@@ -53,6 +53,7 @@ function setup(fetchImpl: typeof fetch, usage?: Pick<UsageService, 'record'>) {
       getValue: (name: string) => KEYS[name] ?? null,
       hasValue: (name: string) => name in KEYS,
       names: () => Object.keys(KEYS),
+      registerRedactValue: () => {},
     } as unknown as SecretsService,
     logger: LOGGER,
     usage: recorder as UsageService,

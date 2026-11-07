@@ -67,35 +67,86 @@ export function providerKeySecretNames(secrets: SecretsService, providerId: stri
   return secrets.hasValue(base) ? [base, ...extras] : extras;
 }
 
-/** 按存储顺序读出全部 Key；损坏的条目跳过，不让设置页整体失败。 */
-export function readProviderKeys(secrets: SecretsService, providerId: string): string[] {
-  const keys: string[] = [];
+/** 已存 Key 的单条状态：值 + 标注（别名、启停）。 */
+export interface ProviderKeyEntry {
+  key: string;
+  alias?: string;
+  enabled: boolean;
+}
+
+/**
+ * Key 槽位的落盘格式：`{"key":...,"alias":...,"enabled":false}`（多 Key 功能
+ * 引入后的 JSON envelope，含标注）；旧值为纯文本 Key（缺省启用、无别名）。
+ * 元数据随 Key 存进同一槽位，删除 / 重编号天然对齐，明文不出加密表。
+ */
+function parseProviderKeyEntry(value: string): ProviderKeyEntry {
+  if (value.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(value) as { key?: unknown; alias?: unknown; enabled?: unknown };
+      if (typeof parsed.key === 'string' && parsed.key.length > 0) {
+        return {
+          key: parsed.key,
+          ...(typeof parsed.alias === 'string' && parsed.alias.length > 0
+            ? { alias: parsed.alias }
+            : {}),
+          enabled: parsed.enabled !== false,
+        };
+      }
+    } catch {
+      // 非法 JSON（理论上不会出现）：按旧格式纯 Key 处理。
+    }
+  }
+  return { key: value, enabled: true };
+}
+
+function serializeProviderKeyEntry(entry: ProviderKeyEntry): string {
+  return JSON.stringify({
+    key: entry.key,
+    ...(entry.alias !== undefined ? { alias: entry.alias } : {}),
+    ...(entry.enabled ? {} : { enabled: false }),
+  });
+}
+
+/** 按存储顺序读出全部 Key 条目；损坏的条目跳过，不让设置页整体失败。 */
+export function readProviderEntries(secrets: SecretsService, providerId: string): ProviderKeyEntry[] {
+  const entries: ProviderKeyEntry[] = [];
   for (const name of providerKeySecretNames(secrets, providerId)) {
     try {
       const value = secrets.getValue(name);
-      if (value !== null && value.length > 0) keys.push(value);
+      if (value !== null && value.length > 0) {
+        const entry = parseProviderKeyEntry(value);
+        // envelope 槽位的存储值是整串 JSON，secrets.redact 的精确子串匹配盖不到
+        // 内层明文 Key——读出时补登记（旧纯文本值本就是存储值，重复登记无害）。
+        secrets.registerRedactValue(entry.key);
+        entries.push(entry);
+      }
     } catch {
       // 单条解密失败（密钥轮换 / 数据损坏）时其余 Key 仍可用。
     }
   }
-  return keys;
+  return entries;
+}
+
+/** 按存储顺序读出全部 Key 值。 */
+export function readProviderKeys(secrets: SecretsService, providerId: string): string[] {
+  return readProviderEntries(secrets, providerId).map((entry) => entry.key);
 }
 
 function removeProviderKeys(secrets: SecretsService, providerId: string): void {
   for (const name of providerKeySecretNames(secrets, providerId)) secrets.removeValue(name);
 }
 
-/** 整体替换 Key 列表（providers.setKey 的语义：单 Key 覆盖）。 */
+/** 整体替换 Key 列表（providers.setKey 的语义：单 Key 覆盖，标注一并重置）。 */
 export function replaceProviderKeys(
   secrets: SecretsService,
   providerId: string,
-  keys: readonly string[],
+  entries: readonly ProviderKeyEntry[],
 ): void {
   removeProviderKeys(secrets, providerId);
-  keys.forEach((key, index) => {
+  entries.forEach((entry, index) => {
     secrets.setValue(
       index === 0 ? providerSecretName(providerId) : providerKeySlotName(providerId, index),
-      key,
+      serializeProviderKeyEntry(entry),
     );
   });
 }
@@ -105,7 +156,7 @@ export function addProviderKey(secrets: SecretsService, providerId: string, key:
   if (readProviderKeys(secrets, providerId).includes(key)) return;
   const names = providerKeySecretNames(secrets, providerId);
   if (names.length === 0) {
-    secrets.setValue(providerSecretName(providerId), key);
+    secrets.setValue(providerSecretName(providerId), serializeProviderKeyEntry({ key, enabled: true }));
     return;
   }
   const prefix = `${providerSecretName(providerId)}${PROVIDER_KEY_SLOT}`;
@@ -116,32 +167,65 @@ export function addProviderKey(secrets: SecretsService, providerId: string, key:
   );
   let slot = 1;
   while (used.has(slot)) slot++;
-  secrets.setValue(providerKeySlotName(providerId, slot), key);
+  secrets.setValue(
+    providerKeySlotName(providerId, slot),
+    serializeProviderKeyEntry({ key, enabled: true }),
+  );
 }
 
-/** 按下标删除一个 Key 并重新编号；下标非法时报 INVALID_INPUT。 */
+/** 按下标删除一个 Key 并重新编号（其余条目的标注原样保留）；下标非法时报 INVALID_INPUT。 */
 export function removeProviderKeyAt(
   secrets: SecretsService,
   providerId: string,
   index: number,
 ): void {
-  const keys = readProviderKeys(secrets, providerId);
-  if (index < 0 || index >= keys.length) {
+  const entries = readProviderEntries(secrets, providerId);
+  if (index < 0 || index >= entries.length) {
     throw new AppError('INVALID_INPUT', `API Key #${index} 不存在`);
   }
-  keys.splice(index, 1);
-  replaceProviderKeys(secrets, providerId, keys);
+  entries.splice(index, 1);
+  replaceProviderKeys(secrets, providerId, entries);
 }
 
-/** 进程内轮询游标：每个供应商独立，逐个请求轮换 Key。 */
+/** 更新单个 Key 的标注（别名 / 启停）；其余条目不动。 */
+export function updateProviderKeyMeta(
+  secrets: SecretsService,
+  providerId: string,
+  index: number,
+  patch: { alias?: string; enabled?: boolean },
+): void {
+  const names = providerKeySecretNames(secrets, providerId);
+  if (index < 0 || index >= names.length) {
+    throw new AppError('INVALID_INPUT', `API Key #${index} 不存在`);
+  }
+  const current = parseProviderKeyEntry(secrets.getValue(names[index]!) ?? '');
+  if (current.key.length === 0) {
+    throw new AppError('INVALID_INPUT', `API Key #${index} 不存在`);
+  }
+  const alias = patch.alias !== undefined ? patch.alias.trim() : current.alias;
+  // 单槽位原位更新：别名 / 启停是高频操作，不走「全删重写」，避免进程在
+  // 删除与重写之间中断时丢掉该供应商的全部 Key。
+  secrets.setValue(
+    names[index]!,
+    serializeProviderKeyEntry({
+      key: current.key,
+      ...(alias !== undefined && alias.length > 0 ? { alias } : {}),
+      enabled: patch.enabled ?? current.enabled,
+    }),
+  );
+}
+
+/** 进程内轮询游标：每个供应商独立，逐个请求在启用中的 Key 间轮换。 */
 const providerKeyCursor = new Map<string, number>();
 
-/** 取下一次调用应使用的 Key；没有配置时返回 null。 */
+/** 取下一次调用应使用的 Key（跳过停用条目）；没有可用 Key 时返回 null。 */
 export function nextProviderApiKey(
   secrets: SecretsService,
   providerId: string,
 ): string | null {
-  const keys = readProviderKeys(secrets, providerId);
+  const keys = readProviderEntries(secrets, providerId)
+    .filter((entry) => entry.enabled)
+    .map((entry) => entry.key);
   if (keys.length === 0) return null;
   const cursor = providerKeyCursor.get(providerId) ?? 0;
   providerKeyCursor.set(providerId, (cursor + 1) % keys.length);
@@ -249,7 +333,10 @@ export function buildModelRegistry(deps: {
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: m.contextWindow,
           maxTokens: Math.min(32_000, Math.max(1_024, Math.floor(m.contextWindow / 4))),
-          compat: { supportsDeveloperRole: false },
+          // 兼容收敛：developer 角色与 OpenAI 专有的 store（蒸馏存储开关）
+          // 都不是通用兼容端点的字段——Gemini 等严格校验的实现会因未知字段
+          // 整单 400，一律不发（不发 store 对 OpenAI 也无行为差异，缺省即 false）。
+          compat: { supportsDeveloperRole: false, supportsStore: false },
         })),
         api: apiImpl(instance.api),
       }),
@@ -286,8 +373,16 @@ export function providerInfoList(
 ): ProviderInfo[] {
   const infos: ProviderInfo[] = [];
   const keyInfo = (providerId: string): Pick<ProviderInfo, 'hasKey' | 'keyPreviews'> => {
-    const keys = readProviderKeys(secrets, providerId);
-    return { hasKey: keys.length > 0, keyPreviews: keys.map(maskApiKey) };
+    const entries = readProviderEntries(secrets, providerId);
+    return {
+      // 全部停用视为无可用 Key：调用层会跳过，模型下拉 / 能力预检也应视为未配置。
+      hasKey: entries.some((entry) => entry.enabled),
+      keyPreviews: entries.map((entry) => ({
+        mask: maskApiKey(entry.key),
+        ...(entry.alias !== undefined ? { alias: entry.alias } : {}),
+        enabled: entry.enabled,
+      })),
+    };
   };
   const instanceIds = new Set(settings.modelProviders.map((p) => p.id));
   for (const provider of models.getProviders()) {

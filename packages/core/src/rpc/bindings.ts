@@ -18,6 +18,7 @@ import {
   providersAddKeyInputSchema,
   providersRemoveKeyAtInputSchema,
   providersSetKeyInputSchema,
+  providersSetKeyMetaInputSchema,
   providerNameInputSchema,
   providersTestInputSchema,
   providersListOutputSchema,
@@ -698,6 +699,17 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       okOutputSchema,
       async (input) => {
         domain.providers.removeKeyAt(input.provider, input.index);
+        return { ok: true as const };
+      },
+    ),
+    'providers.setKeyMeta': method(
+      providersSetKeyMetaInputSchema,
+      okOutputSchema,
+      async (input) => {
+        domain.providers.setKeyMeta(input.provider, input.index, {
+          ...(input.alias !== undefined ? { alias: input.alias } : {}),
+          ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+        });
         return { ok: true as const };
       },
     ),

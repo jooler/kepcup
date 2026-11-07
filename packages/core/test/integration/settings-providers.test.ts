@@ -67,12 +67,12 @@ describe('settings and provider key persistence', () => {
     await core.rpc.call('providers.addKey', { provider: 'custom:mock', key: second });
 
     const list = (await core.rpc.call('providers.list')) as {
-      providers: Array<{ id: string; hasKey: boolean; keyPreviews: string[] }>;
+      providers: Array<{ id: string; hasKey: boolean; keyPreviews: Array<{ mask: string }> }>;
     };
     const info = list.providers.find((p) => p.id === 'custom:mock');
     expect(info).toMatchObject({
       hasKey: true,
-      keyPreviews: [maskApiKey(first), maskApiKey(second)],
+      keyPreviews: [{ mask: maskApiKey(first) }, { mask: maskApiKey(second) }],
     });
     const serialized = JSON.stringify(list);
     expect(serialized.includes(first)).toBe(false);
@@ -80,11 +80,61 @@ describe('settings and provider key persistence', () => {
 
     await core.rpc.call('providers.removeKeyAt', { provider: 'custom:mock', index: 0 });
     const after = (await core.rpc.call('providers.list')) as {
-      providers: Array<{ id: string; keyPreviews: string[] }>;
+      providers: Array<{ id: string; keyPreviews: Array<{ mask: string }> }>;
     };
     expect(after.providers.find((p) => p.id === 'custom:mock')?.keyPreviews).toEqual([
-      maskApiKey(second),
+      { mask: maskApiKey(second), enabled: true },
     ]);
+  });
+
+  it('Key 标注：别名与启停经 providers.setKeyMeta 生效，删除其余 Key 时标注保留', async () => {
+    const stack = await createTestStack();
+    stacks.push(stack);
+    const { core } = stack;
+
+    await core.rpc.call('providers.setKey', { provider: 'custom:mock', key: 'sk-alpha-1111' });
+    await core.rpc.call('providers.addKey', { provider: 'custom:mock', key: 'sk-beta-2222' });
+    await core.rpc.call('providers.setKeyMeta', {
+      provider: 'custom:mock',
+      index: 1,
+      alias: '备用渠道',
+      enabled: false,
+    });
+
+    const list = (await core.rpc.call('providers.list')) as {
+      providers: Array<{
+        id: string;
+        hasKey: boolean;
+        keyPreviews: Array<{ mask: string; alias?: string; enabled: boolean }>;
+      }>;
+    };
+    const previews = list.providers.find((p) => p.id === 'custom:mock')?.keyPreviews ?? [];
+    // 首条启用无别名；第二条带别名且停用——全部启用 Key 为零时 hasKey 视为 false。
+    expect(previews).toEqual([
+      { mask: maskApiKey('sk-alpha-1111'), enabled: true },
+      { mask: maskApiKey('sk-beta-2222'), alias: '备用渠道', enabled: false },
+    ]);
+    expect(list.providers.find((p) => p.id === 'custom:mock')?.hasKey).toBe(true);
+    await core.rpc.call('providers.setKeyMeta', { provider: 'custom:mock', index: 0, enabled: false });
+    const allDisabled = (await core.rpc.call('providers.list')) as {
+      providers: Array<{ id: string; hasKey: boolean }>;
+    };
+    expect(allDisabled.providers.find((p) => p.id === 'custom:mock')?.hasKey).toBe(false);
+
+    // 删除首条后重编号：剩余条目的别名与停用状态原样保留；别名可清除（空串）。
+    await core.rpc.call('providers.removeKeyAt', { provider: 'custom:mock', index: 0 });
+    await core.rpc.call('providers.setKeyMeta', { provider: 'custom:mock', index: 0, alias: '' });
+    const after = (await core.rpc.call('providers.list')) as {
+      providers: Array<{ keyPreviews: Array<{ alias?: string; enabled: boolean }> }>;
+    };
+    expect(after.providers.find((p) => p.id === 'custom:mock')?.keyPreviews).toEqual([
+      { mask: maskApiKey('sk-beta-2222'), enabled: false },
+    ]);
+
+    // 非法下标报 INVALID_INPUT。
+    await expect(
+      core.rpc.call('providers.setKeyMeta', { provider: 'custom:mock', index: 9, enabled: true }),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
   });
 
   it('providers.test succeeds against the mock and reports PROVIDER_AUTH_FAILED on 401', async () => {
@@ -101,6 +151,44 @@ describe('settings and provider key persistence', () => {
     await expect(
       core.rpc.call('providers.test', { provider: 'custom:mock', model: 'mock-light' }),
     ).rejects.toMatchObject({ code: 'PROVIDER_AUTH_FAILED' });
+  });
+
+  it('OpenAI 兼容实例不发 store 字段（Gemini 等严格校验端点会因未知字段 400）', async () => {
+    const stack = await createTestStack();
+    stacks.push(stack);
+    const { core, llm } = stack;
+
+    // Gemini（AI Studio OpenAI 兼容层）对请求体做严格字段校验：pi-ai 缺省
+    // 会带 OpenAI 专有的 store=false，兼容实例的 compat 必须把它关掉。
+    llm.script('mock-main', [step().replyText('pong')]);
+    const before = (await core.rpc.call('settings.get')) as {
+      modelProviders: Array<Record<string, unknown>>;
+    };
+    await core.rpc.call('settings.update', {
+      modelProviders: [
+        ...before.modelProviders,
+        {
+          id: 'custom:gemini',
+          vendor: null,
+          name: 'Gemini（OpenAI 兼容）',
+          baseUrl: llm.url,
+          enabled: true,
+          api: 'openai-completions',
+          models: [{ id: 'mock-main' }],
+        },
+      ],
+    });
+    await core.rpc.call('providers.setKey', { provider: 'custom:gemini', key: 'sk-gemini' });
+
+    await expect(
+      core.rpc.call('providers.test', { provider: 'custom:gemini', model: 'mock-main' }),
+    ).resolves.toEqual({ ok: true });
+
+    const requests = llm.requestsFor('mock-main');
+    expect(requests.length).toBeGreaterThan(0);
+    for (const req of requests) {
+      expect('store' in req.body).toBe(false);
+    }
   });
 
   it('国内厂商：条目经 settings.update 持久化，providers.test 缺省按对话/能力配置路由（不误报 Unknown provider）', async () => {

@@ -15,6 +15,7 @@ import {
   replaceProviderKeys,
   resolveModel,
   testProvider,
+  updateProviderKeyMeta,
 } from '../agent/models.js';
 import { providerTestSessionId } from '../agent/model-session-id.js';
 import type { MediaService } from '../media/service.js';
@@ -64,7 +65,7 @@ export class ProvidersService {
 
   setKey(provider: string, key: string): void {
     this.#assertProviderExists(provider);
-    replaceProviderKeys(this.#secrets, provider, [key]);
+    replaceProviderKeys(this.#secrets, provider, [{ key, enabled: true }]);
   }
 
   /** 追加一个 Key（同一供应商多 Key 轮询）；setKey 仍是整体替换。 */
@@ -76,6 +77,16 @@ export class ProvidersService {
   removeKeyAt(provider: string, index: number): void {
     this.#assertProviderExists(provider);
     removeProviderKeyAt(this.#secrets, provider, index);
+  }
+
+  /** 更新单个 Key 的标注：别名（空串清除）与启停；停用的 Key 调用时跳过。 */
+  setKeyMeta(
+    provider: string,
+    index: number,
+    patch: { alias?: string; enabled?: boolean },
+  ): void {
+    this.#assertProviderExists(provider);
+    updateProviderKeyMeta(this.#secrets, provider, index, patch);
   }
 
   removeKey(provider: string): void {

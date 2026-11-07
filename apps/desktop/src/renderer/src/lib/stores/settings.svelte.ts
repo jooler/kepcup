@@ -163,6 +163,21 @@ class SettingsState {
     await this.refresh();
   }
 
+  /** 更新单个 Key 的标注：别名（空串清除）与启停；刷新后 providers.list 带上新值。 */
+  async setKeyMeta(
+    provider: string,
+    index: number,
+    patch: { alias?: string; enabled?: boolean },
+  ): Promise<void> {
+    await core.call('providers.setKeyMeta', {
+      provider,
+      index,
+      ...(patch.alias !== undefined ? { alias: patch.alias } : {}),
+      ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
+    });
+    await this.refresh();
+  }
+
   async removeKey(provider: string): Promise<void> {
     await core.call('providers.removeKey', { provider });
     await this.refresh();
