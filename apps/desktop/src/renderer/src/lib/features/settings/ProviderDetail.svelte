@@ -1,32 +1,37 @@
 <script lang="ts">
-  import type { ProviderInstance, ProviderModel } from '@kepcup/shared';
-  import { VENDOR_DESCRIPTORS } from '@kepcup/shared';
+  import type { FetchedProviderModel, ProviderApi, ProviderInstance, ProviderModel } from '@kepcup/shared';
+  import { isCustomInstanceId, VENDOR_DESCRIPTORS } from '@kepcup/shared';
   import { t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { untrack } from 'svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import {
     formatContextWindow,
+    mergeFetchedProviderModels,
     modelCapabilityBadges,
     providerNavStatus,
+    PROVIDER_API_OPTIONS,
     settingsWithoutInstance,
   } from './provider-instances';
   import ProviderLogo from './ProviderLogo.svelte';
   import { providerIconForInstance } from './provider-logos';
+  import ProviderFetchModelsDialog from './ProviderFetchModelsDialog.svelte';
   import ProviderModelDialog from './ProviderModelDialog.svelte';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { Checkbox } from '$lib/components/ui/checkbox';
+  import * as Select from '$lib/components/ui/select';
   import { Switch } from '$lib/components/ui/switch';
-  import { Plus, Trash2, Pencil } from '@lucide/svelte';
+  import { Plus, Trash2, Pencil, Download } from '@lucide/svelte';
 
   /**
    * 左栏选中某个供应商实例后的详情（ZCode 的 provider card + 模型列表）：
-   * 头部（名称、类型、状态点、启停、删除）→ 连接区（baseUrl / API Key /
-   * 测试连接）→ 模型列表（模型 ID + 上下文 badge + 能力 badge + 编辑/删除，
-   * 「添加模型」出弹框）。baseUrl / 名称 / 启停即改即存；Key 失焦或回车提交，
+   * 头部（名称、类型、状态点、启停、删除）→ 连接区（baseUrl / 数据风格 /
+   * API Key / 测试连接）→ 模型列表（模型 ID + 上下文 badge + 能力 badge +
+   * 编辑/删除，「添加模型」出弹框，「获取模型」按线协议拉取远端清单）。
+   * baseUrl / 名称 / 启停 / 数据风格（仅自定义实例）即改即存；Key 失焦或回车提交，
    * 已存 Key 行可标注别名（列表态以文字 + 笔图标展示，点击进入编辑，失焦 / 回车
    * 提交、Esc 放弃）与启停（toggle，停用的 Key 调用时跳过）。
    */
@@ -310,6 +315,49 @@
     instance?.models.find((m) => m.id === editingModelId) ?? null,
   );
 
+  // --- 获取模型 ---------------------------------------------------------------
+  // 按实例的线协议拉取远端可用模型（Key 用已存的，core 解析）；已登记条目在
+  // 弹框里只读展示，确认后只新增不覆盖（mergeFetchedProviderModels）。
+  let fetchingModels = $state(false);
+  let fetchedModels = $state<FetchedProviderModel[]>([]);
+  let fetchDialogOpen = $state(false);
+
+  /** 拉取端点：实例 baseUrl 优先（vendor 实例兜底描述符默认根）。 */
+  const fetchBaseUrl = $derived(instance?.baseUrl ?? descriptor?.baseUrl ?? null);
+
+  async function fetchInstanceModels(): Promise<void> {
+    const current = instance;
+    const baseUrl = fetchBaseUrl;
+    if (current === null || baseUrl === null || fetchingModels) return;
+    fetchingModels = true;
+    try {
+      const models = await settingsStore.fetchModels({
+        provider: current.id,
+        baseUrl,
+        api: current.api,
+      });
+      if (models.length === 0) {
+        toast.error(t('settings.fetchModelsEmpty'));
+        return;
+      }
+      fetchedModels = models;
+      fetchDialogOpen = true;
+    } catch (error) {
+      toast.error(
+        t('settings.fetchModelsFailed', { reason: String((error as Error).message ?? '') }),
+      );
+    } finally {
+      fetchingModels = false;
+    }
+  }
+
+  async function onFetchedConfirm(picked: FetchedProviderModel[]): Promise<void> {
+    const current = instance;
+    if (current === null) return;
+    await patchInstance({ models: mergeFetchedProviderModels(current, picked) });
+    toast.success(t('settings.saved'));
+  }
+
   async function removeModel(modelId: string): Promise<void> {
     const settings = settingsStore.settings;
     const current = instance;
@@ -402,6 +450,35 @@
         </div>
       {:else}
         <p class="text-xs text-muted-foreground">{t('settings.providerBuiltinCatalogHint')}</p>
+      {/if}
+      {#if isCustomInstanceId(instance.id) && !instance.builtinCatalog}
+        <!-- 仅自定义实例可改数据风格（预置厂商实例的线协议由模板固定——注意
+             目录模板实例同样是 vendor:null，不能用 descriptor 判别）；改后注册表按新协议重建。 -->
+        <div class="grid gap-1.5">
+          <Label for={`provider-api-${instance.id}`}>{t('settings.providerApiLabel')}</Label>
+          <Select.Root
+            type="single"
+            value={instance.api}
+            onValueChange={(value) => {
+              if (value !== undefined) void patchInstance({ api: value as ProviderApi });
+            }}
+          >
+            <Select.Trigger
+              class="w-full"
+              id={`provider-api-${instance.id}`}
+              aria-label={t('settings.providerApiLabel')}
+              data-testid={`provider-api-${instance.id}`}
+            >
+              {t(`settings.providerApi.${instance.api}`)}
+            </Select.Trigger>
+            <Select.Content>
+              {#each PROVIDER_API_OPTIONS as option (option)}
+                <Select.Item value={option}>{t(`settings.providerApi.${option}`)}</Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
+          <p class="text-xs text-muted-foreground">{t('settings.providerApiHint')}</p>
+        </div>
       {/if}
       <div class="grid gap-1.5">
         <Label for={`provider-key-${instance.id}`}>{t('settings.providerKey')}</Label>
@@ -534,10 +611,22 @@
       <div class="flex items-center justify-between gap-2">
         <h4 class="text-sm font-medium">{t('settings.providerModelsLabel')}</h4>
         {#if !instance.builtinCatalog}
-          <Button size="sm" variant="outline" onclick={openAddModel} data-testid={`provider-add-model-${instance.id}`}>
-            <Plus class="size-4" />
-            {t('settings.providerAddModel')}
-          </Button>
+          <div class="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={fetchingModels || fetchBaseUrl === null}
+              onclick={() => void fetchInstanceModels()}
+              data-testid={`provider-fetch-models-${instance.id}`}
+            >
+              <Download class="size-4" />
+              {fetchingModels ? t('settings.fetchingModels') : t('settings.fetchModels')}
+            </Button>
+            <Button size="sm" variant="outline" onclick={openAddModel} data-testid={`provider-add-model-${instance.id}`}>
+              <Plus class="size-4" />
+              {t('settings.providerAddModel')}
+            </Button>
+          </div>
         {/if}
       </div>
       {#if (displayModels ?? []).length === 0}
@@ -592,5 +681,12 @@
     bind:open={modelDialogOpen}
     instanceId={instance.id}
     model={editingModel}
+  />
+
+  <ProviderFetchModelsDialog
+    bind:open={fetchDialogOpen}
+    models={fetchedModels}
+    existingIds={instance.models.map((m) => m.id)}
+    onConfirm={(picked) => void onFetchedConfirm(picked)}
   />
 {/if}

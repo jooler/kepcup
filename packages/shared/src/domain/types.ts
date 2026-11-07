@@ -372,6 +372,17 @@ export const providerModelSchema = z.object({
 export type ProviderModel = z.infer<typeof providerModelSchema>;
 
 /**
+ * 从供应商拉取的可用模型条目（providers.fetchModels）：远端清单只保证有 id，
+ * 展示名与上下文提示各家口径不一，缺省由 UI 落默认值（128k）。
+ */
+export const fetchedProviderModelSchema = z.object({
+  id: z.string().min(1).max(200),
+  name: z.string().min(1).max(200).optional(),
+  contextWindow: z.number().int().positive().max(10_000_000).optional(),
+});
+export type FetchedProviderModel = z.infer<typeof fetchedProviderModelSchema>;
+
+/**
  * 供应商实例：内置厂商模板（`vendor` 指向厂商描述符）、ZCode 式模板
  * （`api` 决定对话线协议：openai-completions / anthropic-messages /
  * openai-responses）、pi 内置目录实例（`builtinCatalog`，模型清单直接用
