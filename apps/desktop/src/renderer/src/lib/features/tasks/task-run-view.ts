@@ -150,7 +150,7 @@ export function buildTaskRunTimeline(steps: readonly RunStep[]): TaskRunEntry[] 
         break;
       }
       case 'steer': {
-        const text = textOf(payload.text).trim();
+        const text = steerDisplayText(textOf(payload.text));
         if (text.length > 0) entries.push({ kind: 'steer', id: step.id, text });
         break;
       }
@@ -174,6 +174,19 @@ export function buildTaskRunTimeline(steps: readonly RunStep[]): TaskRunEntry[] 
  */
 export function isToolProgressText(text: string): boolean {
   return text.startsWith('正在');
+}
+
+/**
+ * 追加指令（steer）在时间线上的显示文本。发给引擎的 steer 原文由
+ * `buildTaskInjection` 包成 `<task_inject>指令（含 source_messages）</task_inject>`
+ * 加尾部说明（「对话中的你追加了新的指令：…」）——那是给 LLM 的完整语义，
+ * 用户只需看到标签内的指令本身，气泡标题已有「追加指令」。没有包裹的
+ * 旧数据 / 纯文本 steer 原样显示。
+ */
+export function steerDisplayText(text: string): string {
+  const match = /<task_inject>\n?([\s\S]*?)\n?<\/task_inject>/.exec(text);
+  if (match === null) return text.trim();
+  return match[1]?.trim() ?? '';
 }
 
 /**

@@ -11,6 +11,7 @@ import {
   latestPlan,
   pendingTaskQuestionOf,
   resultPreview,
+  steerDisplayText,
   taskElapsedMs,
   taskRunUsageParts,
   toolCallSummary,
@@ -170,12 +171,66 @@ describe('buildTaskRunTimeline', () => {
     expect(entries[0]).toMatchObject({ kind: 'tool', name: 'bash', result: { ok: true } });
   });
 
+  it('steer entries show the instruction inside <task_inject>, not the LLM framing', () => {
+    const entries = buildTaskRunTimeline([
+      step(0, 'steer', {
+        text: [
+          '<task_inject>',
+          '我在操作当前设备，你可以忽略我的操作',
+          '</task_inject>',
+          '对话中的你追加了新的指令：据此调整当前的工作。',
+        ].join('\n'),
+      }),
+      step(1, 'steer', { text: '先看 README' }),
+    ]);
+    expect(entries[0]).toMatchObject({
+      kind: 'steer',
+      text: '我在操作当前设备，你可以忽略我的操作',
+    });
+    // 没有包裹的旧数据 / 纯文本 steer 原样显示。
+    expect(entries[1]).toMatchObject({ kind: 'steer', text: '先看 README' });
+  });
+
   it('详情页按分组渲染工具卡并展示思考（源码契约锁接线）', () => {
     const source = readFileSync(new URL('./TaskRunView.svelte', import.meta.url), 'utf8');
     expect(source).toContain("import TaskRunToolGroup from './TaskRunToolGroup.svelte';");
     expect(source).toContain('const renderEntries = $derived(groupTaskRunEntries(entries));');
     expect(source).toContain('data-testid="task-run-thinking"');
     expect(source).toContain('<TaskRunToolGroup tools={entry.tools} {active} />');
+  });
+});
+
+describe('steerDisplayText', () => {
+  it('unwraps <task_inject> and hides the tags and trailing note', () => {
+    const text = [
+      '<task_inject>',
+      '我在操作当前设备，你可以忽略我的操作',
+      '</task_inject>',
+      '对话中的你追加了新的指令：据此调整当前的工作。',
+    ].join('\n');
+    expect(steerDisplayText(text)).toBe('我在操作当前设备，你可以忽略我的操作');
+  });
+
+  it('keeps the multi-line inner content (instruction plus source message lines)', () => {
+    const text = [
+      '<task_inject>',
+      '据此调整当前的工作',
+      '<source_messages>',
+      '[12:03] 用户：脚本跑完了吗',
+      '</source_messages>',
+      '</task_inject>',
+      '对话中的你追加了新的指令：据此调整当前的工作。',
+    ].join('\n');
+    expect(steerDisplayText(text)).toBe(
+      ['据此调整当前的工作', '<source_messages>', '[12:03] 用户：脚本跑完了吗', '</source_messages>'].join(
+        '\n',
+      ),
+    );
+  });
+
+  it('shows plain steer texts as-is', () => {
+    expect(steerDisplayText('先看 README')).toBe('先看 README');
+    expect(steerDisplayText('  换成 pnpm test  ')).toBe('换成 pnpm test');
   });
 });
 
