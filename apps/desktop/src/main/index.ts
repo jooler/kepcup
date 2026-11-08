@@ -37,6 +37,7 @@ import { installFileAppProtocol, watchFileAppFrameScripts } from './file-apps';
 import { isOpenablePreviewLinkUrl } from './apps-ui-policy';
 import { CoreHost, type CoreProcessState } from './core-host';
 import { createMainWindow } from './window';
+import { resolveRemoteMode, type RemoteModeTarget } from './remote-mode';
 import { installProductionAppMenu } from './devtools';
 import { WidgetWindowHost } from './widget-window';
 import { createWidgetWindow } from './widget-window-electron';
@@ -99,6 +100,25 @@ const pendingShareUrls: string[] = [];
 let shareWakeLaunch = false;
 /** core 已完成首次 ready：此前的 `kepcup://` URL 都必须排队等 drain。 */
 let coreReady = false;
+
+/**
+ * 远程模式（design 49 §7）：`KEPCUP_REMOTE_URL` 指向一个 headless 服务端时，本次
+ * 启动不建本地 core，主窗口直接加载服务端托管的 web 构建——渲染层由 web 垫片打上
+ * `isWeb`，RPC 走服务端 WebSocket，与浏览器客户端同一条路径。配置非法直接退出：
+ * 静默回落到本地模式会让用户在不知情的情况下写另一份数据。
+ */
+const remoteMode: RemoteModeTarget | null = (() => {
+  try {
+    return resolveRemoteMode(process.env);
+  } catch (error) {
+    dialog.showErrorBox(
+      'KepCup 远程模式配置错误',
+      error instanceof Error ? error.message : String(error),
+    );
+    app.exit(1);
+    return null;
+  }
+})();
 
 const isQuitting = () => quitting;
 
@@ -168,8 +188,16 @@ function openRemotePairing(): void {
 function ensureWindow(): BrowserWindow {
   if (window) return window;
   window = createMainWindow({
-    preloadPath: join(__dirname, '../preload/index.cjs'),
+    // 远程模式没有本地 core 与 IPC：不挂 preload，页面用自带的 web 垫片。
+    preloadPath: remoteMode === null ? join(__dirname, '../preload/index.cjs') : null,
     isQuitting,
+    ...(remoteMode !== null
+      ? {
+          remoteUrl: remoteMode.url,
+          openExternalLinks: true,
+          quitOnClose: true,
+        }
+      : {}),
   });
   window.on('focus', () => {
     windowFocused = true;
@@ -318,6 +346,44 @@ function startShareScanTimer(): void {
   shareScanTimer.unref?.();
 }
 
+/** 主窗口 default session 的权限白名单（D76-7，docs/design/31-sensors.md）。 */
+function installWindowPermissionPolicy(appUrl: () => string): void {
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback, details) => {
+    const allowed = isPermissionAllowed({
+      permission,
+      requestingUrl: details.requestingUrl,
+      mediaTypes: 'mediaTypes' in details ? (details.mediaTypes ?? []) : undefined,
+      appUrl: appUrl(),
+    });
+    if (!allowed)
+      console.warn(`[permissions] denied request: ${permission} (${details.requestingUrl})`);
+    callback(allowed);
+  });
+  session.defaultSession.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) =>
+    isPermissionAllowed({
+      permission,
+      requestingUrl: details.requestingUrl ?? requestingOrigin,
+      // enumerateDevices 等检查的 mediaType 为 'unknown'：不带轨道类型，按来源 + 权限判定。
+      mediaTypes:
+        'mediaType' in details && (details.mediaType === 'audio' || details.mediaType === 'video')
+          ? [details.mediaType]
+          : undefined,
+      appUrl: appUrl(),
+    }),
+  );
+}
+
+/**
+ * 远程模式装配（design 49 §7）：不建 CoreHost / BrowserHost / 托盘 / 本地 IPC，只留
+ * 一个加载远端 web 构建的窗口。页面的能力来自服务端，本地宿主能力（文件对话框、
+ * 浏览器、计算机操控）一概不提供——这正是「大脑与数据在远端」的语义。
+ */
+function bootstrapRemoteMode(target: RemoteModeTarget): void {
+  // 远端页面就是应用界面：媒体 / 剪贴板 / 全屏白名单按它的 origin 判定。
+  installWindowPermissionPolicy(() => target.origin);
+  ensureWindow();
+}
+
 function bootstrap(): void {
   // 生产构建：重建应用菜单，去掉「Toggle Developer Tools」及其快捷键（见 devtools.ts）。
   installProductionAppMenu();
@@ -326,6 +392,11 @@ function bootstrap(): void {
   // （Electron.app）需要手动指定仓库主图标（名称由 patch-dev-electron.cjs 改）。
   if (!app.isPackaged && process.platform === 'darwin' && app.dock) {
     app.dock.setIcon(nativeImage.createFromPath(appIconPath()));
+  }
+
+  if (remoteMode !== null) {
+    bootstrapRemoteMode(remoteMode);
+    return;
   }
 
   // Bot browser partitions live inside the data home (P11), not userData —
@@ -488,29 +559,7 @@ function bootstrap(): void {
     !app.isPackaged && process.env['ELECTRON_RENDERER_URL']
       ? process.env['ELECTRON_RENDERER_URL']
       : 'file:///';
-  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback, details) => {
-    const allowed = isPermissionAllowed({
-      permission,
-      requestingUrl: details.requestingUrl,
-      mediaTypes: 'mediaTypes' in details ? (details.mediaTypes ?? []) : undefined,
-      appUrl: appUrl(),
-    });
-    if (!allowed)
-      console.warn(`[permissions] denied request: ${permission} (${details.requestingUrl})`);
-    callback(allowed);
-  });
-  session.defaultSession.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) =>
-    isPermissionAllowed({
-      permission,
-      requestingUrl: details.requestingUrl ?? requestingOrigin,
-      // enumerateDevices 等检查的 mediaType 为 'unknown'：不带轨道类型，按来源 + 权限判定。
-      mediaTypes:
-        'mediaType' in details && (details.mediaType === 'audio' || details.mediaType === 'video')
-          ? [details.mediaType]
-          : undefined,
-      appUrl: appUrl(),
-    }),
-  );
+  installWindowPermissionPolicy(appUrl);
 
   // System directory picker (docs/dev/02-architecture.md: the result goes to
   // the core through port A as a plain path; the main process only dialogs).
@@ -938,6 +987,13 @@ if (process.env.KEPCUP_HOME) {
   app.setPath('userData', join(process.env.KEPCUP_HOME, 'userData'));
 }
 
+// 远程模式与本地实例并存：独立 userData 让单实例锁、localStorage（clientId /
+// 显示名 / 草稿缓冲）与登录 Cookie 都不和本地桌面互相抢占——同一台机器上可以
+// 同时开「本地壳」和「远端壳」当两个客户端测试协作（design 57）。
+if (remoteMode !== null) {
+  app.setPath('userData', join(app.getPath('userData'), 'remote'));
+}
+
 // D73 P3 §7.5: the privileged `kepcup-app` scheme must be registered before `app.ready`; the
 // navigation guard is installed for every webContents created from now on.
 registerAppsUiScheme();
@@ -949,12 +1005,15 @@ watchFileAppFrameScripts();
 // app.ready 注册——冷启动时 URL 会在 ready 之前送达。
 app.on('open-url', (event, url) => {
   event.preventDefault();
+  // 远程模式没有本地 core / 分享协调器：分享链接交给远端自己处理不了，直接忽略。
+  if (remoteMode !== null) return;
   handleShareUrl(url);
 });
 // dev 下 scheme 由 Electron 壳注册（打包版由 Info.plist 的 CFBundleURLTypes
 // 负责，docs/design/44-macos-share-extension.md §7.2）。只做 macOS：Windows /
 // Linux 的 P0 没有分享入口（D94-10），不该往注册表 / 配置里写没人消费的 scheme。
-if (!app.isPackaged && process.platform === 'darwin') {
+// 远程模式也不注册：那次启动没有分享能力，不该抢走本地实例的 kepcup:// 链接。
+if (remoteMode === null && !app.isPackaged && process.platform === 'darwin') {
   if (process.defaultApp && process.argv.length >= 2) {
     app.setAsDefaultProtocolClient('kepcup', process.execPath, [
       resolve(process.argv[1] as string),
@@ -971,8 +1030,10 @@ if (!gotLock) {
   app.on('second-instance', () => showWindow());
   app.on('activate', () => showWindow());
   // Tray-resident: an empty listener keeps Electron from quitting when the
-  // last window closes (non-macOS default).
-  app.on('window-all-closed', () => {});
+  // last window closes (non-macOS default). 远程模式没有托盘，关窗即退出。
+  app.on('window-all-closed', () => {
+    if (remoteMode !== null) app.quit();
+  });
   app.on('before-quit', beginQuit);
   void app.whenReady().then(bootstrap);
 }
