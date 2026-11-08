@@ -15,6 +15,8 @@ const { capabilitiesMock } = vi.hoisted(() => ({
 vi.mock('./computer/sidecar-client', () => ({
   callComputerSidecarCapabilities: capabilitiesMock,
   callComputerSidecarAction: vi.fn(),
+  // P-B1 WP6：ComputerHostImpl 构造时注入 cua socket 目录父级。
+  setComputerSidecarUserDataDirectory: vi.fn(),
 }));
 
 /**

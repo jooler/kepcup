@@ -1,18 +1,25 @@
 #!/usr/bin/env node
 
 /**
- * computer-use 编排层冒烟（D105 WP2 验收，M1 后半；todo/computer-use.md WP2 验收列）。
+ * computer-use 编排层冒烟（D105 WP2 验收，M1 后半；todo/computer-use.md WP2 验收列；
+ * P-B1 D 层：--provider=cua 走 cua-driver provider，todo/computer-use-cua-adapter.md）。
  *
  *   node scripts/computer-orchestration-smoke.mjs [app-name]
+ *   node scripts/computer-orchestration-smoke.mjs --provider=cua [app-name]
  *
  * 起 Electron 宿主（computer-orchestration-smoke-host/）fork **真实 sidecar 产物**
  * （out/main/computer-sidecar.js），验证 main 编排层全链路：capabilities 握手、
- * listApps、getAppState（树 + diff）、并发第二会话 CONTROLLER_BUSY、stop 清理
- * helper。全部不经 core（core 侧的端到端在 WP4 验收）。
+ * listApps、getAppState（树 + diff；cua 分支追加截图可读性）、stop 清理 provider
+ * 进程。全部不经 core（core 侧的端到端在 WP4 验收）。
+ *
+ * `--provider=cua` 前置：`node scripts/fetch-cua-driver.mjs`（CuaDriver.app 产物）。
+ * 首次使用需要给 KepCup（宿主）授予辅助功能 + 屏幕录制（embedded 模式 TCC 归宿主，
+ * daemon 永不弹窗）；macOS 26+ 还需 direct-capture 同意（首次截图跳过并如实报
+ * screenshot_failed）。
  *
  * 前置：`node scripts/build-computer-use-macos.mjs`（helper）与
  * `pnpm --filter @kepcup/desktop build`（sidecar 产物）。一次性脚本，WP2 验收后
- * 保留供上游 helper 升级时复验。
+ * 保留供上游 provider 升级时复验。
  */
 
 import { spawn } from 'node:child_process';

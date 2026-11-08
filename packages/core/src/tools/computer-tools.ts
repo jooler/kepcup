@@ -53,8 +53,14 @@ const OBSERVE_RULE =
 const ADDRESS_RULE =
   '元素索引来自最近一次 computer_get_app_state 的树文本（行首数字）；观察会重排索引，旧索引失效。坐标兜底只使用最近一帧截屏的窗口栅格坐标。';
 
+/**
+ * Provider 无关的权限引导（P-B1 WP5）：原生 helper 与 cua-driver provider 共用
+ * 一份——授权都记在 KepCup 名下（helper 独立 .app 时代已成历史），设置已独立为
+ * 「计算机操控」段（data-settings-anchor="computer-use"）。core 测试不断言
+ * 这些字符串本身（只断言含「计算机操控」「不」），改写不影响硬验收。
+ */
 const SCOPE_RULE =
-  '本工具操控原生桌面应用窗口；网页内容一律用 browser 工具。权限被拒绝（PERMISSION_DENIED）时让用户到 设置 › 浏览器 › 计算机操控 授权「KepCup Computer Use」，绝不改用其他自动化方式。';
+  '本工具操控原生桌面应用窗口；网页内容一律用 browser 工具。权限被拒绝（PERMISSION_DENIED）时让用户到 设置 › 计算机操控 的权限引导里给 KepCup 授权，绝不改用其他自动化方式。';
 
 function asToolFailure(error: unknown, outcome?: ToolResult['outcome']): ToolResult {
   const hint = computerErrorHint(error);
@@ -75,7 +81,7 @@ function computerErrorHint(error: unknown): { message: string; code: string } {
       case 'PERMISSION_DENIED':
         return {
           message:
-            '系统权限不足：需要给「KepCup Computer Use」授予辅助功能与屏幕录制权限。请让用户到 设置 › 浏览器 › 计算机操控 的权限引导里授权后重试。权限被拒后不会改用其他自动化方式。',
+            '系统权限不足：需要给 KepCup 授予辅助功能与屏幕录制权限。请让用户到 设置 › 计算机操控 的权限引导里授权后重试。权限被拒后不会改用其他自动化方式。',
           code: error.code,
         };
       case 'APP_NOT_FOUND':
@@ -226,7 +232,7 @@ export function buildComputerTools(deps: ComputerToolDeps): ToolDefinition[] {
     // 审批被拒发生在动作前：正常失败结果，不标 uncertain（执行文档 WP4）。
     return {
       ok: false,
-      content: '用户未授权计算机操控。询问用户是否开启（设置 › 浏览器 › 计算机操控），未经授权不要操作桌面应用。',
+      content: '用户未授权计算机操控。询问用户是否开启（设置 › 计算机操控），未经授权不要操作桌面应用。',
       errorCode: 'COMPUTER_DENIED',
       outcome: 'not_started',
     };

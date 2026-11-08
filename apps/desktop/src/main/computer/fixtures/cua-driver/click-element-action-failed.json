@@ -1,0 +1,14 @@
+{
+ "recordedFrom": "cua-driver 0.40.1 darwin-arm64, click element_token (AXWindow, no AXPress) - real error case without structuredContent, 2026-11-07",
+ "tool": "click",
+ "result": {
+  "isError": true,
+  "content": [
+   {
+    "type": "text",
+    "text": "AX action failed: AXUIElementPerformAction(AXPress) returned -25200"
+   }
+  ],
+  "structuredContent": null
+ }
+}

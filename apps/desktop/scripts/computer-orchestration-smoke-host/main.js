@@ -19,7 +19,22 @@ const path = require('node:path')
 const scriptDir = path.dirname(__filename)
 const appDir = path.resolve(scriptDir, '../..')
 const sidecarEntry = path.join(appDir, 'out', 'main', 'computer-sidecar.js')
-const appQuery = process.argv[2] ?? 'Notes'
+const argv = process.argv.slice(2)
+// P-B1（todo/computer-use-cua-adapter.md WP7 D 层）：--provider=cua 走 cua-driver
+// provider（真实 CuaDriver.app daemon + TCC 归宿主）；缺省仍为原生 helper。
+const providerArg = argv.includes('--provider=cua')
+  ? 'cua'
+  : argv.includes('--provider=native')
+    ? 'native'
+    : null
+const positional = argv.filter((arg) => !arg.startsWith('--provider='))
+const appQuery = positional[0] ?? 'Notes'
+const providerEnv = providerArg ? { KEPCUP_COMPUTER_PROVIDER: providerArg } : {}
+const userDataDir = path.join(require('node:os').tmpdir(), `kepcup-orchestration-smoke-${process.pid}`)
+
+function providerProcessPattern() {
+  return providerArg === 'cua' ? 'CuaDriver.app/Contents/MacOS/cua-driver' : 'orca-computer-use-macos'
+}
 
 function fail(message) {
   console.error(`[smoke2] ${message}`)
@@ -28,7 +43,7 @@ function fail(message) {
 
 function helperProcessCount() {
   try {
-    const out = execFileSync('/usr/bin/pgrep', ['-f', 'orca-computer-use-macos'], { encoding: 'utf8' })
+    const out = execFileSync('/usr/bin/pgrep', ['-f', providerProcessPattern()], { encoding: 'utf8' })
     return out.split('\n').filter((line) => line.trim().length > 0).length
   } catch {
     return 0 // pgrep 无匹配退出非 0
@@ -39,7 +54,12 @@ function helperProcessCount() {
 function startSidecar(label) {
   const child = fork(sidecarEntry, [], {
     stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    env: {
+      ...process.env,
+      ...providerEnv,
+      KEPCUP_COMPUTER_USER_DATA_DIR: userDataDir,
+      ELECTRON_RUN_AS_NODE: '1',
+    },
   })
   const pending = new Map()
   let nextId = 1
@@ -90,15 +110,35 @@ async function main() {
   const session = startSidecar('sidecar-1')
 
   const caps = await session.call('capabilities')
+  const expectedProvider = providerArg === 'cua' ? 'cua-driver' : 'orca-computer-use-macos'
   check(
-    'capabilities 握手（provider lifecycle → helper）',
-    caps.ok === true && caps.result?.provider === 'orca-computer-use-macos',
+    `capabilities 握手（provider lifecycle → ${expectedProvider}）`,
+    caps.ok === true && caps.result?.provider === expectedProvider,
     caps.ok ? `${caps.result.provider} v${caps.result.providerVersion} treeDiff=${caps.result.supports?.observation?.treeDiff}` : JSON.stringify(caps.error),
   )
 
   const apps = await session.call('listApps')
   const appNames = apps.ok ? apps.result.apps.map((a) => a.name) : []
   check('listApps', apps.ok === true && appNames.length > 0, apps.ok ? `${appNames.length} apps` : JSON.stringify(apps.error))
+
+  if (providerArg === 'cua') {
+    // P-B1 D 层人眼可判项：截图是否可读（点击命中走 live 测试 / 真机冒烟）。
+    if (apps.ok && appNames.some((name) => name.toLowerCase() === appQuery.toLowerCase())) {
+      const shot = await session.call('getAppState', { app: appQuery })
+      const screenshotOk =
+        shot.ok === true &&
+        shot.result?.screenshotStatus?.state === 'captured' &&
+        typeof shot.result?.screenshot?.data === 'string' &&
+        shot.result.screenshot.data.length > 0
+      check(
+        'getAppState 含截图（cua-driver，截图可读性人眼复核）',
+        screenshotOk,
+        shot.ok
+          ? `state=${shot.result.screenshotStatus?.state}${shot.result.screenshotStatus?.state === 'failed' ? ` (${shot.result.screenshotStatus.message})` : ''}`
+          : JSON.stringify(shot.error),
+      )
+    }
+  }
 
   const running = apps.ok && appNames.some((name) => name.toLowerCase() === appQuery.toLowerCase())
   if (running) {

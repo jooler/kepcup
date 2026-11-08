@@ -1,0 +1,30 @@
+{
+ "recordedFrom": "cua-driver 0.40.1 darwin-arm64, click element_token action:pick on TextEdit menu item, 2026-11-07",
+ "tool": "click",
+ "result": {
+  "isError": null,
+  "content": [
+   {
+    "text": "✅ Performed AXPick on [2] AXMenuBarItem \"TextEdit\".",
+    "type": "text"
+   }
+  ],
+  "structuredContent": {
+   "delivery": {
+    "mode": "background"
+   },
+   "effect": "unverifiable",
+   "hint": "The click was sent but nothing confirmed it. Read what changed before clicking again; a repeat can toggle or double-fire.",
+   "next_call": {
+    "arguments": {
+     "pid": 18053,
+     "since": "latest",
+     "window_id": 4430
+    },
+    "tool": "get_window_state"
+   },
+   "route": "accessibility",
+   "summary": "✅ Performed AXPick on [2] AXMenuBarItem \"TextEdit\"."
+  }
+ }
+}

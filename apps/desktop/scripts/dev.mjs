@@ -3,6 +3,9 @@
 /**
  * pnpm dev 的入口（D105）：先确保 macOS computer-use helper .app 存在
  * （ensure-computer-use-helper.mjs——无产物自动构建一次，`--rebuild` 强制重建），
+ * 再确保 cua-driver provider 产物存在（fetch-cua-driver.mjs——已安装则秒回；
+ * 缓存缺失时下载 85MB，下载失败不阻塞 dev——cua 是非默认 provider，缺产物只让
+ * `KEPCUP_COMPUTER_PROVIDER=cua` 时报可行动的不可用原因），
  * 再走原有的 patch-dev-electron.cjs + electron-vite dev 链。
  *
  * 单独包一层是因为 pnpm 把 `pnpm dev --rebuild` 的追加参数放在脚本链最后一个
@@ -27,6 +30,15 @@ const ensure = spawnSync(
   { stdio: 'inherit' },
 );
 if (ensure.status !== 0) process.exit(ensure.status ?? 1);
+
+const fetchCuaDriver = spawnSync(process.execPath, [path.join(scriptDir, 'fetch-cua-driver.mjs')], {
+  stdio: 'inherit',
+});
+if (fetchCuaDriver.status !== 0) {
+  console.warn(
+    '[dev] cua-driver 产物获取失败（可忽略）：KEPCUP_COMPUTER_PROVIDER=cua 时会报不可用原因；原生 provider 不受影响。',
+  );
+}
 
 const patch = spawnSync(process.execPath, [path.join(scriptDir, 'patch-dev-electron.cjs')], {
   stdio: 'inherit',

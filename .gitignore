@@ -44,6 +44,9 @@ apps/desktop/resources/entitlements.mac.expanded.plist
 # （build-computer-use-macos.mjs 生成，vendored 源码本身入库）。
 apps/desktop/native/computer-use-macos/.build/
 apps/desktop/resources/computer-use/
+# P-B1: cua-driver provider 的 fetch 产物（scripts/fetch-cua-driver.mjs 下载
+# 解包的 CuaDriver.app；版本 pin 入库在 resources/cua-driver.lock.json）。
+apps/desktop/resources/cua-driver/
 # 冒烟客户端必须以 out/main/computer-sidecar.js 的路径运行（helper 的 socket peer
 # 校验按命令行路径识别 sidecar），与上方全局 out/ 产物忽略冲突——豁免这一个目录。
 !apps/desktop/scripts/computer-use-smoke-client/out/
