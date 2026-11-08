@@ -18,6 +18,7 @@ import { widgetCardSchema } from './widgets-ui.js';
 import { presentCardSchema } from './present.js';
 import { SHARE_INTAKE_ID_PATTERN } from './share.js';
 import { DEFAULT_RELAY_URL, relayEndpointSchema } from './remote.js';
+import { collabClientRefSchema } from './collab.js';
 import { askUserFieldSchema, askUserModeSchema } from './ask-user.js';
 import {
   settingCardContentSchema,
@@ -348,9 +349,7 @@ export const CUSTOM_INSTANCE_PREFIX = 'custom:';
 /** 自定义实例裸 id（去 `custom:` 前缀）的字符集，与 legacy customProviderSchema 一致。 */
 export const customInstanceIdPattern = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 /** 供应商实例 id：自定义带 `custom:` 前缀，其余为厂商实例（`dashscope`、`dashscope-2`…）。 */
-export const providerInstanceIdSchema = z
-  .string()
-  .regex(/^(custom:)?[a-z0-9][a-z0-9_-]{0,63}$/);
+export const providerInstanceIdSchema = z.string().regex(/^(custom:)?[a-z0-9][a-z0-9_-]{0,63}$/);
 
 /** 供应商实例上单个模型的登记：对话模型标 `chat`，专有模型标各自能力。 */
 export const providerModelSchema = z.object({
@@ -448,11 +447,14 @@ export function createInstanceFromTemplate(
     api: template.api,
     builtinCatalog: template.builtinCatalog === true,
     ...(template.logo !== undefined ? { logo: template.logo } : {}),
-    models: template.builtinCatalog === true ? [] : template.presets.map((id) => ({
-      id,
-      contextWindow: 128_000,
-      capabilities: ['chat'],
-    })),
+    models:
+      template.builtinCatalog === true
+        ? []
+        : template.presets.map((id) => ({
+            id,
+            contextWindow: 128_000,
+            capabilities: ['chat'],
+          })),
   };
 }
 
@@ -1553,6 +1555,11 @@ export const textContentSchema = z.object({
    * workspace 副本路径（按查看 Bot 物化）；UI 据此显示「通过系统分享导入」。
    */
   shareIntakeId: z.string().regex(SHARE_INTAKE_ID_PATTERN).optional(),
+  /**
+   * 多客户端协作（D121）：发这条用户消息的客户端（设备）。纯展示元数据，
+   * 不进模型上下文；多端在线时 UI 显示「来自 X」。
+   */
+  client: collabClientRefSchema.optional(),
   /**
    * Bot 在本轮回答中创建 / 修改的本地文件（消息下方的文件卡列表）。路径是
    * 工具实际写入的绝对路径；渲染层按扩展名选择预览方式，用户点击后在覆盖层
@@ -2812,6 +2819,8 @@ export const approvalDecisionSchema = z.object({
   via: z.enum(['unattended', 'auto', 'bypass']).optional(),
   /** Set when status = 'failed': why the post-approval action errored (P08). */
   error: z.string().optional(),
+  /** 多客户端协作（D121）：谁做的决定（用户亲手决定时才有）。 */
+  decidedBy: collabClientRefSchema.optional(),
 });
 export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>;
 

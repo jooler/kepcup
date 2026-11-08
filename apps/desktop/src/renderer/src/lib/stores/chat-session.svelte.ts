@@ -308,6 +308,8 @@ export class ChatSession {
       attachmentIds?: string[];
       /** 语音对话模式发送（53 号修订 v2 V2-1）：core 记 content.origin='voice'。 */
       voiceMode?: boolean;
+      /** D121：发这条消息的客户端（设备），UI 显示「来自 X」。 */
+      client?: { id: string; name: string };
     } = {},
   ): Promise<{ ok: true } | { ok: false; code: string | undefined }> {
     try {
@@ -322,6 +324,7 @@ export class ChatSession {
           ? { attachmentIds: options.attachmentIds }
           : {}),
         ...(options.voiceMode === true ? { voiceMode: true } : {}),
+        ...(options.client !== undefined ? { client: options.client } : {}),
       });
       if (this.view?.conversation.id === conversationId) this.replyTo = null;
       return { ok: true };

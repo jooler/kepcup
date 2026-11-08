@@ -38,9 +38,15 @@ export interface PersistedComposerDraft {
   reply: ComposerReplyRef | null;
   attachments: PersistedAttachment[];
   updatedAt: number;
+  /** 服务端共享草稿的版本（D120）；0 = 尚未与 core 同步。 */
+  version: number;
+  /** 本地有未确认的修改（断线 / 版本冲突恢复用）。 */
+  dirty: boolean;
 }
 
-export const COMPOSER_DRAFTS_STORAGE_KEY = 'kepcup.composer.drafts.v2';
+export const COMPOSER_DRAFTS_STORAGE_KEY = 'kepcup.composer.drafts.v3';
+/** 旧版本（纯本地草稿）；读取后一次性升级为 v3，写入时删除。 */
+export const LEGACY_COMPOSER_DRAFTS_STORAGE_KEY = 'kepcup.composer.drafts.v2';
 /** 容量上限：超出时按 updatedAt 淘汰最久未活跃的会话草稿。 */
 export const MAX_PERSISTED_DRAFTS = 30;
 /** 引用回复只用于预览（渲染层截断到 60 字符），持久化时截断保底。 */
@@ -66,9 +72,27 @@ export function loadPersistedDrafts(
   storage: DraftsStorage | null,
 ): Record<string, PersistedComposerDraft> {
   if (storage === null) return {};
+  // v3 键存在（哪怕是空对象）就表示当前版本已初始化，不再回落到 v2——否则
+  // 发送掉最后一条草稿后重启，旧版 v2 会“复活”。
+  let hasCurrent: boolean;
+  try {
+    hasCurrent = storage.getItem(COMPOSER_DRAFTS_STORAGE_KEY) !== null;
+  } catch {
+    return {};
+  }
+  if (hasCurrent) return readDrafts(storage, COMPOSER_DRAFTS_STORAGE_KEY);
+  const legacy = readDrafts(storage, LEGACY_COMPOSER_DRAFTS_STORAGE_KEY);
+  for (const draft of Object.values(legacy)) {
+    draft.version = 0;
+    draft.dirty = true;
+  }
+  return legacy;
+}
+
+function readDrafts(storage: DraftsStorage, key: string): Record<string, PersistedComposerDraft> {
   let raw: string | null;
   try {
-    raw = storage.getItem(COMPOSER_DRAFTS_STORAGE_KEY);
+    raw = storage.getItem(key);
   } catch {
     return {};
   }
@@ -110,6 +134,11 @@ function normalizeDraft(value: unknown): PersistedComposerDraft | null {
         .filter((attachment): attachment is PersistedAttachment => attachment !== null)
     : [];
   const updatedAt = typeof record.updatedAt === 'number' ? record.updatedAt : 0;
+  const version =
+    typeof record.version === 'number' && Number.isInteger(record.version) && record.version >= 0
+      ? record.version
+      : 0;
+  const dirty = typeof record.dirty === 'boolean' ? record.dirty : true;
   if (
     isComposerDocEmpty(doc) &&
     mentions.length === 0 &&
@@ -118,7 +147,7 @@ function normalizeDraft(value: unknown): PersistedComposerDraft | null {
   ) {
     return null;
   }
-  return { doc, mentions, reply, attachments, updatedAt };
+  return { doc, mentions, reply, attachments, updatedAt, version, dirty };
 }
 
 function normalizeReply(value: unknown): ComposerReplyRef | null {
@@ -182,6 +211,8 @@ export function buildPersistedSnapshot(input: {
       mentions: string[];
       reply: ComposerReplyRef | null;
       uploads: SnapshotUpload[];
+      version?: number;
+      dirty?: boolean;
     }
   >;
   previous: Record<string, PersistedComposerDraft>;
@@ -202,6 +233,8 @@ export function buildPersistedSnapshot(input: {
           size: upload.size,
         })),
       updatedAt: input.now,
+      version: entry.version ?? 0,
+      dirty: entry.dirty ?? true,
     };
   }
   for (const [conversationId, draft] of Object.entries(input.previous)) {
@@ -230,9 +263,11 @@ export function writePersistedDrafts(
     const keys = Object.keys(drafts);
     if (keys.length === 0) {
       storage.removeItem(COMPOSER_DRAFTS_STORAGE_KEY);
+      storage.removeItem(LEGACY_COMPOSER_DRAFTS_STORAGE_KEY);
       return;
     }
     storage.setItem(COMPOSER_DRAFTS_STORAGE_KEY, JSON.stringify(drafts));
+    storage.removeItem(LEGACY_COMPOSER_DRAFTS_STORAGE_KEY);
   } catch {
     // localStorage 不可用 / 配额满：缓存是尽力而为，不阻塞输入。
   }

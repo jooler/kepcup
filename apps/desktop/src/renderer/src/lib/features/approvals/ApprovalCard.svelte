@@ -27,13 +27,7 @@
     Bot,
     Globe,
   } from '@lucide/svelte';
-  import {
-    t,
-    errorText,
-    listSeparator,
-    presetSkillText,
-    type MessageKey,
-  } from '$lib/i18n';
+  import { t, errorText, listSeparator, presetSkillText, type MessageKey } from '$lib/i18n';
   import { permissions } from '$lib/stores/permissions.svelte';
   import { environmentStore } from '$lib/stores/environment.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
@@ -42,6 +36,7 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
   import { core } from '$lib/rpc/client.svelte';
+  import { clientIdentity } from '$lib/features/collab/client-identity';
   import { toast } from 'svelte-sonner';
   import { untrack } from 'svelte';
   import { allowlistSuggestionRefusal, suggestAllowlistPrefix } from './suggest-allowlist-prefix';
@@ -74,6 +69,13 @@
   }: { approval: Approval; autofocus?: boolean; variant?: 'card' | 'folded' } = $props();
 
   const pending = $derived(approval.status === 'pending');
+  /** D121：另一位客户端做的决定；本机做的决定不重复标注。 */
+  const decidedBy = $derived(
+    approval.decision?.decidedBy !== undefined &&
+      approval.decision.decidedBy.id !== clientIdentity.id
+      ? approval.decision.decidedBy
+      : null,
+  );
   const access = $derived(
     approval.kind === 'access' ? (approval.payload['access'] === 'write' ? 'write' : 'read') : null,
   );
@@ -262,10 +264,18 @@
     const iso = /^\d{4}-\d{2}-\d{2}/.test(routine.when) ? Date.parse(routine.when) : NaN;
     return Number.isNaN(iso)
       ? describeScheduleWhen(
-          { kind: 'cron', cron: routine.when, runAt: null, timezone: routine.timezone ?? localTimeZone },
+          {
+            kind: 'cron',
+            cron: routine.when,
+            runAt: null,
+            timezone: routine.timezone ?? localTimeZone,
+          },
           { localTimeZone },
         )
-      : describeScheduleWhen({ kind: 'once', runAt: iso, cron: null, timezone: localTimeZone }, { now: Date.now() });
+      : describeScheduleWhen(
+          { kind: 'once', runAt: iso, cron: null, timezone: localTimeZone },
+          { now: Date.now() },
+        );
   }
 
   /** Pending: the local choice; decided: what the decision kept. */
@@ -332,7 +342,9 @@
   }
 
   /** Only mid-turn `command` cards (not unsandboxed / git_remote / access / …). */
-  const canAddAllowlist = $derived(pending && approval.kind === 'command' && command.trim().length > 0);
+  const canAddAllowlist = $derived(
+    pending && approval.kind === 'command' && command.trim().length > 0,
+  );
 
   function openAllowlist(): void {
     allowlistPattern = suggestAllowlistPrefix(command);
@@ -493,34 +505,34 @@
     approval.kind === 'mail_send'
       ? t('approvals.mailSendTitle')
       : approval.kind === 'egress'
-      ? t('approvals.egress.title')
-      : approval.kind === 'access'
-      ? t('approvals.accessTitle')
-      : approval.kind === 'unsandboxed'
-        ? t('approvals.unsandboxedTitle')
-        : approval.kind === 'git_remote'
-          ? t('approvals.gitRemoteTitle')
-          : approval.kind === 'computer_control'
-            ? t('approvals.computerControlTitle')
-            : approval.kind === 'environment'
-              ? t('approvals.environmentTitle')
-              : approval.kind === 'skill_import'
-                ? t('approvals.skillImportTitle')
-                : approval.kind === 'skill_preset'
-                  ? t('approvals.skillPresetTitle')
-                  : approval.kind === 'mcp_tool'
-                    ? appIdentity !== null
-                      ? t('approvals.appToolTitle')
-                      : t('approvals.mcpToolTitle')
-                    : approval.kind === 'agent_tool'
-                      ? agentToolTitle
-                      : approval.kind === 'butler_proposal'
-                        ? butlerProposal?.proposalType === 'project'
-                          ? t('approvals.butlerProjectTitle')
-                          : butlerProposal?.proposalType === 'bot'
-                            ? t('approvals.butlerBotTitle')
-                            : t('approvals.butlerTeamTitle')
-                        : t('approvals.commandTitle'),
+        ? t('approvals.egress.title')
+        : approval.kind === 'access'
+          ? t('approvals.accessTitle')
+          : approval.kind === 'unsandboxed'
+            ? t('approvals.unsandboxedTitle')
+            : approval.kind === 'git_remote'
+              ? t('approvals.gitRemoteTitle')
+              : approval.kind === 'computer_control'
+                ? t('approvals.computerControlTitle')
+                : approval.kind === 'environment'
+                  ? t('approvals.environmentTitle')
+                  : approval.kind === 'skill_import'
+                    ? t('approvals.skillImportTitle')
+                    : approval.kind === 'skill_preset'
+                      ? t('approvals.skillPresetTitle')
+                      : approval.kind === 'mcp_tool'
+                        ? appIdentity !== null
+                          ? t('approvals.appToolTitle')
+                          : t('approvals.mcpToolTitle')
+                        : approval.kind === 'agent_tool'
+                          ? agentToolTitle
+                          : approval.kind === 'butler_proposal'
+                            ? butlerProposal?.proposalType === 'project'
+                              ? t('approvals.butlerProjectTitle')
+                              : butlerProposal?.proposalType === 'bot'
+                                ? t('approvals.butlerBotTitle')
+                                : t('approvals.butlerTeamTitle')
+                            : t('approvals.commandTitle'),
   );
 </script>
 
@@ -557,7 +569,9 @@
       <AlertTriangle class="size-3.5 shrink-0 text-destructive" aria-hidden="true" />
       <span data-testid="approval-failed-reason">
         {title} · {t('approvals.foldedFailed')}
-        {#if approval.decision?.error}{t('common.parenthesized', { text: approval.decision.error })}{/if}
+        {#if approval.decision?.error}{t('common.parenthesized', {
+            text: approval.decision.error,
+          })}{/if}
       </span>
     {:else}
       <Clock class="size-3.5 shrink-0" aria-hidden="true" />
@@ -576,42 +590,42 @@
         {approval.kind === 'egress'
           ? `${egress !== null ? t(`approvals.egress.channel.${egress.channel}` as MessageKey) : ''} · ${egress?.target ?? ''}`
           : approval.kind === 'git_remote'
-          ? `git ${gitRemoteOp} ${gitRemoteArgs}`.trim()
-          : approval.kind === 'environment'
-            ? `${envDisplayName} ${envVersion}`.trim()
-            : approval.kind === 'skill_import'
-              ? `${skillImport?.name ?? ''} ${skillImport?.sourceUrl ?? ''}`.trim()
-              : approval.kind === 'skill_preset'
-                ? (skillPreset === null
+            ? `git ${gitRemoteOp} ${gitRemoteArgs}`.trim()
+            : approval.kind === 'environment'
+              ? `${envDisplayName} ${envVersion}`.trim()
+              : approval.kind === 'skill_import'
+                ? `${skillImport?.name ?? ''} ${skillImport?.sourceUrl ?? ''}`.trim()
+                : approval.kind === 'skill_preset'
+                  ? skillPreset === null
                     ? ''
-                    : presetSkillText(skillPreset.presetId, 'name', skillPreset.displayName))
-                : approval.kind === 'mcp_tool'
-                  ? appIdentity !== null
-                    ? t(
-                        appIdentity.account !== null
-                          ? 'approvals.appToolOnBehalf'
-                          : 'approvals.appToolOnBehalfNoAccount',
-                        {
-                          account: appIdentity.account ?? '',
-                          app: appIdentity.app,
-                          tool: appIdentity.tool,
-                        },
-                      )
-                    : `${mcpTool?.serverName ?? ''} · ${mcpTool?.toolName ?? ''}`.trim()
-                  : approval.kind === 'agent_tool'
-                    ? `${agentToolAgentName} · ${agentTool?.command ?? (agentTool?.locations.join(listSeparator()) || agentTool?.title) ?? ''}`
-                    : approval.kind === 'butler_proposal'
-                      ? butlerProposal?.proposalType === 'project'
-                        ? butlerProposal.title
-                        : (butlerProposal?.bots
-                            .filter(
-                              (_, index) =>
-                                approval.decision?.selection === undefined ||
-                                approval.decision.selection.includes(index),
-                            )
-                            .map((bot) => bot.name)
-                            .join(listSeparator()) ?? '')
-                      : command}
+                    : presetSkillText(skillPreset.presetId, 'name', skillPreset.displayName)
+                  : approval.kind === 'mcp_tool'
+                    ? appIdentity !== null
+                      ? t(
+                          appIdentity.account !== null
+                            ? 'approvals.appToolOnBehalf'
+                            : 'approvals.appToolOnBehalfNoAccount',
+                          {
+                            account: appIdentity.account ?? '',
+                            app: appIdentity.app,
+                            tool: appIdentity.tool,
+                          },
+                        )
+                      : `${mcpTool?.serverName ?? ''} · ${mcpTool?.toolName ?? ''}`.trim()
+                    : approval.kind === 'agent_tool'
+                      ? `${agentToolAgentName} · ${agentTool?.command ?? (agentTool?.locations.join(listSeparator()) || agentTool?.title) ?? ''}`
+                      : approval.kind === 'butler_proposal'
+                        ? butlerProposal?.proposalType === 'project'
+                          ? butlerProposal.title
+                          : (butlerProposal?.bots
+                              .filter(
+                                (_, index) =>
+                                  approval.decision?.selection === undefined ||
+                                  approval.decision.selection.includes(index),
+                              )
+                              .map((bot) => bot.name)
+                              .join(listSeparator()) ?? '')
+                        : command}
       </code>
     {/if}
     {#if effectLine !== null}
@@ -632,6 +646,11 @@
             class="ml-1 text-muted-foreground"
             data-testid="approval-effect-receipt">{effectReceipt}</span
           >{/if}</span
+      >
+    {/if}
+    {#if decidedBy !== null}
+      <span class="ml-auto shrink-0" data-testid="approval-decided-by"
+        >{t('collab.approvalDecidedBy', { name: decidedBy.name })}</span
       >
     {/if}
   </div>
@@ -681,7 +700,9 @@
     {#if priorFlag !== null}
       <p
         class="mb-2 flex items-start gap-1.5 rounded bg-amber-500/15 px-2 py-1 text-xs text-amber-800 dark:text-amber-300"
-        data-testid={priorFlag === 'uncertain' ? 'approval-prior-uncertain' : 'approval-prior-completed'}
+        data-testid={priorFlag === 'uncertain'
+          ? 'approval-prior-uncertain'
+          : 'approval-prior-completed'}
       >
         <AlertTriangle class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
         <span
@@ -930,7 +951,10 @@
       <!-- 管家提议卡（D70）：组队 / 建 Bot 的条目可勾选，确认后由系统确定性创建 -->
       {#if butlerProposal.proposalType === 'project'}
         <!-- 建项目组提议（D92 WP8）：负责人可在批准前改选（下拉 = 提议成员）。 -->
-        <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1" data-testid="approval-butler-project">
+        <div
+          class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1"
+          data-testid="approval-butler-project"
+        >
           <span class="text-muted-foreground">{t('approvals.butlerProjectName')}</span>
           <span data-testid="approval-butler-project-title">{butlerProposal.title}</span>
           {#if butlerProposal.goal.length > 0}
@@ -951,10 +975,15 @@
               {/each}
             </select>
           {:else}
-            <span data-testid="approval-butler-project-lead">{butlerBotName(projectLeadId ?? '')}</span>
+            <span data-testid="approval-butler-project-lead"
+              >{butlerBotName(projectLeadId ?? '')}</span
+            >
           {/if}
           <span class="text-muted-foreground">{t('approvals.butlerProjectMembers')}</span>
-          <span class="flex flex-wrap gap-x-2 gap-y-0.5" data-testid="approval-butler-project-members">
+          <span
+            class="flex flex-wrap gap-x-2 gap-y-0.5"
+            data-testid="approval-butler-project-members"
+          >
             {#each butlerProposal.memberBotIds as botId (botId)}
               <span>
                 {butlerBotName(botId)}{#if botId === projectLeadId}
@@ -992,7 +1021,10 @@
                   <span class="font-medium">{bot.name}</span>
                   {#if bot.bio.length > 0}<span class="text-xs">{bot.bio}</span>{/if}
                   <span class="text-xs text-muted-foreground"
-                    >{t('common.labelValue', { label: t('approvals.butlerResponsibilities'), value: bot.responsibilities })}</span
+                    >{t('common.labelValue', {
+                      label: t('approvals.butlerResponsibilities'),
+                      value: bot.responsibilities,
+                    })}</span
                   >
                   {#if bot.model.length > 0}
                     <!-- D88：提议里指定的模型（与 Bot 详情下拉同源的显示名；不可用时标出） -->
@@ -1004,7 +1036,10 @@
                   {/if}
                   {#if bot.reason.length > 0}
                     <span class="text-xs text-muted-foreground"
-                      >{t('common.labelValue', { label: t('approvals.reason'), value: bot.reason })}</span
+                      >{t('common.labelValue', {
+                        label: t('approvals.reason'),
+                        value: bot.reason,
+                      })}</span
                     >
                   {/if}
                 </span>
@@ -1016,7 +1051,9 @@
                     {@const key = `${index}:${routineIndex}`}
                     <li>
                       <label
-                        class="flex cursor-pointer items-center gap-2 text-xs {butlerDropped.includes(index)
+                        class="flex cursor-pointer items-center gap-2 text-xs {butlerDropped.includes(
+                          index,
+                        )
                           ? 'opacity-50'
                           : ''}"
                       >
@@ -1387,17 +1424,30 @@
     {#if mailSend !== null}
       <div class="mt-2 space-y-1 text-sm" data-testid="approval-mail-send">
         <p><span class="text-muted-foreground">From</span> {mailSend.from}</p>
-        <p data-testid="approval-mail-to"><span class="text-muted-foreground">To</span> {mailSend.to.join(', ')}</p>
+        <p data-testid="approval-mail-to">
+          <span class="text-muted-foreground">To</span>
+          {mailSend.to.join(', ')}
+        </p>
         {#if mailSend.cc.length > 0}
-          <p data-testid="approval-mail-cc"><span class="text-muted-foreground">Cc</span> {mailSend.cc.join(', ')}</p>
+          <p data-testid="approval-mail-cc">
+            <span class="text-muted-foreground">Cc</span>
+            {mailSend.cc.join(', ')}
+          </p>
         {/if}
         {#if mailSend.bcc.length > 0}
-          <p data-testid="approval-mail-bcc"><span class="text-muted-foreground">Bcc</span> {mailSend.bcc.join(', ')}</p>
+          <p data-testid="approval-mail-bcc">
+            <span class="text-muted-foreground">Bcc</span>
+            {mailSend.bcc.join(', ')}
+          </p>
         {/if}
         <p data-testid="approval-mail-subject">{mailSend.subject}</p>
-        <pre class="max-h-48 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 text-xs" data-testid="approval-mail-body">{mailSend.text}</pre>
+        <pre
+          class="max-h-48 overflow-auto rounded bg-muted p-2 text-xs whitespace-pre-wrap"
+          data-testid="approval-mail-body">{mailSend.text}</pre>
         {#if mailSend.tainted}
-          <p class="text-xs text-amber-700 dark:text-amber-400">{t('approvals.egress.taintedHint')}</p>
+          <p class="text-xs text-amber-700 dark:text-amber-400">
+            {t('approvals.egress.taintedHint')}
+          </p>
         {/if}
       </div>
     {/if}
@@ -1409,7 +1459,10 @@
       >
         <p class="text-xs text-muted-foreground">{t('allowlist.addFromCardHint')}</p>
         {#if allowlistSuggestionBlocked !== null && allowlistPattern.trim().length === 0}
-          <p class="text-xs text-amber-700 dark:text-amber-400" data-testid="approval-allowlist-refused">
+          <p
+            class="text-xs text-amber-700 dark:text-amber-400"
+            data-testid="approval-allowlist-refused"
+          >
             {t('allowlist.addFromCardRefused', { reason: allowlistSuggestionBlocked })}
           </p>
         {/if}
@@ -1432,16 +1485,14 @@
             disabled={allowlistBusy ||
               allowlistPattern.trim().length === 0 ||
               allowlistPatternProblem !== null}
-            data-testid="approval-allowlist-confirm"
-            >{t('allowlist.addAndApprove')}</Button
+            data-testid="approval-allowlist-confirm">{t('allowlist.addAndApprove')}</Button
           >
           <Button
             size="sm"
             variant="ghost"
             onclick={cancelAllowlist}
             disabled={allowlistBusy}
-            data-testid="approval-allowlist-cancel"
-            >{t('allowlist.addFromCardCancel')}</Button
+            data-testid="approval-allowlist-cancel">{t('allowlist.addFromCardCancel')}</Button
           >
         </div>
       </div>
@@ -1471,8 +1522,7 @@
             size="sm"
             variant="outline"
             onclick={openAllowlist}
-            data-testid="approval-allowlist-open"
-            >{t('allowlist.addFromCard')}</Button
+            data-testid="approval-allowlist-open">{t('allowlist.addFromCard')}</Button
           >
         {/if}
       </div>

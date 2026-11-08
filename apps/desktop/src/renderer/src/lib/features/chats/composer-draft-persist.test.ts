@@ -3,6 +3,7 @@ import type { JSONContent } from '@tiptap/core';
 import {
   buildPersistedSnapshot,
   COMPOSER_DRAFTS_STORAGE_KEY,
+  LEGACY_COMPOSER_DRAFTS_STORAGE_KEY,
   isComposerDocEmpty,
   loadPersistedDrafts,
   MAX_PERSISTED_DRAFTS,
@@ -41,6 +42,8 @@ function draft(overrides: Partial<PersistedComposerDraft> = {}): PersistedCompos
     reply: null,
     attachments: [],
     updatedAt: 0,
+    version: 0,
+    dirty: false,
     ...overrides,
   };
 }
@@ -166,7 +169,45 @@ describe('loadPersistedDrafts', () => {
       reply: { id: 'm1', senderType: 'user', senderBotId: null, text: '引用' },
       attachments: [{ attachmentId: 'att_1', fileName: 'a.png', mime: 'image/png', size: 3 }],
       updatedAt: 7,
+      version: 0,
+      dirty: true,
     });
+  });
+
+  test('旧 v2 快照升级为 v3 并标记 dirty', () => {
+    const storage = fakeStorage({
+      [LEGACY_COMPOSER_DRAFTS_STORAGE_KEY]: JSON.stringify({
+        conv_old: {
+          doc: docOf('旧草稿'),
+          mentions: [],
+          reply: null,
+          attachments: [],
+          updatedAt: 5,
+        },
+      }),
+    });
+    const loaded = loadPersistedDrafts(storage);
+    expect(loaded.conv_old).toMatchObject({ version: 0, dirty: true });
+  });
+
+  test('write 空快照时同时清掉 v2 键，v2 不会在 v3 清空后复活', () => {
+    const storage = fakeStorage({
+      [LEGACY_COMPOSER_DRAFTS_STORAGE_KEY]: JSON.stringify({
+        conv_old: {
+          doc: docOf('旧草稿'),
+          mentions: [],
+          reply: null,
+          attachments: [],
+          updatedAt: 5,
+        },
+      }),
+    });
+    expect(loadPersistedDrafts(storage).conv_old).toBeDefined();
+
+    writePersistedDrafts(storage, {});
+    expect(storage.store.has(COMPOSER_DRAFTS_STORAGE_KEY)).toBe(false);
+    expect(storage.store.has(LEGACY_COMPOSER_DRAFTS_STORAGE_KEY)).toBe(false);
+    expect(loadPersistedDrafts(storage)).toEqual({});
   });
 });
 
@@ -206,6 +247,8 @@ describe('buildPersistedSnapshot', () => {
       reply: null,
       attachments: [{ attachmentId: 'att_1', fileName: 'a.png', mime: 'image/png', size: 3 }],
       updatedAt: 100,
+      version: 0,
+      dirty: true,
     });
   });
 

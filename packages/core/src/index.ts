@@ -10,12 +10,13 @@ export * from './rpc/server.js';
 export * from './process-entry.js';
 export * from './create-core.js';
 export * from './start.js';
-export type {
-  RelayClientLike,
-  RemoteHubDeps,
-  RemoteHostOptions,
-} from './remote/hub.js';
+export type { RelayClientLike, RemoteHubDeps, RemoteHostOptions } from './remote/hub.js';
 export { LOCAL_ONLY_METHODS } from './remote/hub.js';
+export {
+  withClientIdentityBinding,
+  type ClientIdentityBinding,
+} from './collab/identity-binding.js';
+export { sanitizeClientName } from './collab/client-name.js';
 export type { RelayClientOptions } from './remote/relay-client.js';
 export { withRemoteSource } from './remote/audit.js';
 export { FrameCodec, RelayProtocolError } from './remote/codec.js';

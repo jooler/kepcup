@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { ChevronRight, Settings2 } from '@lucide/svelte';
+  import { ChevronRight, MonitorSmartphone, Settings2 } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { shell } from '$lib/stores/shell.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import UserAvatar from '$lib/avatars/UserAvatar.svelte';
   import ProfileSection from '$lib/features/settings/ProfileSection.svelte';
+  import { clientIdentity } from '$lib/features/collab/client-identity';
+  import { clientNameDialog } from '$lib/features/collab/client-name-dialog.svelte';
   import NarrowPage from './NarrowPage.svelte';
 
   /**
@@ -36,6 +38,19 @@
     >
       <Settings2 class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       <span class="flex-1">{t('menu.settings')}</span>
+      <ChevronRight class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+    </button>
+
+    <button
+      type="button"
+      class="flex w-full cursor-pointer items-center gap-2.5 rounded-xl border p-3 text-left
+        text-sm transition-colors hover:bg-accent/40"
+      onclick={() => clientNameDialog.openDialog()}
+      data-testid="narrow-me-device-name"
+    >
+      <MonitorSmartphone class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+      <span class="flex-1">{t('menu.deviceName')}</span>
+      <span class="max-w-32 truncate text-xs text-muted-foreground">{clientIdentity.name}</span>
       <ChevronRight class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
     </button>
 

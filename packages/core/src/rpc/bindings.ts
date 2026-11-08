@@ -40,6 +40,18 @@ import {
   remoteConfigGetOutputSchema,
   remoteConfigSetInputSchema,
   remoteConfigSetOutputSchema,
+  collabPresenceUpdateInputSchema,
+  collabPresenceLeaveInputSchema,
+  collabPresenceListInputSchema,
+  collabPresenceListOutputSchema,
+  collabDraftClaimInputSchema,
+  collabDraftClaimOutputSchema,
+  collabDraftGetInputSchema,
+  collabDraftGetOutputSchema,
+  collabDraftReleaseInputSchema,
+  collabDraftSendInputSchema,
+  collabDraftUpdateInputSchema,
+  collabDraftUpdateOutputSchema,
   botsListOutputSchema,
   botGetOutputSchema,
   botsCreateInputSchema,
@@ -337,6 +349,7 @@ import {
 } from '@kepcup/shared';
 import type { CoreServices } from '../start.js';
 import type { RemoteHub } from '../remote/hub.js';
+import type { DraftService } from '../collab/drafts.js';
 import { assertPluginServersIntact } from '../plugins/guards.js';
 import type { WatchService } from '../watch/service.js';
 import type { MemoService } from '../workbench/memo-service.js';
@@ -405,9 +418,7 @@ const LIMA_NOT_APPLICABLE = {
   action: 'none',
 } as const;
 
-function limaStatusOutput(
-  report: LimaStatusReport,
-): z.infer<typeof sandboxLimaStatusOutputSchema> {
+function limaStatusOutput(report: LimaStatusReport): z.infer<typeof sandboxLimaStatusOutputSchema> {
   return {
     applicable: true,
     phase: report.phase,
@@ -1302,6 +1313,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}),
         ...(input.attachmentIds !== undefined ? { attachmentIds: input.attachmentIds } : {}),
         ...(input.voiceMode !== undefined ? { voiceMode: input.voiceMode } : {}),
+        ...(input.client !== undefined ? { client: input.client } : {}),
       }),
     ),
 
@@ -1527,6 +1539,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
           input.routineSelection,
           input.handoverSelection,
           input.leadBotId,
+          input.client,
         ),
       }),
     ),
@@ -1567,9 +1580,13 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       orchestrator.tasks.injectById(input.taskId, input.text),
     ),
     // D116 Bot 详情「任务」tab：该 Bot 拉起的任务全集（跨对话），最新在前。
-    'tasks.listByBot': method(tasksListByBotInputSchema, tasksListByBotOutputSchema, async (input) => ({
-      tasks: orchestrator.tasks.listByBotViews(input.botId, input.limit),
-    })),
+    'tasks.listByBot': method(
+      tasksListByBotInputSchema,
+      tasksListByBotOutputSchema,
+      async (input) => ({
+        tasks: orchestrator.tasks.listByBotViews(input.botId, input.limit),
+      }),
+    ),
     // 任务详情页的上下文用量：账本按 run_id（= task.id）聚合。上下文窗口按最近
     // 一次主循环的 provider/model 从模型目录查（内置目录 + 供应商实例都覆盖）；
     // 查不到留空——前端只显示 token 数，不套默认窗口。
@@ -2449,6 +2466,53 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       remoteConfigSetOutputSchema,
       async (input) => requireRemote(services).configSet(input),
     ),
+    // D119 多客户端在线状态：纯内存，本机与远程端点同一份 handlers。
+    'collab.presence.update': method(
+      collabPresenceUpdateInputSchema,
+      okOutputSchema,
+      async (input) => {
+        services.collabPresence.update(input);
+        return { ok: true as const };
+      },
+    ),
+    'collab.presence.leave': method(
+      collabPresenceLeaveInputSchema,
+      okOutputSchema,
+      async (input) => {
+        services.collabPresence.leave(input);
+        return { ok: true as const };
+      },
+    ),
+    'collab.presence.list': method(
+      collabPresenceListInputSchema,
+      collabPresenceListOutputSchema,
+      async (input) => ({ entries: services.collabPresence.list(input.conversationId) }),
+    ),
+    // D120 共享草稿：单写者租约 + 版本化快照；发送原子清草稿。
+    'collab.draft.get': method(
+      collabDraftGetInputSchema,
+      collabDraftGetOutputSchema,
+      async (input) => requireCollabDrafts(services).get(input.conversationId),
+    ),
+    'collab.draft.claim': method(
+      collabDraftClaimInputSchema,
+      collabDraftClaimOutputSchema,
+      async (input) => requireCollabDrafts(services).claim(input),
+    ),
+    'collab.draft.update': method(
+      collabDraftUpdateInputSchema,
+      collabDraftUpdateOutputSchema,
+      async (input) => requireCollabDrafts(services).update(input),
+    ),
+    'collab.draft.release': method(collabDraftReleaseInputSchema, okOutputSchema, async (input) => {
+      requireCollabDrafts(services).release(input);
+      return { ok: true as const };
+    }),
+    'collab.draft.send': method(
+      collabDraftSendInputSchema,
+      messagesSendOutputSchema,
+      async (input) => requireCollabDrafts(services).send(input),
+    ),
     // 对话内应用设置：settings.items.apply 与设置卡动作。
     ...bindSettingsCatalogMethods(services),
   };
@@ -2470,6 +2534,11 @@ function requireBoard(services: CoreServices): BoardService {
 function requireRemote(services: CoreServices): RemoteHub {
   if (!services.remote) throw new AppError('NOT_IMPLEMENTED', '远程遥控服务未就绪');
   return services.remote;
+}
+
+function requireCollabDrafts(services: CoreServices): DraftService {
+  if (services.collabDrafts === null) throw new AppError('NOT_IMPLEMENTED', '共享草稿服务未就绪');
+  return services.collabDrafts;
 }
 
 function requireMemos(services: CoreServices): MemoService {

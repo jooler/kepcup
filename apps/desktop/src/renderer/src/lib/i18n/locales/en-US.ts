@@ -19,6 +19,7 @@ export const enUS = {
   'menu.settings': 'Settings',
   'menu.contacts': 'Contacts',
   'menu.connectPhone': 'Connect phone',
+  'menu.deviceName': 'Device name',
   'narrow.tabBarLabel': 'Global navigation',
   'narrow.tabChats': 'Chats',
   'narrow.tabContacts': 'Contacts',
@@ -3193,11 +3194,13 @@ export const enUS = {
     "A passing self-check only means it runs; it doesn't mean it's safe. You still need to review before loading.",
   // Micro-app consent card (D112, design 55 §5.2: the network line is its own line, ahead of the capability list, never collapsed)
   'botWidget.microApp.kind': 'Micro-app',
-  'botWidget.microApp.netOpen': 'Can access the internet (no domain restrictions) · not filtered per domain',
+  'botWidget.microApp.netOpen':
+    'Can access the internet (no domain restrictions) · not filtered per domain',
   'botWidget.microApp.netNone': 'No internet access',
   'botWidget.microApp.netAllowlist': 'Can access the internet (only {domains})',
   'botWidget.microApp.newerVersion': 'Version v{version} available; reopen to apply',
-  'botWidget.microApp.codeUpdated': 'Code updated, permissions unchanged (your previous consent carries over)',
+  'botWidget.microApp.codeUpdated':
+    'Code updated, permissions unchanged (your previous consent carries over)',
   'botWidget.microApp.canDo': 'What it can do:',
   'botWidget.microApp.cost':
     'Up to {n} tokens per session, billed to the Bot that wrote it ({bot})',
@@ -3210,7 +3213,8 @@ export const enUS = {
   'botWidget.microApp.confirmAndOpen': 'Confirm and open',
   'botWidget.microApp.netBadge': 'Network access',
   'botWidget.microApp.netBadgeOnline': 'Online',
-  'botWidget.microApp.netInfoOpen': 'Can access the internet (no domain restrictions) · not filtered per domain',
+  'botWidget.microApp.netInfoOpen':
+    'Can access the internet (no domain restrictions) · not filtered per domain',
   'botWidget.microApp.netInfoNone': 'No internet access',
   'botWidget.microApp.netInfoAllowlist': 'Can access the internet (only {domains})',
   'botWidget.microApp.micOn': 'Microphone in use (click to revoke)',
@@ -3275,7 +3279,8 @@ export const enUS = {
   'chats.errorCode.WIDGET_CRAFT_FAILED':
     "The widget couldn't be built (self-check failed, timed out, or was cancelled); the draft was kept",
   'chats.errorCode.WIDGET_CRAFT_UNAVAILABLE': 'No model is available to build widgets',
-  'chats.errorCode.MICRO_APP_MANIFEST_INVALID': "The micro-app's manifest (micro-app.json) is invalid and can't be delivered",
+  'chats.errorCode.MICRO_APP_MANIFEST_INVALID':
+    "The micro-app's manifest (micro-app.json) is invalid and can't be delivered",
   'chats.errorCode.MICRO_APP_UNSUPPORTED_SPEC':
     "This KepCup doesn't recognize the micro-app manifest version; please upgrade the app",
   'chats.errorCode.MICRO_APP_CAPABILITY_NOT_DECLARED':
@@ -3285,8 +3290,10 @@ export const enUS = {
   'chats.errorCode.MICRO_APP_CAPABILITY_NOT_CONFIGURED':
     'The host lacks configuration this capability needs (e.g. model / voice); configure it in settings first',
   'chats.errorCode.MICRO_APP_AI_QUOTA': "The micro-app's model usage is over budget",
-  'chats.errorCode.MICRO_APP_AI_BUSY': 'The micro-app already has a model call in flight; try again shortly',
-  'chats.errorCode.MICRO_APP_AI_UNAVAILABLE': 'The model is temporarily unavailable; your progress is saved',
+  'chats.errorCode.MICRO_APP_AI_BUSY':
+    'The micro-app already has a model call in flight; try again shortly',
+  'chats.errorCode.MICRO_APP_AI_UNAVAILABLE':
+    'The model is temporarily unavailable; your progress is saved',
   'chats.errorCode.MICRO_APP_BRIDGE_CLOSED':
     'The host closed the micro-app capability bridge; please reopen it',
   'chats.errorCode.MICRO_APP_UNRESPONSIVE': 'The micro-app is unresponsive; please reopen it',
@@ -4173,6 +4180,23 @@ export const enUS = {
   'web.failed.title': 'Cannot reach the relay',
   'web.failed.body':
     'The relay is unreachable right now (the pairing link itself is still valid). Check your connection and retry.',
+  'collab.online': '{count} online in this chat',
+  'collab.typing': '{name} is typing…',
+  'collab.typingMany': '{count} people are typing…',
+  'collab.draftOwner': '{name} is editing — you are read-only for now',
+  'collab.draftReadonly': 'Another user is editing — you are read-only for now',
+  'collab.takeover': 'Take over',
+  'collab.takeoverConfirm': 'The other user will become read-only. Take over?',
+  'collab.messageFrom': 'From {name}',
+  'collab.approvalDecidedBy': 'Handled by {name}',
+  'collab.approvalAlreadyDecided': 'This approval was already handled by {name}',
+  'collab.clientNameTitle': 'This device’s name',
+  'collab.clientNameHint':
+    'The name other clients see in presence and message attribution. Stored only on this device.',
+  'collab.clientNamePlaceholder': 'e.g. Ming’s MacBook',
+  'collab.clientNameSave': 'Save',
+  'collab.clientNameCancel': 'Cancel',
+  'collab.clientNameSaved': 'Device name updated',
 } as const;
 
 export type MessageKey = keyof typeof enUS;
