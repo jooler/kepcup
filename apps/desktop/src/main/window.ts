@@ -6,10 +6,12 @@ import {
   nativeImage,
   nativeTheme,
   screen,
+  shell,
   type BrowserWindowConstructorOptions,
 } from 'electron';
 import { APP_NAME, appIconPath } from './app-brand';
 import { DEVTOOLS_ENABLED } from './devtools';
+import { isHttpUrl } from './remote-mode';
 import {
   captureWindowState,
   loadWindowState,
@@ -21,8 +23,15 @@ import {
 } from './window-state';
 
 export interface MainWindowOptions {
-  preloadPath: string;
+  /** 本地模式挂 preload（IPC / 端口交接）；远程模式为 null——页面自带 web 垫片。 */
+  preloadPath: string | null;
   isQuitting: () => boolean;
+  /** 远程模式（design 49 §7）：加载该 URL，渲染层按 web 端点启动。 */
+  remoteUrl?: string;
+  /** 远程模式：同源之外的 http(s) 跳转 / window.open 交给系统浏览器。 */
+  openExternalLinks?: boolean;
+  /** 远程模式：关窗即退出（没有本地 core 与托盘常驻语义）。 */
+  quitOnClose?: boolean;
 }
 
 const SAVE_DEBOUNCE_MS = 400;
@@ -39,7 +48,7 @@ function windowsBackdropMaterial(): 'acrylic' | 'opaque' {
 
 export function createMainWindow(options: MainWindowOptions): BrowserWindow {
   const webPreferences: BrowserWindowConstructorOptions['webPreferences'] = {
-    preload: options.preloadPath,
+    ...(options.preloadPath !== null ? { preload: options.preloadPath } : {}),
     sandbox: true,
     contextIsolation: true,
     nodeIntegration: false,
@@ -180,21 +189,40 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
 
   // Tray-resident: closing the window only hides it (02-architecture.md).
   // Persist before hide/destroy so the next show/launch restores this frame.
+  // 远程模式没有托盘与本地 core，关窗即退出（window-all-closed → app.quit()）。
   win.on('close', (event) => {
     persistNow();
+    if (options.quitOnClose === true) return;
     if (!options.isQuitting()) {
       event.preventDefault();
       win.hide();
     }
   });
 
-  // Local content only; no remote navigation or window.open.
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // 本地内容只允许自身 URL。远程模式（design 49 §7）额外放行同源导航，跨源 http(s)
+  // 交给系统浏览器——web 端点没有 shell:openExternal 的 IPC，页面里的外链只能这样出去。
+  const remoteOrigin =
+    options.remoteUrl !== undefined ? new URL(options.remoteUrl).origin : null;
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (options.openExternalLinks === true && isHttpUrl(url)) void shell.openExternal(url);
+    return { action: 'deny' };
+  });
   win.webContents.on('will-navigate', (event, url) => {
-    if (url !== win.webContents.getURL()) event.preventDefault();
+    if (url === win.webContents.getURL()) return;
+    if (remoteOrigin !== null) {
+      try {
+        if (new URL(url).origin === remoteOrigin) return;
+      } catch {
+        // 非法 URL 落到下面的统一拦截。
+      }
+      if (options.openExternalLinks === true && isHttpUrl(url)) void shell.openExternal(url);
+    }
+    event.preventDefault();
   });
 
-  if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
+  if (options.remoteUrl !== undefined) {
+    void win.loadURL(options.remoteUrl);
+  } else if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
     void win.loadURL(process.env['ELECTRON_RENDERER_URL']);
   } else {
     void win.loadFile(join(__dirname, '../renderer/index.html'));

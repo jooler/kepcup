@@ -111,7 +111,9 @@ hub 的 `relayClientFactory` DI 缝（`remote/hub.ts`，测试注入假中转的
 
 - 桌面应用 = 现状不动（本机 core 宿主）。桌面与 headless 服务端**不互通、不同步**（单一大脑原则：用户选定哪个设备当大脑，其他都是客户端）。
 - **同一 headless 可以被多个客户端同时连接**（账号模式 8 路 / 配对模式 5 个 viewer）；它们共享同一个大脑与同一份数据，事件广播保证收敛。在线状态、共享输入框草稿、远端光标与操作归属见 [57](57-multi-client-collaboration.md)。
-- 桌面作为 headless 客户端：打开服务端托管的 PWA（浏览器 / PWA 安装）即是——web 构建与 Electron renderer 同源（D96 WP5）。独立「桌面远程模式」壳（Electron 里加载远程端点）留 P2 便利项。
+- 桌面作为 headless 客户端有两条路：
+  - 浏览器 / PWA：打开服务端托管的 web 构建即是——web 构建与 Electron renderer 同源（D96 WP5）。
+  - 桌面远程模式壳（2026-11-09 落地）：`KEPCUP_REMOTE_URL=http://<host>:<port> pnpm --filter @kepcup/desktop dev`（已构建的 app 设同名环境变量启动即可）。主进程不启动本地 core、窗口不挂 preload，直接加载该 URL；渲染层由 web 垫片打标 `isWeb`，RPC 走服务端 WebSocket，与浏览器客户端完全同路。本地宿主能力（文件对话框 / 浏览器工具 / 计算机操控）在该模式下不存在；userData 隔离到 `<userData>/remote`，可与本地实例同时运行（多客户端协作验证见 [57](57-multi-client-collaboration.md)）。
 
 ## 4 发布与部署
 
@@ -133,5 +135,5 @@ hub 的 `relayClientFactory` DI 缝（`remote/hub.ts`，测试注入假中转的
 ## 6 分期
 
 - **P1（本期）**：上述全部。core 改动 = `RemoteHostOptions`（start 选项）+ hub `alwaysOn` + 类型导出；其余在 `apps/server`。
-- **P2**：客户端本地能力回传（browser-over-WS：直连富客户端声明能力，core 的 deferred facade 绑定到该客户端通道）；离线 Web Push；桌面「远程模式」壳；多客户端协作（[57](57-multi-client-collaboration.md)）。
+- **P2**：客户端本地能力回传（browser-over-WS：直连富客户端声明能力，core 的 deferred facade 绑定到该客户端通道）；离线 Web Push；桌面「远程模式」壳（`KEPCUP_REMOTE_URL`，2026-11-09 落地，见 §3.5）；多客户端协作（[57](57-multi-client-collaboration.md)，P1–P3 已落地）。
 - **P3**：服务端工具以 MCP server 对外暴露（HostMcpBridge 模式扩展，token 认证）；多实例管理 CLI。
