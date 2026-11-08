@@ -47,6 +47,7 @@ export * from './domain/sidebar.js';
 export * from './domain/agent-status.js';
 export * from './domain/share.js';
 export * from './domain/remote.js';
+export * from './domain/collab.js';
 export * from './settings-catalog/index.js';
 export * from './rpc/index.js';
 export * from './browser/net-rules.js';

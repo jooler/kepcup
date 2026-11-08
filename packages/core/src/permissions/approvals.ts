@@ -21,6 +21,7 @@ import {
   type ApprovalStatus,
   type ApprovalEffect,
   type ApprovalPriorEffect,
+  type CollabClientRef,
   type PermissionMode,
   type PermissionModeSource,
   type Run,
@@ -43,6 +44,7 @@ import type { RunsService } from '../domain/runs.js';
 import type { SecretsService } from '../domain/secrets.js';
 import type { RunIdentity } from '../agent/types.js';
 import { activeEffectHooks, type EffectApprovalGate } from './tool-call-scope.js';
+import { sanitizeClientName } from '../collab/client-name.js';
 import { sha256Hex, stableJson } from '../agent/effects/key.js';
 import { commandReachesDataHome } from './command-guard.js';
 import { tierAutoDecides } from './tiers.js';
@@ -122,7 +124,10 @@ export interface ApprovalsDeps {
    * In-memory.
    */
   permissionMode?: {
-    effective(conversationId: string | null): { mode: PermissionMode; source: PermissionModeSource };
+    effective(conversationId: string | null): {
+      mode: PermissionMode;
+      source: PermissionModeSource;
+    };
   };
   /** Core event bus (approval.created / approval.resolved / run.status ...). */
   publish: (event: string, payload: unknown) => void;
@@ -542,7 +547,8 @@ export class ApprovalsService {
       // keeps a null decision (its folded-record wording is the default), so
       // existing receipts are unchanged.
       decision:
-        status === 'approved' && (kind === 'access' || kind === 'agent_tool' || via !== 'unattended')
+        status === 'approved' &&
+        (kind === 'access' || kind === 'agent_tool' || via !== 'unattended')
           ? {
               ...(kind === 'access' || kind === 'agent_tool' ? { duration: 'once' as const } : {}),
               ...(via !== 'unattended' ? { via } : {}),
@@ -606,11 +612,19 @@ export class ApprovalsService {
     handoverSelection?: string[],
     /** D92 T1a WP4: the lead the user picked on a project proposal card (must be a payload member). */
     leadBotId?: string,
+    /** D121: the client (device) that made this decision; null for host-side decisions. */
+    client?: CollabClientRef,
   ): Approval {
     const approval = this.get(id);
     if (!approval) throw new AppError('APPROVAL_NOT_FOUND', `审批 ${id} 不存在`);
     if (approval.status !== 'pending') {
-      throw new AppError('INVALID_INPUT', '该审批已经处理过了');
+      throw new AppError(
+        'INVALID_INPUT',
+        '该审批已经处理过了',
+        approval.decision?.decidedBy !== undefined
+          ? { decidedBy: approval.decision.decidedBy }
+          : undefined,
+      );
     }
     if (payloadHash !== undefined && payloadHash !== approval.payloadHash) {
       throw new AppError('APPROVAL_STALE', '审批内容与界面显示的不一致，请重新查看后再决定');
@@ -661,8 +675,15 @@ export class ApprovalsService {
       }
       const parsed = butlerProposalPayloadSchema.safeParse(approval.payload);
       const data = parsed.success ? parsed.data : null;
-      if (data === null || data.proposalType !== 'project' || !data.memberBotIds.includes(leadBotId)) {
-        throw new AppError('INVALID_INPUT', '改选的负责人必须是提议的成员之一（仅建项目组提议支持）');
+      if (
+        data === null ||
+        data.proposalType !== 'project' ||
+        !data.memberBotIds.includes(leadBotId)
+      ) {
+        throw new AppError(
+          'INVALID_INPUT',
+          '改选的负责人必须是提议的成员之一（仅建项目组提议支持）',
+        );
       }
       keptLead = leadBotId;
     }
@@ -720,6 +741,12 @@ export class ApprovalsService {
     // plain approval otherwise writes null).
     if (approve && keptLead !== undefined) {
       decision = decision === null ? { leadBotId: keptLead } : { ...decision, leadBotId: keptLead };
+    }
+    // D121：记录做决定的客户端（纯展示元数据；自动决定不传）。
+    if (client !== undefined) {
+      const attributed = { ...client, name: sanitizeClientName(client.name) };
+      decision =
+        decision === null ? { decidedBy: attributed } : { ...decision, decidedBy: attributed };
     }
     this.#db
       .prepare('update approvals set status = ?, decision_json = ?, decided_at = ? where id = ?')
@@ -914,6 +941,9 @@ export class ApprovalsService {
     this.#deps.publish(event, {
       conversationId: approval.conversationId,
       approval: this.#withEffect(approval),
+      ...(approval.decision?.decidedBy !== undefined
+        ? { decidedBy: approval.decision.decidedBy }
+        : {}),
     });
   }
 

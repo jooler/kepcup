@@ -20,17 +20,4 @@ export function endpointSupports(id: EndpointCapabilityId): boolean {
   return endpointHasCapability(ENDPOINT_KIND, id);
 }
 
-/**
- * 从 navigator.userAgent 提取配对确认卡上的默认设备名摘要（用户可改），
- * 如「iPhone」「Android 手机」；提不出就给一个中性名。
- */
-export function defaultDeviceName(): string {
-  const ua = navigator.userAgent;
-  if (/iPhone/i.test(ua)) return 'iPhone';
-  if (/iPad/i.test(ua)) return 'iPad';
-  if (/Android/i.test(ua)) return 'Android 手机';
-  if (/Macintosh|Mac OS X/i.test(ua)) return 'Mac 浏览器';
-  if (/Windows/i.test(ua)) return 'Windows 浏览器';
-  if (/Linux/i.test(ua)) return 'Linux 浏览器';
-  return '浏览器';
-}
+export { defaultDeviceName } from '../../device-name';

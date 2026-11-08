@@ -33,6 +33,21 @@ import {
   appsSkillsOffersInputSchema,
   appsSkillsOffersOutputSchema,
 } from '../domain/app-skills.js';
+import {
+  collabClientRefSchema,
+  collabDraftClaimInputSchema,
+  collabDraftClaimOutputSchema,
+  collabDraftGetInputSchema,
+  collabDraftGetOutputSchema,
+  collabDraftReleaseInputSchema,
+  collabDraftSendInputSchema,
+  collabDraftUpdateInputSchema,
+  collabDraftUpdateOutputSchema,
+  collabPresenceLeaveInputSchema,
+  collabPresenceListInputSchema,
+  collabPresenceListOutputSchema,
+  collabPresenceUpdateInputSchema,
+} from '../domain/collab.js';
 import { handoverViewSchema } from '../domain/handover.js';
 import { SIDEBAR_SECTION_NAME_MAX_CHARS, sidebarLayoutSchema } from '../domain/sidebar.js';
 import {
@@ -1280,6 +1295,8 @@ export const messagesSendInputSchema = z.object({
    * 上下文据此标注（不派 transcribe_audio，回复将由客户端自动转语音播报）。
    */
   voiceMode: z.boolean().optional(),
+  /** D121：发这条消息的客户端（设备），UI 显示「来自 X」。 */
+  client: collabClientRefSchema.optional(),
 });
 export const messagesSendOutputSchema = z.object({
   message: messageSchema,
@@ -1520,6 +1537,8 @@ export const approvalsDecideInputSchema = z.object({
    * picked on the card; must be one of the payload's `memberBotIds`.
    */
   leadBotId: z.string().min(1).optional(),
+  /** D121：做决定的客户端（设备）；多端竞争失败方显示「已被 X 处理」。 */
+  client: collabClientRefSchema.optional(),
 });
 export const approvalsDecideOutputSchema = z.object({ approval: approvalSchema });
 
@@ -2656,7 +2675,10 @@ export const rpcMethodSchemas = {
   // D117 组件直接运行（Bot 详情「组件」tab 卡片点击，docs/design/56 §3）。
   'widgets.runCard': { input: widgetsRunCardInputSchema, output: widgetsRunCardOutputSchema },
   // D112 微应用（docs/design/55-bot-micro-app-runtime.md）：能力面专属入口（预检 / 诊断 / 管理）。
-  'microApps.preflight': { input: microAppsPreflightInputSchema, output: microAppsPreflightOutputSchema },
+  'microApps.preflight': {
+    input: microAppsPreflightInputSchema,
+    output: microAppsPreflightOutputSchema,
+  },
   'microApps.ai.chat': { input: microAppsAiChatInputSchema, output: microAppsAiChatOutputSchema },
   'microApps.ai.sessionCreate': {
     input: microAppsAiSessionCreateInputSchema,
@@ -2682,16 +2704,37 @@ export const rpcMethodSchemas = {
     output: microAppsMediaSynthesizeOutputSchema,
   },
   'microApps.collections.put': { input: microAppsCollectionsPutInputSchema, output: okOutput },
-  'microApps.collections.get': { input: microAppsCollectionsGetInputSchema, output: microAppsDocOutputSchema },
-  'microApps.collections.delete': { input: microAppsCollectionsDeleteInputSchema, output: okOutput },
-  'microApps.collections.list': { input: microAppsCollectionsListInputSchema, output: microAppsDocsOutputSchema },
-  'microApps.collections.query': { input: microAppsCollectionsQueryInputSchema, output: microAppsDocsOutputSchema },
+  'microApps.collections.get': {
+    input: microAppsCollectionsGetInputSchema,
+    output: microAppsDocOutputSchema,
+  },
+  'microApps.collections.delete': {
+    input: microAppsCollectionsDeleteInputSchema,
+    output: okOutput,
+  },
+  'microApps.collections.list': {
+    input: microAppsCollectionsListInputSchema,
+    output: microAppsDocsOutputSchema,
+  },
+  'microApps.collections.query': {
+    input: microAppsCollectionsQueryInputSchema,
+    output: microAppsDocsOutputSchema,
+  },
   'microApps.context.update': { input: microAppsContextUpdateInputSchema, output: okOutput },
   'microApps.context.clear': { input: microAppsContextClearInputSchema, output: okOutput },
-  'microApps.diagnostics.record': { input: microAppsDiagnosticsRecordInputSchema, output: okOutput },
+  'microApps.diagnostics.record': {
+    input: microAppsDiagnosticsRecordInputSchema,
+    output: okOutput,
+  },
   'microApps.list': { input: microAppsListInputSchema, output: microAppsListOutputSchema },
-  'microApps.rollback': { input: microAppsRollbackInputSchema, output: microAppsRollbackOutputSchema },
-  'microApps.clearContext': { input: microAppsClearContextInputSchema, output: microAppsClearContextOutputSchema },
+  'microApps.rollback': {
+    input: microAppsRollbackInputSchema,
+    output: microAppsRollbackOutputSchema,
+  },
+  'microApps.clearContext': {
+    input: microAppsClearContextInputSchema,
+    output: microAppsClearContextOutputSchema,
+  },
   'mcp.rawTools': { input: mcpRawToolsInputSchema, output: mcpRawToolsOutputSchema },
   'mcp.refreshTools': { input: mcpRefreshToolsInputSchema, output: mcpRefreshToolsOutputSchema },
   'websearch.test': { input: webSearchTestInputSchema, output: webSearchTestOutputSchema },
@@ -3130,6 +3173,41 @@ export const rpcMethodSchemas = {
   'remote.config.get': { input: voidInput, output: remoteConfigGetOutputSchema },
   'remote.config.set': { input: remoteConfigSetInputSchema, output: remoteConfigSetOutputSchema },
 
+  // 多客户端协作（D119）：在线状态只存在 core 内存，不落库。
+  'collab.presence.update': {
+    input: collabPresenceUpdateInputSchema,
+    output: okOutput,
+  },
+  'collab.presence.leave': {
+    input: collabPresenceLeaveInputSchema,
+    output: okOutput,
+  },
+  'collab.presence.list': {
+    input: collabPresenceListInputSchema,
+    output: collabPresenceListOutputSchema,
+  },
+  // 多客户端共享草稿（D120）：单写者租约 + 版本化整份快照。
+  'collab.draft.get': {
+    input: collabDraftGetInputSchema,
+    output: collabDraftGetOutputSchema,
+  },
+  'collab.draft.claim': {
+    input: collabDraftClaimInputSchema,
+    output: collabDraftClaimOutputSchema,
+  },
+  'collab.draft.update': {
+    input: collabDraftUpdateInputSchema,
+    output: collabDraftUpdateOutputSchema,
+  },
+  'collab.draft.release': {
+    input: collabDraftReleaseInputSchema,
+    output: okOutput,
+  },
+  'collab.draft.send': {
+    input: collabDraftSendInputSchema,
+    output: messagesSendOutputSchema,
+  },
+
   'mail.accounts.list': { input: voidInput, output: mailAccountsListOutputSchema },
   'mail.accounts.get': { input: mailAccountIdInputSchema, output: mailAccountGetOutputSchema },
   'mail.accounts.update': {
@@ -3164,7 +3242,10 @@ export const rpcMethodSchemas = {
   'im.accounts.delete': { input: imAccountIdInputSchema, output: okOutput },
   'im.accounts.setBots': { input: imAccountSetBotsInputSchema, output: okOutput },
   'im.bindings.setForward': { input: imBindingSetForwardInputSchema, output: okOutput },
-  'im.login.qrcode.create': { input: imQrcodeCreateInputSchema, output: imQrcodeCreateOutputSchema },
+  'im.login.qrcode.create': {
+    input: imQrcodeCreateInputSchema,
+    output: imQrcodeCreateOutputSchema,
+  },
   'im.login.qrcode.poll': { input: imQrcodePollInputSchema, output: imQrcodePollOutputSchema },
 
   // P11: served by the main process (browser-host) on port B — see the
@@ -3695,6 +3776,14 @@ const APP_METHODS = [
   'remote.devices',
   'remote.config.get',
   'remote.config.set',
+  'collab.presence.update',
+  'collab.presence.leave',
+  'collab.presence.list',
+  'collab.draft.get',
+  'collab.draft.claim',
+  'collab.draft.update',
+  'collab.draft.release',
+  'collab.draft.send',
   'plugins.list',
   'plugins.inspect',
   'plugins.install',

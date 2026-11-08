@@ -1,7 +1,7 @@
 <script lang="ts">
-import { onDestroy, tick, type Component } from 'svelte';
-import { SvelteSet } from 'svelte/reactivity';
-import { dragHandle, dragHandleZone, type DndEvent } from 'svelte-dnd-action';
+  import { onDestroy, tick, type Component } from 'svelte';
+  import { SvelteSet } from 'svelte/reactivity';
+  import { dragHandle, dragHandleZone, type DndEvent } from 'svelte-dnd-action';
   import {
     ArrowDown,
     ArrowUp,
@@ -25,6 +25,7 @@ import { dragHandle, dragHandleZone, type DndEvent } from 'svelte-dnd-action';
     Pin,
     PinOff,
     Smartphone,
+    MonitorSmartphone,
     FileUp,
     type LucideIcon,
   } from '@lucide/svelte';
@@ -51,6 +52,7 @@ import { dragHandle, dragHandleZone, type DndEvent } from 'svelte-dnd-action';
   import BotTemplateImportDialog from '$lib/features/bot-template/BotTemplateImportDialog.svelte';
   import { endpointSupports } from '$lib/features/web-shell/endpoint';
   import { remotePairing } from '$lib/features/remote/remote-pairing.svelte';
+  import { clientNameDialog } from '$lib/features/collab/client-name-dialog.svelte';
   import { isButlerConversation } from './butler';
   import { sidebarDialogs } from './sidebar-dialogs.svelte';
   import { sidebarSections } from './sidebar-sections.svelte';
@@ -61,25 +63,25 @@ import { dragHandle, dragHandleZone, type DndEvent } from 'svelte-dnd-action';
     visibleSettingsSections,
   } from '$lib/features/settings/settings-sections-list';
   import type { SettingsPageSection } from '$lib/features/settings/sections';
-import {
-  UNASSIGNED_SECTION_ID,
-  SECTION_NAME_MAX,
-  conversationActivityOf,
-  isConversationPinned,
-  layoutSidebarSections,
-  sectionIdOf,
-  sectionStepTarget,
-  type SectionGroup,
-} from './sidebar-sections';
-import {
-  anchorFromFinalize,
-  boardFlipDurationMs,
-  createClickGuard,
-  draggedElementHeight,
-  isNoopMove,
-  isShadow,
-  stripShadow,
-} from '$lib/features/board/board-dnd';
+  import {
+    UNASSIGNED_SECTION_ID,
+    SECTION_NAME_MAX,
+    conversationActivityOf,
+    isConversationPinned,
+    layoutSidebarSections,
+    sectionIdOf,
+    sectionStepTarget,
+    type SectionGroup,
+  } from './sidebar-sections';
+  import {
+    anchorFromFinalize,
+    boardFlipDurationMs,
+    createClickGuard,
+    draggedElementHeight,
+    isNoopMove,
+    isShadow,
+    stripShadow,
+  } from '$lib/features/board/board-dnd';
   import {
     SIDEBAR_SORT_DEBOUNCE_MS,
     SIDEBAR_SORT_MAX_WAIT_MS,
@@ -729,7 +731,12 @@ import {
     const next = stripShadow(event.detail.items);
     const prevIds = sectionLayout.groups.map((group) => group.id);
     sectionItems = next;
-    if (!isNoopMove(prevIds, next.map((group) => group.id))) {
+    if (
+      !isNoopMove(
+        prevIds,
+        next.map((group) => group.id),
+      )
+    ) {
       sidebarSections.move(info.id, decision.beforeId);
     }
     if (info.source !== 'keyboard') setSectionDragging(false);
@@ -874,9 +881,9 @@ import {
   {:else}
     <button
       type="button"
-      class="flex shrink-0 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm whitespace-nowrap transition-colors text-muted-foreground
+      class="flex shrink-0 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm whitespace-nowrap text-muted-foreground transition-colors
         hover:bg-sidebar-accent hover:text-sidebar-accent-foreground
-        data-active:text-sidebar-accent-foreground data-active:font-medium {SIDEBAR_ROW_ACTIVE_CLASS}"
+        data-active:font-medium data-active:text-sidebar-accent-foreground {SIDEBAR_ROW_ACTIVE_CLASS}"
       data-active={active ? 'true' : undefined}
       onclick={() => selectSettingsSection(entry.id)}
       data-testid={`settings-nav-${entry.id}`}
@@ -1120,7 +1127,7 @@ import {
               <Sidebar.Menu>
                 <Sidebar.MenuItem>
                   <Sidebar.MenuButton
-                    class="h-auto min-w-0 flex-1 cursor-pointer gap-2 rounded-lg py-1 px-2 {SIDEBAR_ROW_ACTIVE_CLASS}
+                    class="h-auto min-w-0 flex-1 cursor-pointer gap-2 rounded-lg px-2 py-1 {SIDEBAR_ROW_ACTIVE_CLASS}
                     [&_svg]:size-auto"
                     isActive={workbenchActive}
                     onclick={() => shell.openWorkbench()}
@@ -1240,16 +1247,15 @@ import {
                   <!-- 原位占位插槽：高度钉住拖拽浮动副本的实测高度（同备忘分组区）。 -->
                   <div
                     class="min-h-10 rounded-lg"
-                    style:height={sectionShadowHeight === null ? undefined : `${sectionShadowHeight}px`}
+                    style:height={sectionShadowHeight === null
+                      ? undefined
+                      : `${sectionShadowHeight}px`}
                     aria-hidden="true"
                   ></div>
                 {:else}
                   {@const rows = conversationsInGroup(group.id, group.conversations)}
                   <!-- data-sidebar-section 随克隆带到 body 上的浮动副本，用于克隆样式定界。 -->
-                  <div
-                    data-sidebar-section
-                    class="relative rounded-md mt-2"
-                  >
+                  <div data-sidebar-section class="relative mt-2 rounded-md">
                     {#if sectionLayout.showHeaders}
                       {#if renamingSectionId === group.id}
                         <form
@@ -1273,7 +1279,7 @@ import {
                              正常触发；真实拖拽后的合成 click 由 sectionClickGuard 吞掉。 -->
                         <button
                           type="button"
-                          class="flex w-full cursor-grab items-center gap-2 px-2 pb-1 rounded-md text-left text-xs text-muted-foreground select-none"
+                          class="flex w-full cursor-grab items-center gap-2 rounded-md px-2 pb-1 text-left text-xs text-muted-foreground select-none"
                           aria-expanded={!group.collapsed}
                           data-section-header
                           data-section-id={group.id}
@@ -1365,6 +1371,13 @@ import {
                 <Smartphone aria-hidden="true" />
                 {t('menu.connectPhone')}
               </DropdownMenu.Item>
+              <DropdownMenu.Item
+                onclick={() => clientNameDialog.openDialog()}
+                data-testid="menu-device-name"
+              >
+                <MonitorSmartphone aria-hidden="true" />
+                {t('menu.deviceName')}
+              </DropdownMenu.Item>
               <DropdownMenu.Separator />
               <DropdownMenu.Item
                 onclick={() => shell.openSettings('general')}
@@ -1406,6 +1419,13 @@ import {
               >
                 <Smartphone aria-hidden="true" />
                 {t('menu.connectPhone')}
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                onclick={() => clientNameDialog.openDialog()}
+                data-testid="menu-device-name"
+              >
+                <MonitorSmartphone aria-hidden="true" />
+                {t('menu.deviceName')}
               </DropdownMenu.Item>
               <DropdownMenu.Separator />
               <DropdownMenu.Item
@@ -1484,7 +1504,7 @@ import {
            pointer-events-none，不挡聊天区的点击。 -->
       <div
         class="pointer-events-none absolute top-[calc(50%_+_2.5rem)] left-full z-10 ml-3 flex flex-col
-          gap-0.5 rounded-xl border bg-popover px-3 py-2 whitespace-nowrap shadow-md opacity-0
+          gap-0.5 rounded-xl border bg-popover px-3 py-2 whitespace-nowrap opacity-0 shadow-md
           transition-opacity duration-200 group-hover/resize:opacity-100 group-hover/resize:delay-500"
         style:visibility={sidebarLayout.dragging ? 'hidden' : undefined}
         aria-hidden="true"

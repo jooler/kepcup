@@ -42,6 +42,7 @@ import {
   type AgentView,
   type Attachment,
   type Bot,
+  type CollabClientRef,
   type Conversation,
   type Delegation,
   type Message,
@@ -270,6 +271,7 @@ import {
   type LlmRouter,
 } from '../agent/llm-router.js';
 import type { BotCard, WikiOwner } from '@kepcup/shared';
+import { sanitizeClientName } from '../collab/client-name.js';
 import type { InstalledToolchain } from '../env/manager.js';
 import type { ToolEffectsStore } from '../agent/effects/store.js';
 
@@ -1185,10 +1187,26 @@ export class Orchestrator {
       shareIntakeId?: string;
       /** 53 号修订 v2 V2-1：来自语音对话模式的发送，content 记 origin: 'voice'。 */
       voiceMode?: boolean;
+      /** D121：发这条消息的客户端（设备），仅展示用。 */
+      client?: CollabClientRef;
+      /** 草稿发送：在消息落库事务内清理草稿（D120 原子性修复）。 */
+      onPersisted?: () => void;
     },
   ): { message: Message; runId: string | null } {
     const prepared = this.#prepareUserMessage(conversationId, input);
-    const { runId } = this.#publishAndRouteUserMessage(prepared);
+    let runId: string | null = null;
+    try {
+      runId = this.#publishAndRouteUserMessage(prepared).runId;
+    } catch (error) {
+      // 草稿发送：onPersisted 已在消息事务内执行，消息与草稿清理都已提交。
+      // 路由失败若继续向外抛，客户端会重试并发出重复消息——记录并返回成功
+      // （runId 为空，run 状态仍会通过事件/任务卡呈现）。
+      if (input.onPersisted === undefined) throw error;
+      this.#deps.logger.warn(
+        { conversationId, error: error instanceof Error ? error.message : String(error) },
+        'draft send routing failed after message persisted',
+      );
+    }
     return { message: prepared.message, runId };
   }
 
@@ -1235,6 +1253,10 @@ export class Orchestrator {
       widgetOrigin?: { widgetId: string; version: number };
       shareIntakeId?: string;
       voiceMode?: boolean;
+      /** D121：发这条消息的客户端（设备），仅展示用。 */
+      client?: CollabClientRef;
+      /** 草稿发送：在消息落库事务内清理草稿。 */
+      onPersisted?: () => void;
     },
   ): { conversation: Conversation; message: Message; batchId: string } {
     const conv = this.#deps.conversations.getOrThrow(conversationId);
@@ -1249,6 +1271,10 @@ export class Orchestrator {
       throw new AppError('INVALID_INPUT', '消息内容与附件不能同时为空');
     }
     const batchId = `batch_${this.#deps.clock.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const attributedClient =
+      input.client === undefined
+        ? undefined
+        : { ...input.client, name: sanitizeClientName(input.client.name) };
     let message: Message;
     const tx = this.#deps.db.transaction(() => {
       message = this.#deps.messages.append({
@@ -1262,10 +1288,13 @@ export class Orchestrator {
         ...(input.widgetOrigin !== undefined ? { widgetOrigin: input.widgetOrigin } : {}),
         ...(input.shareIntakeId !== undefined ? { shareIntakeId: input.shareIntakeId } : {}),
         ...(input.voiceMode === true ? { voiceMode: true } : {}),
+        ...(attributedClient !== undefined ? { client: attributedClient } : {}),
       });
       if ((input.attachmentIds?.length ?? 0) > 0) {
         this.#deps.attachments.claimForMessage(input.attachmentIds!, conversationId, message.id);
       }
+      // 草稿清理与消息落库同一事务：要么都成功，要么都回滚。
+      input.onPersisted?.();
     });
     tx.immediate();
     const full: Message = {

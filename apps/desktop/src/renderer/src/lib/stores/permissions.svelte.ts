@@ -11,6 +11,7 @@ import type {
 } from '@kepcup/shared';
 import { errorText, t } from '$lib/i18n';
 import { core } from '$lib/rpc/client.svelte';
+import { clientIdentity } from '$lib/features/collab/client-identity';
 import { toast } from 'svelte-sonner';
 import { mergeApprovalUpdate } from '$lib/features/approvals/approval-effect';
 
@@ -81,7 +82,10 @@ class PermissionsState {
     });
     core.onEvent('grant.changed', (payload) => {
       const data = payload as { conversationId: string; grants: Grant[] };
-      this.#grantsByConversation = { ...this.#grantsByConversation, [data.conversationId]: data.grants };
+      this.#grantsByConversation = {
+        ...this.#grantsByConversation,
+        [data.conversationId]: data.grants,
+      };
       if (data.conversationId === this.#foregroundConversationId) this.grants = data.grants;
     });
     core.onEvent('unattended.changed', (payload) => {
@@ -199,16 +203,32 @@ class PermissionsState {
         ...(routineSelection !== undefined ? { routineSelection } : {}),
         ...(handoverSelection !== undefined ? { handoverSelection } : {}),
         ...(leadBotId !== undefined ? { leadBotId } : {}),
+        // D121：多端审批首胜；记录是谁做的决定。
+        client: { id: clientIdentity.id, name: clientIdentity.name },
       })) as { approval: Approval };
       this.#upsert(result.approval);
       this.#recount(result.approval.conversationId);
     } catch (error) {
       const code = codeOf(error);
-      toast.error(errorText(code, t('chats.errorCode.INTERNAL')));
+      const decidedBy = (error as { details?: { decidedBy?: { name?: string } } } | undefined)
+        ?.details?.decidedBy;
+      if (code === 'INVALID_INPUT' && typeof decidedBy?.name === 'string') {
+        toast.error(t('collab.approvalAlreadyDecided', { name: decidedBy.name }));
+      } else {
+        toast.error(errorText(code, t('chats.errorCode.INTERNAL')));
+      }
       // W4: a stale card — reload the conversation's approvals so the card
       // shows what the user is actually deciding on.
       const conversationId = this.approvals[approvalId]?.conversationId ?? null;
       if (code === 'APPROVAL_STALE' && conversationId !== null) {
+        void this.reloadApprovals(conversationId);
+      }
+      // 已被别人处理：拉一次最新审批，卡片即时转终态。
+      if (
+        code === 'INVALID_INPUT' &&
+        typeof decidedBy?.name === 'string' &&
+        conversationId !== null
+      ) {
         void this.reloadApprovals(conversationId);
       }
     }
@@ -333,7 +353,10 @@ class PermissionsState {
   }
 
   async unattendedSummary(since?: number): Promise<Array<UnattendedSummaryEntry>> {
-    const result = (await core.call('unattended.summary', since !== undefined ? { since } : {})) as {
+    const result = (await core.call(
+      'unattended.summary',
+      since !== undefined ? { since } : {},
+    )) as {
       items: Array<UnattendedSummaryEntry>;
     };
     return result.items;
@@ -367,5 +390,10 @@ export const permissions = new PermissionsState();
 
 /** True for run statuses that count as "active" for sidebar markers. */
 export function isActiveStatus(status: Run['status']): boolean {
-  return status === 'queued' || status === 'running' || status === 'waiting_approval' || status === 'waiting_lease';
+  return (
+    status === 'queued' ||
+    status === 'running' ||
+    status === 'waiting_approval' ||
+    status === 'waiting_lease'
+  );
 }

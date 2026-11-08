@@ -854,3 +854,40 @@ export const BOARD_POSITION_STEP = 1024;
 export const BOARD_POSITION_MIN_GAP = 1e-3;
 /** Minimum cron interval for a board card schedule (P2 enforces this). */
 export const BOARD_CRON_MIN_INTERVAL_MS = 3_600_000;
+
+// --- 多客户端协作（D119，docs/design/57-multi-client-collaboration.md §3） ---
+/** 在线状态心跳间隔。 */
+export const COLLAB_PRESENCE_HEARTBEAT_MS = 20_000;
+/**
+ * 在线状态 TTL：必须大于浏览器后台标签页的定时器节流上限（Chrome 可降到
+ * 1 分钟一次）；`away` 由 visibilitychange 立即上报，不依赖 TTL 表达状态。
+ */
+export const COLLAB_PRESENCE_TTL_MS = 90_000;
+/** 同一会话 presence 事件的合流周期。 */
+export const COLLAB_PRESENCE_BROADCAST_MS = 200;
+/** 客户端输入后多久降回 viewing（正在输入提示）。 */
+export const COLLAB_TYPING_IDLE_MS = 3_000;
+/** 服务端过期清扫周期。 */
+export const COLLAB_PRESENCE_SWEEP_MS = 5_000;
+
+/** 草稿编辑权租约：编辑与持有者心跳续期，过期后任何人可 claim。 */
+export const COLLAB_DRAFT_LEASE_MS = 20_000;
+/** 草稿变更事件的服务端合流周期。 */
+export const COLLAB_DRAFT_BROADCAST_MIN_MS = 300;
+/** 单份草稿序列化上限：必须显著低于 RPC 帧上限（512KB），给 JSON-RPC 包装留余量。 */
+export const COLLAB_DRAFT_MAX_BYTES = 256 * 1024;
+/** 大草稿广播降频阈值（>64KB → 1s，>128KB → 2s）。 */
+export const COLLAB_DRAFT_LARGE_BYTES = 64 * 1024;
+export const COLLAB_DRAFT_HUGE_BYTES = 128 * 1024;
+/** 草稿文档深度 / 节点数上限，防递归解析打爆渲染层。 */
+export const COLLAB_DRAFT_MAX_DEPTH = 100;
+export const COLLAB_DRAFT_MAX_NODES = 20_000;
+/** mention token / 引用 id 的单条长度上限。 */
+export const COLLAB_DRAFT_MENTION_MAX_CHARS = 4096;
+export const COLLAB_DRAFT_REPLY_ID_MAX_CHARS = 128;
+/** 租约过期清扫周期。 */
+export const COLLAB_DRAFT_LEASE_SWEEP_MS = 5_000;
+/** RPC 限流（按客户端；超限丢更新 / 回 RATE_LIMITED，不断开连接）。 */
+export const COLLAB_PRESENCE_MAX_HZ = 10;
+export const COLLAB_DRAFT_UPDATE_MAX_HZ = 5;
+export const COLLAB_DRAFT_CLAIM_MAX_HZ = 2;

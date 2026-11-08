@@ -18,6 +18,7 @@ export const zhCN = {
   'menu.settings': '设置',
   'menu.contacts': '通讯录',
   'menu.connectPhone': '连接手机',
+  'menu.deviceName': '设备名称',
   // 窄屏单栏布局（docs/design/33-narrow-layout.md）：底部全局 tab 与详情页返回
   'narrow.tabBarLabel': '全局导航',
   'narrow.tabChats': '对话',
@@ -2166,7 +2167,8 @@ export const zhCN = {
   'wizard.limaPhaseUnprovisioned': '未初始化',
   'wizard.limaPhaseWorking': '准备中',
   'wizard.limaPhaseFailed': '准备失败',
-  'wizard.limaFirstRunNote': '首次创建需要联网下载 Debian 12 镜像并安装沙箱工具（约 1GB，数分钟）。',
+  'wizard.limaFirstRunNote':
+    '首次创建需要联网下载 Debian 12 镜像并安装沙箱工具（约 1GB，数分钟）。',
   'prompt.title': '完成沙箱准备',
   'prompt.body':
     '完成一次管理员授权与重启后，Bot 执行命令不再需要逐条确认。你可以现在准备，也可以跳过（保持逐条确认模式）。',
@@ -3065,8 +3067,7 @@ export const zhCN = {
   'botWidget.microApp.newerVersion': '有新版本 v{version}，重新打开生效',
   'botWidget.microApp.codeUpdated': '代码已更新，权限未扩大（沿用你上次的确认）',
   'botWidget.microApp.canDo': '它能做什么：',
-  'botWidget.microApp.cost':
-    '预计每次使用 ≤{n} token，计入编写此微应用的 Bot（{bot}）的模型额度',
+  'botWidget.microApp.cost': '预计每次使用 ≤{n} token，计入编写此微应用的 Bot（{bot}）的模型额度',
   'botWidget.microApp.unavailable': '当前不可用：{capability}（{reason}）',
   'botWidget.microApp.openSettings': '去设置',
   'botWidget.microApp.preflightLoading': '正在检查这台电脑能否运行它需要的全部能力…',
@@ -3138,7 +3139,8 @@ export const zhCN = {
   'chats.errorCode.MICRO_APP_UNSUPPORTED_SPEC': '微应用清单的版本当前 KepCup 不认识，请升级应用',
   'chats.errorCode.MICRO_APP_CAPABILITY_NOT_DECLARED': '微应用调用了清单里没有声明的能力',
   'chats.errorCode.MICRO_APP_CAPABILITY_DENIED': '你已拒绝或撤销这个能力，微应用应按降级方式继续',
-  'chats.errorCode.MICRO_APP_CAPABILITY_NOT_CONFIGURED': '宿主缺少这个能力所需的配置（如模型 / 语音），请先到设置里配置',
+  'chats.errorCode.MICRO_APP_CAPABILITY_NOT_CONFIGURED':
+    '宿主缺少这个能力所需的配置（如模型 / 语音），请先到设置里配置',
   'chats.errorCode.MICRO_APP_AI_QUOTA': '微应用的模型用量已超出预算',
   'chats.errorCode.MICRO_APP_AI_BUSY': '微应用已有一个模型调用在进行，请稍候',
   'chats.errorCode.MICRO_APP_AI_UNAVAILABLE': '模型暂时不可用，微应用的进度已保存',
@@ -3952,6 +3954,22 @@ export const zhCN = {
   'settings.desktopOnly': '此功能仅桌面端可用',
   'web.failed.title': '连不上中转',
   'web.failed.body': '中转服务暂时不可达（配对链接本身仍有效）。请检查网络后重试。',
+  'collab.online': '{count} 人在此对话',
+  'collab.typing': '{name} 正在输入…',
+  'collab.typingMany': '{count} 人正在输入…',
+  'collab.draftOwner': '{name} 正在编辑，你暂时只读',
+  'collab.draftReadonly': '另一位用户正在编辑，你暂时只读',
+  'collab.takeover': '接管',
+  'collab.takeoverConfirm': '接管后对方将变为只读，确定继续？',
+  'collab.messageFrom': '来自 {name}',
+  'collab.approvalDecidedBy': '已被 {name} 处理',
+  'collab.approvalAlreadyDecided': '这条审批已被 {name} 处理',
+  'collab.clientNameTitle': '本机设备名称',
+  'collab.clientNameHint': '其他客户端在在线状态与消息归属里看到的名字；只保存在本机。',
+  'collab.clientNamePlaceholder': '例如：小明的 MacBook',
+  'collab.clientNameSave': '保存',
+  'collab.clientNameCancel': '取消',
+  'collab.clientNameSaved': '设备名称已更新',
 } as const;
 
 export type MessageKey = keyof typeof zhCN;

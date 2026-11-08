@@ -248,6 +248,8 @@ import {
 } from './apps/shell-facade.js';
 import { bindAppMethods } from './rpc/bindings.js';
 import { RemoteHub, type RemoteHostOptions } from './remote/hub.js';
+import { PresenceService } from './collab/presence.js';
+import { DraftService } from './collab/drafts.js';
 import type { CoreEventsMap } from './start-types.js';
 
 /** Test hooks for the environment manager's system-item guidance (P06). */
@@ -717,6 +719,10 @@ export interface CoreServices {
   platformMethods: Record<string, RpcMethodSpec>;
   /** D96 远程遥控收发中枢（端点注册表 / 事件扇出 / remote.* 处理）；成功启动后非空。 */
   remote: RemoteHub | null;
+  /** D119 多客户端在线状态（纯内存；连接关闭由宿主 leave，TTL 兜底）。 */
+  collabPresence: PresenceService;
+  /** D120 共享草稿（单写者租约 + 版本化快照）；locked / errored 时为 null。 */
+  collabDrafts: DraftService | null;
   /** Re-announce the current status to a freshly bound RPC client. */
   pushStatusTo(server: RpcServerHandle): void;
   /**
@@ -794,6 +800,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
   // 查询函数在域服务建好后赋值，锁定/未解锁期间原样放行。
   let lookupDirectBot: ((botId: string) => Bot | null) | null = null;
   const events = withDirectConversationBots(createEventBus<CoreEventsMap>(), () => lookupDirectBot);
+  // 多客户端在线状态（D119）：纯内存，宿主连接关闭时调用 leave，TTL 兜底。
+  const collabPresence = new PresenceService({
+    clock,
+    publish: (name, payload) => events.emit(name, payload),
+  });
   // BR-P13-007 test seam: production restore by default; tests inject a
   // failing wrapper to pin the honest migration-failure statusReason.
   const restoreBackup = options.restoreBackup ?? restoreDatabaseBackup;
@@ -993,6 +1004,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     appMethods: {},
     platformMethods: {},
     remote: null,
+    collabPresence,
+    collabDrafts: null,
     pushStatusTo(server) {
       server.pushEvent(
         'core.status',
@@ -1010,6 +1023,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     refreshEnhancedAvailability: enhancedAvailability.refresh,
     async close() {
       servicesClosed.closed = true;
+      services.collabPresence.close();
+      services.collabDrafts?.close();
       await services.remote?.close();
       services.jobsRunner?.stop();
       services.marketplace?.stop();
@@ -2212,10 +2227,15 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         if (read.entries.length === 0) return null;
         const lines = read.entries
           .slice(0, 8)
-          .map((entry) => `- [v${entry.version}] ${entry.code} ×${entry.count}（${entry.phase}）${entry.detail}`);
+          .map(
+            (entry) =>
+              `- [v${entry.version}] ${entry.code} ×${entry.count}（${entry.phase}）${entry.detail}`,
+          );
         return [
           ...lines,
-          ...(read.truncated ? ['-（更多条目省略；可用 micro_app_diagnostics_read 工具看全量）'] : []),
+          ...(read.truncated
+            ? ['-（更多条目省略；可用 micro_app_diagnostics_read 工具看全量）']
+            : []),
         ].join('\n');
       },
       // GATE 的 app.capability-unavailable（55 §11）：宿主缺配置的能力提前标出 + 设置深链。
@@ -2232,7 +2252,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           if (media === null) return { available: false, reason: '媒体模块未就绪' };
           const kind = capability === 'media.listen' ? 'asr' : 'tts';
           if (!media.capabilityConfigured(kind)) {
-            return { available: false, reason: kind === 'asr' ? '未配置语音识别（ASR）模型' : '未配置语音合成（TTS）模型' };
+            return {
+              available: false,
+              reason: kind === 'asr' ? '未配置语音识别（ASR）模型' : '未配置语音合成（TTS）模型',
+            };
           }
           return { available: true };
         }
@@ -2675,7 +2698,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
             .listForBot(input.botId)
             .some((item) => item.widgetId === input.widgetId);
           if (!owned) {
-            return { ok: false, message: '找不到这个微应用（或它不是你创建的）', code: 'FORBIDDEN' as const };
+            return {
+              ok: false,
+              message: '找不到这个微应用（或它不是你创建的）',
+              code: 'FORBIDDEN' as const,
+            };
           }
           const result = microAppStore.diagnosticsRead(input.widgetId);
           const entries =
@@ -3707,6 +3734,23 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       browserProfiles,
     };
     services.orchestrator = orchestrator;
+    // D120 共享草稿：正文进 main.db，租约纯内存；发送复用 orchestrator 的落库 / 路由。
+    const collabDrafts = new DraftService({
+      db: mainDb,
+      clock,
+      publish: (name, payload) => events.emit(name as never, payload as never),
+      sendMessage: (conversationId, input, onPersisted) =>
+        orchestrator.sendMessage(conversationId, {
+          text: input.text,
+          ...(input.mentions !== undefined ? { mentions: input.mentions } : {}),
+          ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}),
+          ...(input.attachmentIds !== undefined ? { attachmentIds: input.attachmentIds } : {}),
+          ...(input.voiceMode !== undefined ? { voiceMode: input.voiceMode } : {}),
+          ...(input.client !== undefined ? { client: input.client } : {}),
+          onPersisted,
+        }),
+    });
+    services.collabDrafts = collabDrafts;
     // D94 分享接收：Share Extension 投递的目标解析、附件落盘与失败恢复。
     const shareIntake = new ShareIntakeService({
       db: mainDb,
@@ -3847,6 +3891,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       clock,
       logger,
       appMethods: () => services.appMethods,
+      presence: collabPresence,
+      releaseDrafts: (clientId) => collabDrafts.releaseClient(clientId),
       ...(options.remote ?? {}),
       pushInitialEventsTo: (server) => {
         services.pushStatusTo(server);
