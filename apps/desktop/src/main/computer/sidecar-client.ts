@@ -53,6 +53,15 @@ type PendingRequest = {
 const REQUEST_TIMEOUT_MS = 60_000
 let sidecar: ComputerSidecarProcess | null = null
 
+// cua-driver provider 的 socket 目录父级（WP6）：provider 跑在 sidecar 进程里，
+// sidecar 不知道 userData 路径——main 装配处经 setComputerSidecarUserDataDirectory
+// 注入，fork 环境变量带给 sidecar。
+let sidecarUserDataDirectory: string | null = null
+
+export function setComputerSidecarUserDataDirectory(userDataDirectory: string | null): void {
+  sidecarUserDataDirectory = userDataDirectory
+}
+
 // Suppress stale child errors without retaining the owner or crashing the process.
 function ignoreStaleChildError(): void {}
 
@@ -214,7 +223,10 @@ class ComputerSidecarProcess {
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: '1',
-        ORCA_COMPUTER_SIDECAR: '1'
+        ORCA_COMPUTER_SIDECAR: '1',
+        ...(sidecarUserDataDirectory
+          ? { KEPCUP_COMPUTER_USER_DATA_DIR: sidecarUserDataDirectory }
+          : {})
       },
       ...(process.platform === 'win32' ? { windowsHide: true } : {})
     })

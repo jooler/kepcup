@@ -6,6 +6,7 @@ import type {
 import {
   callComputerSidecarAction,
   callComputerSidecarCapabilities,
+  setComputerSidecarUserDataDirectory,
 } from './computer/sidecar-client';
 import { shutdownComputerProviders } from './computer/computer-provider-lifecycle';
 import {
@@ -60,6 +61,9 @@ class ComputerHostImpl implements ComputerHost {
 
   constructor(userDataDir: () => string) {
     this.#userDataDir = userDataDir;
+    // cua-driver provider（P-B1 WP6）的 socket 目录要落到 userData 下：main 在
+    // fork sidecar 时经环境变量带给 sidecar（sidecar 进程无 app.getPath）。
+    setComputerSidecarUserDataDirectory(userDataDir());
   }
 
   async invoke(method: ComputerInvokeMethod, params: Record<string, unknown>): Promise<unknown> {
