@@ -22,10 +22,9 @@ import {
 } from './cua-driver-paths'
 import { synthesizeCuaDriverCapabilities } from './cua-driver-capabilities'
 import { checkCuaDriverPermissions } from './cua-driver-permissions'
-import type { NativeActionMethod } from './macos-native-provider-contract'
+import type { ComputerActionMethod } from './computer-action-method'
 
-// cua-driver provider 客户端（P-B1）：provider 接口（5 个方法）的 cua 实现，
-// 与 MacOSNativeProviderClient 同构（macos-native-provider-client.ts 的公开面）。
+// cua-driver provider 客户端（P-B1/P-B2）：provider 接口（5 个方法）的 cua 实现。
 //
 // 生命周期：ensureStarted → 清孤儿 → spawn serve --embedded → 等 socket →
 // 客户端按需连接。失败路径（二进制缺失 / 版本不符 / 启动失败）抛
@@ -76,7 +75,7 @@ export class CuaDriverProviderClient {
     return await this.requireObserver().snapshot(asParams(params))
   }
 
-  async action(method: NativeActionMethod, params: unknown): Promise<ComputerActionResult> {
+  async action(method: ComputerActionMethod, params: unknown): Promise<ComputerActionResult> {
     await this.ensureStarted()
     return await this.requireActions().action(method, asParams(params))
   }

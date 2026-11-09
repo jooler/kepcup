@@ -86,7 +86,7 @@ declare global {
       sensorOpenSettings(kind: SensorKind): Promise<void>;
       /** P13 任务 3: verdict of applying the launch-at-login setting to the OS. */
       onAutostartResult(callback: (result: AutostartResult) => void): () => void;
-      /** D105 计算机操控：kill switch 直达 main + helper TCC 权限三态与设置深链。 */
+      /** D105 / P-B2 计算机操控：kill switch 直达 main + 宿主 TCC 权限三态与设置深链。 */
       computerStop(reason?: string): Promise<{ stopped: boolean }>;
       computerPermissionStatus(): Promise<{
         accessibility: 'granted' | 'not-granted' | 'unknown';

@@ -64,7 +64,7 @@ let browserHost: BrowserHost | null = null;
 let widgetPreviewHost: WidgetPreviewHost | null = null;
 /** 组件「在新窗口打开」（widget-window.md）：独立 Electron 窗口注册表。 */
 let widgetWindows: WidgetWindowHost | null = null;
-/** D105: computer-use orchestration host (helper / sidecar lifecycle in main). */
+/** D105 / P-B2: computer-use orchestration host (CuaDriver daemon / sidecar lifecycle). */
 let computerHost: ComputerHost | null = null;
 let tray: ReturnType<typeof createTray> | null = null;
 /** Tracked to honour "no notifications while the window is in the foreground". */
@@ -137,9 +137,8 @@ function beginQuit(): void {
   widgetPreviewHost?.dispose();
   // 组件窗口（widget-window.md §4.2）：退出即全部关闭（Runtime 卸载即停，无后台遗留）。
   widgetWindows?.closeAll();
-  // D105：计算机操控 helper 的 terminate / provider 回收（编排层的 shutdown 语义，
-  // 沿 orca 的 beforeExit 处理）；host-shutdown-state 先立标志，权限引导等在途
-  // 流程不再拉起新 helper。
+  // D105 / P-B2：计算机操控 sidecar 回收（其 disconnect 处理会终止 CuaDriver
+  // daemon）；host-shutdown-state 先立标志，权限引导等在途流程不再拉起新进程。
   markHostShuttingDown();
   computerHost?.shutdown();
 }
@@ -700,9 +699,16 @@ function bootstrap(): void {
   });
 
   // D105 计算机操控（docs/design/52 §3）：宿主单例（B 口 serverMethods 与 IPC 共用）。
-  // 用户 kill switch 直达编排层（terminate helper + 回收 provider），不经 core——
+  // 用户 kill switch 直达编排层（停止 sidecar → 终止 CuaDriver daemon），不经 core——
   // core 卡死也要能停；权限引导三件套仿 sensor-permission（设置页 computer-use 区块）。
-  computerHost = createComputerHost(() => app.getPath('userData'));
+  computerHost = createComputerHost(
+    () => app.getPath('userData'),
+    {
+      // P-B2：CuaDriver embedded 模式下 TCC 归宿主，权限状态/引导直接用主进程 API。
+      api: systemPreferences,
+      shell: { openExternal: (url) => shell.openExternal(url) },
+    },
+  );
   ipcMain.handle('computer:stop', (_event, reason?: unknown) =>
     Promise.resolve(
       computerHost!.stop(typeof reason === 'string' ? `user stop: ${reason}` : 'user stop'),

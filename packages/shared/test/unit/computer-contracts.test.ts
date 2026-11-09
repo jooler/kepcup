@@ -10,10 +10,9 @@ import {
 } from '../../src/index.js';
 
 /**
- * 计算机操控（D105）契约 round-trip：schema 必须能原样消化 orca helper /
- * sidecar 实际产出的结构（冒烟脚本在 macOS 真机捕获的形态，见
- * apps/desktop/scripts/computer-use-smoke.mjs），错误码与 invoke 方法面是
- * main / core / 渲染层共用的唯一事实来源。
+ * 计算机操控（D105）契约 round-trip：schema 必须能原样消化 CuaDriver / sidecar
+ * 实际产出的结构（fixtures 见 apps/desktop/src/main/computer/fixtures/cua-driver/），
+ * 错误码与 invoke 方法面是 main / core / 渲染层共用的唯一事实来源。
  */
 
 const snapshotFixture = {

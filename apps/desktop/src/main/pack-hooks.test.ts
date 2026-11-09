@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -31,7 +32,11 @@ const hooks = require('../../scripts/pack-hooks.cjs') as {
     signed: boolean;
     appGroup: string | null;
   };
-  assertComputerUseHelper(appBundlePath: string): { bundleId: string; executable: string };
+  assertCuaDriverBundle(
+    appBundlePath: string,
+    targetArch: string,
+    options?: { lockPath?: string; verifySignature?: boolean },
+  ): { version: string; executable: string };
   assertNoShareExtension(outDir: string): void;
   readPlist(plistPath: string): unknown;
   firstAppGroupFromEntitlements(text: string): string | null;
@@ -417,58 +422,141 @@ describe('share extension packaging checks', () => {
   });
 });
 
-// D105 §7：computer-use helper 必须随 mac 包分发且身份正确（TCC 记账靠 bundle id）。
-describe('afterPack computer-use helper checks', () => {
-  function fakeHelperApp(overrides: { bundleId?: string; withHelper?: boolean } = {}): string {
-    const bundle = mkdtempSync(path.join(tmpdir(), 'kepcup-pack-computer-'));
+// P-B2：CuaDriver 是唯一 provider，必须随 mac 包分发；bundle / lock / 版本都要校验。
+describe('afterPack CuaDriver checks', () => {
+  const FAKE_EXECUTABLE = '#!/bin/sh\n';
+  const FAKE_EXECUTABLE_SHA256 = createHash('sha256').update(FAKE_EXECUTABLE).digest('hex');
+
+  function fakeApp(
+    overrides: { withBundle?: boolean; withLock?: boolean; packagedVersion?: string } = {},
+  ): string {
+    const bundle = mkdtempSync(path.join(tmpdir(), 'kepcup-pack-cua-'));
     const app = path.join(bundle, 'KepCup.app');
-    if (overrides.withHelper !== false) {
-      const helper = path.join(app, 'Contents', 'Resources', 'computer-use', 'KepCup Computer Use.app');
-      mkdirSync(path.join(helper, 'Contents', 'MacOS'), { recursive: true });
+    const resources = path.join(app, 'Contents', 'Resources');
+    mkdirSync(resources, { recursive: true });
+    if (overrides.withBundle !== false) {
+      const driver = path.join(resources, 'cua-driver', 'CuaDriver.app');
+      mkdirSync(path.join(driver, 'Contents', 'MacOS'), { recursive: true });
+      writeFileSync(path.join(driver, 'Contents', 'Info.plist'), '<plist/>');
+      writeFileSync(path.join(driver, 'Contents', 'MacOS', 'cua-driver'), FAKE_EXECUTABLE);
+    }
+    if (overrides.withLock !== false) {
       writeFileSync(
-        path.join(helper, 'Contents', 'Info.plist'),
-        [
-          '<?xml version="1.0" encoding="UTF-8"?>',
-          '<plist version="1.0">',
-          '<dict>',
-          '<key>CFBundleIdentifier</key>',
-          `<string>${overrides.bundleId ?? 'app.kepcup.desktop.computer-use'}</string>`,
-          '</dict>',
-          '</plist>',
-          '',
-        ].join('\n'),
+        path.join(resources, 'cua-driver.lock.json'),
+        JSON.stringify({ version: overrides.packagedVersion ?? '0.40.1' }),
       );
-      writeFileSync(path.join(helper, 'Contents', 'MacOS', 'orca-computer-use-macos'), '#!/bin/sh\n');
     }
     return app;
   }
 
-  test('a well-formed helper passes and reports its bundle id', () => {
-    const appBundle = fakeHelperApp();
+  function fakeLock(executableSha256 = FAKE_EXECUTABLE_SHA256): { dir: string; lockPath: string } {
+    const dir = mkdtempSync(path.join(tmpdir(), 'kepcup-pack-lock-'));
+    const lockPath = path.join(dir, 'cua-driver.lock.json');
+    writeFileSync(
+      lockPath,
+      JSON.stringify({
+        version: '0.40.1',
+        assets: {
+          'darwin-arm64': {
+            files: { 'CuaDriver.app/Contents/MacOS/cua-driver': executableSha256 },
+          },
+        },
+      }),
+    );
+    return { dir, lockPath };
+  }
+
+  test('a well-formed bundle passes and reports its version', () => {
+    const appBundle = fakeApp();
+    const { dir, lockPath } = fakeLock();
     try {
-      const summary = hooks.assertComputerUseHelper(appBundle);
-      expect(summary.bundleId).toBe('app.kepcup.desktop.computer-use');
-      expect(summary.executable).toContain('orca-computer-use-macos');
+      const summary = hooks.assertCuaDriverBundle(appBundle, 'arm64', {
+        lockPath,
+        verifySignature: false,
+      });
+      expect(summary.version).toBe('0.40.1');
+      expect(summary.executable).toContain('cua-driver');
     } finally {
       rmSync(path.dirname(appBundle), { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test('a missing helper fails the build (extraResources silently skips absent sources)', () => {
-    const appBundle = fakeHelperApp({ withHelper: false });
+  test('a missing bundle fails the build', () => {
+    const appBundle = fakeApp({ withBundle: false });
+    const { dir, lockPath } = fakeLock();
     try {
-      expect(() => hooks.assertComputerUseHelper(appBundle)).toThrow(/缺少 computer-use helper/);
+      expect(() =>
+        hooks.assertCuaDriverBundle(appBundle, 'arm64', { lockPath, verifySignature: false }),
+      ).toThrow(/缺少 cua-driver 产物/);
     } finally {
       rmSync(path.dirname(appBundle), { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test('a wrong bundle id fails the build (TCC would lose the grant)', () => {
-    const appBundle = fakeHelperApp({ bundleId: 'com.stablyai.orca.computer-use' });
+  test('a missing packaged lock fails the build', () => {
+    const appBundle = fakeApp({ withLock: false });
+    const { dir, lockPath } = fakeLock();
     try {
-      expect(() => hooks.assertComputerUseHelper(appBundle)).toThrow(/bundle id 不对/);
+      expect(() =>
+        hooks.assertCuaDriverBundle(appBundle, 'arm64', { lockPath, verifySignature: false }),
+      ).toThrow(/缺少 cua-driver\.lock\.json/);
     } finally {
       rmSync(path.dirname(appBundle), { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a version mismatch fails the build', () => {
+    const appBundle = fakeApp({ packagedVersion: '0.39.0' });
+    const { dir, lockPath } = fakeLock();
+    try {
+      expect(() =>
+        hooks.assertCuaDriverBundle(appBundle, 'arm64', { lockPath, verifySignature: false }),
+      ).toThrow(/版本不一致/);
+    } finally {
+      rmSync(path.dirname(appBundle), { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a lock without a pinned sha256 fails closed', () => {
+    const appBundle = fakeApp();
+    const { dir, lockPath } = fakeLock('PENDING');
+    try {
+      expect(() =>
+        hooks.assertCuaDriverBundle(appBundle, 'arm64', { lockPath, verifySignature: false }),
+      ).toThrow(/缺少可执行文件 sha256 pin/);
+    } finally {
+      rmSync(path.dirname(appBundle), { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a hash mismatch fails the build', () => {
+    const appBundle = fakeApp();
+    const { dir, lockPath } = fakeLock('0'.repeat(64));
+    try {
+      expect(() =>
+        hooks.assertCuaDriverBundle(appBundle, 'arm64', { lockPath, verifySignature: false }),
+      ).toThrow(/sha256 与 lock 不一致/);
+    } finally {
+      rmSync(path.dirname(appBundle), { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('an unsigned bundle fails the signature check', () => {
+    const appBundle = fakeApp();
+    const { dir, lockPath } = fakeLock();
+    try {
+      expect(() => hooks.assertCuaDriverBundle(appBundle, 'arm64', { lockPath })).toThrow(
+        /签名校验失败/,
+      );
+    } finally {
+      rmSync(path.dirname(appBundle), { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

@@ -15,11 +15,11 @@ import {
   type CuaDriverWindowGeometry
 } from './cua-driver-coordinates'
 import { validateComputerProviderActionParams } from './computer-provider-action-validation'
-import type { NativeActionMethod } from './macos-native-provider-contract'
+import type { ComputerActionMethod } from './computer-action-method'
 
 // cua-driver 动作映射（P-B1，todo/computer-use-cua-adapter.md WP4，附录 A）。
 //
-// 9 个 NativeActionMethod → cua 工具。要点：
+// 9 个 ComputerActionMethod → cua 工具。要点：
 // - 元素寻址：模型的 element_index 经快照索引表换 driver 的 element_token
 //   （0.34+ 契约只收 token，findings Q3）；
 // - 坐标寻址：KepCup 窗口点 → 截图像素（px = pt × ratio，WP3 coordinates），
@@ -48,7 +48,7 @@ export class CuaDriverActions {
     private readonly snapshotStore: CuaDriverSnapshotStore
   ) {}
 
-  async action(method: NativeActionMethod, params: Record<string, unknown>): Promise<ComputerActionResult> {
+  async action(method: ComputerActionMethod, params: Record<string, unknown>): Promise<ComputerActionResult> {
     const app = await validateComputerProviderActionParams(
       method,
       params

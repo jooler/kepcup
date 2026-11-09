@@ -1,6 +1,7 @@
 # 计算机操控（D105）— 执行方案
 
-> 状态：**已实施**（P0 原生 helper 2026-10-31 落地；P-B1 cua-driver provider 适配 2026-11-07 落地，
+> 状态：**已实施**（P0 原生 helper 2026-10-31 落地；P-B1 cua-driver provider 适配 2026-11-07 落地；
+> **P-B2 2026-11-10 全面切换为 CuaDriver-only，原生 helper / script provider 已删除**，
 > 见 [computer-use-cua-adapter.md](computer-use-cua-adapter.md) 与
 > [computer-use-cua-adapter-findings.md](computer-use-cua-adapter-findings.md)）。
 > 设计见 [docs/design/52-computer-use.md](../docs/design/52-computer-use.md)（D105，先读它的 §1 构成、§2 架构、§4-§6 集成设计再开工）。
@@ -12,7 +13,7 @@
 CI 的 macOS runner 无 GUI 会话与 TCC 授权，`cua-driver-provider.live.test.ts` 在无
 `KEPCUP_CUA_DRIVER_BIN` 时自动 skip——以下项只能在真机人工验收，不要假装 CI 覆盖了它：
 
-1. **授权流**：干净机器上 `KEPCUP_COMPUTER_PROVIDER=cua` 首次使用 → 系统设置的辅助功能 /
+1. **授权流**：干净机器上首次使用 → 系统设置的辅助功能 /
    屏幕录制行出现的是 **KepCup**（embedded 语义，不是 CuaDriver）→ 授权后工具即恢复。
    ⚠️ **禁止 `cua-driver permissions grant`**：embedded daemon 下它把 TCC 记到
    com.trycua.driver 名下，破坏授权归属且难还原（findings「授权语义」节）。授权只能
@@ -21,8 +22,8 @@ CI 的 macOS runner 无 GUI 会话与 TCC 授权，`cua-driver-provider.live.tes
    0.40.1 新增发现 2）——验证错误文案可行动（2026-11-07 复检补：截屏失败与被挡的
    scroll/drag 报错现在都带「系统设置 › 屏幕录制给 KepCup 授权 + 重启」指引）、
    授权后截图恢复、设置页权限状态正确。
-3. **切回 native 无残留**：`KEPCUP_COMPUTER_PROVIDER=native`（默认）行为与 P0 一致；两套
-   provider 不得混用（lifecycle 单测覆盖选择语义）。
+3. **唯一 provider**：darwin 上只有 CuaDriver（不再有 native / script 分支）；非 darwin
+   报「尚未启用」。`KEPCUP_COMPUTER_PROVIDER` 开关已删除，不要再按旧文档设置。
 4. **安装包**：含 CuaDriver.app 的包（+约 60MB/架构）在 release note 写明体积变化；
    pack-hooks 对 cua 产物做「存在才校验」的签名 + lock 哈希检查。
 5. **升级重授权**：cua 期的 TCC 记在 KepCup 主应用名下——原生 helper 时代（独立

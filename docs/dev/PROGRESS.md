@@ -2210,3 +2210,14 @@ botId + name 落到首字母占位。
 - **文档**：design 28 §9.2.1 交叉引用 §11→§10、§10 providers 清单补 kimi/devin、§2.1 auth.kinds 补 'anonymous'；testkit SDK 1.7.0 → 1.9.0 与 core 对齐（消除双版本并存）。
 - **记录在案不修**：重试后新会话的 reusable 静默降级（release close/forget，下次走 resume/load）、已注入未应答 steer 重试丢失、initTimeoutMs 行为链缺 testkit `initDelayMs` 旋钮、新 binary 条目缺 sizeBytes、copilot api-key 待 spike 确认、parallel-sessions 预存在的 `catalogEntry('antigravity')` 空转断言（实际 id `antigravity-acp`）。
 - **验证**：hardening 13 + targets 8 + engine 36 = 57 单测全绿；P5 集成 + parallel-sessions 19/19；core typecheck 0 错；testkit / core dist 重建。未跑全量（AGENTS.md：本轮只动了 core 外部智能体内部与测试，无跨包公共契约变更）。
+
+## 计算机操控 P-B2：全面切换为 CuaDriver-only（2026-11-10）
+
+用户确认「只使用 CuaDriver，不再自行实现」，据此把 provider 层收敛为单一上游实现，并按 CuaDriver 实际能力修订设计：
+
+- **唯一 provider**：`computer-provider-lifecycle.ts` 删除 `KEPCUP_COMPUTER_PROVIDER` 与 native/script 分支；darwin → `CuaDriverProviderClient`，其它平台报未启用。
+- **删除自研栈**：`apps/desktop/native/`（vendored orca Swift helper）、`macos-native-provider-*`、`desktop-script-*`、helper 权限检测/引导模块、构建与冒烟脚本、相关测试全部移除；`NativeActionMethod` 抽成 `computer-action-method.ts`（`ComputerActionMethod`）。
+- **权限改宿主 TCC**：新增 `computer-use-permissions.ts`，主进程用 Electron `systemPreferences` 读 AX/屏幕录制状态；`permissionsOpen` 触发 AX 提示并打开系统设置面板；打开后停止 sidecar，下一次调用重建 daemon 读取新 TCC。顺带修复 `computer:stop`（主进程此前调 `shutdownComputerProviders()`，实际 provider 在 sidecar 子进程里，停不掉）。
+- **打包**：`CuaDriver.app` 成为唯一且必需产物；`electron-builder.yml` 删除 helper、增加 `cua-driver.lock.json` 随包；`fetch-cua-driver.mjs` 增加 `--arch`；`dist.mjs` 每架构 fetch；`dev.mjs` 改为 fetch + `--rebuild` 重取；`pack-hooks.cjs` 强制校验 bundle/lock/签名。
+- **设计妥协**（docs/design/52 修订节 + DEV-083~086）：TCC 归主应用、无独立 helper、跨快照索引失效、`focusedElementId` 固定 null、`annotatedScreenshot`/`ocr` false、scroll/drag 保持 unverified、后台修饰键点击与 web 内容元素直写显式拒绝、`max_elements` 截断如实上报、macOS 26+ direct-capture 二段同意、安装包每架构约 +60MB、Win/Linux 后续按上游启用。
+- **验证**：`apps/desktop/src/main/computer/` + `computer-host.test.ts` + `pack-hooks.test.ts` 定向 140 passed / 1 skipped；core 硬验收 `computer-tools.test.ts` + `computer-use.test.ts` 19/19 零改动通过；desktop typecheck 0 error；`fetch-cua-driver.mjs --arch arm64/x64` 均成功。真机验收清单见 `todo/computer-use.md` / `todo/computer-use-cua-adapter.md`（重授权、二段同意、stop 杀 daemon、发布包 lock 随包）。

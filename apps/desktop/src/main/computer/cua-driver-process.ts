@@ -11,8 +11,7 @@ import { runProcess } from './kepcup-process-host'
 // 父进程退出即 daemon 退出——这是孤儿防护的主通道。
 //
 // 孤儿清理：启动前 socket 已存在时先 `<exe> stop --socket <path>`（上一代残留），
-// 2s 内不消失再 SIGKILL 兜底。退出：SIGTERM → 2s → SIGKILL，随后删 socket 目录
-//（沿 macos-native-provider-process-reaping 的既有语义）。
+// 2s 内不消失再 SIGKILL 兜底。退出：SIGTERM → 2s → SIGKILL，随后删 socket 目录。
 
 export const CUA_DRIVER_SIGKILL_GRACE_MS = 2_000
 export const CUA_DRIVER_STARTUP_TIMEOUT_MS = 15_000

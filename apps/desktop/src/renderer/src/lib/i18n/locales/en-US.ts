@@ -2426,11 +2426,11 @@ export const enUS = {
   // --- D105 computer use ------------------------------------------------------
   'settings.computerUseSectionTitle': 'Computer use',
   'settings.computerUseSectionHint':
-    'Let bots read and drive native desktop apps in tasks: accessibility-tree first, screenshots and synthetic input as fallback, without stealing focus. First use needs Accessibility & Screen Recording granted to "KepCup Computer Use" (macOS only, off by default).',
+    'Let bots read and drive native desktop apps in tasks: accessibility-tree first, screenshots and synthetic input as fallback, without stealing focus. First use needs Accessibility & Screen Recording granted to KepCup (macOS only, off by default).',
   'settings.computerUseGranted': 'Granted',
   'settings.computerUseNotGranted': 'Not granted',
   'settings.computerUseUnknown': 'Unknown',
-  'settings.computerUseAvailability': 'Availability (helper & sidecar handshake)',
+  'settings.computerUseAvailability': 'Availability (CuaDriver & sidecar handshake)',
   'settings.computerUseAvailable': 'Available',
   'settings.computerUseUnavailable': 'Unavailable',
   'settings.computerUseChecking': 'Checking…',
@@ -2440,7 +2440,7 @@ export const enUS = {
   'settings.computerUseOpening': 'Opening…',
   'settings.computerUseRefresh': 'Refresh',
   'settings.computerUsePermissionHint':
-    'Permissions go to the standalone "KepCup Computer Use" helper (not the main app); checking its status briefly launches it to register with TCC.',
+    'Permissions go to the KepCup main app (CuaDriver runs embedded; there is no standalone helper). Screen Recording also needs the macOS second-stage consent on first capture; if a grant does not take effect, restart KepCup.',
   // --- D96 remote control -----------------------------------------------------
   'settings.navRemote': 'Remote',
   'settings.remoteSectionTitle': 'Remote control',

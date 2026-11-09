@@ -2345,11 +2345,11 @@ export const zhCN = {
   // --- D105 计算机操控 --------------------------------------------------------
   'settings.computerUseSectionTitle': '计算机操控',
   'settings.computerUseSectionHint':
-    '让 Bot 在任务中读取并操作本机桌面应用：无障碍树优先，截屏与键鼠兜底，不抢焦点。首次使用需给「KepCup Computer Use」授予辅助功能与屏幕录制权限（仅 macOS，默认关闭）。',
+    '让 Bot 在任务中读取并操作本机桌面应用：无障碍树优先，截屏与键鼠兜底，不抢焦点。首次使用需给 KepCup 授予辅助功能与屏幕录制权限（仅 macOS，默认关闭）。',
   'settings.computerUseGranted': '已授权',
   'settings.computerUseNotGranted': '未授权',
   'settings.computerUseUnknown': '未知',
-  'settings.computerUseAvailability': '可用性（helper 与 sidecar 握手）',
+  'settings.computerUseAvailability': '可用性（CuaDriver 与 sidecar 握手）',
   'settings.computerUseAvailable': '可用',
   'settings.computerUseUnavailable': '不可用',
   'settings.computerUseChecking': '检查中…',
@@ -2359,7 +2359,7 @@ export const zhCN = {
   'settings.computerUseOpening': '正在打开…',
   'settings.computerUseRefresh': '刷新状态',
   'settings.computerUsePermissionHint':
-    '授权对象是「KepCup Computer Use」这个独立助手应用（不是主应用）；检测状态会短暂拉起它注册系统权限。',
+    '授权对象是 KepCup 主应用（CuaDriver 以 embedded 模式运行，不再使用独立助手）。屏幕录制首次截图还需系统二段同意；授权后如未生效，请重启 KepCup。',
   // --- D96 远程遥控 -----------------------------------------------------------
   'settings.navRemote': '远程遥控',
   'settings.remoteSectionTitle': '远程遥控',

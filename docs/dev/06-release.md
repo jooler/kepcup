@@ -83,7 +83,7 @@ node scripts/release/sync-github-secrets.mjs             # 写入 GitHub Actions
 
 签名与公证的接线：`electron-builder.yml` 的 `mac` 段开 hardened runtime，配 `resources/entitlements.mac.plist`（JIT、原生模块、麦克风、摄像头）；有 `CSC_LINK` 时签名，签名成功后检测到 `APPLE_API_KEY*` 三件套就公证。electron-builder 26 的 `APPLE_API_KEY` 要求是 `.p8` 的**文件路径**，所以 CI 把机密 `APPLE_API_KEY_BASE64` 解码成临时文件再传路径。
 
-computer-use helper（D105）：`dist.mjs` 的 0c 步骤在每个 mac 目标架构上**强制新鲜构建** `KepCup Computer Use.app`（`build-computer-use-macos.mjs`，签名身份继承 CI 已导出的 `CSC_NAME`，`KEPCUP_MAC_RELEASE=1` 附加 hardened runtime + timestamp），随 `extraResources` 进包。helper 不单独公证：notarytool 对外层 .app 的提交会校验全部嵌套代码，helper 缺签名或缺 hardened runtime 时外层公证直接失败（DEV-081）。`KEPCUP_SKIP_COMPUTER_USE=1` 可跳过构建（产物将不带计算机操控能力）；pack-hooks 校验包内 helper 的存在性、bundle id 与签名。TCC 授权按（bundle id + Developer ID 签名）记账：dev 与 release 的 helper 同 bundle id 同身份，授权互通，发行版安装后不需要重新授权。
+computer-use（D105 / P-B2）：`dist.mjs` 的 0c 步骤在每个 mac 目标架构上调用 `fetch-cua-driver.mjs --arch <arch>`，从 pinned GitHub Release 获取并校验 `CuaDriver.app`（sha256 与 `resources/cua-driver.lock.json` 一致），随 `extraResources` 进包；`cua-driver.lock.json` 也随包（运行时校验版本）。上游产物带自己的签名，**禁止重签**（会破坏 AMFI / 公证链）。`KEPCUP_SKIP_COMPUTER_USE=1` 可跳过获取（产物将不带计算机操控能力，pack-hooks 会明确警告）。安装包每架构约 +60MB。TCC 归属：CuaDriver 以 embedded 模式运行，授权记在 KepCup 主应用名下；老用户从原生 helper 升级后需要重新授权（release note 写明）。dev 壳（Electron）与 release 包的 TCC 身份不同，互不共用授权。
 
 ### 3. Microsoft Store
 

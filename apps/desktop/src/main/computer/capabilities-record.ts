@@ -12,7 +12,7 @@ import { dirname, join } from 'node:path';
 
 export interface ComputerCapabilitiesRecord {
   available: boolean;
-  /** available=false 时的握手失败原因（sidecar 缺失 / helper 拉起失败等，原样人类可读）。 */
+  /** available=false 时的握手失败原因（sidecar 缺失 / CuaDriver 启动失败等，原样人类可读）。 */
   error: string | null;
   /** 本次检查的毫秒时间戳。 */
   checkedAt: number;
