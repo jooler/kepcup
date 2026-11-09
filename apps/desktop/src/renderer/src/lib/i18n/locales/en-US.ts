@@ -2864,8 +2864,8 @@ export const enUS = {
   'search.themeDark': 'Dark mode',
   'search.themeApplied': 'Appearance switched to "{mode}"',
   'settings.navAgents': 'Agents',
+  'settings.navModelsAgents': 'Models & agents',
   'approvals.environmentLicense': 'License',
-  'agents.title': 'External agents',
   'agents.available': 'Available',
   'agents.defaultAgent': 'Agent used by default for new Bots',
   'agents.defaultAgentNone': 'None (use built-in model)',
@@ -2877,14 +2877,17 @@ export const enUS = {
     "Once enabled, you can pick an agent (such as Claude Agent or Codex) as a Bot's task engine in its run settings: it runs tasks dispatched by that Bot (the conversation itself still uses the built-in model). Sign-in goes through the vendor's official flow; KepCup never accesses or stores your subscription credentials.",
   'agents.background.title': 'Background tasks',
   'agents.background.hint':
-    "Background tasks such as summaries, reflection, memory cleanup, profile building, routing decisions, and Wiki maintenance use the built-in model when one is configured; if only an agent is configured, the agent is used instead. When an agent is selected, these tasks send the relevant content to that agent's vendor: the Bot's memories, your profile (the global profile shared across Bots), conversation content and summaries, and Wiki material, consuming your subscription quota. Background tasks run in a fresh private temporary directory, with none of the agent's own file, command, or network tools (only tools KepCup provides for that task); only agents that support this are selectable.",
-  'agents.background.builtinActive':
-    'A built-in model is configured: background tasks use the built-in model, and the settings below have no effect.',
+    "Background tasks such as summaries, reflection, memory cleanup, profile building, routing decisions, and Wiki maintenance use the built-in agent by default. Once an external agent is selected, these tasks send the relevant content to that agent's vendor (the Bot's memories, your profile, conversation content and summaries, and Wiki material) and consume your subscription quota. Background tasks run in a fresh private temporary directory, with none of the agent's own file, command, or network tools (only tools KepCup provides for that task); only agents that support this are selectable.",
   'agents.background.builtinLightOnly':
-    'Only a built-in lightweight model is configured: summaries, reflection, memory cleanup, and routing decisions use it; profile building, Wiki maintenance, and skill generation (which require a main model) still use an agent as configured below.',
+    'Only a built-in lightweight model is configured: summaries, reflection, memory cleanup, and routing decisions use it; profile building, Wiki maintenance, and skill generation (which require a main model) fall back to each Bot’s own agent.',
+  'agents.background.builtinLightOnlyNoAgent':
+    'Only a built-in lightweight model is configured and external agents are not allowed: summaries, reflection, memory cleanup, and routing decisions use it; purposes that need a main model are skipped.',
+  'agents.background.builtinUnavailable':
+    'No built-in model is configured: background tasks fall back to each Bot’s own agent; when a Bot has no agent, or it cannot run background tasks, they are skipped.',
+  'agents.background.builtinUnavailableNoAgent':
+    'No built-in model is configured and external agents are not allowed: background tasks are skipped.',
   'agents.background.agent': 'Agent for background tasks',
-  'agents.background.auto':
-    "Auto (use each Bot's own agent only; profile building and project group summaries don't run)",
+  'agents.background.builtin': 'Built-in agent',
   'agents.background.off': 'Off (skip background tasks)',
   'agents.background.unavailable': '(unavailable)',
   'agents.background.notInCatalog': '(not in catalog; background tasks skipped)',
@@ -3874,7 +3877,7 @@ export const enUS = {
     '0 means unlimited; default is 240 minutes.',
   'settingsItem.background.tasks.title': 'Background task agent',
   'settingsItem.background.tasks.summary':
-    'Whether background upkeep (memory, profile, skill distillation) uses an external agent, and which one',
+    'Whether background upkeep (memory, profile, skill distillation) uses the built-in agent or an external agent',
   'settingsItem.background.tasks.field.agentEnabled': 'Use external agent',
   'settingsItem.background.tasks.field.agent': 'Agent',
   'settingsItem.unattended.enable.title': 'Turn on unattended mode',

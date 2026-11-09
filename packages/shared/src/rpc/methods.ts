@@ -510,6 +510,7 @@ export const settingsUpdateInputSchema = z.object({
   /** 后台任务开关（P6）：部分 patch，与已存值合并。 */
   backgroundTasks: z
     .object({
+      builtinEnabled: z.boolean().optional(),
       agentEnabled: z.boolean().optional(),
       agentSkillAuthoring: z.boolean().optional(),
       projectMentionOnly: z.boolean().optional(),
