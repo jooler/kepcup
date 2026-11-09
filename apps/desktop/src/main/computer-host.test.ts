@@ -8,8 +8,9 @@ import {
   readCapabilitiesRecord,
 } from './computer/capabilities-record';
 
-const { capabilitiesMock } = vi.hoisted(() => ({
+const { capabilitiesMock, shutdownSidecarMock } = vi.hoisted(() => ({
   capabilitiesMock: vi.fn(),
+  shutdownSidecarMock: vi.fn(),
 }));
 
 vi.mock('./computer/sidecar-client', () => ({
@@ -17,6 +18,8 @@ vi.mock('./computer/sidecar-client', () => ({
   callComputerSidecarAction: vi.fn(),
   // P-B1 WP6：ComputerHostImpl 构造时注入 cua socket 目录父级。
   setComputerSidecarUserDataDirectory: vi.fn(),
+  // P-B2：stop / permissionsOpen 通过它终止 sidecar（provider 跑在子进程里）。
+  shutdownComputerSidecar: shutdownSidecarMock,
 }));
 
 /**
@@ -30,6 +33,7 @@ describe('ComputerHost capabilities record', () => {
   beforeEach(() => {
     userDataDir = mkdtempSync(join(tmpdir(), 'kepcup-capabilities-'));
     capabilitiesMock.mockReset();
+    shutdownSidecarMock.mockReset();
   });
 
   afterEach(() => {
@@ -45,17 +49,17 @@ describe('ComputerHost capabilities record', () => {
   });
 
   it('persists the failure reason and surfaces it via capabilitiesStatus', async () => {
-    capabilitiesMock.mockRejectedValue(new Error('helper spawn failed'));
+    capabilitiesMock.mockRejectedValue(new Error('cua-driver daemon failed'));
     const host = createComputerHost(() => userDataDir);
 
     await expect(host.capabilities()).resolves.toBeNull();
     await expect(host.capabilitiesStatus()).resolves.toMatchObject({
       available: false,
-      error: 'helper spawn failed',
+      error: 'cua-driver daemon failed',
     });
     expect(readCapabilitiesRecord(userDataDir)).toMatchObject({
       available: false,
-      error: 'helper spawn failed',
+      error: 'cua-driver daemon failed',
     });
   });
 
@@ -76,5 +80,115 @@ describe('ComputerHost capabilities record', () => {
     expect(join(userDataDir, CAPABILITIES_RECORD_FILENAME)).toContain(
       'computer-use-capabilities.json',
     );
+  });
+});
+
+describe('ComputerHost permissions (P-B2: host TCC via systemPreferences)', () => {
+  let userDataDir: string;
+
+  beforeEach(() => {
+    userDataDir = mkdtempSync(join(tmpdir(), 'kepcup-permissions-'));
+    capabilitiesMock.mockReset();
+    shutdownSidecarMock.mockReset();
+  });
+
+  afterEach(() => {
+    rmSync(userDataDir, { recursive: true, force: true });
+  });
+
+  function permissionDeps(
+    api: {
+      isTrustedAccessibilityClient?: (prompt: boolean) => boolean;
+      getMediaAccessStatus?: (mediaType: 'screen') => string;
+    } = {},
+  ) {
+    const apiMock = {
+      isTrustedAccessibilityClient: vi.fn(api.isTrustedAccessibilityClient ?? (() => true)),
+      getMediaAccessStatus: vi.fn(api.getMediaAccessStatus ?? (() => 'granted')),
+    };
+    const openExternal = vi.fn(async () => undefined);
+    return { api: apiMock, shell: { openExternal }, platform: 'darwin' as const };
+  }
+
+  it('maps host TCC states', async () => {
+    const deps = permissionDeps({
+      isTrustedAccessibilityClient: () => false,
+      getMediaAccessStatus: () => 'denied',
+    });
+    const host = createComputerHost(() => userDataDir, deps);
+
+    await expect(host.permissionsStatus()).resolves.toEqual({
+      accessibility: 'not-granted',
+      screenRecording: 'not-granted',
+    });
+  });
+
+  it('returns unknown without permission deps', async () => {
+    const host = createComputerHost(() => userDataDir);
+    await expect(host.permissionsStatus()).resolves.toEqual({
+      accessibility: 'unknown',
+      screenRecording: 'unknown',
+    });
+  });
+
+  it('prompts for accessibility and opens the Privacy pane', async () => {
+    const deps = permissionDeps();
+    const host = createComputerHost(() => userDataDir, deps);
+
+    await host.permissionsOpen('accessibility');
+
+    expect(deps.api.isTrustedAccessibilityClient).toHaveBeenCalledWith(true);
+    expect(deps.shell.openExternal).toHaveBeenCalledWith(
+      'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility',
+    );
+    // 不在打开设置时杀掉可能承载在途动作的 sidecar；下一次 invoke 前重启。
+    expect(shutdownSidecarMock).not.toHaveBeenCalled();
+    await host.invoke('click', {});
+    expect(shutdownSidecarMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens the screen-recording Privacy pane', async () => {
+    const deps = permissionDeps();
+    const host = createComputerHost(() => userDataDir, deps);
+
+    await host.permissionsOpen('screen-recording');
+
+    expect(deps.api.isTrustedAccessibilityClient).not.toHaveBeenCalled();
+    expect(deps.shell.openExternal).toHaveBeenCalledWith(
+      'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
+    );
+    expect(shutdownSidecarMock).not.toHaveBeenCalled();
+    await host.invoke('click', {});
+    expect(shutdownSidecarMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('restarts the sidecar when a grant is first observed', async () => {
+    const api = {
+      isTrustedAccessibilityClient: vi.fn(() => false),
+      getMediaAccessStatus: vi.fn(() => 'denied'),
+    };
+    const deps = {
+      api,
+      shell: { openExternal: vi.fn(async () => undefined) },
+      platform: 'darwin' as const,
+    };
+    const host = createComputerHost(() => userDataDir, deps);
+
+    await host.permissionsStatus();
+    expect(shutdownSidecarMock).not.toHaveBeenCalled();
+
+    api.isTrustedAccessibilityClient.mockReturnValue(true);
+    await host.permissionsStatus();
+    // 读取权限不直接杀掉 sidecar（在途动作可能已下发）；下一次 invoke 前重启。
+    expect(shutdownSidecarMock).not.toHaveBeenCalled();
+
+    await host.invoke('click', {});
+    expect(shutdownSidecarMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('stop() terminates the sidecar so the daemon sees fresh TCC', () => {
+    const host = createComputerHost(() => userDataDir);
+    expect(host.stop('test')).toEqual({ stopped: true });
+    expect(shutdownSidecarMock).toHaveBeenCalledTimes(1);
   });
 });

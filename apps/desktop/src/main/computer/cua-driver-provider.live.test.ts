@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -53,6 +53,7 @@ describe.skipIf(!BIN)('cua-driver provider（live：macOS 真机）', () => {
       return
     }
     process.env.KEPCUP_CUA_DRIVER_APP_PATH = appPathFromBin(BIN!)
+    process.env.KEPCUP_CUA_DRIVER_ALLOW_APP_PATH_OVERRIDE = '1'
     workspace = mkdtempSync(join(tmpdir(), 'cua-live-'))
     notePath = join(workspace, 'probe-note.txt')
     writeFileSync(notePath, 'live test document\n')
@@ -84,6 +85,7 @@ describe.skipIf(!BIN)('cua-driver provider（live：macOS 真机）', () => {
       rmSync(workspace, { recursive: true, force: true })
     }
     delete process.env.KEPCUP_CUA_DRIVER_APP_PATH
+    delete process.env.KEPCUP_CUA_DRIVER_ALLOW_APP_PATH_OVERRIDE
   })
 
   it('闭环：listApps → listWindows → 快照（含截图）→ typeText → setValue → click（按索引）→ 再观测', async () => {

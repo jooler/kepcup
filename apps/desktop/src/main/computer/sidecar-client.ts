@@ -103,9 +103,14 @@ export async function callComputerSidecarAction(
   )
 }
 
-export function resetComputerSidecarForTest(): void {
+/** 杀掉 sidecar 子进程；其 disconnect 处理会终止 provider 与 CuaDriver daemon。 */
+export function shutdownComputerSidecar(): void {
   sidecar?.shutdown()
   sidecar = null
+}
+
+export function resetComputerSidecarForTest(): void {
+  shutdownComputerSidecar()
 }
 
 function getComputerSidecar(): ComputerSidecarProcess {

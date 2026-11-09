@@ -94,7 +94,7 @@ export function createTray(options: {
           enabled: remote.enabled,
           click: () => options.onPairPhone(),
         },
-        // D105：用户 kill switch——terminate helper / 回收 provider，随时可点
+        // D105 / P-B2：用户 kill switch——停止 sidecar / 终止 CuaDriver daemon，随时可点
         //（没有会话时是无害的幂等动作）。
         { label: '停止计算机操控', click: () => options.onComputerStop() },
         { type: 'separator' },

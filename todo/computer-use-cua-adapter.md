@@ -10,6 +10,21 @@
 > 本期范围：**只在 provider 层换实现**。不动审批、不动 core 工具、不新增工具、只验 macOS。Win/Linux 启用与新增工具（`launch_app` / `invoke_menu` / `zoom` / `verify_state`）是 P-B2，不在本期。
 > 约定：迭代中只跑定向测试（`node scripts/run-tests.mjs run <文件或目录>`）；涉及 shared 契约先 `pnpm --filter @kepcup/shared build`；收口跑一次全量 `pnpm test`。
 
+## P-B2 全面切换（2026-11-10，已实施）
+
+> 用户确认：计算机操控**只使用 CuaDriver**，不再自行实现；后续跟随上游更新适配；
+> 原设计中 CuaDriver 不能满足的要求，设计方案做妥协（见 docs/design/52 修订节）。
+
+- [x] macOS 唯一 provider = CuaDriver；删除 `KEPCUP_COMPUTER_PROVIDER` 开关与 native / script 分支。
+- [x] 删除自研 macOS Swift helper、vendored orca 原生层、native / desktop-script provider 及其测试。
+- [x] 权限状态/引导改为主进程 Electron `systemPreferences`：AX 触发系统提示，屏幕录制打开系统设置面板；TCC 归 KepCup 主应用。
+- [x] `computer:stop` / `permissionsOpen` 通过杀掉 sidecar 终止 CuaDriver daemon；权限读取/打开只标记「下一次 invoke 前重启」，避免打断在途动作（同时修复主进程停不掉子进程 provider 的缺陷）。
+- [x] 打包：`CuaDriver.app` 必需，`cua-driver.lock.json` 随包；`fetch-cua-driver.mjs --arch` 支持交叉打包；pack-hooks 强制校验。
+- [x] 设计文档记录 12 条妥协（TCC 归属、无独立 helper、索引语义、focusedElementId、annotated/OCR、scroll/drag 验证、后台输入限制、max_elements 截断、direct-capture 二段同意、体积、Win/Linux）。
+- [ ] 真机验收：干净机器重授权、macOS 26+ 二段同意、设置页刷新、stop 杀 daemon、发布包 lock 随包。
+- [ ] 发布签名包：确认 `mac.signIgnore` 未重签 `CuaDriver.app`、`afterSign` 的哈希/上游签名校验通过、公证接受不同 Team ID 的嵌套 bundle。
+- [ ] 上游跟进：季度或按需升版（`--record` 回填 lock → 复核 `click`/`get_window_state` 契约 → 单测 + live + smoke → 只改 `cua-driver-*.ts`，不扩散到 core 工具/审批）。
+
 ## 0 一页结论
 
 | | 现役（自研 Swift helper） | 本期目标（cua-driver provider） |
@@ -163,6 +178,9 @@ WP0 是**止损点**：它回答不了的问题，后面全是猜的。WP3 与 W
 
 ## WP6 装配、开关与 UI（1 天，M3 后半）
 
+> **历史记录**：P-B2 已删除 `KEPCUP_COMPUTER_PROVIDER` 开关与 native / script 分支，
+> 本节仅保留 P-B1 实施记录；当前语义以顶部「P-B2 全面切换」为准。
+
 文件（改）：`computer-provider-lifecycle.ts`、`computer-host.ts`、`computer-sidecar.ts`（如需要）、`electron-builder.yml`、`apps/desktop/scripts/pack-hooks.cjs`（产物检查）。
 
 - [x] `computer-provider-lifecycle.ts` 加 `CuaDriverProviderClient` 分支；选择顺序由开关决定：`KEPCUP_COMPUTER_PROVIDER=cua|native|script`（默认 `native`，本期不发版默认）。**原生 provider 代码保留在树里**。
@@ -211,8 +229,8 @@ KEPCUP_CUA_DRIVER_BIN="$PWD/apps/desktop/resources/cua-driver/darwin-arm64/cua-d
 node scripts/run-tests.mjs run packages/core/test/unit/computer-tools.test.ts
 node scripts/run-tests.mjs run packages/core/test/integration/computer-use.test.ts
 
-# 5. 手动冒烟
-KEPCUP_COMPUTER_PROVIDER=cua pnpm --filter @kepcup/desktop dev
+# 5. 手动冒烟（P-B2：CuaDriver 是默认且唯一 provider）
+pnpm --filter @kepcup/desktop dev
 ```
 
 > CI 注意：GitHub 的 macOS runner 无 GUI 会话与 TCC 授权，C 层必须 `skip`；真正的人工验收只能在真机上做，写进 `todo/computer-use.md` 的验收清单，不要假装 CI 覆盖了它。
@@ -222,7 +240,7 @@ KEPCUP_COMPUTER_PROVIDER=cua pnpm --filter @kepcup/desktop dev
 | 风险 | 触发信号 | 止损动作 |
 |---|---|---|
 | 翻译层远超预期 | WP0 预估 >4,000 行，或 Q3/Q4 无法无损映射 | 停在 WP0，回到方案 A，沉没 1 天 |
-| 上游破坏性变更 | 吸收新版本时参数/返回结构变化 | 变更被隔离在 `cua-driver-*.ts`；`KEPCUP_COMPUTER_PROVIDER=native` 回退 |
+| 上游破坏性变更 | 吸收新版本时参数/返回结构变化 | 变更被隔离在 `cua-driver-*.ts`；回退到上一版 lock pin + 重新 fetch 产物 |
 | 上游停更 | 6 个月无发布 | 已在树里的原生 provider 即退路；不追加投入 |
 | 安装包膨胀 | +47MB 不可接受 | 改为首次使用时下载（需签名校验 + 离线可用性设计），或仅 Windows/Linux 打包驱动 |
 | TCC 行为变化 | 老用户升级后需重新授权 | release note 写明；`macos-tcc-reset.ts` 同步改目标 bundle |

@@ -1214,3 +1214,39 @@
 - 问题：todo/computer-use.md 硬约束「vendored 的 Swift helper 源码一行不改」（DEV-077 是第一例外），但 main.swift 里 12 处用户可见显示文案仍写 orca 品牌：3 条错误文案（667 / 714 / 1199）、权限引导窗口标题与副标题（3202 / 3328 / 3330 / 3432 / 3438 / 3439 / 3611 / 4023）、stderr 提示（4393）。构建脚本只改 Info.plist 层的显示名，源内文案够不到；TS 层无绕路（字符串由 helper 直接返回/渲染）。
 - 影响范围：仅 `Sources/OrcaComputerUseMacOS/main.swift` 显示字符串——`Orca Computer Use` / `Orca` → `KepCup Computer Use` / `KepCup`（全局替换，计数校验）；另改写一处失效指引：错误文案让用户跑上游 CLI `orca computer permissions`（KepCup 无此命令），改为只指设置页。标识符（可执行名 `orca-computer-use-macos`、`ORCA_*` env、socket 前缀、`OrcaComputerUse*` 包名）零改动——协议与 peer 校验依赖。`swift test` 6/6；NOTICE.md「例外」小节同步。
 - 决定：品牌串随源码改（属本地化/品牌适配，与 DEV-077 同级的可回退最小例外）；上游跟进人工 diff 时需留意这两处例外文件的再应用。测试 fixture 里的 `/Applications/Orca Computer Use.app` 路径是 mock 数据，不改。
+
+### DEV-083 TCC 归属改为 KepCup 主应用：删除独立 helper
+
+- 状态：已落实
+- 阶段：计算机操控 P-B2（2026-11-10）
+- 是否阻塞：是（用户可见行为变化：原生 helper 时代的授权行不再被使用）
+- 问题：D105-2 原设计让独立 `KepCup Computer Use.app` 承载辅助功能 / 屏幕录制 TCC；CuaDriver 的 embedded 模式要求宿主直接 spawn daemon，TCC 记在宿主 `KepCup.app` 名下，无法再维持独立 helper 身份。
+- 影响范围：删除 `apps/desktop/native/`、helper 构建/权限模块与测试；`computer.permissionsOpen` 改为宿主 API；设置页文案与 release note 写明「老用户需重新授权」；未接线的 `macos-tcc-reset.ts` / `resetComputerUsePermissions` 一并删除。
+- 决定：接受 TCC 归属变化。embedded 模式的正确性以 live 测试的 `source.attribution === "host"` 为断言；dev 壳（Electron）与 release 包的 TCC 身份不同，互不共用授权。
+
+### DEV-084 权限状态/引导改用 Electron systemPreferences
+
+- 状态：已落实
+- 阶段：计算机操控 P-B2（2026-11-10）
+- 是否阻塞：否
+- 问题：cua daemon 的 `check_permissions` 可读，但 TCC 按进程缓存，授权变化后必须重启 daemon 才能读到新状态，会打断进行中的操控会话；而 embedded 模式下宿主与 daemon 是同一 TCC 身份，主进程可以直接读。
+- 影响范围：新增 `apps/desktop/src/main/computer/computer-use-permissions.ts`（注入 `systemPreferences` / `openExternal`）；`computer-host.ts` 的 `permissionsStatus` / `permissionsOpen` 改用它；检测到新授权或打开设置后**标记下一次 invoke 前重启 sidecar**（不立即杀，避免在途动作被降级为 `not_started`）。
+- 决定：产品权限状态用 Electron 内建读取；`cua-driver-permissions.ts` 的 `check_permissions` 仅保留为 live 测试 / embedded 归属诊断。AX 用 `isTrustedAccessibilityClient(true)` 触发系统提示；屏幕录制没有 Electron 主动请求 API，只能打开系统设置面板（macOS 26+ 首次截图还会有 direct-capture 二段同意）。
+
+### DEV-085 删除自研 provider，CuaDriver 成为唯一 provider 且打包必需
+
+- 状态：已落实
+- 阶段：计算机操控 P-B2（2026-11-10）
+- 是否阻塞：否
+- 问题：用户确认「只使用 CuaDriver，不再自行实现」。保留 native 默认 provider 会让 cua 的打包/权限问题长期被掩盖，也违背不再维护自研栈的决定；`desktop-script-*` 的 runtime.ps1/runtime.py 从未落地，属于死代码。
+- 影响范围：删除 `native/`、`macos-native-provider-*`、`desktop-script-*`、`KEPCUP_COMPUTER_PROVIDER` 开关及相关测试；`electron-builder.yml` / `pack-hooks.cjs` / `dist.mjs` / `dev.mjs` 改为 CuaDriver；`cua-driver.lock.json` 随包；`fetch-cua-driver.mjs` 增加 `--arch` 供交叉打包。`mac.signIgnore: ['/cua-driver/']` 阻止 electron-builder 重签上游 bundle；`afterSign` 在签名后的最终产物上再次校验哈希与上游签名（afterPack 早于签名，单独校验不够）。
+- 决定：macOS 唯一 provider = CuaDriver；打包缺失 `CuaDriver.app` 或 lock 时 fail-fast；`KEPCUP_SKIP_COMPUTER_USE=1` 保留为显式豁免（产物无该能力）。
+
+### DEV-086 CuaDriver 能力妥协（原设计要求无法完全满足的部分）
+
+- 状态：已落实
+- 阶段：计算机操控 P-B2（2026-11-10）
+- 是否阻塞：否（设计已按实际能力修订并记录）
+- 问题：原 D105 设计要求中的跨快照稳定元素索引、`focusedElementId`、`annotatedScreenshot` / `ocr`、scroll/drag 读回验证、后台修饰键点击、web 内容元素直写、完整大树、截图稳定可用、安装包体积与 Windows/Linux 自研 runtime，CuaDriver 不能完全满足。
+- 影响范围：`cua-driver-actions.ts` / `cua-driver-observer.ts` 的如实映射；`docs/design/52-computer-use.md`「实现修订（2026-11-10）」12 条妥协表；设置页与错误文案。
+- 决定：不虚报能力（`annotatedScreenshot` / `ocr` = false）、不静默降级（截图失败 / 修饰键点击 / web 内容直写都报可行动错误）、滚动与拖拽保持 `unverified`（不得报 verified）、`focusedElementId` 固定 null、索引只在当前快照内有效。Windows/Linux 后续按上游启用，不再自研。

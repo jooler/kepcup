@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * 下载 / 校验 pinned 的 cua-driver（trycua/cua，P-B1，见 todo/computer-use-cua-adapter.md WP1）。
+ * 下载 / 校验 pinned 的 cua-driver（trycua/cua，P-B1/P-B2，见 todo/computer-use-cua-adapter.md）。
  *
  *   node scripts/fetch-cua-driver.mjs                 # 缓存命中则跳过下载，解包到 resources/
+ *   node scripts/fetch-cua-driver.mjs --arch x64      # 交叉打包：取指定架构（arm64|x64）
  *   node scripts/fetch-cua-driver.mjs --offline       # 只用缓存，缺缓存即失败（CI 离线复现）
  *   node scripts/fetch-cua-driver.mjs --record        # 下载后打印 lock 文件需要的哈希（升版时用）
  *
@@ -11,7 +12,7 @@
  * - 缓存：~/.cache/kepcup/cua-driver/<version>/<asset>；产物输出
  *   apps/desktop/resources/cua-driver/<os>-<arch>/CuaDriver.app（gitignored）。
  * - 校验失败（下载的 tarball / 解包出的可执行文件哈希不匹配 lock）直接失败，不「警告后继续」。
- * - 非 darwin 直接 exit 0（本期只验 macOS；win/linux 启用是 P-B2）。
+ * - 非 darwin 直接 exit 0（本期只接 macOS）。
  * - 必须以完整 CuaDriver.app bundle 形态落盘：裸二进制会被 AMFI SIGKILL（签名校验需要
  *   bundle 内的 Info.plist），findings「架构级新发现 1」。
  */
@@ -20,14 +21,16 @@ import { createHash } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
@@ -37,12 +40,37 @@ const lockPath = join(appDir, 'resources', 'cua-driver.lock.json');
 const outputRoot = join(appDir, 'resources', 'cua-driver');
 const cacheRoot = join(homedir(), '.cache', 'kepcup', 'cua-driver');
 
-const argv = new Set(process.argv.slice(2));
+const rawArgs = process.argv.slice(2);
+const argv = new Set(rawArgs);
 const offline = argv.has('--offline');
 const record = argv.has('--record');
 
+function argValue(name) {
+  for (let index = 0; index < rawArgs.length; index += 1) {
+    if (rawArgs[index] === name) {
+      const value = rawArgs[index + 1];
+      if (value === undefined || value.startsWith('-')) {
+        fail(`${name} requires a value`);
+      }
+      return value;
+    }
+    if (rawArgs[index].startsWith(`${name}=`)) {
+      const value = rawArgs[index].slice(name.length + 1);
+      if (value.length === 0 || value.startsWith('-')) {
+        fail(`${name} requires a value`);
+      }
+      return value;
+    }
+  }
+  return null;
+}
+
 function sha256File(filePath) {
   return createHash('sha256').update(readFileSync(filePath)).digest('hex');
+}
+
+function validSha256(value) {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/i.test(value);
 }
 
 function fail(message) {
@@ -51,12 +79,16 @@ function fail(message) {
 }
 
 if (process.platform !== 'darwin') {
-  // P-B1 只验 macOS；win/linux 打包随 P-B2 打开。
+  // 本期只接 macOS；win/linux 后续按上游启用。
   process.exit(0);
 }
 
 const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
-const arch = process.arch === 'x64' ? 'x64' : 'arm64';
+const requestedArch = argValue('--arch');
+if (requestedArch !== null && requestedArch !== 'arm64' && requestedArch !== 'x64') {
+  fail(`unsupported --arch ${requestedArch} (expected arm64 or x64)`);
+}
+const arch = requestedArch ?? (process.arch === 'x64' ? 'x64' : 'arm64');
 const asset = lock.assets[`darwin-${arch}`];
 if (!asset) fail(`lock file has no darwin-${arch} asset`);
 
@@ -65,12 +97,13 @@ const cacheTarball = join(cacheDir, asset.asset);
 const outputDir = join(outputRoot, `darwin-${arch}`);
 const outputApp = join(outputDir, 'CuaDriver.app');
 const outputExecutable = join(outputApp, 'Contents', 'MacOS', 'cua-driver');
+const pinnedExecutableSha = asset.files?.['CuaDriver.app/Contents/MacOS/cua-driver'];
 
 const alreadyExtracted =
+  validSha256(pinnedExecutableSha) &&
   existsSync(outputExecutable) &&
   existsSync(join(outputApp, 'Contents', 'Info.plist')) &&
-  (asset.files['CuaDriver.app/Contents/MacOS/cua-driver'] ?? '') !== 'PENDING' &&
-  sha256File(outputExecutable) === asset.files['CuaDriver.app/Contents/MacOS/cua-driver'];
+  sha256File(outputExecutable) === pinnedExecutableSha;
 
 if (alreadyExtracted && !record) {
   console.log(`fetch-cua-driver: darwin-${arch} ${lock.version} already up to date at ${outputDir}`);
@@ -115,8 +148,18 @@ if (!existsSync(cacheTarball) || sha256File(cacheTarball) !== asset.assetSha256)
 const staging = join(cacheDir, `.staging-${process.pid}`);
 rmSync(staging, { recursive: true, force: true });
 mkdirSync(staging, { recursive: true });
+// 第一道闸：拒绝绝对路径 / '..' 成员，防止 tarball 逃逸 staging。
+const archiveEntries = execFileSync('tar', ['-tzf', cacheTarball], { encoding: 'utf8' })
+  .split('\n')
+  .filter((entry) => entry.length > 0);
+for (const entry of archiveEntries) {
+  const normalized = entry.replace(/\\/g, '/');
+  if (normalized.startsWith('/') || normalized.split('/').includes('..')) {
+    fail(`release tarball contains an unsafe path: ${entry}`);
+  }
+}
 try {
-  execFileSync('tar', ['-xzf', cacheTarball, '-C', staging]);
+  execFileSync('tar', ['-xzf', cacheTarball, '-C', staging, '--no-same-owner']);
 } catch (error) {
   fail(`tar extraction failed: ${error instanceof Error ? error.message : String(error)}`);
 }
@@ -125,13 +168,25 @@ const stagedApp = findCuaDriverBundle(staging);
 if (!stagedApp) {
   fail('release tarball did not contain CuaDriver.app (bundle form is required; see findings)');
 }
+// 第二道闸：解包结果必须仍在 staging 内，且可执行文件是普通文件（非符号链接）。
+const realStaging = realpathSync(staging);
+const realStagedApp = realpathSync(stagedApp);
+if (!realStagedApp.startsWith(`${realStaging}${sep}`)) {
+  fail('release tarball escaped the staging directory');
+}
 const stagedExecutable = join(stagedApp, 'Contents', 'MacOS', 'cua-driver');
+if (!lstatSync(stagedExecutable).isFile()) {
+  fail('CuaDriver.app executable is not a regular file');
+}
 const executableSha = sha256File(stagedExecutable);
-const pinnedExecutableSha = asset.files['CuaDriver.app/Contents/MacOS/cua-driver'];
 if (record) {
   console.log(JSON.stringify({ version: lock.version, assetSha256: sha256File(cacheTarball), executableSha256: executableSha }, null, 2));
-}
-if (pinnedExecutableSha !== 'PENDING' && executableSha !== pinnedExecutableSha) {
+} else if (!validSha256(pinnedExecutableSha)) {
+  fail(
+    `lock file has no pinned executable sha256 for darwin-${arch}; ` +
+      'run with --record and commit the value'
+  );
+} else if (executableSha !== pinnedExecutableSha) {
   fail(`extracted executable sha256 mismatch: got ${executableSha}, want ${pinnedExecutableSha}`);
 }
 chmodSync(stagedExecutable, 0o755);

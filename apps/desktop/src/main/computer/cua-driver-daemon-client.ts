@@ -301,7 +301,7 @@ function attach(
   }
 }
 
-// --- 行缓冲（与 macos-native-provider-transport 的 NativeProviderLineBuffer 同语义） ----
+// --- 行缓冲（一行一个 JSON 对象；读超时与行上限） ----------------------------
 
 export class CuaDriverLineBuffer {
   private buffer = ''

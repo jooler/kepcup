@@ -131,8 +131,8 @@ const api = {
   closeBotBrowser: (botId: string, conversationId: string): Promise<void> =>
     ipcRenderer.invoke('browser:close', botId, conversationId),
   /**
-   * D105 计算机操控（docs/design/52 §3）：用户 kill switch 直达 main（不经 core，
-   * core 卡死也要能停）+ helper 的 TCC 权限三态与系统设置深链（设置页引导区块）。
+   * D105 / P-B2 计算机操控（docs/design/52 §3）：用户 kill switch 直达 main（不经 core，
+   * core 卡死也要能停）+ 宿主 TCC 权限三态与系统设置深链（设置页引导区块）。
    */
   computerStop: (reason?: string): Promise<{ stopped: boolean }> =>
     ipcRenderer.invoke('computer:stop', reason),

@@ -6,13 +6,14 @@
   import { endpointSupports } from '$lib/features/web-shell/endpoint';
 
   /**
-   * 设置页「计算机操控」独立分区（D105，docs/design/52 §6）：开关走设置目录
-   * 的标量条目（`computer.control`）；下方是 helper 的状态与 TCC 权限引导——
+   * 设置页「计算机操控」独立分区（D105 / P-B2，docs/design/52 §6）：开关走设置目录
+   * 的标量条目（`computer.control`）；下方是 CuaDriver 的状态与宿主 TCC 权限引导——
    * 可用性行（`computer:capabilities-status`，重新握手并把结果落盘 userData，
    * 「本次能不能用」与 TCC 分开呈现，2026-10-31 冒烟反馈）+ TCC 权限三态
-   * （已授权 / 未授权 / 未知，`computer:permissions-status`，检测会拉起 helper 注册
-   * TCC）与「打开系统设置」深链（`computer:permissions-open`，首次拉起 helper 的
-   * --permissions 引导窗口）。远程端点按 desktop-only 能力置灰（'computer-use'）。
+   * （已授权 / 未授权 / 未知，`computer:permissions-status`，直接读 KepCup 的
+   * systemPreferences）与「打开系统设置」深链（`computer:permissions-open`，
+   * AX 会触发系统提示，屏幕录制只开面板）。远程端点按 desktop-only 能力置灰
+   * （'computer-use'）。
    */
 
   type PermissionState = 'granted' | 'not-granted' | 'unknown';
