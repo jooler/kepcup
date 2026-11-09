@@ -98,6 +98,14 @@ async function openSettings(page: Page, section: string): Promise<void> {
   await page.locator('[data-testid="user-menu-trigger"]').click();
   await page.locator('[data-testid="menu-settings"]').click();
   await expect(page.locator('[data-testid="settings-page-content"]')).toBeVisible();
+  // 「模型」「智能体」合并为「模型与智能体」一个左栏条目，内部分页切换。
+  if (section === 'models' || section === 'agents') {
+    await page.locator('[data-testid="settings-nav-models"]').click();
+    if (section === 'agents') {
+      await page.locator('[data-testid="models-agents-tab-agents"]').click();
+    }
+    return;
+  }
   await page.locator(`[data-testid="settings-nav-${section}"]`).click();
 }
 
@@ -132,6 +140,8 @@ async function enableFakeAgent(page: Page, agentId = 'fake'): Promise<void> {
   await page.locator('[data-testid="agents-nav-config"]').click();
   const background = page.locator('[data-testid="background-tasks-agent-select"]');
   await expect(background).toBeVisible();
+  // 默认是内置智能体（即使没有内置模型，也先落在这个默认条目上）。
+  await expect(background).toHaveValue('builtin');
   await background.selectOption('off');
   await expect(page.locator('[data-testid="background-tasks-skill-authoring"]')).toHaveCount(0);
   await expect(page.locator('[data-testid="background-tasks-project-mention-only"]')).toHaveCount(

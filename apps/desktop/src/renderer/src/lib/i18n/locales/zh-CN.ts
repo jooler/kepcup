@@ -2758,8 +2758,8 @@ export const zhCN = {
   'search.themeApplied': '外观已切换为「{mode}」',
   // --- 外部智能体（D72，docs/design/28-external-agents-acp.md）---------------
   'settings.navAgents': '智能体',
+  'settings.navModelsAgents': '模型与智能体',
   'approvals.environmentLicense': '许可',
-  'agents.title': '外部智能体',
   'agents.available': '可用',
   'agents.defaultAgent': '新建 Bot 默认使用的智能体',
   'agents.defaultAgentNone': '不设（使用内置模型）',
@@ -2772,12 +2772,17 @@ export const zhCN = {
   // --- 后台任务（D72 P6，design 28 §8）----------------------------------------
   'agents.background.title': '后台任务',
   'agents.background.hint':
-    '摘要、反思、记忆整理、画像整理、路由判断、Wiki 维护等后台任务：有内置模型时照旧使用内置模型；只配置了智能体时改用智能体。选用智能体后，这些任务会把相应内容发给该智能体的厂商：Bot 的记忆、你的画像（跨 Bot 的全局画像）、对话内容与摘要、Wiki 资料，并消耗该订阅的额度。后台任务在全新的私有临时目录里运行，智能体自带的文件 / 命令 / 联网工具一律不给（只有 KepCup 为该任务提供的工具）；只有能做到这一点的智能体可选。',
-  'agents.background.builtinActive': '当前已配置内置模型：后台任务使用内置模型，以下设置暂不生效。',
+    '摘要、反思、记忆整理、画像整理、路由判断、Wiki 维护等后台任务默认由内置智能体执行。选用外部智能体后，这些任务会把相应内容（Bot 的记忆、你的画像、对话内容与摘要、Wiki 资料）发给该智能体的厂商并消耗其额度；后台任务在全新的私有临时目录里运行，智能体自带的文件 / 命令 / 联网工具一律不给（只有 KepCup 为该任务提供的工具），只有能做到这一点的智能体可选。',
   'agents.background.builtinLightOnly':
-    '当前只配置了内置轻量模型：摘要、反思、记忆整理与路由判断使用它；画像整理、Wiki 维护与技能生成（需主模型）仍按以下设置使用智能体。',
+    '当前只配置了内置轻量模型：摘要、反思、记忆整理与路由判断使用它；画像整理、Wiki 维护与技能生成（需主模型）会改用各 Bot 自己的智能体。',
+  'agents.background.builtinLightOnlyNoAgent':
+    '当前只配置了内置轻量模型，且未允许外部智能体：摘要、反思、记忆整理与路由判断使用它；需要主模型的用途会被跳过。',
+  'agents.background.builtinUnavailable':
+    '当前没有配置内置模型：后台任务会改用各 Bot 自己的智能体；没有智能体或它不能用于后台任务时，任务会被跳过。',
+  'agents.background.builtinUnavailableNoAgent':
+    '当前没有配置内置模型，且未允许外部智能体：后台任务会被跳过。',
   'agents.background.agent': '用于后台任务的智能体',
-  'agents.background.auto': '自动（只用各 Bot 自己的智能体；画像整理与项目组摘要不运行）',
+  'agents.background.builtin': '内置智能体',
   'agents.background.off': '关闭（跳过后台任务）',
   'agents.background.unavailable': '（暂不可用）',
   'agents.background.notInCatalog': '（不在目录中，后台任务跳过）',
@@ -3680,7 +3685,7 @@ export const zhCN = {
   'settingsItem.general.task-loop.field.maxWallMinutes.hint': '0 = 不限制；默认 240 分钟。',
   'settingsItem.background.tasks.title': '后台任务智能体',
   'settingsItem.background.tasks.summary':
-    '后台整理（记忆、画像、技能沉淀）是否改用外部智能体，以及用哪个',
+    '后台整理（记忆、画像、技能沉淀）由内置智能体还是某个外部智能体执行',
   'settingsItem.background.tasks.field.agentEnabled': '改用外部智能体',
   'settingsItem.background.tasks.field.agent': '智能体',
   'settingsItem.unattended.enable.title': '开启无人值守',

@@ -174,6 +174,15 @@
     shell.settingsSection = id;
   }
 
+  /**
+   * 左栏条目是否高亮：「智能体」与「模型」合并为「模型与智能体」一个条目，内容
+   * 用分区内页签切换（分区 id 仍是 `models` / `agents`），两个 id 都算这一条。
+   */
+  function settingsNavActive(id: SettingsPageSection): boolean {
+    const current = shell.settingsSection;
+    return current === id || (id === 'models' && current === 'agents');
+  }
+
   $effect(() => {
     // 设置快照未到时不要抢先复位：启动恢复可能已经按记忆切到工作台，
     // 等开关真正加载后再判断是否关闭入口。
@@ -863,7 +872,7 @@
      token（展开态 SIDEBAR_ROW_ACTIVE_CLASS，图标态 SIDEBAR_ICON_ACTIVE_CLASS）。 -->
 {#snippet settingsNavEntry(entry: SettingsNavEntry, iconMode: boolean)}
   {@const Icon = asIconComponent(entry.icon)}
-  {@const active = shell.settingsSection === entry.id}
+  {@const active = settingsNavActive(entry.id)}
   {#if iconMode}
     <Tooltip.Root>
       <Tooltip.Trigger

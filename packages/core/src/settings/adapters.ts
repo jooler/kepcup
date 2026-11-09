@@ -853,13 +853,18 @@ export function backgroundTasksAdapter(deps: AdapterDeps): ItemAdapter {
     read: () => {
       const settings = deps.settings.get();
       const agentEnabled = settings.backgroundTasks.agentEnabled;
+      const builtinEnabled = settings.backgroundTasks.builtinEnabled !== false;
       const agent = settings.backgroundAgentId ?? '';
       return snapshot(
         'configured',
         { agentEnabled, agent },
-        agentEnabled
-          ? `无内置模型时改用外部智能体${agent.length > 0 ? `（${clean(agent, 30)}）` : '（自动）'}`
-          : '不改用外部智能体',
+        !builtinEnabled && !agentEnabled
+          ? '关闭后台任务'
+          : agentEnabled && agent.length > 0
+            ? `后台任务改用外部智能体（${clean(agent, 30)}）`
+            : !builtinEnabled
+              ? '各 Bot 自己的智能体'
+              : '内置智能体',
       );
     },
     options: (field) =>
@@ -878,10 +883,15 @@ export function backgroundTasksAdapter(deps: AdapterDeps): ItemAdapter {
     },
     write: (_item, { next }) => {
       const latest = deps.settings.get();
+      const agentEnabled = bool(next.agentEnabled) ?? latest.backgroundTasks.agentEnabled;
       deps.settings.update({
         backgroundTasks: {
           ...latest.backgroundTasks,
-          agentEnabled: bool(next.agentEnabled) ?? latest.backgroundTasks.agentEnabled,
+          // 目录卡片没有「关闭」概念：打开「改用外部智能体」时必须同时打开内置
+          // 路由，否则会留下「内置智能体」显示与「只用各 Bot 自己的智能体」
+          // 路由不一致的状态。
+          builtinEnabled: agentEnabled ? true : latest.backgroundTasks.builtinEnabled,
+          agentEnabled,
         },
         backgroundAgentId: str(next.agent) ?? latest.backgroundAgentId ?? '',
       });

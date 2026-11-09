@@ -1030,17 +1030,28 @@ export const agentSettingInputSchema = z
   .strict();
 
 /**
- * 后台任务（D72 P6，design 28 §8）：只配了外部 Agent、没有内置模型时，后台
- * loop 是否改用外部 Agent 以及降配项。有内置模型时这些开关不起作用。
+ * 后台任务（D72 P6，design 28 §8）：摘要 / 反思 / 记忆整理等后台 loop 由内置
+ * 智能体还是外部 Agent 执行，以及外部 Agent 的降配项。
+ *
+ * 默认是内置智能体（`agentEnabled=true` + 未指定 Agent；没有内置模型时回落到
+ * 各 Bot 自己的智能体）；明确指定 `backgroundAgentId` 时「选定即生效」，即使
+ * 配置了内置模型也走该 Agent。`builtinEnabled=false` + `agentEnabled=false`
+ * 才是整块跳过后台任务。
  */
 export const backgroundTasksSettingsSchema = z
   .object({
-    /** 无内置模型时后台任务改用外部 Agent（关 = 跳过，同 P4 兜底）。 */
+    /**
+     * 是否允许内置模型执行后台任务（缺省 true；false = 跳过内置路由）。
+     * 旧值只有 `agentEnabled=false`、没有本字段：仍视作内置智能体——升级前它在
+     * 有内置模型时本就跑内置，迁移成 false 会静默停掉后台任务。
+     */
+    builtinEnabled: z.boolean().optional().catch(undefined),
+    /** 是否允许改用外部 Agent（关 = 只用内置智能体）。 */
     agentEnabled: z.boolean().default(true).catch(true),
-    /** 只有外部 Agent 时也运行技能生成（最耗额度，默认关）。 */
+    /** 外部 Agent 也运行技能生成（最耗额度，默认关）。 */
     agentSkillAuthoring: z.boolean().default(false).catch(false),
     /**
-     * 只有外部 Agent 时项目组只在被 @ / 回复时响应（不跑路由判断）。默认开
+     * 外部 Agent 的项目组路由判断默认关：项目组只在被 @ / 回复时响应。默认开
      * （审查 C2）：路由判断经 Agent 只在用户明确关掉此项后运行。
      */
     projectMentionOnly: z.boolean().default(true).catch(true),
@@ -1292,9 +1303,9 @@ export const settingsSchema = z.object({
   // 逐条 safeParse），避免未来格式变化让 settings 整体解析失败。
   customAgents: z.array(z.unknown()).default([]).catch([]),
   /**
-   * 无内置模型时后台 loop 选用的 Agent（P6）；缺省 / '' = 自动：只用该 Bot
-   * 自己的 Agent（不换用别家，审查 S2）；无所属 Bot 的任务（画像整理、项目组
-   * 摘要）只在这里明确指定了 Agent 时运行。
+   * 后台 loop 选用的 Agent（P6）；缺省 / '' = 内置智能体（没有内置模型时回落到
+   * 各 Bot 自己的 Agent，不换用别家，审查 S2）；明确指定时即使有内置模型也走它
+   * （选定即生效）；无所属 Bot 的任务（画像整理、项目组摘要）只在明确指定时运行。
    */
   backgroundAgentId: z.string().optional().catch(undefined),
   /** 后台任务（P6）：改用外部 Agent 的开关与降配项。 */

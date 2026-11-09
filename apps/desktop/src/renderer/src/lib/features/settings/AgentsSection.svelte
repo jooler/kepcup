@@ -121,7 +121,6 @@
   data-settings-section="agents"
 >
   <div class="shrink-0 space-y-1">
-    <h3 class="text-sm font-medium">{t('agents.title')}</h3>
     <p class="text-xs text-muted-foreground">{t('agents.hint')}</p>
   </div>
 

@@ -257,13 +257,13 @@ interface AgentCatalogEntry {
 
 - **并发**：调度器 provider 键 `agent:{id}`，并发沿用 `settings.providerConcurrency`，缺省 `AGENT_DEFAULT_CONCURRENCY`（2）——仅限 `features.parallelSessions` 的 Agent，其余恒为 1（§7「跨会话并发」）。
 - **用量**：`usage_ledger` 沿用现有列（`provider='agent:{id}'`、费用为空）；token 取 `PromptResponse.usage`（ACP 不稳定字段；口径由 Provider 声明——Claude / Codex 实为本 turn，其余按会话累计做差），缺失时每个模型轮记一条零 token 行（只记轮数）；连锁预算对零 token 行按 `AGENT_TURN_BUDGET_TOKENS` 折算；用量页单列「订阅 / 外部 Agent」。
-- **后台 loop**（P6 已实现，P6 审查修复后）：有内置模型则照旧；只有外部 Agent 时由 `agent/llm-router.ts` 改走外部 Agent。`complete()` 用一次性精简会话（Claude 替换式系统提示词字符串、`tools: []`、`settingSources: []`；以新建的空私有临时目录作 cwd、结束即删；不挂宿主桥、不复用任何会话、结束即 `session/close`），只输出 JSON（Schema 写进系统提示词），复用 `structured.ts` 文本 JSON 回退 + zod，**只在输出无法解析时**重试 1 次（重试提示「只输出 JSON」；调用失败 / 超时 / 取消不重试）；Wiki 维护 / 技能生成这类带工具的 loop 以同样的后台精简会话 `startRun`（时限 `AGENT_BACKGROUND_RUN_TIMEOUT_MS`，10 分钟），工具只经宿主桥注入，原生工具的权限请求不弹卡、一律拒绝。
+- **后台 loop**（P6 已实现，P6 审查修复后）：明确指定了外部 Agent 时「选定即生效」——即使配置了内置模型也由 `agent/llm-router.ts` 走该 Agent（不可用则跳过，不换用别家）；否则有内置模型则照旧，没有内置模型时回落到各 Bot 自己的 Agent。`complete()` 用一次性精简会话（Claude 替换式系统提示词字符串、`tools: []`、`settingSources: []`；以新建的空私有临时目录作 cwd、结束即删；不挂宿主桥、不复用任何会话、结束即 `session/close`），只输出 JSON（Schema 写进系统提示词），复用 `structured.ts` 文本 JSON 回退 + zod，**只在输出无法解析时**重试 1 次（重试提示「只输出 JSON」；调用失败 / 超时 / 取消不重试）；Wiki 维护 / 技能生成这类带工具的 loop 以同样的后台精简会话 `startRun`（时限 `AGENT_BACKGROUND_RUN_TIMEOUT_MS`，10 分钟），工具只经宿主桥注入，原生工具的权限请求不弹卡、一律拒绝。
   - **后台会话没有原生工具**：只有 Provider 声明 `backgroundNoNativeTools`（经核对能为该会话完全关闭原生工具）的 Agent 可用于后台——本期只有 Claude（`tools: []`，会话级）与 testkit 假 Agent；引擎对其他 Agent 拒绝开后台会话（第二道防线）。私有临时 cwd 只说明工作目录不是用户 workspace，**不等于**读不到用户文件：能否读取取决于工具——后台会话没有原生工具，只能经宿主桥工具（受网关 / 数据目录规则约束）访问。OpenCode 1.18.35 理论上可用 `"*":"deny"` + 只放行 `{server}_*` 关掉全部原生工具（`Permission.disabled` 对末条命中为 `"*"`/deny 的工具直接下架，离线核对内嵌源码），但其权限配置是进程级（`OPENCODE_CONFIG_CONTENT`），需要单独的后台进程，本期不做（届时后台会话同样先过 Provider 的 `checkConfig`——引擎在每次建 / 恢复 / 复用会话前都调用，后台会话走同一路径）；Codex / Cursor / DeepSeek Harness / Antigravity 未核实能否关闭，均不可用于后台。
   - **合格条件**（`agentBackgroundBlocker`，设置页逐个列出原因）：上一条；未开启「加载我的个人配置」（OpenCode / Cursor 按进程加载个人配置，Claude 虽是会话级也一并排除，从严）；能同进程并行会话（`features.parallelSessions`，否则「该智能体未验证可并行会话」）；并发上限 ≥ 2。
   - **不跨厂商**：「自动」**只用该 Bot 自己的 Agent**，不可用即跳过，永不换用别家；无所属 Bot 的任务（画像整理——跨 Bot 的全局画像；项目组对话的摘要）只在设置里**明确指定**后台 Agent 时运行；明确指定的 Agent 处理所有 Bot 的后台任务，不可用时跳过、不换用别家。设置页说明会发给所选厂商的内容（Bot 记忆、全局画像、对话内容与摘要、Wiki 资料）并消耗订阅额度。
   - **调度**：调度器对 `agent:*` 键上的后台任务（priority 2）至多用 并发-1 个名额（总在用数 < 并发-1 才启动），为对话 / 定时响应（priority 0/1）留一个；并发为 1 时不预留（路由器本就不把后台任务派给并发 1 的 Agent）。`JobsRunner` 的调度键只在路由到 Agent 时用 `agent:{id}`，内置路由保持 P6 前的键（全局轻量 / 主模型的厂商）；直聊摘要按其 Bot 取路由。
   - **项目组路由判断**：默认不经 Agent（`backgroundTasks.projectMentionOnly` 默认开 = 仅 @ / 回复响应）；用户关掉后才跑：时限 `AGENT_TRIAGE_TIMEOUT_MS`（60 s，超时 `no_action`）、同一 Bot 在同一项目组每 `AGENT_TRIAGE_MIN_INTERVAL_MS`（2 分钟）至多判断一次（期间仅 @ / 回复）、计入该 Bot 的每日后台预算（用完即不跑；内置模型的路由判断仍不计）。
-  - 续接 L2 仲裁关闭；反思 / 摘要每 `AGENT_BACKGROUND_EVERY_N_RUNS`（5）次触发一跑（按 Bot / 对话计数，进程内，归零即删计数）；技能生成默认关。设置页「后台任务」：自动 / 指定 Agent / 关闭；哪些用途仍走内置模型按全局主 / 轻量模型逐用途提示。
+  - 续接 L2 仲裁关闭；反思 / 摘要每 `AGENT_BACKGROUND_EVERY_N_RUNS`（5）次触发一跑（按 Bot / 对话计数，进程内，归零即删计数）；技能生成默认关。设置页「后台任务」：内置智能体（默认；没有内置模型时回落各 Bot 自己的智能体）/ 指定 Agent / 关闭；指定的 Agent 优先于内置模型（选定即生效），`builtinEnabled` 只控制内置路由。
   - **用量与预算**：用量照常记 `agent:{id}`（未报 token 记零行）；每日后台预算把零 token 行按 `AGENT_TURN_BUDGET_TOKENS` 折算（协作回合已无 token 预算，D92）（`complete()` 每次调用一行——多轮也只按一轮计；后台 run 每个模型轮一行）。Agent 路由的直聊摘要与记忆整理行记在所属 Bot 名下（计入其每日预算，`JobsRunner` 也按它推迟）；画像整理、项目组对话摘要无所属 Bot，不计入任何 Bot 的预算。内置路由的归属不变。
   - **核心关闭**：后台会话（`complete()`、后台 run）在 `AgentHost.dispose()` 时以失败结算（`AGENT_UNAVAILABLE`）并删除临时目录，调用方不会永远等待；对话 run 照旧不结算（重启恢复标中断）。
   - **待用户确认的默认**（P6 审查修复，协调会话按保守原则决定）：只有 Claude 可用于后台；开启「加载我的个人配置」即不可用于后台；「自动」只用 Bot 自己的 Agent，画像整理 / 项目组对话摘要需明确指定；项目组路由判断默认不经 Agent；并发须 ≥ 2；上述时限与节流值。
@@ -394,7 +394,7 @@ interface AgentProvider {
 | 2   | 能力包默认值                       | 「Agent 原生没有的全部注入」；未知原生能力视为没有                                |
 | 3   | 是否加载用户个人 Agent 配置            | 默认否，提供开关                                                    |
 | 4   | 无 OS 沙箱的 Agent               | `workspace` / `ask` 档命令逐条确认；Windows 上一律 `ask`（有 OS 沙箱的 Agent：两档的沙箱内命令都自动放行，f2b9627） |
-| 5   | 后台 loop 走外部 Agent            | 仅当无内置模型时；L2 仲裁关、反思 / 摘要降频、技能生成默认关                           |
+| 5   | 后台 loop 走外部 Agent            | 明确指定时优先（选定即生效）；否则仅当无内置模型时；L2 仲裁关、反思 / 摘要降频、技能生成默认关 |
 | 6   | 管家可否用外部 Agent                | 可以；onboarding 只有订阅的新用户默认如此                                  |
 | 7   | 社区 Agent（运行时同步 ACP Registry） | 本期不做；架构上已支持（通用 Provider）                                    |
 | 8   | ZCode                        | **已决定**：放弃（P5 复核：订阅鉴权须由宿主读取 / 中转凭据，见 §9.2、DEV-008） |

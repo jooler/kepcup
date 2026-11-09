@@ -15,7 +15,7 @@
   import WebSearchSection from './WebSearchSection.svelte';
   import BrowserProfilesSection from './BrowserProfilesSection.svelte';
   import ComputerUseSection from './ComputerUseSection.svelte';
-  import AgentsSection from './AgentsSection.svelte';
+  import ModelsAgentsSection from './ModelsAgentsSection.svelte';
   import SchedulesSection from './SchedulesSection.svelte';
   import DiagnosticsSection from './DiagnosticsSection.svelte';
   import ExtensionCenterBody from '$lib/features/extension-center/ExtensionCenterBody.svelte';
@@ -52,11 +52,19 @@
     </div>
   </div>
 {:else if section === 'models'}
-  <!-- 宽屏设置页对「模型」分区不滚动（SettingsPage）：容器传递剩余高度，
-       ModelsSection 让右栏详情自己在栏内滚动；窄屏调用方是普通滚动容器，
-       这里的 flex-1 / min-h-0 不生效，照旧整页滚。 -->
+  <!-- 「模型与智能体」一个左栏条目、内部分页：「模型」与「智能体」两个分区 id
+       仍是深链事实源，页签落在对应一侧。两个子分区都接管纵向空间（两栏卡撑满
+       剩余高度，滚动归右栏详情自己）。 -->
   <div data-settings-section="models" class="flex min-h-0 flex-1 flex-col">
-    <ModelsSection />
+    <ModelsAgentsSection tab="models" />
+  </div>
+{:else if section === 'agents'}
+  <div
+    data-settings-section="agents"
+    data-settings-anchor="agents"
+    class="flex min-h-0 flex-1 flex-col"
+  >
+    <ModelsAgentsSection tab="agents" />
   </div>
 {:else if section === 'search'}
   <div data-settings-section="search" class="space-y-6">
@@ -75,15 +83,6 @@
     <div data-settings-anchor="computer-use">
       <ComputerUseSection />
     </div>
-  </div>
-{:else if section === 'agents'}
-  <!-- 与「模型」分区同样接管纵向空间：两栏卡撑满剩余高度，滚动归右栏详情自己。 -->
-  <div
-    data-settings-section="agents"
-    data-settings-anchor="agents"
-    class="flex min-h-0 flex-1 flex-col"
-  >
-    <AgentsSection />
   </div>
 {:else if section === 'contacts'}
   <div data-settings-section="contacts">

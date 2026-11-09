@@ -27,6 +27,20 @@ describe('settings section labels follow locale switches', () => {
     }
   });
 
+  it('models and agents share one nav entry but keep per-section labels', () => {
+    const prev = i18n.locale;
+    try {
+      i18n.setLocale('zh-CN');
+      const ids = visibleSectionSources(false).map((s) => s.id);
+      expect(ids).toContain('models');
+      expect(ids).not.toContain('agents');
+      expect(sectionLabel('models')).toBe('模型与智能体');
+      expect(sectionLabel('agents')).toBe('模型与智能体');
+    } finally {
+      i18n.setLocale(prev);
+    }
+  });
+
   it('unknown id falls back to the settings title in the current locale', () => {
     const prev = i18n.locale;
     try {
