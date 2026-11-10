@@ -29,6 +29,7 @@
 - [ ] 真机验收：干净机器重授权、macOS 26+ 二段同意、设置页刷新、stop 杀 daemon、发布包 lock 随包。
 - [ ] 发布签名包：确认 `mac.signIgnore` 未重签 `CuaDriver.app`、`afterSign` 的哈希/上游签名校验通过、公证接受不同 Team ID 的嵌套 bundle。
 - [ ] 上游跟进：季度或按需升版（`--record` 回填 lock → 复核 `click`/`get_window_state` 契约 → 单测 + live + smoke → 只改 `cua-driver-*.ts`，不扩散到 core 工具/审批）。
+- [x] 升版 0.46.1（2026-11-10）：`--record` 回填 lock（两个 darwin 架构同一 universal 可执行文件哈希）；契约复核结果——输入 schema 只有 `type_text.delay_ms` 默认 30→0，其余工具不变；`get_window_state` / `list_windows` / `check_permissions` 输出字段保持，新增 `capture_id`、`direct_capture_error` 为加法；`drag` 仍不返回 verification。定向 + pack-hooks 全绿。
 
 ## 0 一页结论
 

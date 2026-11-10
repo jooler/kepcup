@@ -2243,3 +2243,11 @@ botId + name 落到首字母占位。
 - **截屏落盘并暴露路径**：外部 Bot 没有图像能力，只拿 base64 做不了像素读回。截图改为写到 provider socket 目录下 `computer-screenshots/`（0700 / 文件 0600，保留最近 20 张且不超过 30 分钟，读入新帧后修剪；sidecar 停止时随 socket 目录整体删除）；`computer_get_app_state` 文本提示追加「文件：<路径>」，base64 照旧返回。
 - **三路独立只读审查后的修正**：① 自检前消费 `#restartSidecarBeforeNextInvoke`（授权后旧 daemon 还缓存着旧 TCC，会让「检测截屏」假阴性）；② 屏幕录制被撤销时把 `directCapture` 重置为 unknown；③ 自检失败原因随结果返回并在设置页就地显示；④ **请求截图但失败**时不再沿用旧像素栅格（只有本来没要截图才复用）；⑤ 动作后失效窗口缓存（zoom/缩放后用旧尺寸判断会沿用废栅格）；⑥ 截图文件改为驱动写入前预创建 0600；⑦ sidecar 停止时**同步**删 socket 目录（SIGTERM 后直接 `process.exit`，异步清理等不到）；⑧ 删除无调用方的 sidecar `permissions` 分支，并把 `probeDirectCapture` 排除出 action 联合；⑨ 设置页刷新补 catch、刷新成功清除旧探测错误。
 - **验证**：`apps/desktop/src/main/computer/` + core 硬验收 `computer-tools.test.ts` + `computer-use.test.ts` 定向 148 passed / 1 skipped（新增：补观察沿用栅格、尺寸变化作废旧栅格、截图失败作废旧栅格、动作后窗口缓存失效、drag foreground 透传与元数据、截屏落盘路径与轮换、自检原因回传 / 授权后重启 sidecar / 撤销后重置直采状态）；desktop / core typecheck 0 error；eslint 干净；全量 `pnpm test` 8046 passed / 44 skipped（755 文件）。记入 DEV-088 / DEV-089 / DEV-090。
+
+## 计算机操控：CuaDriver 升版 0.40.1 → 0.46.1（2026-11-10）
+
+- **上游 stable 判定**：npm 与 PyPI 的 `@trycua/cua-driver` / `cua-driver` 都是 0.46.1；0.40.1 自带的 `check-update` 报 0.44.0，是旧版内嵌清单滞后（GitHub 的 Pre-release 标记只用于避免 monorepo 的 repository Latest 指针漂移，发布说明里明确「SemVer 即稳定版」）。
+- **lock 回填**：version/tag 3 个字段 + 两个架构的 asset sha256（arm64 `f7f226…`、x64 `5eb85d…`）；两个 darwin tarball 内是同一个 universal 可执行文件，哈希 `b6a541…`；LICENSE 未变，`licenseSha256` 不动。`fetch-cua-driver.mjs` 复跑显示 already up to date。
+- **契约复核**（0.40.1 ↔ 0.46.1 逐工具 `describe` diff）：输入 schema 只有 `type_text.delay_ms` 默认 30 → 0（KepCup 不传该参数，影响仅限 CGEvent 回退路径的键入节奏）；其余工具 schema 不变；描述新增 `run_steps` 批处理建议与遥测提示（我们已用 `CUA_DRIVER_RS_TELEMETRY_ENABLED=0` 关闭遥测）。输出面用 0.46.1 daemon 实跑核对：`check_permissions` / `list_apps` / `list_windows` / `get_window_state` 字段与 0.40.1 一致，新增 `capture_id`、`direct_capture_error` 为加法；`drag` 仍不返回 verification。
+- **验证**：`apps/desktop/src/main/computer/` + `computer-host.test.ts` + `pack-hooks.test.ts` 定向 157 passed / 1 skipped。
+- **未做**：真机 live（测试进程无 AX 授权，与上轮同因）；dev 壳需重启才会换上新二进制。

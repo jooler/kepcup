@@ -6,7 +6,7 @@ Bot 通过**无障碍树优先、截屏与键鼠兜底**读取并操作本机原
 
 > ## 实现修订（2026-11-10）：只保留 CuaDriver
 >
-> 用户确认：计算机操控**只使用 CuaDriver**（trycua/cua，pin 0.40.1），不再自行实现；
+> 用户确认：计算机操控**只使用 CuaDriver**（trycua/cua，pin 0.46.1），不再自行实现；
 > 后续跟随上游版本更新适配。自研 macOS Swift helper、vendored orca 原生层、
 > native / desktop-script provider 及其构建/打包链路已删除。CuaDriver 不能满足的
 > 原设计要求按下表妥协（本表与 [docs/dev/DEVIATIONS.md](../dev/DEVIATIONS.md)
