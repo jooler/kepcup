@@ -3,7 +3,6 @@
   import AppearanceSection from './AppearanceSection.svelte';
   import GeneralSection from './GeneralSection.svelte';
   import HardwareSection from './HardwareSection.svelte';
-  import ModelsSection from './ModelsSection.svelte';
   import ContactsSection from '$lib/features/contacts/ContactsSection.svelte';
   import SandboxSection from './SandboxSection.svelte';
   import UnattendedSection from './UnattendedSection.svelte';
