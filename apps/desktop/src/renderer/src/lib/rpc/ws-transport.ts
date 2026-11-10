@@ -8,16 +8,19 @@ import {
   envelopeAadString,
   pairingAcceptTranscript,
   pairingRequestTranscript,
+  parsePairingLink,
   relayEnvelopeSchema,
   relayEventPayloadSchema,
   relayKickPayloadSchema,
   relayPairingPayloadSchema,
   type PairingKeyMode,
+  type PairingLink,
   type RelayEnvelope,
   type RelayFragment,
   type RelayFrameType,
 } from '@kepcup/shared';
 import type { RpcTransport } from '@kepcup/shared';
+import { NATIVE_SHELL } from '../features/web-shell/shell';
 
 /**
  * 远程遥控手机端（D96 WP5，design 46 §4.4/§4.5/§5.5）：手机 PWA 到桌面 core 的
@@ -465,42 +468,10 @@ function chunkBytes(bytes: Uint8Array, size: number): Uint8Array[] {
 
 // --- 配对链接（§3.1：`<origin>/#pair=<relayUrl>,<sessionId>,<pairingSecret>`）------
 
-export interface PairingLink {
-  relayUrl: string;
-  sessionId: string;
-  /** 16B 配对码的 base64url（一次性，5 分钟有效）。 */
-  secret: string;
-}
-
-const SESSION_ID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
-
-/** 解析配对链接（容忍整条 URL 或只有 `#pair=…` 片段）；不合法返回 null。 */
-export function parsePairingLink(raw: string): PairingLink | null {
-  const text = raw.trim();
-  const at = text.indexOf('#pair=');
-  const marker = at >= 0 ? text.slice(at + 6) : text.startsWith('pair=') ? text.slice(5) : null;
-  if (marker === null) return null;
-  const parts = marker.split(',');
-  if (parts.length !== 3) return null;
-  const [relayPart, sessionId, secret] = parts as [string, string, string];
-  let relayUrl: string;
-  try {
-    relayUrl = decodeURIComponent(relayPart);
-    const url = new URL(relayUrl);
-    if ((url.protocol !== 'wss:' && url.protocol !== 'ws:') || url.hostname.length === 0)
-      return null;
-  } catch {
-    return null;
-  }
-  if (
-    !SESSION_ID_PATTERN.test(sessionId) ||
-    secret.length < 8 ||
-    !/^[A-Za-z0-9_-]+$/.test(secret)
-  ) {
-    return null;
-  }
-  return { relayUrl: relayUrl.replace(/\/+$/, ''), sessionId, secret };
-}
+// D122：实现上移 shared（apps/mobile 原生首页也要识别配对码），这里 re-export 维持
+// Gate / 既有测试的 import 路径不变。
+export { parsePairingLink };
+export type { PairingLink };
 
 // --- 传输层（配对状态机 + 重连自举 + 心跳）----------------------------------------
 
@@ -556,6 +527,9 @@ const DEVICE_ID_KEY = 'kepcup.remote.deviceId.v1';
  * localStorage**——跨标签页稳定且非机密，服务端仍识别「同一台设备」，重配对
  * 只更新设备行、不产生僵尸条目。同一桌面 + 同一设备身份只保留一条在席连接
  * （第二个标签页顶掉第一个），这是「配对设备 ≡ 全权用户」的既有安全边界。
+ *
+ * 例外（D122 原生壳）：壳是单 WebView 单「标签页」，多标签语义不适用，凭证经
+ * `resolveShellCredentialStorage` 注入 localStorage 跨 App 冷启动保留（见文件尾）。
  */
 
 /** 探测一个存储可用性（隐私模式可能直接禁用访问，读取本身就会抛）。 */
@@ -1565,9 +1539,32 @@ type RelayPairingRequestPayload = {
 
 let shared: WsTransport | null = null;
 
+/**
+ * D122 原生壳的凭证存储选择(docs/design/58-mobile-shell.md §1.3):壳模式下返回
+ * localStorage(单 WebView 单「标签页」,浏览器 PWA 的 sessionStorage 多标签语义
+ * 不适用;localStorage 让配对凭证跨 App 冷启动保留,最近连接一键静默重连),
+ * localStorage 被禁(隐私模式)或非壳时返回 undefined → 回退默认存储链
+ * (sessionStorage → localStorage → MemoryStorage)。
+ */
+export function resolveShellCredentialStorage(
+  native: boolean,
+  probe: (get: () => Storage) => Storage | null = tryStorage,
+): Storage | undefined {
+  if (!native) return undefined;
+  try {
+    return probe(() => localStorage) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function getWebTransport(): WsTransport {
   if (shared === null) {
-    shared = new WsTransport({ sessionId: '0'.repeat(26) });
+    const shellStorage = resolveShellCredentialStorage(NATIVE_SHELL);
+    shared = new WsTransport({
+      sessionId: '0'.repeat(26),
+      ...(shellStorage !== undefined ? { storage: shellStorage } : {}),
+    });
   }
   return shared;
 }

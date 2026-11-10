@@ -4187,6 +4187,9 @@ export const enUS = {
   'web.connected.fingerprint': 'Key fingerprint',
   'web.install.hint': 'Add KepCup to your home screen to use it like an app',
   'web.install.action': 'Add to Home Screen',
+  // --- D122 native mobile shell (docs/design/58-mobile-shell.md) ---------------
+  'web.shell.disconnect': 'Disconnect',
+  'web.shell.disconnectHint': 'Disconnect and return to the KepCup app home',
   'settings.desktopOnly': 'Available on the desktop app only',
   'web.failed.title': 'Cannot reach the relay',
   'web.failed.body':
