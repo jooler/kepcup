@@ -18,6 +18,10 @@ export default tseslint.config(
       // D102 headless 服务端：web 构建产物（pack-server.mjs 生成）与打包暂存目录。
       'apps/server/web/**',
       'release-server/**',
+      // D122 手机原生壳:cap add 生成的原生工程(Java/Swift/ObjC,由 Xcode /
+      // Android Studio 维护),web 构建产物与同步资产已被各自 .gitignore 覆盖。
+      'apps/mobile/android/**',
+      'apps/mobile/ios/**',
       'packages/core/src/**/migrations/**',
       // P12 rootfs build scripts: distro-side CI artifacts (CommonJS/bash by
       // contract, executed inside the image build — not app source).
@@ -30,6 +34,8 @@ export default tseslint.config(
       // require('electron') 改 dev 壳 Info.plist——均为构建工具链，非应用代码。
       'apps/desktop/scripts/generate-icons-electron.cjs',
       'apps/desktop/scripts/patch-dev-electron.cjs',
+      // D122 移动端图标渲染器：同款 Electron 拉起的 CommonJS 构建工具链。
+      'apps/mobile/scripts/generate-icons-electron.cjs',
       // P-B2 computer-use orchestration smoke host: Electron main-process script
       // (package.json "type": "commonjs", launched as `<Electron> <directory>`).
       // CommonJS by contract — not app source.
@@ -52,6 +58,8 @@ export default tseslint.config(
         // Bundler-injected build-time constant (see
         // apps/desktop/src/main/build-constants.d.ts).
         __KEPCUP_TEST_HOOKS__: 'readonly',
+        // D122 mobile home build-time constant (see apps/mobile/src/vite-env.d.ts).
+        __KEPCUP_MOBILE_VERSION__: 'readonly',
         // D72 agent catalog release gates (apps/desktop/scripts/dist.mjs).
         __KEPCUP_AGENT_RELEASE_GATES__: 'readonly',
       },
@@ -82,7 +90,13 @@ export default tseslint.config(
     },
   },
   {
-    files: ['scripts/**', 'apps/desktop/scripts/**', '**/*.config.*', 'packages/*/test/**'],
+    files: [
+      'scripts/**',
+      'apps/desktop/scripts/**',
+      'apps/mobile/scripts/**',
+      '**/*.config.*',
+      'packages/*/test/**',
+    ],
     rules: {
       'no-console': 'off',
     },

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  D122(docs/design/58-mobile-shell.md §1.5):局域网直连 headless(http://ip:port)
+  必须放行明文。取舍:base-config 全局放行而不是枚举私网网段——目标可能是
+  Tailscale 100.x / .local / 任意自建域名,枚举漏网段会变成「莫名连不上」;
+  公网明文 http 本就不被推荐(headless README 建议 --public-url wss / 反代 TLS),
+  壳侧不再二次设防。usesCleartextTraffic 属性不并用(存在本配置时被忽略)。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

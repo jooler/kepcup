@@ -93,41 +93,62 @@ export default defineConfig({
           ],
         },
       },
+      svelteClientProject('desktop-svelte', './apps/desktop/src/renderer/src/lib', [
+        'apps/desktop/src/renderer/src/**/*.svelte.test.ts',
+      ]),
+      // D122 手机原生壳首页(apps/mobile):纯逻辑(connect / target-model / scan)。
+      // src 下也收(svelte store 的纯函数部分可能放 src),排除 .svelte.test.ts 归上面的项目。
       {
-        plugins: [
-          // `svelte` 只装在 apps/desktop 下：从那里解析（含 svelte/internal/client 等子路径）。
-          {
-            name: 'resolve-svelte-from-desktop',
-            enforce: 'pre',
-            resolveId(source) {
-              if (source !== 'svelte' && !source.startsWith('svelte/')) return null;
-              const key = source === 'svelte' ? '.' : `./${source.slice('svelte/'.length)}`;
-              const target = svelteExports[key];
-              if (target === undefined) return null;
-              // 与 vite 的 `browser` 条件一致：优先 browser，其次 default。
-              const file =
-                typeof target === 'string' ? target : (target.browser ?? target.default ?? null);
-              return file === null ? null : path.join(svelteDir, file);
-            },
-          },
-          svelte({ configFile: false, hot: false }),
-        ],
-        resolve: {
-          alias: {
-            $lib: fileURLToPath(new URL('./apps/desktop/src/renderer/src/lib', import.meta.url)),
-            '@kepcup/shared': fileURLToPath(
-              new URL('./packages/shared/src/index.ts', import.meta.url),
-            ),
-          },
-          // 客户端运行时（effect 会真的跑），不是 SSR 的空实现。
-          conditions: ['browser'],
-        },
         test: {
-          name: 'desktop-svelte',
-          environment: './apps/desktop/test/svelte-client-env.ts',
-          include: ['apps/desktop/src/renderer/src/**/*.svelte.test.ts'],
+          name: 'mobile',
+          include: ['apps/mobile/test/**/*.test.ts', 'apps/mobile/src/**/*.test.ts'],
+          exclude: ['**/node_modules/**', 'apps/mobile/src/**/*.svelte.test.ts'],
         },
       },
+      svelteClientProject('mobile-svelte', './apps/mobile/src/lib', [
+        'apps/mobile/src/**/*.svelte.test.ts',
+      ]),
     ],
   },
 });
+
+/**
+ * Svelte 客户端测试项目的单一来源(desktop 与 mobile 共用,D122 审查修复:原先
+ * desktop-svelte / mobile-svelte 两块 30 行配置逐行复制,插件与解析规则会漂移):
+ * `svelte` 只装在 apps/desktop 下、从那里解析(含 svelte/internal/client 等子路径,
+ * 两包版本一致由 pnpm 锁文件保证);`$lib` 按包指向;客户端运行时(effect 会真的
+ * 跑),不是 SSR 的空实现。
+ */
+function svelteClientProject(name: string, libDir: string, include: string[]) {
+  return {
+    plugins: [
+      {
+        name: 'resolve-svelte-from-desktop',
+        enforce: 'pre',
+        resolveId(source) {
+          if (source !== 'svelte' && !source.startsWith('svelte/')) return null;
+          const key = source === 'svelte' ? '.' : `./${source.slice('svelte/'.length)}`;
+          const target = svelteExports[key];
+          if (target === undefined) return null;
+          // 与 vite 的 `browser` 条件一致：优先 browser，其次 default。
+          const file =
+            typeof target === 'string' ? target : (target.browser ?? target.default ?? null);
+          return file === null ? null : path.join(svelteDir, file);
+        },
+      },
+      svelte({ configFile: false, hot: false }),
+    ],
+    resolve: {
+      alias: {
+        $lib: fileURLToPath(new URL(libDir, import.meta.url)),
+        '@kepcup/shared': fileURLToPath(new URL('./packages/shared/src/index.ts', import.meta.url)),
+      },
+      conditions: ['browser'],
+    },
+    test: {
+      name,
+      environment: './apps/desktop/test/svelte-client-env.ts',
+      include,
+    },
+  };
+}
