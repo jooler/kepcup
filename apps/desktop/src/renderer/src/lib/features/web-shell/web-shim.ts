@@ -71,7 +71,12 @@ export function installWebShim(version: string): void {
     // 远程端点一律 desktop-only 拒绝（endpointCapabilityIdSchema 'computer-use'）。
     computerStop: () => Promise.resolve({ stopped: false }),
     computerPermissionStatus: () =>
-      Promise.resolve({ accessibility: 'unknown', screenRecording: 'unknown' }),
+      Promise.resolve({ accessibility: 'unknown', screenRecording: 'unknown', directCapture: 'unknown' }),
+    computerPermissionProbeCapture: () =>
+      Promise.resolve({
+        status: { accessibility: 'unknown', screenRecording: 'unknown', directCapture: 'unknown' },
+        reason: null,
+      }),
     computerPermissionOpen: noop,
     computerCapabilitiesStatus: () =>
       Promise.resolve({ available: false, error: null, checkedAt: 0 }),

@@ -21,6 +21,11 @@
 - [x] `computer:stop` / `permissionsOpen` 通过杀掉 sidecar 终止 CuaDriver daemon；权限读取/打开只标记「下一次 invoke 前重启」，避免打断在途动作（同时修复主进程停不掉子进程 provider 的缺陷）。
 - [x] 打包：`CuaDriver.app` 必需，`cua-driver.lock.json` 随包；`fetch-cua-driver.mjs --arch` 支持交叉打包；pack-hooks 强制校验。
 - [x] 设计文档记录 12 条妥协（TCC 归属、无独立 helper、索引语义、focusedElementId、annotated/OCR、scroll/drag 验证、后台输入限制、max_elements 截断、direct-capture 二段同意、体积、Win/Linux）。
+- [x] 直采（2026-11-10 真机复检）：driver 在直采同意未知时默认不采集；daemon 带
+      `CUA_DRIVER_ALLOW_CAPTURE_CONSENT_ALERT=1` 真去采集（复检机直接成功、不弹框）；
+      embedded 下 `check_permissions{prompt}` 被忽略，故设置页「检测截屏」走真实抓帧自检
+      （`computer:permissions-probe-capture` → sidecar `probeDirectCapture`）；
+      `computer.permissionsStatus` 增加 `directCapture` 三态。见 DEV-087。
 - [ ] 真机验收：干净机器重授权、macOS 26+ 二段同意、设置页刷新、stop 杀 daemon、发布包 lock 随包。
 - [ ] 发布签名包：确认 `mac.signIgnore` 未重签 `CuaDriver.app`、`afterSign` 的哈希/上游签名校验通过、公证接受不同 Team ID 的嵌套 bundle。
 - [ ] 上游跟进：季度或按需升版（`--record` 回填 lock → 复核 `click`/`get_window_state` 契约 → 单测 + live + smoke → 只改 `cua-driver-*.ts`，不扩散到 core 工具/审批）。

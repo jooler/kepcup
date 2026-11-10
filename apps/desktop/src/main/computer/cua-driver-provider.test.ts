@@ -1,9 +1,8 @@
-import { mkdtempSync, writeFileSync, rmSync, existsSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, rmSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import net from 'node:net'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { z } from 'zod'
 import { AppError } from '@kepcup/shared'
 import {
   computerActionResultSchema,
@@ -19,6 +18,7 @@ import {
   cuaDriverToolError
 } from './cua-driver-error-map'
 import { windowPointToScreenshotPixel } from './cua-driver-coordinates'
+import { MAX_KEPT_SCREENSHOTS, SCREENSHOT_DIRECTORY_NAME } from './cua-driver-observer'
 
 // P-B1 单元层（todo/computer-use-cua-adapter.md WP7 A 层）：伪 daemon（node:net
 // 监听 tmpdir 路径）按脚本应答，覆盖 5 个 provider 方法 + 9 个 action 方法 +
@@ -311,8 +311,26 @@ describe('CuaDriverProviderClient（伪 daemon）', () => {
     expect(parsed.screenshotStatus.state).toBe('captured')
     expect(parsed.screenshot?.data).toBe(tinyPngBase64)
     expect(parsed.screenshot?.scale).toBe(2)
-    // 临时截图文件读后即删。
+    // 截图落盘保留并暴露路径（无视觉能力的客户端做像素读回）；文件 0600。
+    const shotPath = parsed.screenshot?.path
+    expect(shotPath?.startsWith(join(tempDir, 'computer-screenshots'))).toBe(true)
+    expect(existsSync(shotPath!)).toBe(true)
+    expect(statSync(shotPath!).mode & 0o777).toBe(0o600)
     expect(existsSync(join(tempDir, 'cua-driver'))).toBe(false)
+  })
+
+  it('截图按数量轮换：超过上限的旧文件被清理，最新一张仍在', async () => {
+    const { provider } = await withProvider(standardHandlers())
+    let lastPath: string | undefined
+    for (let index = 0; index <= MAX_KEPT_SCREENSHOTS; index += 1) {
+      const result = await provider.snapshot({ app: 'Notes', noScreenshot: false })
+      lastPath = result.screenshot?.path
+    }
+    const kept = readdirSync(join(tempDir, SCREENSHOT_DIRECTORY_NAME)).filter((name) =>
+      name.endsWith('.png')
+    )
+    expect(kept.length).toBeLessThanOrEqual(MAX_KEPT_SCREENSHOTS)
+    expect(existsSync(lastPath!)).toBe(true)
   })
 
   it('snapshot(noScreenshot) → screenshotStatus skipped', async () => {
@@ -351,9 +369,9 @@ describe('CuaDriverProviderClient（伪 daemon）', () => {
     const result = await provider.snapshot({ app: 'Notes', noScreenshot: false })
     expect(result.screenshotStatus.state).toBe('failed')
     if (result.screenshotStatus.state === 'failed') {
-      // 二段同意是可恢复状态：文案必须可行动（P-B1 验收清单项 2），原始码保留可诊断。
-      expect(result.screenshotStatus.message).toContain('屏幕录制授权不可用')
-      expect(result.screenshotStatus.message).toContain('屏幕录制')
+      // 截屏被挡是可恢复状态：文案必须可行动（P-B1 验收清单项 2），原始码保留可诊断。
+      expect(result.screenshotStatus.message).toContain('「直接采集」同意')
+      expect(result.screenshotStatus.message).toContain('检测截屏')
       expect(result.screenshotStatus.message).toContain('direct_capture_consent_required')
     }
     // truthful AX 负载保留。
@@ -370,7 +388,7 @@ describe('CuaDriverProviderClient（伪 daemon）', () => {
       provider.action('scroll', { app: 'Notes', elementIndex: 2, direction: 'down' })
     ).rejects.toMatchObject({
       code: 'invalid_argument',
-      message: expect.stringContaining('屏幕录制授权不可用')
+      message: expect.stringContaining('「直接采集」同意')
     })
   })
 
@@ -386,7 +404,7 @@ describe('CuaDriverProviderClient（伪 daemon）', () => {
       provider.action('scroll', { app: 'Notes', elementIndex: 2, direction: 'down' })
     ).rejects.toMatchObject({
       code: 'invalid_argument',
-      message: expect.stringContaining('屏幕录制授权不可用')
+      message: expect.stringContaining('「直接采集」同意')
     })
   })
 
@@ -408,7 +426,7 @@ describe('CuaDriverProviderClient（伪 daemon）', () => {
       provider.action('scroll', { app: 'Notes', elementIndex: 2, direction: 'down' })
     ).rejects.toMatchObject({
       code: 'invalid_argument',
-      message: expect.stringContaining('屏幕录制授权不可用')
+      message: expect.stringContaining('「直接采集」同意')
     })
   })
 
@@ -469,6 +487,109 @@ describe('CuaDriverProviderClient（伪 daemon）', () => {
     await provider.action('click', { app: 'Notes', x: 100, y: 50 })
     expect(received.x).toBe(200)
     expect(received.y).toBe(100)
+  })
+
+  it('动作后的无截屏观察沿用上一帧像素栅格：下一次坐标动作不用重新截屏', async () => {
+    const { provider, daemon } = await withProvider(
+      standardHandlers({
+        click: () => ({ effect: 'unverifiable', route: 'synthetic_events' })
+      })
+    )
+    // 真机实测：include_screenshot:false 时 driver 不回 screenshot_* 与 window_bounds。
+    await provider.snapshot({ app: 'Notes' })
+    // 动作后的补观察（无截图）不得把几何清零。
+    await provider.action('click', { app: 'Notes', x: 100, y: 50 })
+    daemon.calls.length = 0
+    await provider.action('click', { app: 'Notes', x: 120, y: 90 })
+    const clickCall = daemon.calls.find((call) => call.name === 'click')
+    expect(clickCall?.args.x).toBe(240)
+    expect(clickCall?.args.y).toBe(180)
+  })
+
+  it('窗口尺寸变了就不沿用旧像素栅格（要求重新截屏而不是按旧比例乱点）', async () => {
+    const { provider } = await withProvider(
+      standardHandlers({
+        get_window_state: (args) => {
+          const base = standardHandlers().get_window_state!(args) as Record<string, unknown>
+          return args.include_screenshot === true
+            ? base
+            : { ...base, window_bounds: { x: 10, y: 20, width: 500, height: 300 } }
+        }
+      })
+    )
+    await provider.snapshot({ app: 'Notes' })
+    await provider.snapshot({ app: 'Notes', noScreenshot: true })
+    await expect(
+      provider.action('click', { app: 'Notes', x: 100, y: 50 })
+    ).rejects.toMatchObject({ code: 'invalid_argument' })
+  })
+
+  it('截图失败时作废旧像素栅格：坐标动作拿到可行动的截屏错误', async () => {
+    let captures = 0
+    const { provider } = await withProvider(
+      standardHandlers({
+        get_window_state: (args) => {
+          if (args.include_screenshot !== true) {
+            return standardHandlers().get_window_state!(args)
+          }
+          captures += 1
+          return captures === 1
+            ? standardHandlers().get_window_state!(args)
+            : consentBlockedWindowState(args)
+        }
+      })
+    )
+    // 先成功截一帧（几何可用），随后采集被系统挡下（如授权被撤销）。
+    await provider.snapshot({ app: 'Notes' })
+    await provider.snapshot({ app: 'Notes' })
+    await expect(
+      provider.action('click', { app: 'Notes', x: 100, y: 50 })
+    ).rejects.toMatchObject({
+      code: 'invalid_argument',
+      message: expect.stringContaining('「直接采集」同意')
+    })
+  })
+
+  it('动作后失效窗口缓存：动作把窗口缩放后作废旧像素栅格', async () => {
+    let windowCalls = 0
+    const { provider } = await withProvider({
+      ...standardHandlers(),
+      list_windows: () => {
+        windowCalls += 1
+        // 动作后（第二次起）窗口已被 zoom：尺寸从 400 变 500。
+        const width = windowCalls === 1 ? 400 : 500
+        return {
+          windows: [
+            {
+              window_id: 7,
+              pid: 100,
+              app_name: 'Notes',
+              title: 'MainWindow',
+              bounds: { x: 10, y: 20, width, height: 300 },
+              is_on_screen: true,
+              z_index: 5
+            }
+          ]
+        }
+      },
+      get_window_state: (args) => {
+        const base = standardHandlers().get_window_state!(args) as Record<string, unknown>
+        if (args.include_screenshot === true) {
+          return base
+        }
+        // 真机行为：无截图观察不回 window_bounds（只能靠 list_windows 判断尺寸）。
+        const copy = { ...base }
+        delete copy.window_bounds
+        return copy
+      },
+      click: () => ({ effect: 'unverifiable', route: 'synthetic_events' })
+    })
+    await provider.snapshot({ app: 'Notes' })
+    // 元素动作不需要几何；其补观察会发现窗口变大 → 几何作废。
+    await provider.action('click', { app: 'Notes', elementIndex: 1 })
+    await expect(
+      provider.action('click', { app: 'Notes', x: 100, y: 50 })
+    ).rejects.toMatchObject({ code: 'invalid_argument' })
   })
 
   it('click 多击 → double_click；右键 → right_click', async () => {
@@ -545,6 +666,29 @@ describe('CuaDriverProviderClient（伪 daemon）', () => {
     expect(dragArgs.from_y).toBe(100)
     expect(dragArgs.to_x).toBe(320)
     expect(dragArgs.to_y).toBe(310)
+    // 默认后台；前台需要真机实测才有意义（Finder 内容区后台拖拽完全无效）。
+    expect(dragArgs.delivery_mode).toBe('background')
+  })
+
+  it('drag delivery:foreground 透传前台投递，并在动作元数据里如实标注', async () => {
+    let dragArgs: Record<string, unknown> = {}
+    const { provider } = await withProvider(
+      standardHandlers({
+        drag: (args) => {
+          dragArgs = args
+          return { effect: 'unverifiable', route: 'global_input' }
+        }
+      })
+    )
+    await provider.snapshot({ app: 'Notes' })
+    const result = await provider.action('drag', {
+      app: 'Notes',
+      fromElementIndex: 1,
+      toElementIndex: 2,
+      delivery: 'foreground'
+    })
+    expect(dragArgs.delivery_mode).toBe('foreground')
+    expect(result.action?.delivery).toBe('foreground')
   })
 
   it('typeText 带元素索引：element_token 直传（0.40 契约）', async () => {
@@ -589,7 +733,8 @@ describe('CuaDriverProviderClient（伪 daemon）', () => {
     await provider.snapshot({ app: 'Notes' })
     const result = await provider.action('pasteText', { app: 'Notes', text: 'secret-payload' })
     const names = daemon.calls.map((c) => c.name)
-    expect(names).toEqual(['list_apps', 'list_windows', 'get_window_state', 'clipboard_write', 'hotkey', 'get_window_state'])
+    // 动作后先失效窗口缓存：补观察的 list_windows 会重新取一次（判窗口尺寸是否变化）。
+    expect(names).toEqual(['list_apps', 'list_windows', 'get_window_state', 'clipboard_write', 'hotkey', 'get_window_state', 'list_windows'])
     expect(daemon.calls.find((c) => c.name === 'clipboard_write')?.args.text).toBe('secret-payload')
     expect(daemon.calls.find((c) => c.name === 'hotkey')?.args.keys).toEqual(['cmd', 'v'])
     const parsed = computerActionResultSchema.parse(result)
@@ -916,5 +1061,84 @@ describe('cua-driver fixtures（真实应答录制）', () => {
     expect(error).toBeInstanceOf(AppError)
     expect((error as AppError).code).toBe('accessibility_error')
     expect((error as AppError).message).toContain('-25200')
+  })
+})
+
+// P-B2 追加：macOS 26+ 的「直接采集」不能靠 check_permissions 探测（embedded 下
+// prompt 被忽略），只能真抓一帧；code 里的 probeDirectCapture 就是这条路径。
+describe('直采状态与截屏自检', () => {
+  it('只读调用：ready → granted，且不带 prompt', async () => {
+    const { provider, daemon } = await withProvider({
+      check_permissions: () => ({
+        accessibility: true,
+        screen_recording: true,
+        screen_recording_capturable: null,
+        direct_capture_status: 'ready',
+        source: { attribution: 'host' }
+      })
+    })
+
+    await expect(provider.permissionsStatus()).resolves.toEqual({
+      accessibility: true,
+      screenRecording: true,
+      directCapture: 'granted',
+      attribution: 'host'
+    })
+    expect(daemon.calls.at(-1)?.args).toEqual({ prompt: false })
+  })
+
+  it('blocked_by_screen_recording 归为 not-granted', async () => {
+    const { provider } = await withProvider({
+      check_permissions: () => ({
+        accessibility: true,
+        screen_recording: false,
+        direct_capture_status: 'blocked_by_screen_recording',
+        source: { attribution: 'host' }
+      })
+    })
+
+    await expect(provider.permissionsStatus()).resolves.toMatchObject({
+      directCapture: 'not-granted'
+    })
+  })
+
+  it('截屏自检成功 → granted（抓到真实文件）', async () => {
+    const { provider, daemon } = await withProvider({
+      list_windows: () => ({ windows: [{ window_id: 7, pid: 100 }] }),
+      get_window_state: (args) => {
+        writeFileSync(String(args.screenshot_out_file), Buffer.from(tinyPngBase64, 'base64'))
+        return { screenshot_file_path: args.screenshot_out_file, screenshot_frame_valid: true }
+      }
+    })
+
+    await expect(provider.probeDirectCapture()).resolves.toEqual({
+      state: 'granted',
+      reason: null
+    })
+    const call = daemon.calls.find((entry) => entry.name === 'get_window_state')
+    expect(call?.args).toMatchObject({ pid: 100, window_id: 7, include_screenshot: true })
+    // 自检不取 AX 树（便宜路径）。
+    expect(call?.args.include_accessibility_tree).toBe(false)
+  })
+
+  it('截屏自检被挡 → not-granted 并带回 driver 原因', async () => {
+    const { provider } = await withProvider({
+      list_windows: () => ({ windows: [{ window_id: 7, pid: 100 }] }),
+      get_window_state: () => ({
+        screenshot_error: {
+          code: 'px_capture_unavailable',
+          reason: 'direct_capture_consent_required: screen capture skipped'
+        }
+      })
+    })
+
+    const probe = await provider.probeDirectCapture()
+    expect(probe.state).toBe('not-granted')
+    expect(probe.reason).toContain('direct_capture_consent_required')
+  })
+
+  it('没有在屏窗口时自检给 unknown，不臆断权限', async () => {
+    const { provider } = await withProvider({ list_windows: () => ({ windows: [] }) })
+    await expect(provider.probeDirectCapture()).resolves.toMatchObject({ state: 'unknown' })
   })
 })

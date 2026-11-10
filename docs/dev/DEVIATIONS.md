@@ -1250,3 +1250,86 @@
 - 问题：原 D105 设计要求中的跨快照稳定元素索引、`focusedElementId`、`annotatedScreenshot` / `ocr`、scroll/drag 读回验证、后台修饰键点击、web 内容元素直写、完整大树、截图稳定可用、安装包体积与 Windows/Linux 自研 runtime，CuaDriver 不能完全满足。
 - 影响范围：`cua-driver-actions.ts` / `cua-driver-observer.ts` 的如实映射；`docs/design/52-computer-use.md`「实现修订（2026-11-10）」12 条妥协表；设置页与错误文案。
 - 决定：不虚报能力（`annotatedScreenshot` / `ocr` = false）、不静默降级（截图失败 / 修饰键点击 / web 内容直写都报可行动错误）、滚动与拖拽保持 `unverified`（不得报 verified）、`focusedElementId` 固定 null、索引只在当前快照内有效。Windows/Linux 后续按上游启用，不再自研。
+
+### DEV-087 截屏被 driver 默认策略挡下：直采同意 + 真实抓帧自检
+
+- 状态：已落实
+- 阶段：计算机操控 P-B2 真机复检（2026-11-10）
+- 是否阻塞：否
+- 问题：真机复检发现「屏幕录制」已授权 + `check_permissions` 报 `attribution: "host"` 时，
+  `computer_get_app_state(screenshot: true)` 仍失败：`px_capture_unavailable` /
+  `direct_capture_consent_required`。根因是 driver 在「直采同意状态未知」时**默认不尝试
+  采集**（原文：首次采集会让系统弹框并抢焦点），因而永久静默失败——不是 macOS 拒绝。
+  另：embedded 模式下 `check_permissions` 的 `prompt:true` 被忽略（driver 回
+  「never raises its own prompt」），所以设置页不能用它来触发任何授权。
+- 影响范围：`cua-driver-process.ts` 的 daemon 环境；`cua-driver-permissions.ts`
+  （`directCapture` 映射 + `probeCuaDriverDirectCapture`）；sidecar `probeDirectCapture`
+  方法与 `computer-host.ts` `permissionsProbeCapture`；共享
+  `computer.permissionsStatus` 的 `directCapture` 字段；设置页「直接采集」状态行与
+  「检测截屏」按钮；截图失败文案。
+- 决定：daemon 固定带 `CUA_DRIVER_ALLOW_CAPTURE_CONSENT_ALERT=1` 真去采集（复检机上
+  宿主已有屏幕录制 → 直接成功、不弹框；系统若要求同意则由这次采集弹一次框）。状态只能
+  靠真抓一帧判断：设置页按钮 → sidecar `probeDirectCapture`（取一个在屏窗口、
+  `include_accessibility_tree:false` + 截图到临时文件，成功后删除）。三态如实区分：
+  抓到文件→granted；`screenshot_error`→not-granted（带回 driver 原因）；没有在屏窗口等
+  →unknown。自检会短暂抢焦点，只能由用户主动点击触发，不挂在状态轮询里。
+
+### DEV-088 拖拽投递：后台合成拖拽在 Finder 内容区无效，文件拖放前台也落不了盘
+
+- 状态：已缓解（能力限制不在我们这侧）
+- 阶段：计算机操控 P-B2 真机复检（2026-11-10）
+- 是否阻塞：否（工具描述与参数给出替代路径）
+- 问题：Finder 列表视图实测（坐标为 `window_bounds` 换算后的截图像素，已核对落点）：
+  1. `delivery_mode:"background"` 的拖拽在内容区**完全无效**——文件不动，连框选都不响应，
+     只回 `effect:"unverifiable"`；驱动文档说的 `background_unavailable` /
+     `drag_and_drop_session` 未触发。
+  2. `delivery_mode:"foreground"` 能恢复普通拖拽（框选选中整列、窗口右下角缩放
+     920×436 → 870×386 均成功）。
+  3. **文件拖放**（`probe.txt` 行 → `dst` 文件夹行）后台/前台、500–2500ms/20–60 步都
+     不落盘：目标目录为空，Finder 把按下/抬起当两次单击（状态栏出现双选）。macOS 的
+     拖放会话要真实指针，合成事件建不起来。
+- 影响范围：`packages/core/src/tools/computer-tools.ts` 的 `computer_drag`（新增
+  `delivery`）；`cua-driver-actions.ts` 的 drag 分支与 `action.delivery` 元数据。
+- 决定：`computer_drag` 暴露 `delivery: 'background' | 'foreground'`（默认后台），
+  工具描述写明「后台无效时用 foreground 重试；系统级文件拖放即使前台也可能失败，改用
+  应用自带的『移动到』或文件系统操作」。不做自动重试——拖拽没有读回，自动重放有重复
+  执行风险。
+
+### DEV-089 动作后补观察丢失像素栅格；关闭窗口后动作仍绑旧 window_id
+
+- 状态：已落实（像素栅格）/ 记录在案（窗口重绑）
+- 阶段：计算机操控 P-B2 真机复检（2026-11-10）
+- 是否阻塞：否
+- 问题：
+  1. `get_window_state` 在 `include_screenshot:false` 时不回 `screenshot_width` /
+     `screenshot_height` / `screenshot_scale`，也不回 `window_bounds`（实测均 undefined）。
+     动作后的补观察（以及 `noScreenshot: true` 的观察）用这些字段重建几何，缺失时写 0，
+     于是下一次坐标寻址被 `requireGeometry` 误判成「还没拿过截屏」，模型被迫每步都
+     重新截屏。
+  2. 窗口被用户关掉后，`resolveActionWindowId` 仍优先返回快照表里的旧 `window_id`，动作
+     被 driver 拒绝（`window_not_found`：「WindowServer has no record of window N」），
+     必须重新 `computer_get_app_state` 才能续投。
+- 影响范围：`cua-driver-observer.ts`（`resolveGeometry`）；`cua-driver-snapshot-store` /
+  `cua-driver-actions.ts` 的窗口解析。
+- 决定：无截图观察时，窗口尺寸未变就沿用上一帧像素栅格（driver 自身也保留上一帧），
+  尺寸变了才清空并要求重新截屏；单测覆盖「动作后补观察不断链」「尺寸变化作废旧栅格」。
+  窗口重绑不做自动重试：显式 `windowId` 时静默改目标窗口会打到用户没指的窗口；隐式
+  场景下错误码已如实映射 `WINDOW_NOT_FOUND`，模型拿得到「重新 list_windows 选窗」的引导。
+
+### DEV-090 截屏落盘并把文件路径交给模型
+
+- 状态：已落实
+- 阶段：计算机操控 P-B2 真机复检（2026-11-10）
+- 是否阻塞：否
+- 问题：截图只以 base64 放进 `ToolResult.images`；引擎在没有图像能力时会丢弃它，
+  外部 Bot 既看不到像素、也没有文件路径可读，像素级校验和坐标落点确认都做不了
+  （原实现读入后立即删除临时文件）。
+- 影响范围：`cua-driver-observer.ts`（落盘目录与轮换）、共享
+  `computerScreenshotDataSchema.path`、core `renderSnapshot` 的截屏提示文案。
+- 决定：截图写到 provider 的 socket 目录下 `computer-screenshots/`（目录 0700，文件在
+  驱动写入前以 0600 预创建、读入后复核权限位），每写入一张新帧后按「最近 20 张 / 30
+  分钟」修剪——清理发生在新帧落盘时；工具文本里的「[附截屏 WxH]」追加「文件：<路径>
+  （本次会话有效）」。不新增接口——路径随既有结果返回，base64 仍保留给有视觉能力的
+  客户端。文件生命周期与 provider 会话绑定：socket 目录在 sidecar 停止（退出应用、
+  `computer:stop`、权限变更后的重启）时**同步**删除（sidecar 的 SIGTERM 处理会直接
+  `process.exit`，异步清理等不到），路径随之失效。

@@ -21,7 +21,11 @@ import {
   resolveCuaDriverUnavailableReason
 } from './cua-driver-paths'
 import { synthesizeCuaDriverCapabilities } from './cua-driver-capabilities'
-import { checkCuaDriverPermissions } from './cua-driver-permissions'
+import { checkCuaDriverPermissions, probeCuaDriverDirectCapture } from './cua-driver-permissions'
+import type {
+  CuaDriverCaptureProbe,
+  CuaDriverPermissionStatus
+} from './cua-driver-permissions'
 import type { ComputerActionMethod } from './computer-action-method'
 
 // cua-driver provider 客户端（P-B1/P-B2）：provider 接口（5 个方法）的 cua 实现。
@@ -81,9 +85,15 @@ export class CuaDriverProviderClient {
   }
 
   /** WP5：TCC 状态走 socket 的 check_permissions（embedded 只读、不弹窗）。 */
-  async permissionsStatus(): Promise<{ accessibility: boolean; screenRecording: boolean; attribution: string | null }> {
+  async permissionsStatus(): Promise<CuaDriverPermissionStatus> {
     await this.ensureStarted()
     return await checkCuaDriverPermissions(this.requireClient())
+  }
+
+  /** 截屏自检：真抓一帧（首次可能触发系统直采同意框），返回可用性。 */
+  async probeDirectCapture(): Promise<CuaDriverCaptureProbe> {
+    await this.ensureStarted()
+    return await probeCuaDriverDirectCapture(this.requireClient())
   }
 
   shutdown(): void {

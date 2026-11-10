@@ -1,11 +1,13 @@
 import type {
   ComputerInvokeMethod,
   ComputerPermissionsStatus,
+  ComputerPermissionState,
   ComputerProviderCapabilities,
 } from '@kepcup/shared';
 import {
   callComputerSidecarAction,
   callComputerSidecarCapabilities,
+  callComputerSidecarDirectCaptureProbe,
   setComputerSidecarUserDataDirectory,
   shutdownComputerSidecar,
 } from './computer/sidecar-client';
@@ -43,6 +45,11 @@ export interface ComputerHost {
    */
   capabilitiesStatus(): Promise<ComputerCapabilitiesRecord>;
   permissionsStatus(): Promise<ComputerPermissionsStatus>;
+  /**
+   * 截屏自检：让 CuaDriver 真抓一帧，据此判断 macOS 26+ 直采是否可用（首次可能
+   * 触发系统同意框）。只有用户在设置页点按钮时才调用（会短暂抢焦点）。
+   */
+  permissionsProbeCapture(): Promise<ComputerCaptureProbeResult>;
   permissionsOpen(permission: 'accessibility' | 'screen-recording'): Promise<void>;
   stop(reason?: string): { stopped: boolean };
   /** app 退出收尾（beginQuit / will-quit 调用；与 BrowserHost.closeAll 同位）。 */
@@ -57,10 +64,21 @@ export type ComputerHostPermissionDeps = {
   platform?: NodeJS.Platform;
 };
 
+/** 截屏自检结果：状态 + driver 给的原始失败原因（设置页就地显示，不再静默）。 */
+export type ComputerCaptureProbeResult = {
+  status: ComputerPermissionsStatus;
+  reason: string | null;
+};
+
 class ComputerHostImpl implements ComputerHost {
   #userDataDir: () => string;
   #permissionDeps: ComputerHostPermissionDeps | null;
   #lastPermissionStatus: ComputerUsePermissionStatus | null = null;
+  /**
+   * macOS 26+ 直采同意的最近一次探测结果。宿主 API 读不到它（Electron 没有对应
+   * 接口），只能由 CuaDriver 真跑一次采集才知道；未探测前保持 unknown。
+   */
+  #directCapture: ComputerPermissionState = 'unknown';
   /**
    * 权限变化后不要立刻杀 sidecar（可能承载在途动作，会让结果降级为
    * not_started）；标记到下一次 invoke 前再重启，确保新动作读到的 TCC 是新的。
@@ -128,10 +146,10 @@ class ComputerHostImpl implements ComputerHost {
 
   async permissionsStatus(): Promise<ComputerPermissionsStatus> {
     if (isHostShuttingDown()) {
-      return { accessibility: 'unknown', screenRecording: 'unknown' };
+      return { accessibility: 'unknown', screenRecording: 'unknown', directCapture: 'unknown' };
     }
     if (!this.#permissionDeps) {
-      return { accessibility: 'unknown', screenRecording: 'unknown' };
+      return { accessibility: 'unknown', screenRecording: 'unknown', directCapture: 'unknown' };
     }
     // CuaDriver embedded 模式下 TCC 归宿主：直接读 KepCup 的 systemPreferences。
     const status = readComputerUsePermissionStatus(
@@ -149,7 +167,32 @@ class ComputerHostImpl implements ComputerHost {
     ) {
       this.#restartSidecarBeforeNextInvoke = true;
     }
-    return status;
+    // 直采结果依附于「屏幕录制仍然授权」：授权被撤销后旧探测结论必然失效，
+    // 不能继续显示「直接采集：已授权」。
+    if (status.screenRecording !== 'granted') {
+      this.#directCapture = 'unknown';
+    }
+    return { ...status, directCapture: this.#directCapture };
+  }
+
+  async permissionsProbeCapture(): Promise<ComputerCaptureProbeResult> {
+    if (isHostShuttingDown()) {
+      return { status: await this.permissionsStatus(), reason: null };
+    }
+    if (!this.#permissionDeps) {
+      throw new Error('computer-use permissions are not available in this host');
+    }
+    // 用户刚在系统设置里授权时，旧 sidecar 里的 daemon 还缓存着旧 TCC：与 invoke
+    // 一样先按标记重启，否则「授权 → 检测截屏」会一直拿到未授权（主流程假阴性）。
+    if (this.#restartSidecarBeforeNextInvoke) {
+      this.#restartSidecarBeforeNextInvoke = false;
+      shutdownComputerSidecar();
+    }
+    // embedded 模式下 check_permissions 的 prompt 会被 driver 忽略（真机复检），
+    // 想要结论只能真抓一帧：成功即 granted，screenshot_error 即 not-granted。
+    const probe = await callComputerSidecarDirectCaptureProbe();
+    this.#directCapture = probe.state;
+    return { status: await this.permissionsStatus(), reason: probe.reason };
   }
 
   async permissionsOpen(permission: 'accessibility' | 'screen-recording'): Promise<void> {

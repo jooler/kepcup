@@ -715,6 +715,9 @@ function bootstrap(): void {
     ),
   );
   ipcMain.handle('computer:permissions-status', () => computerHost!.permissionsStatus());
+  ipcMain.handle('computer:permissions-probe-capture', () =>
+    computerHost!.permissionsProbeCapture(),
+  );
   // 设置页可用性行（2026-10-31 冒烟反馈）：重新握手并落盘，「本次能不能用」与 TCC 分开呈现。
   ipcMain.handle('computer:capabilities-status', () => computerHost!.capabilitiesStatus());
   ipcMain.handle(

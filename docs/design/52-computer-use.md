@@ -20,15 +20,43 @@ Bot 通过**无障碍树优先、截屏与键鼠兜底**读取并操作本机原
 > | 4 | `focusedElementId` 有值 | driver 无此字段 | 固定 `null` |
 > | 5 | `annotatedScreenshot` / `ocr` | 不支持 | 能力上报 `false` |
 > | 6 | scroll/drag 读回验证 | 只有 `effect`/`evidence`，无布局指纹 | 保持 `unverified`，不得报 verified |
-> | 7 | 后台输入 | 带修饰键点击需前台；web 内容元素直写被拒 | 修饰键点击显式拒绝；web 内容走键盘/坐标 + 焦点输入；无前台升级入口 |
+> | 7 | 后台输入 | 带修饰键点击需前台；web 内容元素直写被拒；后台合成拖拽在 Finder 内容区完全无效 | 修饰键点击显式拒绝；web 内容走键盘/坐标 + 焦点输入；`computer_drag` 暴露 `delivery: 'foreground'`（后台无效时重试），其余动作仍只有后台 |
 > | 8 | 大树完整可用 | `max_elements` 顺序截断 | 如实上报 `truncated`；分页/角色过滤留待后续 |
-> | 9 | 截图稳定可用 | macOS 26+ direct-capture 二段同意 | 如实报 `screenshot_failed` + 指引 |
-> | 10 | 权限引导自动弹窗 | embedded daemon 永不弹窗；TCC 按进程缓存 | 主进程用 `systemPreferences` 读状态/触发 AX 提示；屏幕录制只开面板；下一次动作前重启 daemon |
+> | 9 | 截图稳定可用 | driver 默认不尝试采集（避免弹框抢焦点），embedded 下 `check_permissions` 的 prompt 也被忽略 | daemon 带 `CUA_DRIVER_ALLOW_CAPTURE_CONSENT_ALERT=1` 真去采集（宿主已有屏幕录制时通常直接成功；macOS 要求时由系统弹一次同意框）；设置页「检测截屏」做真实抓帧自检；失败时如实报 `screenshot_failed` + 指引 |
+> | 10 | 权限引导自动弹窗 | embedded daemon 默认不弹窗；TCC 按进程缓存 | 主进程用 `systemPreferences` 读状态/触发 AX 提示；屏幕录制只开面板；直采同意只能由真实采集触发（设置页「检测截屏」或首次截图时由系统弹）；下一次动作前重启 daemon |
 > | 11 | 安装包体积 | CuaDriver.app 每架构约 +60MB | release note 写明；禁止重签上游产物 |
 > | 12 | Windows/Linux 自研 runtime | 上游支持三端 | 本期只接 macOS；后续按上游启用 |
 >
 > 未受影响的硬约束：审批、敏感参数掩码、`outcome: 'uncertain'` 语义与工具面
 > 全部留在 core（`packages/core/src/tools/computer-tools.ts`），provider 替换不触碰。
+>
+> **2026-11-10 真机复检补充（直采）**：宿主（打包版 KepCup / dev 壳）的辅助功能与
+> 屏幕录制都已授权、daemon 也报 `source.attribution: "host"` 时，截图仍会以
+> `direct_capture_consent_required` 失败——根因不是 macOS 拒绝，而是 driver 在「直采
+> 同意状态未知」时**默认不尝试采集**（避免系统弹框抢焦点）。处理：daemon 固定带
+> `CUA_DRIVER_ALLOW_CAPTURE_CONSENT_ALERT=1` 真去采集；复检机上宿主已有屏幕录制，
+> 采集直接成功、系统不弹框；若系统确实要求同意，则由这次采集弹一次框。另注：embedded
+> 模式下 `check_permissions` 的 `prompt` 会被忽略（driver 回「never raises its own
+> prompt」），所以自检只能真抓一帧：设置页「直接采集」状态行 +「检测截屏」
+> （`computer:permissions-probe-capture` → sidecar `probeDirectCapture`）；
+> `computer.permissionsStatus` 增加 `directCapture` 三态（宿主 API 读不到，未自检为
+> `unknown`）。
+>
+> **2026-11-10 真机复检补充（拖拽）**：Finder 列表视图实测——后台（`delivery_mode:
+> "background"`）合成拖拽在内容区**完全无效**（连框选都不响应），前台能恢复框选、
+> 窗口缩放这类普通拖拽；但**文件拖放（Finder 行 → 文件夹行）后台与前台都不落盘**，
+> macOS 的拖放会话要真实指针。所以 `computer_drag` 暴露 `delivery`（默认
+> background，无效时前台重试），工具描述明确「系统级文件拖放不可用，改用应用自带
+> 的『移动到』或文件系统操作」。另：`get_window_state` 在 `include_screenshot:false`
+> 时不回任何像素元数据（实测），动作后的补观察必须沿用上一帧栅格，否则下一次坐标
+> 寻址会被误判成「还没拿过截屏」。
+>
+> **2026-11-10 真机复检补充（截屏落盘）**：外部 Bot 没有图像能力，只靠
+> `ToolResult.images` 里的 base64 做不了像素读回。截图改为写到 provider socket 目录
+> 下的 `computer-screenshots/`（目录 0700、文件预创建为 0600；每写入新帧后按「最近
+> 20 张 / 30 分钟」修剪），`computerGetAppState` 的文本提示追加「文件：<路径>（本次
+> 会话有效）」；base64 照旧返回给有视觉能力的客户端。路径只在本次 provider 会话内
+> 有效——sidecar 停止时 socket 目录整体删除。见 DEV-090。
 
 相关：D75 任务分治（[30](30-supervisor-and-tasks.md)，工具只在任务面注册）、D89 设置目录（[38](38-conversational-settings.md)，开关条目）、D58 失败续跑与审批卡（[18](18-inline-setup.md)）、浏览器宿主（main serve `browser.*` 的 B 口先例）、D102 headless 服务端（[49](49-headless-server.md)，能力降级）、D96 host-capabilities（[46](46-remote-control.md)）。
 
@@ -133,7 +161,7 @@ sidecar 方法面（`computer-sidecar.ts` dispatch，树 diff 基线在 sidecar 
 ## 6 设置与权限引导（WP3 + WP5）
 
 - settings-catalog 条目 `browser.computer-use`：fields `[toggle enabled]`、`write: write('user-only')`、`card: 'field-editor'`、`store: { kind: 'settings', generic: true }`（路径 `computerUse.enabled`）、`deepLink: settings/browser/computer-use`；按目录惯例补 contributions 适配器、渲染层卡片分支、`data-settings-anchor`、覆盖率测试（漏登记会挂 `settings-adapters-coverage.test.ts`）。
-- 设置页 anchor 区块（独立「计算机操控」分区）：开关 + 宿主 TCC 权限状态（AX / 屏幕录制，各自「已授权 / 未授权 / 未知」）+「打开系统设置」按钮；状态与打开动作走 main 的 `computer:permissions-status` / `computer:permissions-open` IPC（P-B2：直接读 Electron `systemPreferences`；AX 触发系统提示，屏幕录制只开面板）。
+- 设置页 anchor 区块（独立「计算机操控」分区）：开关 + 宿主 TCC 权限状态（AX / 屏幕录制 / 直接采集，各自「已授权 / 未授权 / 未知」）+「打开系统设置」按钮 + 「检测截屏」按钮（`computer:permissions-probe-capture`：真抓一帧判断 macOS 26+ 直采可用性，未授权时就地显示 driver 原因，可能触发系统同意框）；状态与打开动作走 main 的 `computer:permissions-status` / `computer:permissions-open` IPC（P-B2：直接读 Electron `systemPreferences`；AX 触发系统提示，屏幕录制只开面板）。
 - 权限未就绪时工具返回结构化 `PERMISSION_DENIED` + 引导文案，Bot 可用设置工具指路（deepLink）。
 
 ## 7 构建与打包（WP1 / WP5）

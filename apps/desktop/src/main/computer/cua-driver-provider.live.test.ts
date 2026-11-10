@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -113,6 +113,11 @@ describe.skipIf(!BIN)('cua-driver provider（live：macOS 真机）', () => {
     expect(parsed.snapshot.treeText.length).toBeGreaterThan(0)
     expect(parsed.snapshot.elementCount).toBeGreaterThan(0)
     expect(parsed.screenshotStatus.state === 'captured' || parsed.screenshotStatus.state === 'failed').toBe(true)
+    // 截到帧时必须落盘并暴露路径（无视觉能力的客户端据此做像素读回）。
+    if (parsed.screenshotStatus.state === 'captured') {
+      expect(parsed.screenshot?.path).toBeTruthy()
+      expect(existsSync(parsed.screenshot!.path!)).toBe(true)
+    }
 
     // 4. typeText：写进文本区（AXTextArea 的 AXSelectedText），confirmed → value 读回。
     // 树文本已整形为行首数字格式（无方括号）。

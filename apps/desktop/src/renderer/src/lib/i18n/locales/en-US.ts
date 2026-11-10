@@ -2436,11 +2436,14 @@ export const enUS = {
   'settings.computerUseChecking': 'Checking…',
   'settings.computerUseAccessibility': 'Accessibility (read & drive app UIs)',
   'settings.computerUseScreenRecording': 'Screen Recording (capture app windows)',
+  'settings.computerUseDirectCapture': 'Direct capture (macOS 26+ screenshot availability)',
+  'settings.computerUseProbeCapture': 'Test capture',
+  'settings.computerUseProbingCapture': 'Capturing…',
   'settings.computerUseOpenSettings': 'Open System Settings',
   'settings.computerUseOpening': 'Opening…',
   'settings.computerUseRefresh': 'Refresh',
   'settings.computerUsePermissionHint':
-    'Permissions go to the KepCup main app (CuaDriver runs embedded; there is no standalone helper). Screen Recording also needs the macOS second-stage consent on first capture; if a grant does not take effect, restart KepCup.',
+    'Permissions go to the KepCup main app (CuaDriver runs embedded; there is no standalone helper). Test capture grabs one real frame to confirm screenshots work; macOS 26+ may show a consent dialog the first time — choose Allow. If a grant does not take effect, restart KepCup.',
   // --- D96 remote control -----------------------------------------------------
   'settings.navRemote': 'Remote',
   'settings.remoteSectionTitle': 'Remote control',

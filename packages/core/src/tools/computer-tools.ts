@@ -173,7 +173,7 @@ function renderSnapshot(
   const shot = result.screenshot;
   const shotNote =
     shot?.data && shot.data.length > 0
-      ? `\n[附截屏 ${shot.width}x${shot.height}]`
+      ? `\n[附截屏 ${shot.width}x${shot.height}${shot.path ? `，文件：${shot.path}（本次会话有效）` : ''}]`
       : result.screenshotStatus.state === 'failed'
         ? `\n[截屏失败：${result.screenshotStatus.message}]`
         : '';
@@ -438,9 +438,10 @@ export function buildComputerTools(deps: ComputerToolDeps): ToolDefinition[] {
     from_y?: number;
     to_x?: number;
     to_y?: number;
+    delivery?: 'background' | 'foreground';
   }> = {
     name: 'computer_drag',
-    description: `从一个元素 / 坐标拖到另一个元素 / 坐标（后台投递）。${ADDRESS_RULE}${OBSERVE_RULE}${SCOPE_RULE}`,
+    description: `从一个元素 / 坐标拖到另一个元素 / 坐标。默认后台投递；后台拖拽在 Finder / 桌面等会开启系统拖放会话的场景里拿不到落点（文件不会移动），确认界面没变化后用 delivery: 'foreground' 重试；系统级文件拖放即使前台也可能失败，改用应用自带的「移动到」菜单或文件系统操作。${ADDRESS_RULE}${OBSERVE_RULE}${SCOPE_RULE}`,
     parameters: Type.Object({
       app: appParam,
       from_element_index: Type.Optional(elementIndexParam),
@@ -449,6 +450,12 @@ export function buildComputerTools(deps: ComputerToolDeps): ToolDefinition[] {
       from_y: Type.Optional(Type.Number({ description: '起点窗口坐标 Y' })),
       to_x: Type.Optional(Type.Number({ description: '终点窗口坐标 X' })),
       to_y: Type.Optional(Type.Number({ description: '终点窗口坐标 Y' })),
+      delivery: Type.Optional(
+        Type.Union([Type.Literal('background'), Type.Literal('foreground')], {
+          description:
+            'background（默认，不抢焦点）| foreground（短暂置前窗口并移动真实指针，用于后台拖拽无效时重试）',
+        }),
+      ),
     }),
     execute: async (params, ctx) => {
       ctx.progress(`正在对 ${params.app} 拖拽`);
@@ -461,6 +468,9 @@ export function buildComputerTools(deps: ComputerToolDeps): ToolDefinition[] {
         params2.fromY = params.from_y;
         params2.toX = params.to_x;
         params2.toY = params.to_y;
+      }
+      if (params.delivery !== undefined) {
+        params2.delivery = params.delivery;
       }
       return invoke('drag', params2, ctx, {
         approval: { action: '拖拽', app: params.app },

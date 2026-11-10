@@ -91,6 +91,17 @@ declare global {
       computerPermissionStatus(): Promise<{
         accessibility: 'granted' | 'not-granted' | 'unknown';
         screenRecording: 'granted' | 'not-granted' | 'unknown';
+        directCapture: 'granted' | 'not-granted' | 'unknown';
+      }>;
+      /** 截屏自检：让 CuaDriver 真抓一帧判断直采是否可用（会短暂抢焦点）。 */
+      computerPermissionProbeCapture(): Promise<{
+        status: {
+          accessibility: 'granted' | 'not-granted' | 'unknown';
+          screenRecording: 'granted' | 'not-granted' | 'unknown';
+          directCapture: 'granted' | 'not-granted' | 'unknown';
+        };
+        /** not-granted / unknown 时 driver 给的原始原因（设置页就地显示）。 */
+        reason: string | null;
       }>;
       computerPermissionOpen(permission: 'accessibility' | 'screen-recording'): Promise<void>;
       /** D105 设置页可用性行：重新握手（结果落盘 userData），「本次能不能用」与 TCC 分开。 */
