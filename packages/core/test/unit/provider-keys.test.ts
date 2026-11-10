@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Settings } from '@kepcup/shared';
+import { maskApiKey, type Settings } from '@kepcup/shared';
 import {
   addProviderKey,
   buildModelRegistry,
@@ -179,6 +179,93 @@ describe('provider keys', () => {
 
     replaceProviderKeys(secrets, 'p-rotate', []);
     expect(nextProviderApiKey(secrets, 'p-rotate')).toBeNull();
+  });
+
+  it('全部停用时鉴权解析失败，不回退到环境变量 / 占位 key；从未配 Key 的端点保持原行为', async () => {
+    const secrets = fakeSecrets();
+    addProviderKey(secrets, 'p-off', 'sk-off-1111');
+    updateProviderKeyMeta(secrets, 'p-off', 0, { enabled: false });
+
+    const settings = {
+      modelProviders: [
+        {
+          id: 'p-off',
+          vendor: null,
+          name: 'Off',
+          baseUrl: 'http://127.0.0.1:9',
+          enabled: true,
+          api: 'openai-completions',
+          builtinCatalog: false,
+          models: [{ id: 'm', contextWindow: 1_000, capabilities: ['chat'] }],
+        },
+        {
+          id: 'p-keyless',
+          vendor: null,
+          name: 'Keyless',
+          baseUrl: 'http://127.0.0.1:9',
+          enabled: true,
+          api: 'openai-completions',
+          builtinCatalog: false,
+          models: [{ id: 'm', contextWindow: 1_000, capabilities: ['chat'] }],
+        },
+      ],
+    } as unknown as Settings;
+    const registry = buildModelRegistry({
+      settings,
+      secrets,
+      logger: { info() {}, debug() {}, warn() {}, error() {} } as never,
+    });
+
+    await expect(registry.getAuth('p-off')).rejects.toThrow(/全部停用/);
+    // 从未配置 Key：沿用无鉴权（本地兼容端点）行为。
+    expect((await registry.getAuth('p-keyless'))?.auth.apiKey).toBe('unused');
+  });
+
+  it('每进程对每个供应商记一次 Key 概览（只有掩码，不含明文）', async () => {
+    const secrets = fakeSecrets();
+    addProviderKey(secrets, 'p-summary', 'sk-a-1111');
+    addProviderKey(secrets, 'p-summary', 'sk-b-2222');
+    updateProviderKeyMeta(secrets, 'p-summary', 1, { enabled: false });
+
+    const logged: Array<Record<string, unknown>> = [];
+    const settings = {
+      modelProviders: [
+        {
+          id: 'p-summary',
+          vendor: null,
+          name: 'Summary',
+          baseUrl: 'http://127.0.0.1:9',
+          enabled: true,
+          api: 'openai-completions',
+          builtinCatalog: false,
+          models: [{ id: 'm', contextWindow: 1_000, capabilities: ['chat'] }],
+        },
+      ],
+    } as unknown as Settings;
+    const registry = buildModelRegistry({
+      settings,
+      secrets,
+      logger: {
+        info: (record: Record<string, unknown>, message?: string) =>
+          logged.push({ ...record, ...(message !== undefined ? { msg: message } : {}) }),
+        debug() {},
+        warn() {},
+        error() {},
+      } as never,
+    });
+
+    await registry.getAuth('p-summary');
+    await registry.getAuth('p-summary');
+
+    const rows = logged.filter((record) => record['msg'] === 'provider keys loaded');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      providerId: 'p-summary',
+      enabledKeys: 1,
+      disabledKeys: 1,
+      keyMasks: [maskApiKey('sk-a-1111')],
+    });
+    expect(JSON.stringify(rows)).not.toContain('sk-a-1111');
   });
 
   it('注册表在每次请求解析 Key 时轮换（实例供应商）', async () => {
