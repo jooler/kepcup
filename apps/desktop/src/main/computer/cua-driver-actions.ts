@@ -29,7 +29,8 @@ import type { ComputerActionMethod } from './computer-action-method'
 //   入口（P-B2），显式拒绝而不是静默丢失修饰键；
 // - pasteText 是唯一非 1:1：clipboard_write + hotkey(cmd+v)，验证恒为
 //   unverified/clipboard_paste（防重放硬要求，不得报 verified）；
-// - delivery_mode 恒 background（与现役一致；前台升级是 P-B2）；
+// - delivery_mode 默认 background；仅 drag 支持显式 foreground（后台合成拖拽在
+//   Finder 内容区实测完全无效），其余方法仍恒后台；
 // - 动作后补一次全树观察（与原生 provider 行为一致：动作结果携带新索引，
 //   treeBaselines 才有新基线；截图留给下一次 get_app_state）。
 
@@ -60,6 +61,9 @@ export class CuaDriverActions {
     let verificationOverride: ComputerActionVerification | null = null
     let pathOverride: ComputerActionMetadata['path'] | null = null
     let actionName: string | null = null
+    // 投递方式本期只对 drag 开放（后台合成拖拽在 Finder 内容区实测完全无效，
+    // 前台能成功；其它方法的升级入口等有实测需求再加）。
+    let delivery: 'background' | 'foreground' = 'background'
 
     switch (method) {
       case 'click': {
@@ -103,13 +107,14 @@ export class CuaDriverActions {
         const geometry = this.requireGeometry(resolvedApp.pid, windowId)
         const from = await this.resolveDragPoint(resolvedApp, windowId, params, 'from', geometry)
         const to = await this.resolveDragPoint(resolvedApp, windowId, params, 'to', geometry)
+        delivery = params.delivery === 'foreground' ? 'foreground' : 'background'
         structured = await this.callActionTool('drag', {
           from_x: from.x,
           from_y: from.y,
           to_x: to.x,
           to_y: to.y,
           target: windowTarget(resolvedApp.pid, windowId),
-          delivery_mode: 'background'
+          delivery_mode: delivery
         })
         break
       }
@@ -194,12 +199,17 @@ export class CuaDriverActions {
       actionName,
       targetWindowId: windowId,
       targetWindowIndex: null,
-      delivery: 'background',
+      delivery,
       ...(verification ? { verification } : {}),
       ...(structured.escalation !== undefined && structured.escalation !== null
         ? { fallbackReason: JSON.stringify(structured.escalation) }
         : {})
     }
+
+    // 动作可能改了窗口几何（zoom / 缩放）：补观察没有 window_bounds 时靠
+    // list_windows 的 bounds 判断「尺寸是否变化」，2s 缓存会把动作前的旧尺寸喂给
+    // 判断，导致沿用已作废的像素栅格。
+    this.observer.invalidateWindowCache(resolvedApp.pid)
 
     // 动作后观测：全树（与原生 provider 一致——动作结果带新索引，模型可直接用；
     // 截图按需由下一次 get_app_state 拿）。动作可能已打开新窗口 / 替换窗口

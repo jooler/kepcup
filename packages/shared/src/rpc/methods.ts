@@ -2408,6 +2408,12 @@ export type ComputerPermissionState = z.infer<typeof computerPermissionStateSche
 export const computerPermissionsStatusOutputSchema = z.object({
   accessibility: computerPermissionStateSchema,
   screenRecording: computerPermissionStateSchema,
+  /**
+   * macOS 26+ 的 ScreenCaptureKit「直接采集」二段同意：与「屏幕录制」是两把不同的
+   * 钥匙，key 在 CuaDriver.app 这个 bundle 上，宿主 TCC 已授权也不代表截屏可用。
+   * 'unknown' = 尚未探测（探测需要真跑一次采集，会弹系统同意框）。
+   */
+  directCapture: computerPermissionStateSchema.default('unknown'),
 });
 export type ComputerPermissionsStatus = z.infer<typeof computerPermissionsStatusOutputSchema>;
 

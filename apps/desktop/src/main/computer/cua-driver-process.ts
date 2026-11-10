@@ -28,6 +28,11 @@ export function baseDaemonEnvironment(): Record<string, string> {
     CUA_DRIVER_PARENT_LIVENESS_STDIN: '1',
     CUA_DRIVER_RS_TELEMETRY_ENABLED: '0',
     CUA_DRIVER_RS_UPDATE_CHECK: '0',
+    // macOS 26+ 的 ScreenCaptureKit「直接采集」同意只能由采集进程自己触发：默认
+    // 不加这个变量时 driver 会一直跳过截图（px_capture_unavailable /
+    // direct_capture_consent_required），宿主把屏幕录制授权给它也没用。首次截图
+    // 因此会弹一次系统同意框（归 CuaDriver.app），点 Allow 后不再出现。
+    CUA_DRIVER_ALLOW_CAPTURE_CONSENT_ALERT: '1',
     // 动作后窗口变化观察窗口（默认 1000ms 是后台点击延迟大头；200ms 按
     // EMBEDDING.md 的推荐折中）与键间隔（默认 8ms）。
     CUA_DRIVER_WINDOW_CHANGE_TIMEOUT_MS: '200',
@@ -112,6 +117,11 @@ export class CuaDriverProcessOwner {
       }
     } catch {
       // 进程已退出时 kill 可能抛错；忽略。
+    }
+    // sidecar 收到 SIGTERM 会同步 process.exit()，'close' 事件等不到——同步删一次，
+    // 否则 socket 目录（含 computer-screenshots 里的截图）会留在磁盘上。
+    if (socketDirectory) {
+      rmSync(socketDirectory, { recursive: true, force: true })
     }
     const escalation = setTimeout(() => {
       try {

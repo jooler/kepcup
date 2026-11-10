@@ -1,5 +1,5 @@
-import { readFile, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { chmod, mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { AppError } from '@kepcup/shared'
 import type {
@@ -15,7 +15,8 @@ import {
   normalizeCuaTreeText,
   parseCuaElementRecords
 } from './cua-driver-tree-normalization'
-import { CuaDriverSnapshotStore, type CuaDriverElementRecord } from './cua-driver-snapshot-store'
+import type { CuaDriverSnapshotStore } from './cua-driver-snapshot-store'
+import type { CuaDriverWindowGeometry } from './cua-driver-coordinates'
 import { cuaDriverTransportError } from './cua-driver-error-map'
 
 // cua-driver 观察归一化（P-B1，todo/computer-use-cua-adapter.md WP3）。
@@ -33,6 +34,10 @@ export const CUA_DRIVER_APP_CACHE_TTL_MS = 5_000
 export const CUA_DRIVER_WINDOW_CACHE_TTL_MS = 2_000
 /** AX 树预算（driver 默认 2000 / depth 25；KepCup 不传即用 driver 默认，预留收口）。 */
 export const CUA_DRIVER_MAX_ELEMENTS = 2_000
+/** 截图落盘子目录（相对 provider 的 userData/socket 目录）与保留策略。 */
+export const SCREENSHOT_DIRECTORY_NAME = 'computer-screenshots'
+export const MAX_KEPT_SCREENSHOTS = 20
+export const SCREENSHOT_MAX_AGE_MS = 30 * 60 * 1000
 
 export type ResolvedCuaApp = {
   pid: number
@@ -118,7 +123,7 @@ export class CuaDriverObserver {
   ): Promise<ComputerSnapshotResult> {
     const includeTree = options.includeTree !== false
     const screenshotOutFile = options.includeScreenshot
-      ? join(this.tempDirectory, `cua-shot-${randomBytes(6).toString('hex')}.png`)
+      ? await this.nextScreenshotPath()
       : undefined
     const result = await this.client.call('get_window_state', {
       pid: app.pid,
@@ -131,16 +136,25 @@ export class CuaDriverObserver {
       ...(includeTree ? { max_elements: CUA_DRIVER_MAX_ELEMENTS } : {})
     })
     const structured = result.structuredContent
-    try {
-      return await this.normalizeWindowState(app, windowId, structured, screenshotOutFile, {
-        includeTree,
-        includeScreenshot: options.includeScreenshot
-      })
-    } finally {
-      if (screenshotOutFile) {
-        await rm(screenshotOutFile, { force: true }).catch(() => {})
-      }
-    }
+    return await this.normalizeWindowState(app, windowId, structured, screenshotOutFile, {
+      includeTree,
+      includeScreenshot: options.includeScreenshot
+    })
+  }
+
+  /**
+   * 截图落盘目录：帧保留在磁盘上并把路径交给模型（无视觉能力的客户端可以做像素
+   * 读回）。目录 0700、单文件 0600；每张新帧读入后按数量 + 时效修剪，避免把用户
+   * 屏幕内容长期留在磁盘上。
+   */
+  private async nextScreenshotPath(): Promise<string> {
+    const directory = join(this.tempDirectory, SCREENSHOT_DIRECTORY_NAME)
+    await mkdir(directory, { recursive: true, mode: 0o700 })
+    const path = join(directory, `cua-shot-${Date.now()}-${randomBytes(4).toString('hex')}.png`)
+    // 先以 0600 预创建：driver 覆盖写入会沿用已有权限位，否则按 umask（常见 0644）
+    // 落盘，屏幕内容在 chmod 之前对同机其他用户可读。
+    await writeFile(path, '', { mode: 0o600 })
+    return path
   }
 
   private async normalizeWindowState(
@@ -188,27 +202,24 @@ export class CuaDriverObserver {
       this.snapshotStore.clearScreenshotFailure(app.pid, windowId)
     }
     // 带树快照才更新索引表（截图后观测没有新索引，findings Q3）。
-    let elementRecords = new Map<number, CuaDriverElementRecord>()
-    if (options.includeTree) {
-      elementRecords = parseCuaElementRecords(structured)
-      if (windowBounds) {
-        this.snapshotStore.remember({
-          pid: app.pid,
+    if (options.includeTree && windowBounds) {
+      this.snapshotStore.remember({
+        pid: app.pid,
+        windowId,
+        snapshotId,
+        appName: app.name,
+        bundleId: app.bundleId,
+        windowTitle,
+        windowBounds,
+        geometry: this.resolveGeometry(
+          app.pid,
           windowId,
-          snapshotId,
-          appName: app.name,
-          bundleId: app.bundleId,
-          windowTitle,
           windowBounds,
-          geometry: cuaDriverSnapshotGeometry({
-            windowBounds,
-            screenshotWidth: asInt(structured.screenshot_width) ?? 0,
-            screenshotHeight: asInt(structured.screenshot_height) ?? 0,
-            screenshotScale: asNumber(structured.screenshot_scale) ?? 1
-          }),
-          elements: elementRecords
-        })
-      }
+          structured,
+          options.includeScreenshot
+        ),
+        elements: parseCuaElementRecords(structured)
+      })
     }
 
     const snapshot: ComputerSnapshotResult['snapshot'] = {
@@ -245,6 +256,50 @@ export class CuaDriverObserver {
   }
 
   /**
+   * 无截图的观察（动作后补观察 / noScreenshot）里 driver 不回任何像素元数据
+   * （实测 screenshot_width/height/scale 全缺）。窗口尺寸没变时沿用上一次的像素
+   * 栅格——driver 自身也保留上一帧——否则这次观察会把几何清零，下一次坐标寻址
+   * 被 requireGeometry 误判成「还没拿过截屏」。
+   *
+   * 只对「本来就没要截图」的观察成立：请求了截图却失败时，driver 不会保留上一帧
+   * （契约是 `include_screenshot:false` 才保留），必须清零，让坐标动作拿到
+   * 「截屏不可用 + 检测截屏」的可行动错误，而不是拿旧栅格去撞 driver。
+   */
+  private resolveGeometry(
+    pid: number,
+    windowId: number,
+    windowBounds: { x: number; y: number; width: number; height: number },
+    structured: Record<string, unknown>,
+    captureRequested: boolean
+  ): CuaDriverWindowGeometry {
+    const screenshotWidth = asInt(structured.screenshot_width)
+    const screenshotHeight = asInt(structured.screenshot_height)
+    if (screenshotWidth !== null && screenshotHeight !== null) {
+      return cuaDriverSnapshotGeometry({
+        windowBounds,
+        screenshotWidth,
+        screenshotHeight,
+        screenshotScale: asNumber(structured.screenshot_scale) ?? 1
+      })
+    }
+    const previous = !captureRequested ? this.snapshotStore.current(pid, windowId) : null
+    if (
+      previous &&
+      previous.geometry.screenshotWidth > 0 &&
+      previous.windowBounds.width === windowBounds.width &&
+      previous.windowBounds.height === windowBounds.height
+    ) {
+      return { ...previous.geometry, boundsX: windowBounds.x, boundsY: windowBounds.y }
+    }
+    return cuaDriverSnapshotGeometry({
+      windowBounds,
+      screenshotWidth: 0,
+      screenshotHeight: 0,
+      screenshotScale: 1
+    })
+  }
+
+  /**
    * 截图失败原因 → 模型可见文本（core 把 message 渲染为「[截屏失败：<message>]」）。
    * macOS 26+ 直接采集二段同意未完成（px_capture_unavailable /
    * direct_capture_consent_required——findings 0.40.1 新增发现 2）时给可行动指引，
@@ -253,8 +308,8 @@ export class CuaDriverObserver {
   private screenshotFailureMessage(rawReason: string): string {
     if (/direct_capture_consent_required|px_capture_unavailable/i.test(rawReason)) {
       return (
-        '屏幕录制授权不可用（macOS 26+ 直接采集需要二次同意）：在 系统设置 › 隐私与安全性 › 屏幕录制 ' +
-        '给 KepCup 开启授权（或对弹出的采集同意框点「允许」），然后重启 KepCup（TCC 按进程缓存）再试。' +
+        '截屏不可用：若系统弹出「直接采集」同意框，选允许即可；也可以在 设置 › 计算机操控 ' +
+        '点「检测截屏」定位原因。同意后无需重启，重新截屏即可。' +
         `原始原因：${rawReason}`
       )
     }
@@ -303,14 +358,21 @@ export class CuaDriverObserver {
     if (!includeScreenshot || typeof structured.screenshot_file_path !== 'string') {
       return null
     }
+    const filePath =
+      screenshotOutFile ?? (structured.screenshot_file_path as string)
     try {
-      const data = await readFile(screenshotOutFile ?? structured.screenshot_file_path as string)
+      const data = await readFile(filePath)
+      // 文件里是用户屏幕内容：收紧到 0600（driver 按 umask 可能落成 0644）。
+      await chmod(filePath, 0o600).catch(() => {})
+      // 新帧落盘后再修剪（含刚写的一张），目录里始终不超过保留上限。
+      await pruneScreenshots(dirname(filePath))
       return {
         data: data.toString('base64'),
         format: 'png',
         width: asInt(structured.screenshot_width) ?? 0,
         height: asInt(structured.screenshot_height) ?? 0,
-        scale: asNumber(structured.screenshot_scale) ?? 1
+        scale: asNumber(structured.screenshot_scale) ?? 1,
+        path: filePath
       }
     } catch {
       return null
@@ -335,6 +397,19 @@ export class CuaDriverObserver {
       )
     }
     return { pid: match.pid, name: match.name, bundleId: match.bundle_id ?? null }
+  }
+
+  /**
+   * 动作后调用：动作可能改了窗口几何（zoom / 缩放）。补观察在无截图时没有
+   * `window_bounds`，只能拿 list_windows 的 bounds 判断「尺寸是否变化」，2s 缓存
+   * 会把动作前的旧尺寸喂给判断，导致沿用已被作废的像素栅格。
+   */
+  invalidateWindowCache(pid?: number): void {
+    if (pid === undefined) {
+      this.windowCache.clear()
+    } else {
+      this.windowCache.delete(pid)
+    }
   }
 
   async listWindowsForPid(pid: number): Promise<CuaWindowRecord[]> {
@@ -431,6 +506,29 @@ export function pickMainWindow(windows: CuaWindowRecord[]): CuaWindowRecord | nu
   return withZ.reduce((best, window) =>
     (window.z_index as number) > (best.z_index as number) ? window : best
   )
+}
+
+/** 只保留最近 MAX_KEPT_SCREENSHOTS 张、且不超过 SCREENSHOT_MAX_AGE_MS 的截图。 */
+async function pruneScreenshots(directory: string): Promise<void> {
+  const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
+  const files: Array<{ path: string; atMs: number }> = []
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.png')) {
+      continue
+    }
+    const path = join(directory, entry.name)
+    const stats = await stat(path).catch(() => null)
+    if (stats) {
+      files.push({ path, atMs: stats.mtimeMs })
+    }
+  }
+  files.sort((a, b) => b.atMs - a.atMs)
+  const cutoff = Date.now() - SCREENSHOT_MAX_AGE_MS
+  for (const [index, file] of files.entries()) {
+    if (index >= MAX_KEPT_SCREENSHOTS || file.atMs < cutoff) {
+      await unlink(file.path).catch(() => {})
+    }
+  }
 }
 
 function stringParam(params: Record<string, unknown>, key: string): string {

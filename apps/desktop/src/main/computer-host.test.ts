@@ -8,14 +8,17 @@ import {
   readCapabilitiesRecord,
 } from './computer/capabilities-record';
 
-const { capabilitiesMock, shutdownSidecarMock } = vi.hoisted(() => ({
+const { capabilitiesMock, shutdownSidecarMock, probeCaptureMock } = vi.hoisted(() => ({
   capabilitiesMock: vi.fn(),
   shutdownSidecarMock: vi.fn(),
+  probeCaptureMock: vi.fn(),
 }));
 
 vi.mock('./computer/sidecar-client', () => ({
   callComputerSidecarCapabilities: capabilitiesMock,
   callComputerSidecarAction: vi.fn(),
+  // P-B2 直采自检：设置页「检测截屏」经 sidecar 让 CuaDriver 真抓一帧。
+  callComputerSidecarDirectCaptureProbe: probeCaptureMock,
   // P-B1 WP6：ComputerHostImpl 构造时注入 cua socket 目录父级。
   setComputerSidecarUserDataDirectory: vi.fn(),
   // P-B2：stop / permissionsOpen 通过它终止 sidecar（provider 跑在子进程里）。
@@ -90,6 +93,7 @@ describe('ComputerHost permissions (P-B2: host TCC via systemPreferences)', () =
     userDataDir = mkdtempSync(join(tmpdir(), 'kepcup-permissions-'));
     capabilitiesMock.mockReset();
     shutdownSidecarMock.mockReset();
+    probeCaptureMock.mockReset();
   });
 
   afterEach(() => {
@@ -120,7 +124,67 @@ describe('ComputerHost permissions (P-B2: host TCC via systemPreferences)', () =
     await expect(host.permissionsStatus()).resolves.toEqual({
       accessibility: 'not-granted',
       screenRecording: 'not-granted',
+      directCapture: 'unknown',
     });
+  });
+
+  it('probes capture through the daemon and caches the result', async () => {
+    probeCaptureMock.mockResolvedValue({ state: 'granted', reason: null });
+    const host = createComputerHost(() => userDataDir, permissionDeps());
+
+    await expect(host.permissionsProbeCapture()).resolves.toEqual({
+      status: {
+        accessibility: 'granted',
+        screenRecording: 'granted',
+        directCapture: 'granted',
+      },
+      reason: null,
+    });
+    expect(probeCaptureMock).toHaveBeenCalledTimes(1);
+    // 后续只读状态沿用自检结论，不重复抓帧。
+    await expect(host.permissionsStatus()).resolves.toMatchObject({ directCapture: 'granted' });
+  });
+
+  it('surfaces the driver reason when the probe cannot capture', async () => {
+    probeCaptureMock.mockResolvedValue({
+      state: 'not-granted',
+      reason: 'direct_capture_consent_required: screen capture skipped',
+    });
+    const host = createComputerHost(() => userDataDir, permissionDeps());
+
+    await expect(host.permissionsProbeCapture()).resolves.toEqual({
+      status: {
+        accessibility: 'granted',
+        screenRecording: 'granted',
+        directCapture: 'not-granted',
+      },
+      reason: 'direct_capture_consent_required: screen capture skipped',
+    });
+  });
+
+  it('restarts a stale sidecar before probing (grant → Test capture)', async () => {
+    const deps = permissionDeps({ getMediaAccessStatus: () => 'denied' });
+    const host = createComputerHost(() => userDataDir, deps);
+    probeCaptureMock.mockResolvedValue({ state: 'granted', reason: null });
+
+    await host.permissionsStatus();
+    deps.api.getMediaAccessStatus.mockReturnValue('granted');
+    await host.permissionsStatus();
+    expect(shutdownSidecarMock).not.toHaveBeenCalled();
+
+    // 用户刚在系统设置里授权：旧 daemon 缓存着旧 TCC，自检前必须先重启。
+    await host.permissionsProbeCapture();
+    expect(shutdownSidecarMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a cached direct-capture verdict when screen recording is revoked', async () => {
+    const deps = permissionDeps();
+    const host = createComputerHost(() => userDataDir, deps);
+    probeCaptureMock.mockResolvedValue({ state: 'granted', reason: null });
+    await host.permissionsProbeCapture();
+
+    deps.api.getMediaAccessStatus.mockReturnValue('denied');
+    await expect(host.permissionsStatus()).resolves.toMatchObject({ directCapture: 'unknown' });
   });
 
   it('returns unknown without permission deps', async () => {
@@ -128,6 +192,7 @@ describe('ComputerHost permissions (P-B2: host TCC via systemPreferences)', () =
     await expect(host.permissionsStatus()).resolves.toEqual({
       accessibility: 'unknown',
       screenRecording: 'unknown',
+      directCapture: 'unknown',
     });
   });
 

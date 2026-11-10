@@ -139,7 +139,16 @@ const api = {
   computerPermissionStatus: (): Promise<{
     accessibility: 'granted' | 'not-granted' | 'unknown';
     screenRecording: 'granted' | 'not-granted' | 'unknown';
+    directCapture: 'granted' | 'not-granted' | 'unknown';
   }> => ipcRenderer.invoke('computer:permissions-status'),
+  computerPermissionProbeCapture: (): Promise<{
+    status: {
+      accessibility: 'granted' | 'not-granted' | 'unknown';
+      screenRecording: 'granted' | 'not-granted' | 'unknown';
+      directCapture: 'granted' | 'not-granted' | 'unknown';
+    };
+    reason: string | null;
+  }> => ipcRenderer.invoke('computer:permissions-probe-capture'),
   computerPermissionOpen: (permission: 'accessibility' | 'screen-recording'): Promise<void> =>
     ipcRenderer.invoke('computer:permissions-open', permission),
   /** 设置页可用性行：重新握手并落盘（computer-use-capabilities.json），失败原因随结果返回。 */

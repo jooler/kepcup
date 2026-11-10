@@ -11,6 +11,7 @@ import {
   normalizeComputerActionResult,
   rejectContradictedComputerAction
 } from './computer-action-verification-normalization'
+import type { CuaDriverCaptureProbe } from './cua-driver-permissions'
 import { isComputerSidecarDiagnostic, logComputerDiagnostic } from './computer-sidecar-diagnostics'
 import { validateComputerSidecarPasteText } from './computer-sidecar-paste-validation'
 import { RuntimeClientError } from './runtime-client-error'
@@ -21,6 +22,7 @@ export const COMPUTER_SIDECAR_ENTRY_FILENAME = 'computer-sidecar.js'
 
 type ComputerSidecarMethod =
   | 'capabilities'
+  | 'probeDirectCapture'
   | 'listApps'
   | 'listWindows'
   | 'getAppState'
@@ -73,6 +75,17 @@ export async function callComputerSidecarCapabilities(): Promise<ComputerProvide
   return (await getComputerSidecar().call('capabilities', {})) as ComputerProviderCapabilities
 }
 
+/**
+ * 截屏自检：经 sidecar 让 CuaDriver 真抓一帧（首次可能触发系统直采同意框）。
+ * 只允许用户在设置页主动触发——会短暂抢焦点，不挂在状态轮询里。
+ */
+export async function callComputerSidecarDirectCaptureProbe(): Promise<CuaDriverCaptureProbe> {
+  return (await getComputerSidecar().call(
+    'probeDirectCapture',
+    {}
+  )) as CuaDriverCaptureProbe
+}
+
 export async function callComputerSidecarListWindows(
   params: unknown
 ): Promise<ComputerListWindowsResult> {
@@ -88,7 +101,7 @@ export async function callComputerSidecarSnapshot(
 export async function callComputerSidecarAction(
   method: Exclude<
     ComputerSidecarMethod,
-    'capabilities' | 'listApps' | 'listWindows' | 'getAppState'
+    'capabilities' | 'probeDirectCapture' | 'listApps' | 'listWindows' | 'getAppState'
   >,
   params: unknown
 ): Promise<ComputerActionResult> {

@@ -2355,11 +2355,14 @@ export const zhCN = {
   'settings.computerUseChecking': '检查中…',
   'settings.computerUseAccessibility': '辅助功能（读取与操作应用界面）',
   'settings.computerUseScreenRecording': '屏幕录制（截取应用窗口）',
+  'settings.computerUseDirectCapture': '直接采集（macOS 26+ 截屏可用性）',
+  'settings.computerUseProbeCapture': '检测截屏',
+  'settings.computerUseProbingCapture': '正在截屏…',
   'settings.computerUseOpenSettings': '打开系统设置',
   'settings.computerUseOpening': '正在打开…',
   'settings.computerUseRefresh': '刷新状态',
   'settings.computerUsePermissionHint':
-    '授权对象是 KepCup 主应用（CuaDriver 以 embedded 模式运行，不再使用独立助手）。屏幕录制首次截图还需系统二段同意；授权后如未生效，请重启 KepCup。',
+    '授权对象是 KepCup 主应用（CuaDriver 以 embedded 模式运行，不再使用独立助手）。「检测截屏」会真抓一帧确认截屏是否可用；macOS 26+ 首次可能弹出系统同意框，选允许即可。授权后如未生效，请重启 KepCup。',
   // --- D96 远程遥控 -----------------------------------------------------------
   'settings.navRemote': '远程遥控',
   'settings.remoteSectionTitle': '远程遥控',

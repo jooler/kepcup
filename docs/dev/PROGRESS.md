@@ -2221,3 +2221,25 @@ botId + name 落到首字母占位。
 - **打包**：`CuaDriver.app` 成为唯一且必需产物；`electron-builder.yml` 删除 helper、增加 `cua-driver.lock.json` 随包；`fetch-cua-driver.mjs` 增加 `--arch`；`dist.mjs` 每架构 fetch；`dev.mjs` 改为 fetch + `--rebuild` 重取；`pack-hooks.cjs` 强制校验 bundle/lock/签名。
 - **设计妥协**（docs/design/52 修订节 + DEV-083~086）：TCC 归主应用、无独立 helper、跨快照索引失效、`focusedElementId` 固定 null、`annotatedScreenshot`/`ocr` false、scroll/drag 保持 unverified、后台修饰键点击与 web 内容元素直写显式拒绝、`max_elements` 截断如实上报、macOS 26+ direct-capture 二段同意、安装包每架构约 +60MB、Win/Linux 后续按上游启用。
 - **验证**：`apps/desktop/src/main/computer/` + `computer-host.test.ts` + `pack-hooks.test.ts` 定向 140 passed / 1 skipped；core 硬验收 `computer-tools.test.ts` + `computer-use.test.ts` 19/19 零改动通过；desktop typecheck 0 error；`fetch-cua-driver.mjs --arch arm64/x64` 均成功。真机验收清单见 `todo/computer-use.md` / `todo/computer-use-cua-adapter.md`（重授权、二段同意、stop 杀 daemon、发布包 lock 随包）。
+
+## 计算机操控：直采同意（macOS 26+）真机复检与修复（2026-11-10）
+
+真机复检发现：「屏幕录制」已授权、`check_permissions` 也报 `source.attribution: "host"`，但 `get_window_state(include_screenshot)` 仍报 `px_capture_unavailable` / `direct_capture_consent_required`。用 dev 壳自己的 daemon（pid 实测）复现：AX 树正常、只卡采集。根因是 macOS 26+ 的 ScreenCaptureKit「直接采集」同意——独立于系统设置里的「屏幕录制」开关，key 在 `CuaDriver.app`（`com.trycua.driver`）上，embedded 也不继承宿主 TCC，且只能由采集进程触发。
+
+- **daemon**：`baseDaemonEnvironment()` 增加 `CUA_DRIVER_ALLOW_CAPTURE_CONSENT_ALERT=1`，让 driver 敢于真去采集（复检机上宿主已有屏幕录制，采集中直接成功、系统不弹框；若系统要求同意则由这次采集弹一次框）。不设时 driver 永久静默跳过截图。
+- **状态如实上报**：`computer.permissionsStatus` 新增 `directCapture` 三态；设置页状态直接读宿主 TCC（`systemPreferences`），不走 sidecar；`cua-driver-permissions.ts` 的只读 `check_permissions`（`prompt:false`）把 `direct_capture_status` 映射为 granted / not-granted / unknown（`timed_out` 等未定论不谎报未授权），供 live 诊断与自检复用。
+- **截屏自检**：embedded 下 `check_permissions{prompt:true}` 被 driver 忽略（复检确认），状态只能靠真抓一帧判断——设置页「检测截屏」（`computer:permissions-probe-capture` → sidecar `probeDirectCapture`：取在屏窗口、不取 AX 树、截图到临时文件后删除）；抓到文件=已授权，`screenshot_error`=未授权并带回原因。
+- **文案**：截图失败提示改为「在系统弹窗里选允许，或到 设置 › 计算机操控 点检测截屏；同意后无需重启」；设置页说明同步。
+- **验证**：`apps/desktop/src/main/computer/` + `computer-host.test.ts` 定向 118 passed / 1 skipped；desktop typecheck（tsc + svelte-check）0 error；core 定向 typecheck 通过。真机「允许后截图可用」仍需在重启 dev 壳后手验（同意框要人点）。
+
+## 计算机操控：拖拽与窗口绑定真机复检（2026-11-10）
+
+用 dev 壳自己的 daemon（socket 直连，pid 实测）对 Finder 复现外部 Bot 报告的三条问题，并修掉其中两条我们这侧的缺陷：
+
+- **拖拽**：`delivery_mode:"background"` 的合成拖拽在 Finder 内容区**完全无效**（文件不动、框选也不响应，只回 `effect:"unverifiable"`；驱动文档说的 `background_unavailable / drag_and_drop_session` 未触发）；`foreground` 能恢复框选与窗口缩放（920×436 → 870×386 实测成功）；**文件拖放**（`probe.txt` → `dst`）后台/前台、500–2500ms/20–60 步都不落盘，Finder 把按下/抬起当两次单击（双选）。结论：系统级文件拖放不是我们的映射错误，是 macOS 拖放会话需要真实指针。
+- **窗口绑定**：`cmd+n` 第二窗口时 `list_windows` 正常返回两个窗口（z_index 排序可用），未复现「无在屏窗口」；但「旧窗口关闭后动作仍绑旧 id」属实——向已关闭的 `window_id` 发 `press_key` 得到 `window_not_found` /「WindowServer has no record of window N」。我们的错误映射已把 `window_not_found` 落到 `WINDOW_NOT_FOUND`，模型能拿到重新选窗引导。
+- **我们自己的一处真 bug**：`get_window_state` 在 `include_screenshot:false` 时**不回任何像素元数据**（`screenshot_width/height/scale`、`window_bounds` 实测均 undefined），而动作后的补观察会用这些字段重建几何 → 几何被清零，下一次坐标寻址被误判成「还没拿过截屏」。修复：`cua-driver-observer.ts` 新增 `resolveGeometry`——窗口尺寸未变时沿用上一帧栅格（driver 自身也保留上一帧），尺寸变了才清空。
+- **`computer_drag` 增加 `delivery`**：默认 `background`，可显式 `foreground` 重试；动作元数据如实标注；工具描述写明系统级文件拖放不可用、改用「移动到」或文件系统操作。不做自动重试（拖拽无读回，自动重放会重复执行）。
+- **截屏落盘并暴露路径**：外部 Bot 没有图像能力，只拿 base64 做不了像素读回。截图改为写到 provider socket 目录下 `computer-screenshots/`（0700 / 文件 0600，保留最近 20 张且不超过 30 分钟，读入新帧后修剪；sidecar 停止时随 socket 目录整体删除）；`computer_get_app_state` 文本提示追加「文件：<路径>」，base64 照旧返回。
+- **三路独立只读审查后的修正**：① 自检前消费 `#restartSidecarBeforeNextInvoke`（授权后旧 daemon 还缓存着旧 TCC，会让「检测截屏」假阴性）；② 屏幕录制被撤销时把 `directCapture` 重置为 unknown；③ 自检失败原因随结果返回并在设置页就地显示；④ **请求截图但失败**时不再沿用旧像素栅格（只有本来没要截图才复用）；⑤ 动作后失效窗口缓存（zoom/缩放后用旧尺寸判断会沿用废栅格）；⑥ 截图文件改为驱动写入前预创建 0600；⑦ sidecar 停止时**同步**删 socket 目录（SIGTERM 后直接 `process.exit`，异步清理等不到）；⑧ 删除无调用方的 sidecar `permissions` 分支，并把 `probeDirectCapture` 排除出 action 联合；⑨ 设置页刷新补 catch、刷新成功清除旧探测错误。
+- **验证**：`apps/desktop/src/main/computer/` + core 硬验收 `computer-tools.test.ts` + `computer-use.test.ts` 定向 148 passed / 1 skipped（新增：补观察沿用栅格、尺寸变化作废旧栅格、截图失败作废旧栅格、动作后窗口缓存失效、drag foreground 透传与元数据、截屏落盘路径与轮换、自检原因回传 / 授权后重启 sidecar / 撤销后重置直采状态）；desktop / core typecheck 0 error；eslint 干净；全量 `pnpm test` 8046 passed / 44 skipped（755 文件）。记入 DEV-088 / DEV-089 / DEV-090。
