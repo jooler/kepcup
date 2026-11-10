@@ -3963,6 +3963,9 @@ export const zhCN = {
   'web.connected.fingerprint': '密钥指纹',
   'web.install.hint': '把 KepCup 添加到主屏幕，像应用一样使用',
   'web.install.action': '添加到主屏幕',
+  // --- D122 手机原生壳（docs/design/58-mobile-shell.md）------------------------
+  'web.shell.disconnect': '断开',
+  'web.shell.disconnectHint': '断开并回到 KepCup App 首页',
   'settings.desktopOnly': '此功能仅桌面端可用',
   'web.failed.title': '连不上中转',
   'web.failed.body': '中转服务暂时不可达（配对链接本身仍有效）。请检查网络后重试。',

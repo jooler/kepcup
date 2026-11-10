@@ -27,6 +27,7 @@ import {
   bytesToB64Url,
   deriveSessionKeysWeb,
   parsePairingLink,
+  resolveShellCredentialStorage,
   transcriptHashWeb,
   type PairingPhase,
   type WebLinkState,
@@ -1043,5 +1044,24 @@ describe('WsTransport: connected-phase frames', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('resolveShellCredentialStorage(D122 原生壳凭证存储)', () => {
+  it('非壳 → undefined(走默认存储链,浏览器 PWA 的 sessionStorage 语义不变)', () => {
+    expect(resolveShellCredentialStorage(false)).toBeUndefined();
+  });
+
+  it('壳 + localStorage 可用 → localStorage(凭证跨 App 冷启动保留)', () => {
+    const shellStorage = {} as Storage;
+    expect(resolveShellCredentialStorage(true, () => shellStorage)).toBe(shellStorage);
+  });
+
+  it('壳 + localStorage 被禁(privacy 模式读取抛错)→ undefined,回退默认链', () => {
+    expect(
+      resolveShellCredentialStorage(true, () => {
+        throw new Error('SecurityError: blocked');
+      }),
+    ).toBeUndefined();
   });
 });

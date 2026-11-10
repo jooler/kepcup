@@ -1,6 +1,6 @@
 import { readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { defineConfig } from 'vite';
+import { defineConfig, type PreviewServer } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import tailwindcss from '@tailwindcss/vite';
 
@@ -57,6 +57,29 @@ const cleanHashedAssets = {
   },
 };
 
+/**
+ * preview server 的路径语义对齐真实部署（2026-11-11）：真实宿主（apps/server
+ * static.ts / relay Worker 的 SPA 回退）对 /api、/admin 返回 REST 语义、/ws 是
+ * WS 升级——都不会回退到 SPA 的 index.html。vite preview 缺省把未知路径全部
+ * 回退成 200+HTML，认证探测层（authed-transport probeServerAuth 只看状态码）
+ * 会把 200 误判为「密码模式已登录」，冒烟停在 booting（D102 探测语义修订后
+ * preview 环境回归；生产部署不受影响）。
+ */
+const previewNoSpaFallback = {
+  name: 'preview-no-spa-fallback',
+  configurePreviewServer(server: PreviewServer) {
+    server.middlewares.use((req, res, next) => {
+      const url = (req.url ?? '').split('?')[0] ?? '';
+      if (url.startsWith('/api/') || url.startsWith('/admin/')) {
+        res.statusCode = 404;
+        res.end();
+        return;
+      }
+      next();
+    });
+  },
+};
+
 export default defineConfig({
   root: resolve(__dirname, 'src/renderer'),
   // 相对 base：同一构建可被自建中转托管在任意路径下（配对 URL 带出真实地址）。
@@ -71,6 +94,7 @@ export default defineConfig({
     svelte({ configFile: resolve(__dirname, 'svelte.config.js') }),
     renameEntryHtmlToIndex,
     cleanHashedAssets,
+    previewNoSpaFallback,
   ],
   define: {
     __KEPCUP_TEST_HOOKS__: 'false',
@@ -85,7 +109,8 @@ export default defineConfig({
         : resolve(__dirname, '../../infra/cloudflare/relay/public'),
     // 改投目录（打包场景）整目录归 web 产物，允许清空；缺省目录里混有 Worker
     // 的占位文件，不能清。
-    emptyOutDir: process.env.KEPCUP_WEB_OUTDIR !== undefined && process.env.KEPCUP_WEB_OUTDIR !== '',
+    emptyOutDir:
+      process.env.KEPCUP_WEB_OUTDIR !== undefined && process.env.KEPCUP_WEB_OUTDIR !== '',
     // vite 的内联 module preload polyfill 过不了 index.web.html 的 CSP
     // （script-src 'self'）；现代浏览器不需要它。
     modulePreload: { polyfill: false },
