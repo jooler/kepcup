@@ -250,7 +250,7 @@
   <!-- 顶层高度收敛到视口并裁剪溢出：各页面自己有滚动区，内容再宽/再高也不能把
        document 撑出全局滚动条（含横向）。 -->
   <div class="flex h-screen min-h-0 flex-col overflow-hidden" data-testid="app-shell">
-    <div class="flex min-h-0 flex-1" inert={layerCoversMain}>
+    <div class="flex min-h-0 min-w-0 flex-1" inert={layerCoversMain}>
       {#if core.connection === 'failed'}
         <CoreErrorPage />
       {:else if narrowLayout.narrow}

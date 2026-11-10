@@ -45,11 +45,11 @@
 </script>
 
 <Tooltip.Provider delayDuration={0}>
-  <div class="flex min-h-0 flex-1 flex-col" data-testid="narrow-shell">
+  <div class="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="narrow-shell">
     {#if narrowLayout.tab === 'chats'}
       {#if showDetail}
         <!-- 会话详情层：显式铺不透明背景（macOS 毛玻璃只保留在列表页侧栏）。 -->
-        <div class="flex min-h-0 flex-1 flex-col bg-background">
+        <div class="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
           <ChatsArea />
         </div>
       {:else}

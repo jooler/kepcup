@@ -10,6 +10,6 @@
   let { conversationId }: { conversationId: string } = $props();
 </script>
 
-<div class="flex h-full min-h-0 flex-col overflow-hidden" data-testid="project-board-view">
+<div class="flex h-full min-h-0 min-w-0 flex-col overflow-hidden" data-testid="project-board-view">
   <BoardView projectId={conversationId} />
 </div>
