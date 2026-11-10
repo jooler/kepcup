@@ -1,21 +1,75 @@
 # 52 计算机操控（Computer Use）
 
-Bot 通过**无障碍树优先、截屏与键鼠兜底**读取并操作本机原生桌面应用的 UI：语义寻址（元素索引）、精确、可作用于后台应用、不抢焦点；树读不到的（canvas / 游戏 / Electron 内容区）退到截屏坐标与键盘。能力整体拆自 [stablyai/orca](https://github.com/stablyai/orca)（MIT，快照 commit `55507b87` / v1.4.214，本机只读镜像 `~/www/orca-mirror/orca`）的 computer-use 模块：**原生 helper 层照搬（vendored）、TS 编排层移植进 main 进程、集成层（工具 / 审批 / 设置 / RPC）按 KepCup 自有体系重建**。P0 仅 macOS；Windows / Linux 分期。
+Bot 通过**无障碍树优先、截屏与键鼠兜底**读取并操作本机原生桌面应用的 UI：语义寻址（元素索引）、精确、可作用于后台应用、不抢焦点；树读不到的（canvas / 游戏 / Electron 内容区）退到截屏坐标与键盘。能力最初拆自 [stablyai/orca](https://github.com/stablyai/orca)（MIT，快照 commit `55507b87` / v1.4.214），**2026-11-10 起 provider 改为 CuaDriver（trycua/cua），原 vendored 原生层已删除**；TS 编排层与集成层（工具 / 审批 / 设置 / RPC）保留在 KepCup。P0 仅 macOS；Windows / Linux 后续按上游启用。
 
-**状态：设计定稿（2026-10-31），待实施**；执行方案与工作包见 [todo/computer-use.md](../../todo/computer-use.md)。无 DB 迁移。
+**状态：已实施（2026-10-31 P0 原生 helper；2026-11-10 P-B2 全面切换为 CuaDriver）**；执行方案与工作包见 [todo/computer-use.md](../../todo/computer-use.md) 与 [todo/computer-use-cua-adapter.md](../../todo/computer-use-cua-adapter.md)。无 DB 迁移。
+
+> ## 实现修订（2026-11-10）：只保留 CuaDriver
+>
+> 用户确认：计算机操控**只使用 CuaDriver**（trycua/cua，pin 0.46.1），不再自行实现；
+> 后续跟随上游版本更新适配。自研 macOS Swift helper、vendored orca 原生层、
+> native / desktop-script provider 及其构建/打包链路已删除。CuaDriver 不能满足的
+> 原设计要求按下表妥协（本表与 [docs/dev/DEVIATIONS.md](../dev/DEVIATIONS.md)
+> DEV-083~086 为准）：
+>
+> | # | 原设计要求 | CuaDriver 现实 | 妥协 |
+> |---|---|---|---|
+> | 1 | 独立 helper `.app` 承载 TCC，不污染宿主（D105-2） | embedded 模式 TCC 记在 KepCup 主应用名下 | 无独立 helper；老用户需重新授权（未接线的重置工具一并删除） |
+> | 2 | vendored orca 原生层，人工 diff（D105-1） | 上游独立二进制 | 不再 vendored；lock pin + 按季度吸收 |
+> | 3 | 跨快照稳定元素索引 | 索引每次快照重排 | 沿用 `ADDRESS_RULE`：旧索引失效→重新观察 |
+> | 4 | `focusedElementId` 有值 | driver 无此字段 | 固定 `null` |
+> | 5 | `annotatedScreenshot` / `ocr` | 不支持 | 能力上报 `false` |
+> | 6 | scroll/drag 读回验证 | 只有 `effect`/`evidence`，无布局指纹 | 保持 `unverified`，不得报 verified |
+> | 7 | 后台输入 | 带修饰键点击需前台；web 内容元素直写被拒；后台合成拖拽在 Finder 内容区完全无效 | 修饰键点击显式拒绝；web 内容走键盘/坐标 + 焦点输入；`computer_drag` 默认 `foreground`（后台合成拖拽拿不到系统拖放会话），可显式传 `background`；其余动作仍只有后台 |
+> | 8 | 大树完整可用 | `max_elements` 顺序截断 | 如实上报 `truncated`；分页/角色过滤留待后续 |
+> | 9 | 截图稳定可用 | driver 默认不尝试采集（避免弹框抢焦点），embedded 下 `check_permissions` 的 prompt 也被忽略 | daemon 带 `CUA_DRIVER_ALLOW_CAPTURE_CONSENT_ALERT=1` 真去采集（宿主已有屏幕录制时通常直接成功；macOS 要求时由系统弹一次同意框）；设置页「检测截屏」做真实抓帧自检；失败时如实报 `screenshot_failed` + 指引 |
+> | 10 | 权限引导自动弹窗 | embedded daemon 默认不弹窗；TCC 按进程缓存 | 主进程用 `systemPreferences` 读状态/触发 AX 提示；屏幕录制只开面板；直采同意只能由真实采集触发（设置页「检测截屏」或首次截图时由系统弹）；下一次动作前重启 daemon |
+> | 11 | 安装包体积 | CuaDriver.app 每架构约 +60MB | release note 写明；禁止重签上游产物 |
+> | 12 | Windows/Linux 自研 runtime | 上游支持三端 | 本期只接 macOS；后续按上游启用 |
+>
+> 未受影响的硬约束：审批、敏感参数掩码、`outcome: 'uncertain'` 语义与工具面
+> 全部留在 core（`packages/core/src/tools/computer-tools.ts`），provider 替换不触碰。
+>
+> **2026-11-10 真机复检补充（直采）**：宿主（打包版 KepCup / dev 壳）的辅助功能与
+> 屏幕录制都已授权、daemon 也报 `source.attribution: "host"` 时，截图仍会以
+> `direct_capture_consent_required` 失败——根因不是 macOS 拒绝，而是 driver 在「直采
+> 同意状态未知」时**默认不尝试采集**（避免系统弹框抢焦点）。处理：daemon 固定带
+> `CUA_DRIVER_ALLOW_CAPTURE_CONSENT_ALERT=1` 真去采集；复检机上宿主已有屏幕录制，
+> 采集直接成功、系统不弹框；若系统确实要求同意，则由这次采集弹一次框。另注：embedded
+> 模式下 `check_permissions` 的 `prompt` 会被忽略（driver 回「never raises its own
+> prompt」），所以自检只能真抓一帧：设置页「直接采集」状态行 +「检测截屏」
+> （`computer:permissions-probe-capture` → sidecar `probeDirectCapture`）；
+> `computer.permissionsStatus` 增加 `directCapture` 三态（宿主 API 读不到，未自检为
+> `unknown`）。
+>
+> **2026-11-10 真机复检补充（拖拽）**：Finder 列表视图实测——后台（`delivery_mode:
+> "background"`）合成拖拽在内容区**完全无效**（连框选都不响应），前台能恢复框选、
+> 窗口缩放这类普通拖拽；但**文件拖放（Finder 行 → 文件夹行）后台与前台都不落盘**，
+> macOS 的拖放会话要真实指针。所以 `computer_drag` 的 `delivery` **默认 foreground**
+>（后台合成拖拽默认就会静默无效），需要不抢焦点时显式传 `background`；工具描述明确
+>「系统级文件拖放可能仍失败，改用应用自带的『移动到』或文件系统操作」。另：`get_window_state` 在 `include_screenshot:false`
+> 时不回任何像素元数据（实测），动作后的补观察必须沿用上一帧栅格，否则下一次坐标
+> 寻址会被误判成「还没拿过截屏」。
+>
+> **2026-11-10 真机复检补充（截屏落盘）**：外部 Bot 没有图像能力，只靠
+> `ToolResult.images` 里的 base64 做不了像素读回。截图改为写到 provider socket 目录
+> 下的 `computer-screenshots/`（目录 0700、文件预创建为 0600；每写入新帧后按「最近
+> 20 张 / 30 分钟」修剪），`computerGetAppState` 的文本提示追加「文件：<路径>（本次
+> 会话有效）」；base64 照旧返回给有视觉能力的客户端。路径只在本次 provider 会话内
+> 有效——sidecar 停止时 socket 目录整体删除。见 DEV-090。
 
 相关：D75 任务分治（[30](30-supervisor-and-tasks.md)，工具只在任务面注册）、D89 设置目录（[38](38-conversational-settings.md)，开关条目）、D58 失败续跑与审批卡（[18](18-inline-setup.md)）、浏览器宿主（main serve `browser.*` 的 B 口先例）、D102 headless 服务端（[49](49-headless-server.md)，能力降级）、D96 host-capabilities（[46](46-remote-control.md)）。
 
 ## 决策
 
 - **D105 计算机操控**：
-  1. **拆用 orca（MIT），三层对应搬运**：原生层 vendored 照搬（macOS Swift helper / Windows PowerShell / Linux Python，与宿主只有 unix socket / stdio JSON-line 协议边界，是 orca 全仓库里与宿主耦合最少、最可拆的部分）；TS 编排层移植进 `apps/desktop/src/main/computer/`（保持与 orca 相同的相对路径便于后续 diff 上游；解耦点仅 `@orca/process-host` 等少量工具函数）；orca 的 CLI 与 runtime RPC 层**不搬**（KepCup 用自己的 B 口 birpc 与工具体系）。上游以 vendored 快照固定，跟进走人工 diff 不自动同步；vendored 目录携带 `NOTICE.md`（来源、commit、MIT 声明，对齐插件 NOTICE 惯例）。
-  2. **独立 helper .app 承载系统权限**（继承 orca 关键设计）：macOS 辅助功能（AX）与屏幕录制的 TCC 授权授给 `KepCup Computer Use.app`（bundle id `app.kepcup.desktop.computer-use`，G0 确认），不污染宿主应用；helper 无特殊 entitlement，经 Unix socket 与 main 通信，单会话互斥（并发第二个会话报 `CONTROLLER_BUSY`）。重命名、重签名，不直接复用 orca 产物。
-  3. **能力宿主在 main 进程，core 经 B 口调用 `computer.*`**：镜像 browser 的「平台能力由 main serve 给 core」模式。main 负责 helper / sidecar 生命周期、权限状态检测与引导（仿 `sensor-permission.ts`）；core 不直接 spawn。理由：权限引导是 main 职责、core 保持平台无关；截图经 B 口的量级与 browser_screenshot 相同，可接受。headless（D102）B 口无此能力 → 工具不可用即拒调（对齐 `DeferredBrowserHostRpc`），并进 host-capabilities（desktop-only）。
+  1. **拆用 orca（MIT），三层对应搬运**：原生层 vendored 照搬（macOS Swift helper / Windows PowerShell / Linux Python，与宿主只有 unix socket / stdio JSON-line 协议边界，是 orca 全仓库里与宿主耦合最少、最可拆的部分）；TS 编排层移植进 `apps/desktop/src/main/computer/`（保持与 orca 相同的相对路径便于后续 diff 上游；解耦点仅 `@orca/process-host` 等少量工具函数）；orca 的 CLI 与 runtime RPC 层**不搬**（KepCup 用自己的 B 口 birpc 与工具体系）。上游以 vendored 快照固定，跟进走人工 diff 不自动同步；vendored 目录携带 `NOTICE.md`（来源、commit、MIT 声明，对齐插件 NOTICE 惯例）。**（2026-11-10 修订：不再 vendored；原生层改为 CuaDriver 上游二进制，TS 编排层与 core 工具面保留。）**
+  2. **独立 helper .app 承载系统权限**（继承 orca 关键设计）：macOS 辅助功能（AX）与屏幕录制的 TCC 授权授给 `KepCup Computer Use.app`（bundle id `app.kepcup.desktop.computer-use`，G0 确认），不污染宿主应用；helper 无特殊 entitlement，经 Unix socket 与 main 通信，单会话互斥（并发第二个会话报 `CONTROLLER_BUSY`）。重命名、重签名，不直接复用 orca 产物。**（2026-11-10 修订：已删除独立 helper；CuaDriver embedded 模式的 TCC 归 KepCup 主应用。）**
+  3. **能力宿主在 main 进程，core 经 B 口调用 `computer.*`**：镜像 browser 的「平台能力由 main serve 给 core」模式。main 负责 CuaDriver / sidecar 生命周期、权限状态检测与引导（仿 `sensor-permission.ts`）；core 不直接 spawn。理由：权限引导是 main 职责、core 保持平台无关；截图经 B 口的量级与 browser_screenshot 相同，可接受。headless（D102）B 口无此能力 → 工具不可用即拒调（对齐 `DeferredBrowserHostRpc`），并进 host-capabilities（desktop-only）。
   4. **工具面与 sidecar 方法一对一，粒度仿 browser 工具**：`computer_list_apps` / `computer_list_windows` / `computer_get_app_state` / `computer_click` / `computer_perform_action` / `computer_scroll` / `computer_drag` / `computer_type` / `computer_key` / `computer_paste` / `computer_set_value` / `computer_stop`（pressKey/hotkey 在工具层合一为 `computer_key`，sidecar 方法面不变；orca 的 selectText sidecar 未实现，P0 不暴露）。截图并入 `computer_get_app_state`（`screenshot` 参数）与各动作的可选返回，走 `ToolResult.images`；树文本复用输出截断。仅当「平台支持 + 设置开启 + helper 可用」时注册；**P0 仅任务 loop 注册**（重副作用能力，对话轮不需要），提示词规则进工具描述、不进常驻提示词、不新增技能。
   5. **审批与安全第一版做全**：新增 `ApprovalKind` `computer_control`，审批时长复用 once / conversation / bot 分档，**不设「永不问」档**；动作防重放对齐 orca / ZCode 验证过的语义——`ComputerActionVerification`（可能已下发）映射到 `ToolResult.outcome: 'uncertain'`，重试前必须先观察；`type` / `paste` / `set_value` 的文本参数标 `sensitiveParams`，不进审批卡明文与日志；粘贴走 orca 的剪贴板校验（防提示注入）；stop 三通道：模型 `computer_stop`、用户 renderer 常驻「停止操控」（main `ipcMain.handle` 直达 sidecar，不经 core）、sidecar 单会话互斥。**已知限制明示**：桌面级「用户正在手动操作」检测 v1 不做（技术上不可靠），靠审批档位与显式 stop 兜底；**权限被拒后绝不切换到 osascript / AppleScript / 系统事件等其他 UI 自动化技术**（写入工具描述与错误文案）。
   6. **设置目录一处开关 + 权限引导走设置页**：条目 `browser.computer-use`（group `browser`，anchor `computer-use`；条目增多再迁独立组），字段 toggle `enabled`，`store: { kind: 'settings', generic: true }`（顶层键 `computerUse.enabled`，默认关）+ `card: 'field-editor'`，`maxMode: 'user-only'`（安全开关，Bot 可出卡但宿主不采用 values，符合 D89 惯例），不进 `DIRECT_ITEM_IDS`。macOS 权限引导不做卡片：设置页 anchor 区块显示 helper 的 AX / 屏幕录制权限状态，一键打开对应系统设置 pane 并首次拉起 helper 注册 TCC（main 新增 `computer:permissions-status` / `computer:permissions-open` IPC，仿 sensor-permission）。
-  7. **构建与分发跟随 KepCup mac 现有策略**：SwiftPM 按 arm64 / x64 分架构出包（不做 universal lipo，同 rg「平台私有二进制只打本机架构一份」）；`apps/desktop/scripts/build-computer-use-macos.mjs` 改造自 orca 构建脚本（重命名 / bundle id / icon / 签名）；release 用 Developer ID + runtime + timestamp + **helper 独立公证**（嵌入主包前单独 notarize，验收项），dev 用 Apple Development 身份；无有效签名身份时构建跳过 helper、能力整体不可用并明确报错（不静默降级）。electron-builder：helper 走 `extraResources`，sidecar 入口走 `asarUnpack`（`ELECTRON_RUN_AS_NODE` fork，对齐 stdio-proxy 先例）；pack-hooks 加「mac 包必须含 helper」校验。
+  7. **构建与分发跟随 KepCup mac 现有策略**：SwiftPM 按 arm64 / x64 分架构出包（不做 universal lipo，同 rg「平台私有二进制只打本机架构一份」）；`apps/desktop/scripts/build-computer-use-macos.mjs` 改造自 orca 构建脚本（重命名 / bundle id / icon / 签名）；release 用 Developer ID + runtime + timestamp + **helper 独立公证**（嵌入主包前单独 notarize，验收项），dev 用 Apple Development 身份；无有效签名身份时构建跳过 helper、能力整体不可用并明确报错（不静默降级）。electron-builder：helper 走 `extraResources`，sidecar 入口走 `asarUnpack`（`ELECTRON_RUN_AS_NODE` fork，对齐 stdio-proxy 先例）；pack-hooks 加「mac 包必须含 helper」校验。**（2026-11-10 修订：不再构建 Swift helper；改为 `fetch-cua-driver.mjs` 获取 pinned `CuaDriver.app`，上游签名禁止重签，pack-hooks 改为强制校验 CuaDriver + lock 文件。）**
   8. **平台分期**：P0 macOS（helper 需 macOS 14+，沿 orca 门控）；P1 Windows（`runtime.ps1` 零第三方依赖，验证 PowerShell 执行策略与 serve 通道）；P2 Linux（依赖 GNOME AT-SPI，KDE / 其他桌面明确报能力不可用）。能力集按平台经 `capabilities` 裁剪，工具描述不承诺跨平台一致。
 
 ## 1 调研结论摘要
@@ -30,9 +84,9 @@ Bot 通过**无障碍树优先、截屏与键鼠兜底**读取并操作本机原
 | TS 编排层 | `src/main/computer/`（生产 ~5-6k 行，含测试 ~12k） | 全平台 | 出口仅 `@orca/process-host` 等 spawn 工具函数；`sidecar-client.ts` fork `computer-sidecar.js`（`COMPUTER_SIDECAR_ENTRY_FILENAME`，构建独立入口、asar.unpacked 解出） |
 | 集成层 | `src/main/runtime/rpc/methods/computer.ts`（runtime RPC）+ `src/cli/specs/computer.ts` + `src/cli/handlers/computer.ts`（CLI）+ `skills/computer-use`（agent 技能文档）+ `src/shared/computer-use-runtime-types.ts`（206 行类型契约） | 薄 | 与 orca 自有 RPC / CLI 深绑，**不搬** |
 
-sidecar 方法面（`computer-sidecar.ts` dispatch，树 diff 基线在 sidecar 进程内持有）：`capabilities` / `listApps` / `listWindows` / `getAppState` / `click` / `performSecondaryAction` / `scroll` / `drag` / `typeText` / `pressKey` / `hotkey` / `pasteText` / `setValue`。provider 选择在 `computer-provider-lifecycle.ts`：darwin 且 macOS 14+ 且 helper 可执行 → `MacOSNativeProviderClient`；否则 win/linux → `DesktopScriptProviderClient`（`desktop-script-runtime-host.ts` 按 spawn PowerShell / Python）。
+sidecar 方法面（`computer-sidecar.ts` dispatch，树 diff 基线在 sidecar 进程内持有）：`capabilities` / `listApps` / `listWindows` / `getAppState` / `click` / `performSecondaryAction` / `scroll` / `drag` / `typeText` / `pressKey` / `hotkey` / `pasteText` / `setValue`。provider 选择在 `computer-provider-lifecycle.ts`：darwin → `CuaDriverProviderClient`；其它平台暂不启用（返回 null）。
 
-macOS 原生层的关键机制（全部继承，不改语义）：无障碍树快照 + 稳定元素索引（`StableElementIndexes`）、后台输入注入（`BackgroundInputTransport`、`SyntheticMouseClickDelivery`）、键盘安全（`KeyboardInputSafety`）、权限信任静置（`PermissionTrustSettling`）、会话所有权与连接鉴权（`AgentSessionOwnership`、`AuthenticatedConnectionHangupMonitor`）、Unix socket 路径安全、树 diff 与大树按优先级裁剪（祖先保留）。
+原 macOS 原生层的关键机制（稳定元素索引、后台输入注入、键盘安全、权限信任静置、会话所有权与连接鉴权、Unix socket 路径安全）随 P-B2 删除；CuaDriver 对应能力由上游实现，KepCup 只保留树 diff 与大树裁剪（祖先保留）。
 
 ### 1.2 拆出可行性结论（调研于 2026-10-31）
 
@@ -52,8 +106,8 @@ macOS 原生层的关键机制（全部继承，不改语义）：无障碍树�
                  ├─ sidecar-client ──fork──► computer-sidecar.js（独立构建入口，
                  │        Node IPC dispatch；asar.unpacked 解出 + ELECTRON_RUN_AS_NODE）
                  │        ├─ 树 diff 基线（ComputerTreeBaselines，sidecar 进程内）
-                 │        ├─ darwin: MacOSNativeProviderClient ──unix socket──► KepCup Computer Use.app（helper，独立 TCC）
-                 │        └─ win/linux（P1/P2）: DesktopScriptProviderClient ──stdio──► runtime.ps1 / runtime.py
+                 │        └─ darwin: CuaDriverProviderClient ──unix socket──► CuaDriver.app
+                 │                （embedded；TCC 归 KepCup 主应用）
                  └─ 权限状态检测 / 系统设置引导（sensor-permission 式 IPC，供 renderer）
 ```
 
@@ -64,6 +118,10 @@ macOS 原生层的关键机制（全部继承，不改语义）：无障碍树�
 - **会话**：helper 单会话互斥；main 持有 sidecar 生命周期（空闲回收 / 退出清理，沿 orca 的 reaping 与 shutdown 处理）。
 
 ## 3 main 进程集成（WP2）
+
+> **2026-11-10 修订**：原生 provider、权限 helper 与 desktop-script 分支已删除；
+> 保留的是 sidecar / provider lifecycle（cua-only）/ 树 diff / 动作验证归一化 /
+> 粘贴校验 / capabilities record。下面的移植清单保留为历史记录。
 
 - **移植清单**（orca `src/main/computer/` → `apps/desktop/src/main/computer/`，保持文件名）：`sidecar-client` / `computer-sidecar` / `computer-provider-lifecycle` / `computer-snapshot-tree-diff` / `computer-action-verification-normalization` / `computer-{clipboard,sidecar}-paste-validation` / `runtime-client-error` / `macos-native-provider-*`（client / socket / transport / paths / availability / contract / line-buffer / process-reaping / startup-cleanup）/ `macos-computer-use-permissions*`（含 permission-status）/ `desktop-script-*`（win/linux，随 P1/P2 激活）。解耦点：`@orca/process-host` 的 `spawnProcess` / `windows-system-binary` 换成 KepCup 等价（`node:child_process` 薄封装）；orca `forked-child-entry-path` 换成 KepCup 的入口解析（asar.unpacked 约定同 stdio-proxy）；诊断日志对接 KepCup main 日志。
 - **B 口 serverMethods**（core → main，控制面与数据面分离，main 保持薄）：`computer.invoke { method, params }`（method 白名单 = sidecar 方法面，透传）、`computer.capabilities`、`computer.permissionsStatus`、`computer.permissionsOpen`、`computer.stop`。core 侧由 `packages/core/src/start.ts` 装配（对齐 browser host 的可选注入与 `DeferredComputerHostRpc` 拒调）。
@@ -88,7 +146,7 @@ macOS 原生层的关键机制（全部继承，不改语义）：无障碍树�
 | `computer_stop` | （stop 会话） | `reason?` |
 
 - **结果语义**：树文本进 `content`（超长走 `TOOL_OUTPUT_MAX_CHARS` 截断）；截屏进 `ToolResult.images`（模型不支持图像时按 `SCREENSHOT_OMITTED_NOTE` 惯例降级）；动作的 `ComputerActionVerification` 映射 `outcome`（未下发 → 正常；可能已下发 → `uncertain`，工具结果明示「先观察再决定重试」）。
-- **scroll 没有可断言属性**：`computer_scroll` 没有 `focusedText` / `selection` / `value` 这类可读回的目标值，helper 投递后在 150–400ms 内重取一次快照（不带截图），用元素签名（role/title/label，**不含 frame**）配取整的窗口内 y 做指纹，比较滚动前后的布局：移动了也不报 `verified`（仍按 `synthetic_input` / `accessibility_action_unasserted`），位移写进 `actualPreview`；「读回明确说没动」才换像素单位（480pt/页）重试一次，仍没动 → `suspected_noop`；树重排导致可比样本不足 → `readback_unsupported`；AX `AXScroll*ByPage` 被接受但没动时回落到指针路径（`fallbackReason: accessibilityActionNoop`）。后台投递滚轮前必须先发一个带窗口戳的 `mouseMoved`（前台路径一直这么做），否则 pid 投递的滚轮不进目标窗口（`BackgroundInputTransport.scrollEvents`）。
+- **scroll 没有可断言属性**：`computer_scroll` 没有 `focusedText` / `selection` / `value` 这类可读回的目标值，helper 投递后在 150–400ms 内重取一次快照（不带截图），用元素签名（role/title/label，**不含 frame**）配取整的窗口内 y 做指纹，比较滚动前后的布局：移动了也不报 `verified`（仍按 `synthetic_input` / `accessibility_action_unasserted`），位移写进 `actualPreview`；「读回明确说没动」才换像素单位（480pt/页）重试一次，仍没动 → `suspected_noop`；树重排导致可比样本不足 → `readback_unsupported`；AX `AXScroll*ByPage` 被接受但没动时回落到指针路径（`fallbackReason: accessibilityActionNoop`）。后台投递滚轮前必须先发一个带窗口戳的 `mouseMoved`（前台路径一直这么做），否则 pid 投递的滚轮不进目标窗口（`BackgroundInputTransport.scrollEvents`）。**（2026-11-10 修订：CuaDriver 只提供 `effect`/`evidence`，无布局指纹；滚动/拖拽保持 `unverified`（`synthetic_input` / `accessibility_action_unasserted`），不得报 `verified`。）**
 - **注册与门控**：`buildResponseTools` 按条件装配——任务 loop、平台支持（B 口 capabilities）、`computerUse.enabled` 为真；否则整组不出现。工具描述承载用法规则（无障碍优先、观察-动作-再观察、索引寻址、坐标只取当前帧栅格、权限被拒不换技术、验证后才算完成），浓缩自 orca `skills/computer-use`。
 - **错误**：`RuntimeClientError` 的 code 原样透传（`PERMISSION_DENIED` / `APP_NOT_FOUND` / `CONTROLLER_BUSY` / `STALE_STATE` …），工具层补人话与引导（如权限被拒 → 指设置页 anchor）。
 
@@ -103,10 +161,18 @@ macOS 原生层的关键机制（全部继承，不改语义）：无障碍树�
 ## 6 设置与权限引导（WP3 + WP5）
 
 - settings-catalog 条目 `browser.computer-use`：fields `[toggle enabled]`、`write: write('user-only')`、`card: 'field-editor'`、`store: { kind: 'settings', generic: true }`（路径 `computerUse.enabled`）、`deepLink: settings/browser/computer-use`；按目录惯例补 contributions 适配器、渲染层卡片分支、`data-settings-anchor`、覆盖率测试（漏登记会挂 `settings-adapters-coverage.test.ts`）。
-- 设置页 anchor 区块（browser 分区新增 `computer-use`）：开关 + helper 权限状态（AX / 屏幕录制，各自「已授权 / 未授权 / 未知」）+「打开系统设置」按钮；状态与打开动作走 main 的 `computer:permissions-status` / `computer:permissions-open` IPC（首次拉起 helper 以注册 TCC，沿 orca permission-status 的静置检测）。
+- 设置页 anchor 区块（独立「计算机操控」分区）：开关 + 宿主 TCC 权限状态（AX / 屏幕录制 / 直接采集，各自「已授权 / 未授权 / 未知」）+「打开系统设置」按钮 + 「检测截屏」按钮（`computer:permissions-probe-capture`：真抓一帧判断 macOS 26+ 直采可用性，未授权时就地显示 driver 原因，可能触发系统同意框）；状态与打开动作走 main 的 `computer:permissions-status` / `computer:permissions-open` IPC（P-B2：直接读 Electron `systemPreferences`；AX 触发系统提示，屏幕录制只开面板）。
 - 权限未就绪时工具返回结构化 `PERMISSION_DENIED` + 引导文案，Bot 可用设置工具指路（deepLink）。
 
 ## 7 构建与打包（WP1 / WP5）
+
+> **2026-11-10 修订**：本节的原生 helper 构建/打包流程已删除。当前流程：
+> `apps/desktop/scripts/fetch-cua-driver.mjs` 获取 pinned `CuaDriver.app` →
+> `electron-builder.yml` 的 `resources/cua-driver/darwin-${arch}` 与
+> `resources/cua-driver.lock.json` → `pack-hooks.cjs` 强制校验 bundle / lock / 签名。
+> `mac.signIgnore: ['/cua-driver/']` 禁止 electron-builder 重签上游产物；
+> `afterSign` 在最终产物上再次校验可执行文件哈希与上游签名。
+> 安装包每架构约 +60MB。
 
 - vendored 目录（保持 orca 相对布局便于 diff 上游）：`apps/desktop/native/computer-use-macos/`（SwiftPM 原样）+ `NOTICE.md`（来源 URL、commit `55507b87`、MIT、修改说明）。Windows / Linux 原生目录随 P1 / P2 搬。
 - 构建脚本 `apps/desktop/scripts/build-computer-use-macos.mjs`（改造自 orca `build-computer-macos.mjs`）：产物 `resources/computer-use/darwin-${arch}/KepCup Computer Use.app`；bundle id `app.kepcup.desktop.computer-use`；图标用 KepCup icns；签名身份解析沿 orca 逻辑（env 显式指定 > Apple Development（dev）> Developer ID（release）> 无身份则跳过并让打包校验报错）；release 加 `--options runtime --timestamp --entitlements`（entitlements 空 dict，随 KepCup 资源放置）。
@@ -119,3 +185,7 @@ macOS 原生层的关键机制（全部继承，不改语义）：无障碍树�
 - **P0 范围**：macOS arm64 + x64；任务 loop；12 个工具；conversation 默认审批档。
 - **不做**（永不做或 P1+）：全屏自由坐标桌面操控；对话轮注册；「永不问」审批档；桌面级用户接管检测；AppleScript / 系统事件兜底路径；自动同步上游。
 - **风险**：① 签名 / 公证是最大非代码成本——helper 无有效公证时 TCC 授权在升级后可能反复丢失，体验回退（缓解：CI 公证 + 验收项）；② 上游漂移——orca 每日发版，vendored 快照 + 人工 diff，协议（socket / stdio JSON-line）稳定则跟进成本低；③ 树过大 —— max_elements + 截断 + diff 已是 orca 成熟方案，但真机要测大应用（浏览器 / IDE）；④ Windows / Linux 在 P1 / P2 才验证，工作量估计不含返工；⑤ headless 场景（D102）能力不可用，务必对齐 browser 的降级表现并写进文档。
+
+> **2026-11-10 修订**：风险①（独立 helper 签名 / 公证）随 helper 删除而消失；
+> 新增风险为 CuaDriver 上游签名 / AMFI、安装包体积（每架构约 +60MB）、TCC 归属变化
+> （老用户需重新授权）与上游契约漂移（版本 pin + 季度吸收）。

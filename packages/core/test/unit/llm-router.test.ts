@@ -64,7 +64,6 @@ function router(
   } = {},
 ) {
   const settings = settingsSchema.parse({
-    experimental: { externalAgents: true },
     agents: { alpha: { enabled: true }, beta: { enabled: true } },
     ...patch,
   });
@@ -87,15 +86,28 @@ function router(
   });
 }
 
+/** 后台任务改用外部 Agent（默认是内置智能体）。 */
+const AGENTS_ON = {
+  backgroundTasks: { agentEnabled: true, agentSkillAuthoring: false, projectMentionOnly: true },
+} satisfies Partial<Settings>;
 /** An explicitly chosen background agent (routes bot-less purposes too). */
-const CHOSEN = { backgroundAgentId: 'alpha' } satisfies Partial<Settings>;
+const CHOSEN = { ...AGENTS_ON, backgroundAgentId: 'alpha' } satisfies Partial<Settings>;
+/** 整块关闭后台任务（内置 + 外部）。 */
+const TASKS_OFF = {
+  backgroundTasks: {
+    builtinEnabled: false,
+    agentEnabled: false,
+    agentSkillAuthoring: false,
+    projectMentionOnly: true,
+  },
+} satisfies Partial<Settings>;
 /** Agent triage opted in (projectMentionOnly is on by default, 审查 C2). */
 const TRIAGE_ON = {
   backgroundTasks: { agentEnabled: true, agentSkillAuthoring: false, projectMentionOnly: false },
 } satisfies Partial<Settings>;
 
 describe('LlmRouter', () => {
-  it('built-in models win, with the per-purpose model rules of the old call sites', () => {
+  it('built-in models win unless a background agent is explicitly chosen', () => {
     const withModels = router({
       defaultMainModel: 'custom:m/main',
       defaultLightModel: 'custom:m/light',
@@ -123,21 +135,56 @@ describe('LlmRouter', () => {
     expect(
       router({ defaultMainModel: 'custom:m/main' }).resolveDefault('reflection')?.modelRef,
     ).toBe('custom:m/main');
+    // 明确指定的后台 Agent「选定即生效」：即使有内置模型也走它。
+    expect(
+      router({
+        ...CHOSEN,
+        defaultMainModel: 'custom:m/main',
+        defaultLightModel: 'custom:m/light',
+      }).resolveForBot(b, 'summary')?.agentId,
+    ).toBe('alpha');
+    // 后台任务设置只约束后台用途：关闭 / 指定 Agent 不改变微应用、组件制作与
+    // 上下文压缩的模型选择（审查 P1 回归）。
+    for (const purpose of [
+      'micro_app',
+      'widget_authoring',
+      'widget_review',
+      'task_compaction',
+    ] as const) {
+      for (const patch of [CHOSEN, TASKS_OFF]) {
+        expect(
+          router({
+            ...patch,
+            defaultMainModel: 'custom:m/main',
+            defaultLightModel: 'custom:m/light',
+          }).resolveForBot(b, purpose),
+          purpose,
+        ).toMatchObject({ engine: builtin, agentId: null });
+      }
+    }
+    // builtinEnabled=false + agentEnabled=false：内置与外部都关 = 整块跳过。
+    expect(
+      router({
+        ...TASKS_OFF,
+        defaultMainModel: 'custom:m/main',
+      }).resolveDefault('summary'),
+    ).toBeNull();
   });
 
   it('no built-in model: auto = the bot’s own agent only, never another vendor (审查 S2)', () => {
     // Auto without a bot: nothing (no cross-vendor fallback to the first agent).
-    expect(router({}, { ready: ['beta'] }).resolveDefault('reflection')).toBeNull();
+    expect(router(AGENTS_ON, { ready: ['beta'] }).resolveDefault('reflection')).toBeNull();
     const own = bot({}, { id: 'beta', model: 'beta-pro' });
-    expect(router({}, { bot: own }).resolveForBot(own, 'summary')).toEqual({
+    expect(router(AGENTS_ON, { bot: own }).resolveForBot(own, 'summary')).toEqual({
       engine: external,
       modelRef: 'agent:beta/beta-pro',
       provider: 'agent:beta',
       agentId: 'beta',
     });
-    expect(router({}, { bot: own }).resolveForBot('bot_1', 'summary')?.agentId).toBe('beta');
+    expect(router(AGENTS_ON, { bot: own }).resolveForBot('bot_1', 'summary')?.agentId).toBe('beta');
     // Bot model empty → the agent's configured default; a Bot choice wins.
     const agentDefaults = {
+      ...AGENTS_ON,
       agents: {
         alpha: { enabled: true, model: 'alpha-default' },
         beta: { enabled: true, model: 'beta-default' },
@@ -155,11 +202,13 @@ describe('LlmRouter', () => {
         ?.modelRef,
     ).toBe('agent:alpha/alpha-default');
     // The bot's own agent unusable: skipped, alpha (ready) is NOT used instead.
-    expect(router({}, { bot: own, ready: ['alpha'] }).resolveForBot(own, 'summary')).toBeNull();
+    expect(
+      router(AGENTS_ON, { bot: own, ready: ['alpha'] }).resolveForBot(own, 'summary'),
+    ).toBeNull();
     // A bot without an agent of its own: skipped.
-    expect(router().resolveForBot(bot(), 'reflection')).toBeNull();
+    expect(router(AGENTS_ON).resolveForBot(bot(), 'reflection')).toBeNull();
     // Global profile curation (cross-bot): only with an explicit choice.
-    expect(router({}, { bot: own }).resolveForBot(own, 'profile_curation')).toBeNull();
+    expect(router(AGENTS_ON, { bot: own }).resolveForBot(own, 'profile_curation')).toBeNull();
     expect(router(CHOSEN).resolveDefault('profile_curation')?.agentId).toBe('alpha');
     // Explicit choice: used as is (bot or not); never swapped when unusable.
     expect(router(CHOSEN, { bot: own }).resolveForBot(own, 'summary')).toMatchObject({
@@ -167,17 +216,13 @@ describe('LlmRouter', () => {
     });
     expect(router(CHOSEN).resolveDefault('summary')?.agentId).toBe('alpha');
     expect(router(CHOSEN, { ready: ['beta'] }).resolveDefault('summary')).toBeNull();
-    // Nothing usable / no external engine / experimental off → skip (P4 fallback).
+    // Nothing usable / no external engine → skip (P4 fallback).
     expect(router(CHOSEN, { ready: [] }).resolveDefault('summary')).toBeNull();
     expect(router(CHOSEN, { withExternal: false }).resolveDefault('summary')).toBeNull();
-    expect(
-      router({ ...CHOSEN, experimental: { externalAgents: false } }).resolveDefault('summary'),
-    ).toBeNull();
   });
 
   it('background eligibility: no native tools, no personal config, concurrency ≥ 2 (审查 S1 / C1)', () => {
-    const settings = (patch: Partial<Settings> = {}) =>
-      settingsSchema.parse({ experimental: { externalAgents: true }, ...patch });
+      const settings = (patch: Partial<Settings> = {}) => settingsSchema.parse({ ...patch });
     const claude = fakeAgentEntry('claude-x', { provider: 'claude', releaseGate: 'claude' });
     const opencode = fakeAgentEntry('oc-x', { provider: 'opencode', releaseGate: 'opencode' });
     const codex = fakeAgentEntry('codex-x', { provider: 'codex', releaseGate: 'codex' });
@@ -217,10 +262,10 @@ describe('LlmRouter', () => {
     expect(blocked.resolveDefault('summary')).toBeNull();
     const own = bot({}, { id: 'beta' });
     expect(
-      router({ providerConcurrency: { default: 4, 'agent:beta': 1 } }, { bot: own }).resolveForBot(
-        own,
-        'summary',
-      ),
+      router(
+        { ...AGENTS_ON, providerConcurrency: { default: 4, 'agent:beta': 1 } },
+        { bot: own },
+      ).resolveForBot(own, 'summary'),
     ).toBeNull();
   });
 
@@ -340,7 +385,6 @@ describe('judgeContinuation through the router (P6 / D92 T1a routing)', () => {
       settings: {
         get: () =>
           settingsSchema.parse({
-            experimental: { externalAgents: true },
             agents: { alpha: { enabled: true } },
             ...TRIAGE_ON,
           }),

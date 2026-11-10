@@ -1056,7 +1056,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     id: 'background.tasks',
     group: 'background',
     title: '后台任务智能体',
-    summary: '后台整理（记忆、画像、技能沉淀）是否改用外部智能体，以及用哪个',
+    summary: '后台整理（记忆、画像、技能沉淀）由内置智能体还是某个外部智能体执行',
     keywords: ['后台任务', '后台智能体', '记忆整理'],
     scope: 'global',
     fields: [

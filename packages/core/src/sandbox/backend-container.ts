@@ -1,6 +1,11 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { homedir, userInfo } from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
+
+import { LIMA_SHIM_BIN, LIMA_VM_NAME } from './lima/constants.js';
+import { limaInstanceState, parseLimaList } from './lima/list.js';
+import { hostPathWithCommonDirs } from '../infra/paths.js';
 
 import { srtFilesystemFor, srtNetworkConfigFor } from './backend-srt.js';
 import { encodeExecRequest, parseExecResponse } from './wsl/protocol.js';
@@ -14,6 +19,7 @@ import type {
   SandboxBackendKind,
   SandboxExecRequest,
   SandboxExecResult,
+  SandboxUnavailableState,
 } from './types.js';
 import type { CoreLogger } from '../infra/logger.js';
 
@@ -31,25 +37,25 @@ import type { CoreLogger } from '../infra/logger.js';
  *  - Podman: `podman run --rm -i … -v <host>:<host>…` — per-command binds of
  *    the resolved policy paths at IDENTICAL in-container paths (no path
  *    rewriting; docs/dev/phases/P12 任务 6 文件系统/网络规则与默认级一致);
- *  - Lima: `limactl exec --workdir … kepcup -- …` — the VM is provisioned
- *    once with mounts at identical paths (see the build-rootfs.sh header);
- *    probe() requires the VM to exist and run.
+ *  - Lima: `limactl shell --workdir … kepcup -- …` — the VM is created and
+ *    provisioned by the settings-page preparation wizard (sandbox/lima,
+ *    mounts at identical paths, shim + srt installed in the guest);
+ *    probe() requires the VM to run AND the shim to be initialized.
  *
  * 红线 (same as the WSL backend): every host path the policy needs visible
  * inside the VM must be registered (data home / bound workdir / active
  * grants) or belong to the static read-only roots — resolvePolicyMounts
  * fails the whole command otherwise.
  *
- * Platform reality (docs 任务书 + todo/cross-platform-acceptance.md P12):
- * these backends are blind-written — the Lima probe was confirmed absent on
- * the dev machine (`command -v limactl` empty; installation deliberately not
- * done — 重资源), the Podman path targets Linux. The security use-case
- * suites run on these backends only on real macOS/Linux machines
+ * Platform reality: Lima is exercised on macOS (setup wizard creates the VM
+ * and initializes the guest tooling); the Podman path targets Linux and its
+ * image import is still pending (todo/cross-platform-acceptance.md P12).
+ * The security use-case suites still need a real Linux machine for Podman
  * (任务书 测试要求「增强级：在 macOS 与 Linux 上运行安全用例集」).
  */
 
-/** Lima VM instance name provisioned for the app. */
-export const LIMA_VM_NAME = 'kepcup';
+/** Lima VM instance name provisioned for the app (re-exported for consumers). */
+export { LIMA_VM_NAME } from './lima/constants.js';
 
 /** Podman image tag built from the same rootfs artifact (CI 产出). */
 export const PODMAN_IMAGE = 'kepcup-sandbox:1';
@@ -114,7 +120,13 @@ export abstract class ContainerSandboxBackend implements SandboxBackend {
   async #probeOnce(): Promise<SandboxAvailability> {
     const cli = await this.cliAvailable();
     if (!cli.available) {
-      return { backend: this.kind, available: false, reason: cli.reason, fixHint: cli.fixHint };
+      return {
+        backend: this.kind,
+        available: false,
+        reason: cli.reason,
+        fixHint: cli.fixHint,
+        state: cli.state ?? 'cli_missing',
+      };
     }
     return this.instanceReady();
   }
@@ -131,6 +143,12 @@ export abstract class ContainerSandboxBackend implements SandboxBackend {
       cwd: req.cwd,
       registration: this.opts.registration,
       trustedReadOnlyRoots: readOnlyRoots(this.opts.platform),
+      // macOS policy re-allows this one file out of the denied home (srt does
+      // the same). It is already visible through the home mount — no bind and
+      // no rejection (same carve-out as the WSL image-owned roots).
+      ...(this.opts.platform === 'darwin'
+        ? { skipReadOnlyRoots: [path.join(homedir(), '.CFUserTextEncoding')] }
+        : {}),
     });
     const rejections = cwdCoverageRejections(req.cwd, resolved.entries, this.opts.platform);
     if (resolved.rejections.length > 0 || rejections.length > 0) {
@@ -176,11 +194,25 @@ export abstract class ContainerSandboxBackend implements SandboxBackend {
   // --- subclass contract -------------------------------------------------------
 
   /** CLI presence check with a localized install hint when absent. */
-  protected abstract cliAvailable(): Promise<{ available: boolean; reason: string; fixHint: string }>;
+  protected abstract cliAvailable(): Promise<{
+    available: boolean;
+    reason: string;
+    fixHint: string;
+    state?: SandboxUnavailableState;
+  }>;
   /** VM / image readiness (after the CLI exists). */
   protected abstract instanceReady(): Promise<SandboxAvailability>;
   /** Transport argv; the shim receives the request on stdin. */
   protected abstract execArgv(req: SandboxExecRequest, mounts: readonly ResolvedMount[]): string[];
+
+  /**
+   * Base env inside the guest (identity/locale/temp). WSL/Podman use the
+   * dedicated `kepcup` account from the rootfs/image; Lima runs as the Lima
+   * default user (the host user), so it overrides HOME/USER/LOGNAME.
+   */
+  protected baseEnv(): Record<string, string> {
+    return { ...DISTRO_BASE_ENV };
+  }
 
   // --- internals ---------------------------------------------------------------
 
@@ -188,7 +220,7 @@ export abstract class ContainerSandboxBackend implements SandboxBackend {
    * shim replaces the child env wholesale, so identity/locale/temp basics
    * travel in the request; the policy's own PATH and cache variables win. */
   #distroEnv(policy: SandboxExecRequest['policy']): Record<string, string> {
-    const env: Record<string, string> = { ...DISTRO_BASE_ENV };
+    const env: Record<string, string> = this.baseEnv();
     for (const [key, value] of Object.entries(policy.env)) {
       if (key === 'PATH') {
         // The policy PATH starts with the mounted toolchain bins (host paths
@@ -232,7 +264,12 @@ export function cwdCoverageRejections(cwd: string, mounts: readonly ResolvedMoun
 export class PodmanSandboxBackend extends ContainerSandboxBackend {
   readonly kind: SandboxBackendKind = 'podman';
 
-  protected async cliAvailable(): Promise<{ available: boolean; reason: string; fixHint: string }> {
+  protected async cliAvailable(): Promise<{
+    available: boolean;
+    reason: string;
+    fixHint: string;
+    state?: SandboxUnavailableState;
+  }> {
     const ok = await commandAvailable(this.runner, 'podman', ['--version']);
     return ok
       ? { available: true, reason: '', fixHint: '' }
@@ -240,6 +277,7 @@ export class PodmanSandboxBackend extends ContainerSandboxBackend {
           available: false,
           reason: '未安装 rootless Podman，增强沙箱不可用',
           fixHint: '安装 rootless Podman（如 sudo apt install podman / sudo dnf install podman），或经设置页的环境管理器安装',
+          state: 'cli_missing',
         };
   }
 
@@ -251,6 +289,7 @@ export class PodmanSandboxBackend extends ContainerSandboxBackend {
         available: false,
         reason: '增强沙箱镜像尚未导入',
         fixHint: '在设置页导入增强沙箱镜像（podman import rootfs.tar）',
+        state: 'instance_missing',
       };
     }
     return { backend: 'podman', available: true };
@@ -271,7 +310,12 @@ export class PodmanSandboxBackend extends ContainerSandboxBackend {
 export class LimaSandboxBackend extends ContainerSandboxBackend {
   readonly kind: SandboxBackendKind = 'lima';
 
-  protected async cliAvailable(): Promise<{ available: boolean; reason: string; fixHint: string }> {
+  protected async cliAvailable(): Promise<{
+    available: boolean;
+    reason: string;
+    fixHint: string;
+    state?: SandboxUnavailableState;
+  }> {
     const ok = await commandAvailable(this.runner, 'limactl', ['--version']);
     return ok
       ? { available: true, reason: '', fixHint: '' }
@@ -279,6 +323,7 @@ export class LimaSandboxBackend extends ContainerSandboxBackend {
           available: false,
           reason: '未安装 Lima，增强沙箱不可用',
           fixHint: '安装 Lima（brew install lima），或经设置页的环境管理器安装增强沙箱',
+          state: 'cli_missing',
         };
   }
 
@@ -289,38 +334,75 @@ export class LimaSandboxBackend extends ContainerSandboxBackend {
         backend: 'lima',
         available: false,
         reason: 'Lima 已安装但增强沙箱虚拟机尚未创建',
-        fixHint: '在设置页创建增强沙箱虚拟机（limactl create/start）',
+        fixHint: '在设置页的沙箱准备向导中创建增强沙箱虚拟机',
+        state: 'instance_missing',
       };
     }
-    const running = list.stdout
-      .toString('utf8')
-      .split('\n')
-      .filter((line) => line.trim().length > 0)
-      .some((line) => {
-        try {
-          const entry = JSON.parse(line) as { name?: string; status?: string; running?: boolean };
-          return entry.name === LIMA_VM_NAME && (entry.running === true || entry.status === 'Running');
-        } catch {
-          return false;
-        }
-      });
-    if (!running) {
+    const state = limaInstanceState(parseLimaList(list.stdout.toString('utf8')));
+    // `limactl list --json` exits 0 with empty output when no instance exists:
+    // that is "not created yet", not "installed but stopped".
+    if (state === 'missing') {
+      return {
+        backend: 'lima',
+        available: false,
+        reason: 'Lima 已安装但增强沙箱虚拟机尚未创建',
+        fixHint: '在设置页的沙箱准备向导中创建增强沙箱虚拟机',
+        state: 'instance_missing',
+      };
+    }
+    if (state === 'stopped') {
       return {
         backend: 'lima',
         available: false,
         reason: '增强沙箱虚拟机未在运行',
-        fixHint: '在设置页启动增强沙箱虚拟机（limactl start）',
+        fixHint: '在设置页的沙箱准备向导中启动增强沙箱虚拟机',
+        state: 'instance_stopped',
+      };
+    }
+    // Running is not enough: the guest must have the sandbox shim and its
+    // runtime (provisioned by the setup wizard). Without this check the
+    // backend would advertise "available" while every exec fails.
+    const shim = await this.runner.run(
+      ['limactl', 'shell', '--tty=false', LIMA_VM_NAME, '--', 'test', '-x', LIMA_SHIM_BIN],
+      { timeoutMs: 20_000 },
+    );
+    if (shim.exitCode !== 0 || shim.error !== undefined) {
+      return {
+        backend: 'lima',
+        available: false,
+        reason: '增强沙箱虚拟机已运行，但沙箱工具尚未初始化',
+        fixHint: '在设置页的沙箱准备向导中初始化沙箱工具',
+        state: 'instance_unprovisioned',
       };
     }
     return { backend: 'lima', available: true };
   }
 
+  /**
+   * Lima uses the host-matching default user (the VM mounts `~` with the host
+   * UID), so the WSL rootfs account does not exist there.
+   */
+  protected override baseEnv(): Record<string, string> {
+    let username = DISTRO_BASE_ENV.USER!;
+    try {
+      username = userInfo().username;
+    } catch {
+      // keep the WSL default in odd environments
+    }
+    return {
+      ...DISTRO_BASE_ENV,
+      ...(process.env.HOME !== undefined ? { HOME: process.env.HOME } : {}),
+      USER: username,
+      LOGNAME: username,
+    };
+  }
+
   protected execArgv(req: SandboxExecRequest, _mounts: readonly ResolvedMount[]): string[] {
     // Lima mounts are provisioned at VM creation (identical paths); exec
-    // only needs the workdir. The resolved mounts were still validated
-    // against the registration above (fail-closed).
+    // only needs the workdir. `limactl shell` is the Lima 2.x command (there
+    // is no `limactl exec`); stdin carries the shim protocol.
     void _mounts;
-    return ['limactl', 'exec', '--workdir', req.cwd, '--user', WSL_USER, LIMA_VM_NAME, '--', WSL_SHIM_BIN];
+    return ['limactl', 'shell', '--tty=false', '--workdir', req.cwd, LIMA_VM_NAME, '--', LIMA_SHIM_BIN];
   }
 }
 
@@ -335,6 +417,7 @@ export function spawnCliRunner(): CliRunner {
             stdio: ['pipe', 'pipe', 'pipe'],
             shell: false,
             detached: process.platform !== 'win32',
+            env: { ...process.env, PATH: hostPathWithCommonDirs() },
           });
         } catch (error) {
           resolve({ exitCode: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), error: String(error) });

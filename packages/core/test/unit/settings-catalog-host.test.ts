@@ -108,7 +108,6 @@ function makeRig(
     workdirs?: AdapterDeps['workdirs'];
     /** Bot 条目写入走真实的 `applyBotProfileUpdate`（校验 + 锁外中断 / 收回授权）。 */
     realBotProfiles?: boolean;
-    experimentalAgents?: boolean;
     oauthClients?: AdapterDeps['oauthClients'];
     fileGrants?: AdapterDeps['fileGrants'];
     schedules?: AdapterDeps['schedules'];
@@ -177,6 +176,9 @@ function makeRig(
         { id: 'mock-x', name: 'Mock X', contextWindow: 1000, capabilities: ['chat'] },
       ],
       hasKey: secrets.has('provider:custom:mock'),
+      keyPreviews: secrets.has('provider:custom:mock')
+        ? [{ mask: 'sk-.......1234', enabled: true }]
+        : [],
     },
     {
       id: 'dashscope',
@@ -188,6 +190,9 @@ function makeRig(
         { id: 'qwen-image', name: 'qwen-image', contextWindow: 128000, capabilities: ['image'] },
       ],
       hasKey: secrets.has('provider:dashscope'),
+      keyPreviews: secrets.has('provider:dashscope')
+        ? [{ mask: 'sk-.......5678', enabled: true }]
+        : [],
     },
     {
       id: 'openai',
@@ -196,6 +201,9 @@ function makeRig(
       enabled: true,
       models: [{ id: 'gpt-x', name: 'GPT X', contextWindow: 1000, capabilities: ['chat'] }],
       hasKey: secrets.has('provider:openai'),
+      keyPreviews: secrets.has('provider:openai')
+        ? [{ mask: 'sk-.......9012', enabled: true }]
+        : [],
     },
   ];
   const bots = new Map<string, Bot>([
@@ -209,9 +217,6 @@ function makeRig(
   const mcpRevoked: string[][] = [];
   const revocations: PermissionRevokedEvent[] = [];
   const profileSwitches: string[] = [];
-  if (extras.experimentalAgents === true) {
-    settings.update({ experimental: { externalAgents: true } } as never);
-  }
   const catalog = [
     { id: 'agent-a', name: 'Agent A' },
     { id: 'agent-b', name: 'Agent B' },
@@ -1697,25 +1702,24 @@ describe('settings catalog host: D89 review round 2', () => {
     expect(rig.profileSwitches).toEqual(['bot_a']);
   });
 
-  it('bot.agent: switching to an external agent honors the experimental switch like bots.update', async () => {
+  it('bot.agent: switching to a catalog agent works; unknown ids are rejected like bots.update', async () => {
     const rig = makeRig({ realBotProfiles: true });
     await expect(
       rig.host.applyItem({
         itemId: 'bot.agent',
-        values: { agent: 'agent-a', permission: 'ask' },
+        values: { agent: 'not-in-catalog', permission: 'ask' },
         expected: null,
         target: { botId: 'bot_a' },
       }),
-    ).rejects.toThrow(/实验功能/);
+    ).rejects.toThrow(/不在目录中/);
     expect(rig.bots.get('bot_a')!.profile.runtime.agent.id).toBe('');
-    const enabled = makeRig({ realBotProfiles: true, experimentalAgents: true });
-    await enabled.host.applyItem({
+    await rig.host.applyItem({
       itemId: 'bot.agent',
       values: { agent: 'agent-a', permission: 'ask' },
       expected: null,
       target: { botId: 'bot_a' },
     });
-    expect(enabled.bots.get('bot_a')!.profile.runtime.agent).toMatchObject({
+    expect(rig.bots.get('bot_a')!.profile.runtime.agent).toMatchObject({
       id: 'agent-a',
       permission: 'ask',
     });
@@ -1922,7 +1926,6 @@ describe('settings catalog host: D89 review round 3', () => {
                 { id: 'srv', name: 'S', transport: 'stdio', command: 'x', enabled: true },
               ],
               browserProfiles: [{ id: 'bpf', name: 'B', createdAt: 1 }],
-              experimental: { externalAgents: false },
             }) as never,
         },
         agentCatalog: () => [],

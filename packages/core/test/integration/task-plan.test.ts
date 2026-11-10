@@ -80,6 +80,17 @@ describe('update_plan in a built-in task (D93 P1)', () => {
     expect(bodies.at(-1)).toContain('[in_progress] 运行测试');
     expect(bodies.at(-1)).toContain('[completed] 检查项目');
 
+    // 计划走消息尾部，不写 system：system 整轮逐字节不变（prompt cache 前缀）。
+    const systems = taskRequests.map((request) =>
+      JSON.stringify(
+        ((request.body.messages ?? []) as Array<{ role?: string; content?: unknown }>).find(
+          (message) => message.role === 'system',
+        )?.content ?? '',
+      ),
+    );
+    expect(new Set(systems).size).toBe(1);
+    expect(systems.every((system) => !system.includes('<current_plan>'))).toBe(true);
+
     const steps = (
       (await core.rpc.call('runs.steps', { runId: run.id })) as {
         steps: Array<{ type: string; payload: Record<string, unknown> }>;

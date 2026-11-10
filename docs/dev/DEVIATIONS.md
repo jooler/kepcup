@@ -1214,3 +1214,128 @@
 - 问题：todo/computer-use.md 硬约束「vendored 的 Swift helper 源码一行不改」（DEV-077 是第一例外），但 main.swift 里 12 处用户可见显示文案仍写 orca 品牌：3 条错误文案（667 / 714 / 1199）、权限引导窗口标题与副标题（3202 / 3328 / 3330 / 3432 / 3438 / 3439 / 3611 / 4023）、stderr 提示（4393）。构建脚本只改 Info.plist 层的显示名，源内文案够不到；TS 层无绕路（字符串由 helper 直接返回/渲染）。
 - 影响范围：仅 `Sources/OrcaComputerUseMacOS/main.swift` 显示字符串——`Orca Computer Use` / `Orca` → `KepCup Computer Use` / `KepCup`（全局替换，计数校验）；另改写一处失效指引：错误文案让用户跑上游 CLI `orca computer permissions`（KepCup 无此命令），改为只指设置页。标识符（可执行名 `orca-computer-use-macos`、`ORCA_*` env、socket 前缀、`OrcaComputerUse*` 包名）零改动——协议与 peer 校验依赖。`swift test` 6/6；NOTICE.md「例外」小节同步。
 - 决定：品牌串随源码改（属本地化/品牌适配，与 DEV-077 同级的可回退最小例外）；上游跟进人工 diff 时需留意这两处例外文件的再应用。测试 fixture 里的 `/Applications/Orca Computer Use.app` 路径是 mock 数据，不改。
+
+### DEV-083 TCC 归属改为 KepCup 主应用：删除独立 helper
+
+- 状态：已落实
+- 阶段：计算机操控 P-B2（2026-11-10）
+- 是否阻塞：是（用户可见行为变化：原生 helper 时代的授权行不再被使用）
+- 问题：D105-2 原设计让独立 `KepCup Computer Use.app` 承载辅助功能 / 屏幕录制 TCC；CuaDriver 的 embedded 模式要求宿主直接 spawn daemon，TCC 记在宿主 `KepCup.app` 名下，无法再维持独立 helper 身份。
+- 影响范围：删除 `apps/desktop/native/`、helper 构建/权限模块与测试；`computer.permissionsOpen` 改为宿主 API；设置页文案与 release note 写明「老用户需重新授权」；未接线的 `macos-tcc-reset.ts` / `resetComputerUsePermissions` 一并删除。
+- 决定：接受 TCC 归属变化。embedded 模式的正确性以 live 测试的 `source.attribution === "host"` 为断言；dev 壳（Electron）与 release 包的 TCC 身份不同，互不共用授权。
+
+### DEV-084 权限状态/引导改用 Electron systemPreferences
+
+- 状态：已落实
+- 阶段：计算机操控 P-B2（2026-11-10）
+- 是否阻塞：否
+- 问题：cua daemon 的 `check_permissions` 可读，但 TCC 按进程缓存，授权变化后必须重启 daemon 才能读到新状态，会打断进行中的操控会话；而 embedded 模式下宿主与 daemon 是同一 TCC 身份，主进程可以直接读。
+- 影响范围：新增 `apps/desktop/src/main/computer/computer-use-permissions.ts`（注入 `systemPreferences` / `openExternal`）；`computer-host.ts` 的 `permissionsStatus` / `permissionsOpen` 改用它；检测到新授权或打开设置后**标记下一次 invoke 前重启 sidecar**（不立即杀，避免在途动作被降级为 `not_started`）。
+- 决定：产品权限状态用 Electron 内建读取；`cua-driver-permissions.ts` 的 `check_permissions` 仅保留为 live 测试 / embedded 归属诊断。AX 用 `isTrustedAccessibilityClient(true)` 触发系统提示；屏幕录制没有 Electron 主动请求 API，只能打开系统设置面板（macOS 26+ 首次截图还会有 direct-capture 二段同意）。
+
+### DEV-085 删除自研 provider，CuaDriver 成为唯一 provider 且打包必需
+
+- 状态：已落实
+- 阶段：计算机操控 P-B2（2026-11-10）
+- 是否阻塞：否
+- 问题：用户确认「只使用 CuaDriver，不再自行实现」。保留 native 默认 provider 会让 cua 的打包/权限问题长期被掩盖，也违背不再维护自研栈的决定；`desktop-script-*` 的 runtime.ps1/runtime.py 从未落地，属于死代码。
+- 影响范围：删除 `native/`、`macos-native-provider-*`、`desktop-script-*`、`KEPCUP_COMPUTER_PROVIDER` 开关及相关测试；`electron-builder.yml` / `pack-hooks.cjs` / `dist.mjs` / `dev.mjs` 改为 CuaDriver；`cua-driver.lock.json` 随包；`fetch-cua-driver.mjs` 增加 `--arch` 供交叉打包。`mac.signIgnore: ['/cua-driver/']` 阻止 electron-builder 重签上游 bundle；`afterSign` 在签名后的最终产物上再次校验哈希与上游签名（afterPack 早于签名，单独校验不够）。
+- 决定：macOS 唯一 provider = CuaDriver；打包缺失 `CuaDriver.app` 或 lock 时 fail-fast；`KEPCUP_SKIP_COMPUTER_USE=1` 保留为显式豁免（产物无该能力）。
+
+### DEV-086 CuaDriver 能力妥协（原设计要求无法完全满足的部分）
+
+- 状态：已落实
+- 阶段：计算机操控 P-B2（2026-11-10）
+- 是否阻塞：否（设计已按实际能力修订并记录）
+- 问题：原 D105 设计要求中的跨快照稳定元素索引、`focusedElementId`、`annotatedScreenshot` / `ocr`、scroll/drag 读回验证、后台修饰键点击、web 内容元素直写、完整大树、截图稳定可用、安装包体积与 Windows/Linux 自研 runtime，CuaDriver 不能完全满足。
+- 影响范围：`cua-driver-actions.ts` / `cua-driver-observer.ts` 的如实映射；`docs/design/52-computer-use.md`「实现修订（2026-11-10）」12 条妥协表；设置页与错误文案。
+- 决定：不虚报能力（`annotatedScreenshot` / `ocr` = false）、不静默降级（截图失败 / 修饰键点击 / web 内容直写都报可行动错误）、滚动与拖拽保持 `unverified`（不得报 verified）、`focusedElementId` 固定 null、索引只在当前快照内有效。Windows/Linux 后续按上游启用，不再自研。
+
+### DEV-087 截屏被 driver 默认策略挡下：直采同意 + 真实抓帧自检
+
+- 状态：已落实
+- 阶段：计算机操控 P-B2 真机复检（2026-11-10）
+- 是否阻塞：否
+- 问题：真机复检发现「屏幕录制」已授权 + `check_permissions` 报 `attribution: "host"` 时，
+  `computer_get_app_state(screenshot: true)` 仍失败：`px_capture_unavailable` /
+  `direct_capture_consent_required`。根因是 driver 在「直采同意状态未知」时**默认不尝试
+  采集**（原文：首次采集会让系统弹框并抢焦点），因而永久静默失败——不是 macOS 拒绝。
+  另：embedded 模式下 `check_permissions` 的 `prompt:true` 被忽略（driver 回
+  「never raises its own prompt」），所以设置页不能用它来触发任何授权。
+- 影响范围：`cua-driver-process.ts` 的 daemon 环境；`cua-driver-permissions.ts`
+  （`directCapture` 映射 + `probeCuaDriverDirectCapture`）；sidecar `probeDirectCapture`
+  方法与 `computer-host.ts` `permissionsProbeCapture`；共享
+  `computer.permissionsStatus` 的 `directCapture` 字段；设置页「直接采集」状态行与
+  「检测截屏」按钮；截图失败文案。
+- 决定：daemon 固定带 `CUA_DRIVER_ALLOW_CAPTURE_CONSENT_ALERT=1` 真去采集（复检机上
+  宿主已有屏幕录制 → 直接成功、不弹框；系统若要求同意则由这次采集弹一次框）。状态只能
+  靠真抓一帧判断：设置页按钮 → sidecar `probeDirectCapture`（取一个在屏窗口、
+  `include_accessibility_tree:false` + 截图到临时文件，成功后删除）。三态如实区分：
+  抓到文件→granted；`screenshot_error`→not-granted（带回 driver 原因）；没有在屏窗口等
+  →unknown。自检会短暂抢焦点，只能由用户主动点击触发，不挂在状态轮询里。
+
+### DEV-088 拖拽投递：后台合成拖拽在 Finder 内容区无效，文件拖放前台也落不了盘
+
+- 状态：已缓解（能力限制不在我们这侧）
+- 阶段：计算机操控 P-B2 真机复检（2026-11-10）
+- 是否阻塞：否（工具描述与参数给出替代路径）
+- 问题：Finder 列表视图实测（坐标为 `window_bounds` 换算后的截图像素，已核对落点）：
+  1. `delivery_mode:"background"` 的拖拽在内容区**完全无效**——文件不动，连框选都不响应，
+     只回 `effect:"unverifiable"`；驱动文档说的 `background_unavailable` /
+     `drag_and_drop_session` 未触发。
+  2. `delivery_mode:"foreground"` 能恢复普通拖拽（框选选中整列、窗口右下角缩放
+     920×436 → 870×386 均成功）。
+  3. **文件拖放**（`probe.txt` 行 → `dst` 文件夹行）后台/前台、500–2500ms/20–60 步都
+     不落盘：目标目录为空，Finder 把按下/抬起当两次单击（状态栏出现双选）。macOS 的
+     拖放会话要真实指针，合成事件建不起来。
+- 影响范围：`packages/core/src/tools/computer-tools.ts` 的 `computer_drag`（新增
+  `delivery`）；`cua-driver-actions.ts` 的 drag 分支与 `action.delivery` 元数据。
+- 决定：`computer_drag` 的 `delivery` **默认 `foreground`**——后台合成拖拽拿不到系统
+  拖放会话，默认即静默无效；需要「不抢焦点」时显式传 `background`。工具描述写明系统级
+  文件拖放即使前台也可能失败，改用应用自带的「移动到」或文件系统操作。不做「失败后自动
+  重试」：拖拽没有读回，自动重放有重复执行风险；默认前台把成本（短暂置前 + 移动真实
+  指针，driver 结束会还原前台应用）变成确定行为。
+
+### DEV-089 动作后补观察丢失像素栅格；关闭窗口后动作仍绑旧 window_id
+
+- 状态：已落实（像素栅格）/ 记录在案（窗口重绑）
+- 阶段：计算机操控 P-B2 真机复检（2026-11-10）
+- 是否阻塞：否
+- 问题：
+  1. `get_window_state` 在 `include_screenshot:false` 时不回 `screenshot_width` /
+     `screenshot_height` / `screenshot_scale`，也不回 `window_bounds`（实测均 undefined）。
+     动作后的补观察（以及 `noScreenshot: true` 的观察）用这些字段重建几何，缺失时写 0，
+     于是下一次坐标寻址被 `requireGeometry` 误判成「还没拿过截屏」，模型被迫每步都
+     重新截屏。
+  2. 窗口被用户关掉后，`resolveActionWindowId` 仍优先返回快照表里的旧 `window_id`，动作
+     被 driver 拒绝（`window_not_found`：「WindowServer has no record of window N」），
+     必须重新 `computer_get_app_state` 才能续投。
+- 影响范围：`cua-driver-observer.ts`（`resolveGeometry`）；`cua-driver-snapshot-store` /
+  `cua-driver-actions.ts` 的窗口解析。
+- 决定：无截图观察时，窗口尺寸未变就沿用上一帧像素栅格（driver 自身也保留上一帧），
+  尺寸变了才清空并要求重新截屏；单测覆盖「动作后补观察不断链」「尺寸变化作废旧栅格」。
+  窗口目标失效的处理（2026-11-10 复检后补齐）：①默认目标改成「有标题窗口优先」——
+  sheet / 无标题辅助窗口同样以 layer-0 进 `list_windows` 且常带最高 z_index，按 z 选会
+  把默认目标落成 sheet，动作随即报 `off_space_or_ax_unresolved`（已映射为
+  `WINDOW_NOT_FOUND`）；②按键类动作（pressKey / hotkey / pasteText / 无元素索引的
+  typeText）在 driver 报窗口失效、且调用方没指定窗口时，丢弃陈旧快照、重新枚举换窗口
+  重试一次。坐标与元素寻址**不**自动换目标：栅格与 element_token 都绑定旧窗口，换目标
+  会打到别的位置，宁可报错让模型重新观察；显式 `windowId` 同样不重绑。
+
+### DEV-090 截屏落盘并把文件路径交给模型
+
+- 状态：已落实
+- 阶段：计算机操控 P-B2 真机复检（2026-11-10）
+- 是否阻塞：否
+- 问题：截图只以 base64 放进 `ToolResult.images`；引擎在没有图像能力时会丢弃它，
+  外部 Bot 既看不到像素、也没有文件路径可读，像素级校验和坐标落点确认都做不了
+  （原实现读入后立即删除临时文件）。
+- 影响范围：`cua-driver-observer.ts`（落盘目录与轮换）、共享
+  `computerScreenshotDataSchema.path`、core `renderSnapshot` 的截屏提示文案。
+- 决定：截图写到 provider 的 socket 目录下 `computer-screenshots/`（目录 0700，文件在
+  驱动写入前以 0600 预创建、读入后复核权限位），每写入一张新帧后按「最近 20 张 / 30
+  分钟」修剪——清理发生在新帧落盘时；工具文本里的「[附截屏 WxH]」追加「文件：<路径>
+  （本次会话有效）」。不新增接口——路径随既有结果返回，base64 仍保留给有视觉能力的
+  客户端。文件生命周期与 provider 会话绑定：socket 目录在 sidecar 停止（退出应用、
+  `computer:stop`、权限变更后的重启）时**同步**删除（sidecar 的 SIGTERM 处理会直接
+  `process.exit`，异步清理等不到），路径随之失效。

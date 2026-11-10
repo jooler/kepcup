@@ -182,7 +182,7 @@ export type AgentTestResult = z.infer<typeof agentTestResultSchema>;
 
 /**
  * 外部 Agent run 因「缺设置」失败的原因（D58 对话内设置卡，design 28 §9.1）：
- * `experimental_off` 实验开关未开；`not_enabled` 未启用；`not_installed` 未安装 /
+ * `not_enabled` 未启用；`not_installed` 未安装 /
  * 安装损坏 / 安装中；`auth_required` 未登录；`incompatible` 版本不兼容；
  * `unavailable` 其余可经设置卡重试的不可用（如宿主工具桥未启动）；
  * `sandbox_unavailable` Agent 自身的 OS 沙箱起不来（如 Linux 缺 bubblewrap /
@@ -191,7 +191,6 @@ export type AgentTestResult = z.infer<typeof agentTestResultSchema>;
  * `detail`），改配置后重试即可，无需重装。
  */
 export const agentSetupReasonSchema = z.enum([
-  'experimental_off',
   'not_enabled',
   'not_installed',
   'auth_required',
@@ -209,9 +208,7 @@ export type AgentSetupReason = z.infer<typeof agentSetupReasonSchema>;
  */
 export function agentSetupReasonOf(
   view: Pick<AgentView, 'enabled' | 'status'> | null,
-  experimental: boolean,
 ): AgentSetupReason | null {
-  if (!experimental) return 'experimental_off';
   if (view === null) return null;
   if (!view.enabled) return 'not_enabled';
   switch (view.status) {
@@ -266,8 +263,6 @@ export function agentApiKeySecretName(agentId: string): string {
 
 export const agentIdInputSchema = z.object({ id: agentIdSchema });
 export const agentsListOutputSchema = z.object({
-  /** 实验开关（关时设置页只显示开关，不显示目录）。 */
-  experimental: z.boolean(),
   agents: z.array(agentViewSchema),
 });
 export const agentOutputSchema = z.object({ agent: agentViewSchema });

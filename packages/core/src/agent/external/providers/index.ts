@@ -12,8 +12,10 @@ import { antigravityProvider } from './antigravity.js';
 import { claudeProvider } from './claude.js';
 import { codexProvider } from './codex.js';
 import { cursorProvider } from './cursor.js';
+import { devinProvider } from './devin.js';
 import { dshProvider } from './dsh.js';
 import { genericAcpProvider } from './generic-acp.js';
+import { kimiProvider } from './kimi.js';
 import { opencodeProvider } from './opencode.js';
 
 /**
@@ -28,6 +30,8 @@ export const PROVIDERS: ProviderRegistry = {
   dsh: dshProvider,
   cursor: cursorProvider,
   antigravity: antigravityProvider,
+  kimi: kimiProvider,
+  devin: devinProvider,
 };
 
 export function providerFor(

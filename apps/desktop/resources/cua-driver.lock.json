@@ -1,0 +1,24 @@
+{
+  "$comment": "cua-driver (trycua/cua, MIT) 版本 pin——P-B1 适配器唯一事实来源。升版按季度吸收：改 version/tag/asset/assetSha256/files，校验失败拒绝使用（无「警告后继续」）。assetSha256 对 GitHub Release 资产 tarball；files 覆盖解包后 CuaDriver.app 内的关键文件（AMFI 要求 bundle 形态，见 todo/computer-use-cua-adapter-findings.md）。licenseSha256 对上游 tag 里的 LICENSE.md。哈希由 scripts/fetch-cua-driver.mjs --record 生成后回填。",
+  "version": "0.46.1",
+  "tag": "cua-driver-rs-v0.46.1",
+  "repository": "trycua/cua",
+  "assets": {
+    "darwin-arm64": {
+      "asset": "cua-driver-rs-0.46.1-darwin-arm64.tar.gz",
+      "assetSha256": "f7f226af2cf3387951c703179a3ef4b60a6c97641086c2ae1b6663aeff847766",
+      "files": {
+        "CuaDriver.app/Contents/MacOS/cua-driver": "b6a541934c6d925688a6a0e6c7d1e01f52b5712b638ff8b501a2b08f8be1ebb7"
+      }
+    },
+    "darwin-x64": {
+      "asset": "cua-driver-rs-0.46.1-darwin-x86_64.tar.gz",
+      "assetSha256": "5eb85dad74bcdb690a54ff09a68e87c5e1e55a0bfe57eea12ddd61b71a5b58d2",
+      "files": {
+        "CuaDriver.app/Contents/MacOS/cua-driver": "b6a541934c6d925688a6a0e6c7d1e01f52b5712b638ff8b501a2b08f8be1ebb7"
+      }
+    }
+  },
+  "license": "MIT",
+  "licenseSha256": "c0779290c1d4783169aa3dbfb55feb505e563ef8a004bbf55298ceffcfbda8d9"
+}

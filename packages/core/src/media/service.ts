@@ -8,7 +8,7 @@ import {
   type Settings,
   type VendorId,
 } from '@kepcup/shared';
-import { findProviderInstance, providerSecretName } from '../agent/models.js';
+import { findProviderInstance, nextProviderApiKey } from '../agent/models.js';
 import type { SettingsService } from '../domain/settings.js';
 import type { UsageService } from '../domain/usage.js';
 import type { SecretsService } from '../domain/secrets.js';
@@ -450,7 +450,7 @@ export class MediaService {
     if (instance === undefined) {
       throw new AppError('NOT_FOUND', `供应商实例 "${instanceId}" 不存在`);
     }
-    const apiKey = keyOverride ?? this.#secrets.getValue(providerSecretName(instance.id));
+    const apiKey = keyOverride ?? nextProviderApiKey(this.#secrets, instance.id);
     if (apiKey === null) {
       throw new AppError('PROVIDER_AUTH_FAILED', `供应商 ${instance.name} 未配置 API Key`);
     }

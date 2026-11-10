@@ -115,8 +115,12 @@ const KEY_ITEMS = itemIdsForSettingsPaths([
   'defaultLightModel',
 ]);
 const EXTRA_METHOD_ITEMS: Readonly<Record<string, readonly string[]>> = {
-  // 厂商 Key 决定模型与能力模型是否可用。
+  // 厂商 Key 决定模型与能力模型是否可用；增 / 删 / 启停都改变「是否有可用 Key」，
+  // 与 setKey 同类（别名只影响展示，一并映射无妨）。
   'providers.setKey': [...KEY_ITEMS, ...Object.values(CAPABILITY_SETTING_IDS)],
+  'providers.addKey': [...KEY_ITEMS, ...Object.values(CAPABILITY_SETTING_IDS)],
+  'providers.removeKeyAt': [...KEY_ITEMS, ...Object.values(CAPABILITY_SETTING_IDS)],
+  'providers.setKeyMeta': [...KEY_ITEMS, ...Object.values(CAPABILITY_SETTING_IDS)],
   'providers.removeKey': [...KEY_ITEMS, ...Object.values(CAPABILITY_SETTING_IDS)],
   'websearch.setKey': itemIdsForSettingsPaths(['webSearch']),
   'websearch.removeKey': itemIdsForSettingsPaths(['webSearch']),

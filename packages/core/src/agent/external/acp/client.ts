@@ -25,7 +25,7 @@ import {
   type StopReason,
   type ToolCallUpdate,
 } from '@agentclientprotocol/sdk';
-import { AppError } from '@kepcup/shared';
+import { AGENT_STDOUT_LINE_MAX_BYTES, AppError } from '@kepcup/shared';
 import type { CoreLogger } from '../../../infra/logger.js';
 
 /**
@@ -90,6 +90,34 @@ export function advertisesSteering(init: AcpInitializeResponse): boolean {
 
 /** 认证状态扩展通知（Claude / Codex 未登录时推 `{authStatus:{kind:'none'}}`）。 */
 export const ACP_AUTH_STATUS_NOTIFICATION = '_auth/status_update';
+
+/** ACP 标准的「会话不存在」错误码（`session/not_found`）。 */
+export const ACP_SESSION_NOT_FOUND = -32002;
+
+/**
+ * Whether the error means the session is gone on the agent's side (D118): the
+ * protocol's `-32002`, or a Provider-verified private variant (Kimi
+ * `-32602 + data.session_id`, Devin `-32016 + errorKind` — unverified shapes
+ * live in the Provider's `sessionNotFound` hook, never here). The engine
+ * treats a prompt-phase hit like a host-less run with no output: one
+ * transparent retry (a fresh session carries the full context anyway).
+ */
+export function isSessionNotFound(
+  error: unknown,
+  provider?: { sessionNotFound?(error: unknown): boolean } | null,
+): boolean {
+  if (provider?.sessionNotFound !== undefined) {
+    try {
+      if (provider.sessionNotFound(error)) return true;
+    } catch {
+      // A hook choking on an unexpected error shape falls back to the
+      // protocol code; a throw here must not escape into the engine's catch
+      // and leave the run unsettled (审查 D118).
+    }
+  }
+  const candidate = (error ?? {}) as { code?: unknown };
+  return candidate.code === ACP_SESSION_NOT_FOUND;
+}
 
 /** Agent 进程的字节通道（子进程的 stdout / stdin，或进程内假 Agent）。 */
 export interface AcpByteChannel {
@@ -388,7 +416,13 @@ export class AcpConnection {
 
   constructor(options: AcpConnectionOptions) {
     this.#options = options;
-    const stream = ndJsonStream(options.channel.writable, options.channel.readable);
+    // SDK 1.9 缓冲整行再解析，默认单行 32 MiB 上限——比我们自己的
+    // `AGENT_STDOUT_LINE_MAX_BYTES`（256 MiB）紧 8 倍，会让限长层与它的
+    // onLimit 诊断永不触发。把 SDK 上限抬到限长层之上，`limitAgentLines`
+    //（host.ts 在这层之前包裹通道）保持唯一权威口径（审查 D118）。
+    const stream = ndJsonStream(options.channel.writable, options.channel.readable, {
+      maxMessageBytes: AGENT_STDOUT_LINE_MAX_BYTES + 1024 * 1024,
+    });
     this.#connection = new ClientSideConnection(() => this.#client(), stream);
   }
 

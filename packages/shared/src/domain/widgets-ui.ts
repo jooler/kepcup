@@ -361,3 +361,22 @@ export const widgetsPublishOutputSchema = z.object({
   message: z.string().optional(),
   cardMessageId: z.string().optional(),
 });
+
+/**
+ * `widgets.runCard`（D117，docs/design/56 §3）：不落消息行、直接运行组件本体。
+ * core 以 publish 同款列投影构建卡片描述符，存入内存虚拟卡片登记表；返回的
+ * `messageId` 是合成 id（`bot-widget:{widgetId}:{conversationId|none}`），渲染端
+ * 拿它走既有 `widgetViewer.show()`——`open / source / poster / storage / query /
+ * reply` 沿虚拟 id 全链路可用。scope='bot' 必传 conversationId（anchor = 发卡
+ * 落点），scope='conversation' 的组件 core 自己用它的归属会话。
+ */
+export const widgetsRunCardInputSchema = z.object({
+  botId: z.string().min(1),
+  widgetId: z.string().min(1),
+  conversationId: z.string().min(1).optional(),
+});
+export const widgetsRunCardOutputSchema = z.object({
+  messageId: z.string().min(1),
+  card: widgetCardSchema,
+});
+export type WidgetsUiRunCardOutput = z.infer<typeof widgetsRunCardOutputSchema>;

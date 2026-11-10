@@ -260,6 +260,21 @@ export function workdirCheckpointsPath(paths: AppPaths, workdirId: string): stri
   return path.join(paths.home, 'workdirs', workdirId, 'checkpoints.git');
 }
 
+/**
+ * PATH plus common user-install directories. macOS apps launched from Finder
+ * inherit launchd's minimal PATH, so brew-installed tools (limactl) are
+ * invisible to `command -v` / spawn even though they are installed. Appending
+ * (never prepending) keeps the normal lookup order intact.
+ */
+export function hostPathWithCommonDirs(env: NodeJS.ProcessEnv = process.env): string {
+  const parts = (env.PATH ?? '').split(path.delimiter).filter((entry) => entry.length > 0);
+  const extra = process.platform === 'darwin' ? ['/opt/homebrew/bin', '/usr/local/bin'] : [];
+  for (const dir of extra) {
+    if (!parts.includes(dir) && existsSync(dir)) parts.push(dir);
+  }
+  return parts.join(path.delimiter);
+}
+
 /** Every workspace directory of a bot (all conversations). */
 export function botWorkspacesRoot(paths: AppPaths, botId: string): string {
   return path.join(paths.home, 'bots', botId, 'workspaces');
@@ -279,6 +294,52 @@ export function sandboxWslDir(paths: AppPaths): string {
 /** Persisted state machine snapshot of the WSL setup (enable → reboot → import). */
 export function wslSetupStatePath(paths: AppPaths): string {
   return path.join(sandboxWslDir(paths), 'setup-state.json');
+}
+
+// --- macOS Lima enhanced sandbox (P12 增强级) --------------------------------
+
+/** App-owned Lima state: generated instance YAML + setup snapshot. */
+export function sandboxLimaDir(paths: AppPaths): string {
+  return path.join(paths.home, 'sandbox', 'lima');
+}
+
+/** Persisted snapshot of the Lima setup (create → start → provision). */
+export function limaSetupStatePath(paths: AppPaths): string {
+  return path.join(sandboxLimaDir(paths), 'setup-state.json');
+}
+
+/** Generated Lima instance YAML handed to `limactl create`. */
+export function limaInstanceYamlPath(paths: AppPaths): string {
+  return path.join(sandboxLimaDir(paths), 'kepcup.yaml');
+}
+
+/**
+ * 沙箱 shim（kepcup-sandbox.cjs）的宿主路径。初始化 Lima VM 时需要把它的
+ * 内容送进 guest。解析顺序：显式 env 覆盖（打包后由 core-host 注入
+ * `Resources/sandbox/kepcup-sandbox.cjs`）→ repo checkout 布局（向上查找，
+ * 与 resolveRootfsTarPath 同思路）。
+ */
+export function resolveSandboxShimPath(env: NodeJS.ProcessEnv = process.env): string | null {
+  const override = env.KEPCUP_SANDBOX_SHIM;
+  if (override !== undefined && override.length > 0) {
+    return existsSync(override) ? override : null;
+  }
+  let current = path.dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 8; i += 1) {
+    const candidate = path.join(
+      current,
+      'apps',
+      'desktop',
+      'scripts',
+      'build-wsl-rootfs',
+      'kepcup-sandbox.cjs',
+    );
+    if (existsSync(candidate)) return candidate;
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return null;
 }
 
 /**

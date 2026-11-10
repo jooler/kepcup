@@ -481,6 +481,19 @@ export class RunsService {
   }
 
   /**
+   * 该 Bot 拉起的任务全集（跨对话，D116 Bot 详情「任务」tab），最新在前、
+   * 截断到 `limit`。
+   */
+  listTasksByBotRecent(botId: string, limit: number): Run[] {
+    const rows = this.db
+      .prepare(
+        "select * from runs where loop_type = 'task' and bot_id = ? order by created_at desc, id desc limit ?",
+      )
+      .all(botId, limit) as RunRow[];
+    return rows.map(rowToRun);
+  }
+
+  /**
    * Bots whose supervisor turn was triggered by the message (any part of a merged batch) — in a
    * group: who took a workbench dispatch, so its update notice can @ them.
    */

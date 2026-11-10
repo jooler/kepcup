@@ -1,0 +1,27 @@
+{
+ "recordedFrom": "cua-driver 0.40.1 darwin-arm64, type_text element_token into TextEdit text area (kAXSelectedText), 2026-11-07",
+ "tool": "type_text",
+ "result": {
+  "isError": null,
+  "content": [
+   {
+    "text": "✅ Inserted 11 char(s) into [10] AXTextArea \"\" A net-zero key edit (space, backspace) was sent so the document registers the change and saves it; an accessibility write alone does not.",
+    "type": "text"
+   }
+  ],
+  "structuredContent": {
+   "delivery": {
+    "delivered_count": 11,
+    "mode": "background"
+   },
+   "effect": "confirmed",
+   "evidence": [
+    {
+     "kind": "value_readback"
+    }
+   ],
+   "route": "accessibility",
+   "summary": "✅ Inserted 11 char(s) into [10] AXTextArea \"\" A net-zero key edit (space, backspace) was sent so the document registers the change and saves it; an accessibility write alone does not."
+  }
+ }
+}

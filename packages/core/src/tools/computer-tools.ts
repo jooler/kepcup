@@ -53,8 +53,14 @@ const OBSERVE_RULE =
 const ADDRESS_RULE =
   '元素索引来自最近一次 computer_get_app_state 的树文本（行首数字）；观察会重排索引，旧索引失效。坐标兜底只使用最近一帧截屏的窗口栅格坐标。';
 
+/**
+ * Provider 无关的权限引导（P-B2）：CuaDriver 与宿主共用一份——授权都记在
+ * KepCup 主应用名下（独立 helper 时代已成历史），设置已独立为「计算机操控」段
+ *（data-settings-anchor="computer-use"）。core 测试不断言这些字符串本身
+ *（只断言含「计算机操控」「不」），改写不影响硬验收。
+ */
 const SCOPE_RULE =
-  '本工具操控原生桌面应用窗口；网页内容一律用 browser 工具。权限被拒绝（PERMISSION_DENIED）时让用户到 设置 › 浏览器 › 计算机操控 授权「KepCup Computer Use」，绝不改用其他自动化方式。';
+  '本工具操控原生桌面应用窗口；网页内容一律用 browser 工具。权限被拒绝（PERMISSION_DENIED）时让用户到 设置 › 计算机操控 的权限引导里给 KepCup 授权，绝不改用其他自动化方式。';
 
 function asToolFailure(error: unknown, outcome?: ToolResult['outcome']): ToolResult {
   const hint = computerErrorHint(error);
@@ -75,7 +81,7 @@ function computerErrorHint(error: unknown): { message: string; code: string } {
       case 'PERMISSION_DENIED':
         return {
           message:
-            '系统权限不足：需要给「KepCup Computer Use」授予辅助功能与屏幕录制权限。请让用户到 设置 › 浏览器 › 计算机操控 的权限引导里授权后重试。权限被拒后不会改用其他自动化方式。',
+            '系统权限不足：需要给 KepCup 授予辅助功能与屏幕录制权限。请让用户到 设置 › 计算机操控 的权限引导里授权后重试。权限被拒后不会改用其他自动化方式。',
           code: error.code,
         };
       case 'APP_NOT_FOUND':
@@ -98,11 +104,11 @@ function computerErrorHint(error: unknown): { message: string; code: string } {
 }
 
 /**
- * sidecar 错误里「可能已下发」的 code：helper 的 focusRecordFailed 以
- * `window_not_focused` 报出且消息明示 "input may already have been delivered"
- *（main.swift BackgroundInputTransport 部分）——按防重放的保守侧归 uncertain。
+ * sidecar 错误里「可能已下发」的 code：保留 native helper 时代的
+ * `WINDOW_NOT_FOCUSED` 作为保守兜底（CuaDriver 走 `action.verification` 的
+ * unverified 路径），按防重放的保守侧归 uncertain。
  * （CONTROLLER_BUSY 是 ZCode 的错误码，orca 侧不存在；并发防护由 main 单例
- * sidecar + helper 的 AgentSessionOwnership 承担，见 DEVIATIONS DEV-079。）
+ * sidecar 承担，见 DEVIATIONS DEV-079。）
  */
 const MAYBE_SENT_CODES: ReadonlySet<string> = new Set(['WINDOW_NOT_FOCUSED']);
 
@@ -167,7 +173,7 @@ function renderSnapshot(
   const shot = result.screenshot;
   const shotNote =
     shot?.data && shot.data.length > 0
-      ? `\n[附截屏 ${shot.width}x${shot.height}]`
+      ? `\n[附截屏 ${shot.width}x${shot.height}${shot.path ? `，文件：${shot.path}（本次会话有效）` : ''}]`
       : result.screenshotStatus.state === 'failed'
         ? `\n[截屏失败：${result.screenshotStatus.message}]`
         : '';
@@ -226,7 +232,7 @@ export function buildComputerTools(deps: ComputerToolDeps): ToolDefinition[] {
     // 审批被拒发生在动作前：正常失败结果，不标 uncertain（执行文档 WP4）。
     return {
       ok: false,
-      content: '用户未授权计算机操控。询问用户是否开启（设置 › 浏览器 › 计算机操控），未经授权不要操作桌面应用。',
+      content: '用户未授权计算机操控。询问用户是否开启（设置 › 计算机操控），未经授权不要操作桌面应用。',
       errorCode: 'COMPUTER_DENIED',
       outcome: 'not_started',
     };
@@ -432,9 +438,10 @@ export function buildComputerTools(deps: ComputerToolDeps): ToolDefinition[] {
     from_y?: number;
     to_x?: number;
     to_y?: number;
+    delivery?: 'background' | 'foreground';
   }> = {
     name: 'computer_drag',
-    description: `从一个元素 / 坐标拖到另一个元素 / 坐标（后台投递）。${ADDRESS_RULE}${OBSERVE_RULE}${SCOPE_RULE}`,
+    description: `从一个元素 / 坐标拖到另一个元素 / 坐标。默认前台投递（会短暂置前目标窗口并移动真实指针）；后台合成拖拽拿不到系统拖放会话（Finder / 桌面里文件根本不会动），只有确定目标能后台拖动时才传 delivery: 'background'。系统级文件拖放仍可能失败，改用应用自带的「移动到」菜单或文件系统操作。${ADDRESS_RULE}${OBSERVE_RULE}${SCOPE_RULE}`,
     parameters: Type.Object({
       app: appParam,
       from_element_index: Type.Optional(elementIndexParam),
@@ -443,6 +450,12 @@ export function buildComputerTools(deps: ComputerToolDeps): ToolDefinition[] {
       from_y: Type.Optional(Type.Number({ description: '起点窗口坐标 Y' })),
       to_x: Type.Optional(Type.Number({ description: '终点窗口坐标 X' })),
       to_y: Type.Optional(Type.Number({ description: '终点窗口坐标 Y' })),
+      delivery: Type.Optional(
+        Type.Union([Type.Literal('background'), Type.Literal('foreground')], {
+          description:
+            'foreground（默认，短暂置前窗口并移动真实指针，能建立系统拖放会话）| background（不抢焦点，但系统级拖放会静默无效）',
+        }),
+      ),
     }),
     execute: async (params, ctx) => {
       ctx.progress(`正在对 ${params.app} 拖拽`);
@@ -455,6 +468,9 @@ export function buildComputerTools(deps: ComputerToolDeps): ToolDefinition[] {
         params2.fromY = params.from_y;
         params2.toX = params.to_x;
         params2.toY = params.to_y;
+      }
+      if (params.delivery !== undefined) {
+        params2.delivery = params.delivery;
       }
       return invoke('drag', params2, ctx, {
         approval: { action: '拖拽', app: params.app },

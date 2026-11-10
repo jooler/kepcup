@@ -56,6 +56,21 @@ function emitResult(result) {
   );
 }
 
+/**
+ * srt 的 Linux 违规监视器与网络桥会长期占用事件循环（macOS 不会）：一次性
+ * shim 必须显式退出，否则宿主的 `limactl shell` / wsl.exe 永远等不到进程
+ * 结束（selfcheck 与每条命令都会挂住）。先等 stdout/stderr 排空再退出，
+ * 避免管道写入被截断。
+ */
+function exitAfterFlush(code) {
+  let pending = 2;
+  const done = () => {
+    if (--pending === 0) process.exit(code);
+  };
+  process.stdout.write('', done);
+  process.stderr.write('', done);
+}
+
 /** Mirrors backend-srt: buffered raw bytes, decoded once (BR-P09-006). */
 function collect(stream) {
   const chunks = [];
@@ -149,22 +164,25 @@ async function main() {
       timeoutMs: 30_000,
       filesystem: { denyRead: ['/root'], allowRead: ['/usr', '/bin'], allowWrite: ['/tmp'], denyWrite: [] },
       network: { allowedDomains: [], deniedDomains: ['localhost'], deniedResolvedAddresses: ['127.0.0.0/8'], strictAllowlist: true, allowLocalBinding: false },
-      env: { PATH: '/opt/kepcup/bin:/usr/local/bin:/usr/bin:/bin', HOME: '/home/kepcup' },
+      env: { PATH: '/opt/kepcup/bin:/usr/local/bin:/usr/bin:/bin', HOME: process.env.HOME || '/home/kepcup' },
     });
     process.stdout.write(outcome.stdout);
     process.stderr.write(outcome.stderr);
     if (outcome.result.exitCode !== 0) {
       process.stderr.write('selfcheck failed: sandboxed `true` exited non-zero\n');
-      process.exit(1);
+      exitAfterFlush(1);
+      return;
     }
     process.stdout.write('selfcheck ok: srt wrapped a command in this image\n');
+    exitAfterFlush(0);
     return;
   }
 
   const request = readStdinJson();
   if (typeof request.command !== 'string' || typeof request.cwd !== 'string') {
     process.stderr.write('bad request: command/cwd required\n');
-    process.exit(2);
+    exitAfterFlush(2);
+    return;
   }
   const outcome = await run(request);
   // Command output first (the host accumulates it), result record last. The
@@ -174,11 +192,12 @@ async function main() {
   process.stdout.write(outcome.stdout);
   process.stderr.write(outcome.stderr);
   emitResult(typeof request.nonce === 'string' ? { ...outcome.result, nonce: request.nonce } : outcome.result);
+  exitAfterFlush(0);
 }
 
 main().catch((error) => {
   process.stderr.write(`kepcup-sandbox failed: ${error && error.stack ? error.stack : String(error)}\n`);
   // No result record: the host treats a missing record as a failed exec —
   // never as exit 0 (protocol.ts fail-closed).
-  process.exit(1);
+  exitAfterFlush(1);
 });

@@ -42,6 +42,7 @@ import {
   type AgentView,
   type Attachment,
   type Bot,
+  type CollabClientRef,
   type Conversation,
   type Delegation,
   type Message,
@@ -87,6 +88,7 @@ import {
 } from '../agent/external/permission-bridge.js';
 import type { SqliteDatabase } from '../infra/db.js';
 import { persistEngineSteps } from '../agent/step-persistence.js';
+import { ToolUsageTracker } from '../agent/tool-usage.js';
 import { clearToolOutputSpill, ToolOutputSpill } from '../agent/tool-output-spill.js';
 import {
   humanizeLateBy,
@@ -270,6 +272,7 @@ import {
   type LlmRouter,
 } from '../agent/llm-router.js';
 import type { BotCard, WikiOwner } from '@kepcup/shared';
+import { sanitizeClientName } from '../collab/client-name.js';
 import type { InstalledToolchain } from '../env/manager.js';
 import type { ToolEffectsStore } from '../agent/effects/store.js';
 
@@ -1185,10 +1188,26 @@ export class Orchestrator {
       shareIntakeId?: string;
       /** 53 号修订 v2 V2-1：来自语音对话模式的发送，content 记 origin: 'voice'。 */
       voiceMode?: boolean;
+      /** D121：发这条消息的客户端（设备），仅展示用。 */
+      client?: CollabClientRef;
+      /** 草稿发送：在消息落库事务内清理草稿（D120 原子性修复）。 */
+      onPersisted?: () => void;
     },
   ): { message: Message; runId: string | null } {
     const prepared = this.#prepareUserMessage(conversationId, input);
-    const { runId } = this.#publishAndRouteUserMessage(prepared);
+    let runId: string | null = null;
+    try {
+      runId = this.#publishAndRouteUserMessage(prepared).runId;
+    } catch (error) {
+      // 草稿发送：onPersisted 已在消息事务内执行，消息与草稿清理都已提交。
+      // 路由失败若继续向外抛，客户端会重试并发出重复消息——记录并返回成功
+      // （runId 为空，run 状态仍会通过事件/任务卡呈现）。
+      if (input.onPersisted === undefined) throw error;
+      this.#deps.logger.warn(
+        { conversationId, error: error instanceof Error ? error.message : String(error) },
+        'draft send routing failed after message persisted',
+      );
+    }
     return { message: prepared.message, runId };
   }
 
@@ -1235,6 +1254,10 @@ export class Orchestrator {
       widgetOrigin?: { widgetId: string; version: number };
       shareIntakeId?: string;
       voiceMode?: boolean;
+      /** D121：发这条消息的客户端（设备），仅展示用。 */
+      client?: CollabClientRef;
+      /** 草稿发送：在消息落库事务内清理草稿。 */
+      onPersisted?: () => void;
     },
   ): { conversation: Conversation; message: Message; batchId: string } {
     const conv = this.#deps.conversations.getOrThrow(conversationId);
@@ -1249,6 +1272,10 @@ export class Orchestrator {
       throw new AppError('INVALID_INPUT', '消息内容与附件不能同时为空');
     }
     const batchId = `batch_${this.#deps.clock.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const attributedClient =
+      input.client === undefined
+        ? undefined
+        : { ...input.client, name: sanitizeClientName(input.client.name) };
     let message: Message;
     const tx = this.#deps.db.transaction(() => {
       message = this.#deps.messages.append({
@@ -1262,10 +1289,13 @@ export class Orchestrator {
         ...(input.widgetOrigin !== undefined ? { widgetOrigin: input.widgetOrigin } : {}),
         ...(input.shareIntakeId !== undefined ? { shareIntakeId: input.shareIntakeId } : {}),
         ...(input.voiceMode === true ? { voiceMode: true } : {}),
+        ...(attributedClient !== undefined ? { client: attributedClient } : {}),
       });
       if ((input.attachmentIds?.length ?? 0) > 0) {
         this.#deps.attachments.claimForMessage(input.attachmentIds!, conversationId, message.id);
       }
+      // 草稿清理与消息落库同一事务：要么都成功，要么都回滚。
+      input.onPersisted?.();
     });
     tx.immediate();
     const full: Message = {
@@ -3056,7 +3086,12 @@ export class Orchestrator {
    * from (other Bots' changes do not matter).
    */
   #conversationRouteCurrent(isTask: boolean, botId: string, modelRef: string): boolean {
-    return (isTask ? this.#modelRefForBot(botId) : this.#turnModelRef(botId)) === modelRef;
+    return this.#conversationModelRef(isTask, botId) === modelRef;
+  }
+
+  /** The model ref a bot's turn / task would use right now ('' = none). */
+  #conversationModelRef(isTask: boolean, botId: string): string {
+    return isTask ? this.#modelRefForBot(botId) : this.#turnModelRef(botId);
   }
 
   /**
@@ -3645,9 +3680,7 @@ export class Orchestrator {
     this.#deps.agents?.noteRunError(agentId, code);
     const view = this.#agentView();
     const stateReason =
-      code === 'AGENT_UNAVAILABLE' && view !== undefined
-        ? agentSetupReasonOf(view(agentId), true)
-        : null;
+      code === 'AGENT_UNAVAILABLE' && view !== undefined ? agentSetupReasonOf(view(agentId)) : null;
     const reason = agentSetupReasonForError(code, stateReason);
     if (reason === null) return null;
     // Which file / key to fix (第三轮审查 #6): the error message lists them.
@@ -4393,6 +4426,9 @@ export class Orchestrator {
               parent: identity,
               modelRef,
               isRouteCurrent: () => this.#conversationRouteCurrent(isTask, batch.botId, modelRef),
+              // Sub runs start on what this Bot uses now, not the provider the
+              // parent run started on (it may have switched mid-run).
+              currentModelRef: () => this.#conversationModelRef(isTask, batch.botId),
               ...this.#compactionRoute(batch.botId),
               buildTools: (subIdentity) =>
                 buildSubagentResearchTools({
@@ -4826,6 +4862,9 @@ export class Orchestrator {
         // Stop retrying a provider the user has since switched this Bot away
         // from (other Bots' changes do not matter).
         isRouteCurrent: () => this.#conversationRouteCurrent(isTask, batch.botId, modelRef),
+        // Follow a live model change by continuing this run on the new model
+        // instead of waiting out the retry countdown.
+        currentModelRef: () => this.#conversationModelRef(isTask, batch.botId),
         // D93: only built-in pi tasks get host-side compaction / idle guard /
         // soft budget; external agents keep their own native harness, and
         // conversation turns are bounded.
@@ -5013,6 +5052,18 @@ export class Orchestrator {
         // 不会被消化；mailbox 释放前 done promise 均会兑现，无泄漏窗口。
         setTimeout(() => handle.abort('setup required'), 0);
       });
+      // A route restart moved the run onto another model: keep the run row
+      // (status line / run detail / retry info) in step with what is being
+      // used. The scheduler's concurrency slot stays on the start-time
+      // provider — only the tail of this run changed.
+      const unsubscribeRouteSwitch = handle.onEvent((event) => {
+        if (event.type !== 'route_switched') return;
+        const updated = this.#deps.runs.update(runId, {
+          provider: event.payload.provider,
+          model: event.payload.model,
+        });
+        this.#deps.publish('run.status', { run: updated });
+      });
       const unsubscribeInterim = this.#deliverInterimTexts(
         runId,
         batch,
@@ -5020,6 +5071,32 @@ export class Orchestrator {
         handle,
         isTask ? runId : null,
       );
+      // 按工具的内置任务上下文消耗（内容估算）：定位哪个工具把上下文顶到
+      // 压缩阈值。外部 Agent 的工具内容只是宿主侧渲染，数值会偏低，不记录；
+      // 记账失败不影响任务（tracker 内部吞掉异常）。
+      const toolUsage =
+        isTask && agentRun === null
+          ? new ToolUsageTracker({
+              record: (entry) => {
+                this.#deps.usage.recordTool({
+                  runId,
+                  botId: batch.botId,
+                  conversationId: batch.conversationId,
+                  loopType: 'task',
+                  toolName: entry.toolName,
+                  callTokens: entry.callTokens,
+                  resultTokens: entry.resultTokens,
+                });
+              },
+            })
+          : null;
+      const unsubscribeToolUsage =
+        toolUsage === null
+          ? () => {}
+          : handle.onEvent((event) => {
+              if (event.type === 'tool_call') toolUsage.call(event.payload);
+              else if (event.type === 'tool_result') toolUsage.result(event.payload);
+            });
       let outcome;
       try {
         outcome = await handle.done;
@@ -5028,7 +5105,10 @@ export class Orchestrator {
         unsubscribeSetup();
         unsubscribeUntrusted();
         unsubscribeInterim();
+        unsubscribeRouteSwitch();
         unsubscribeSteerConfirm();
+        unsubscribeToolUsage();
+        toolUsage?.clear();
         if (exec.kind === 'task') exec.control.detach();
         else this.#activeRuns.delete(runId);
         // D75 §1.2: sub runs die with their parent — before the lease closes
@@ -5085,14 +5165,18 @@ export class Orchestrator {
         this.#recordBotMessage(runId, message);
       }
 
+      // A route restart can put part of this run on another provider/model:
+      // EngineUsage carries the one that actually produced each entry.
+      const runProvider = this.#providerForRef(modelRef);
+      const runModel = modelRef.slice(runProvider.length + 1);
       for (const usage of outcome.usage) {
         this.#deps.usage.record({
           runId,
           botId: batch.botId,
           conversationId: batch.conversationId,
           loopType,
-          provider: this.#providerForRef(modelRef),
-          model: modelRef.slice(this.#providerForRef(modelRef).length + 1),
+          provider: usage.provider ?? runProvider,
+          model: usage.model ?? runModel,
           inputTokens: usage.input,
           outputTokens: usage.output,
           cacheReadTokens: usage.cacheRead,

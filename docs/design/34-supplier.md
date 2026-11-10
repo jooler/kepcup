@@ -91,7 +91,7 @@
 | 检索 | 三家适配器 | `kepcup` 适配器 |
 | 用量 | `usage_ledger` 仅 LLM loop 写入；**媒体调用（向量/重排/图/音/视频）完全不记账**；每日后台预算按 token 计 | 媒体调用记账；记录信用金扣减；预算支持金额维度（§5.6） |
 | 并发 | `providerConcurrency` 按 provider 键，默认 4 | 托管模式下全部流量汇入同一 provider，需拆键（§5.4） |
-| 路由 | `LlmRouter` 有内置模型时后台 loop 优先内置 | 明确托管模式与 D72 订阅用户的后台路由（§5.3） |
+| 路由 | `LlmRouter` 后台 loop 默认内置优先；明确指定外部 Agent 时走它（选定即生效） | 明确托管模式与 D72 订阅用户的后台路由（§5.3） |
 | Onboarding / 设置 / 账号 / 支付 | 无 | 本文 §5、§8 |
 
 ## 3 总体架构
@@ -201,7 +201,7 @@ settings.supplier = {
 - `buildModelRegistry` 从 `settings.supplier.catalog` 注册 `kepcup` 对话模型：`baseUrl` = 供应商 API 根；`auth.apiKey.resolve` 取 `supplier:access`（必要时触发 single-flight 刷新）；模型元数据（`contextWindow`、`maxTokens`、`input`、`reasoning`）**全部来自目录契约**，不在客户端写死。
 - 目录缓存保证离线 / 慢网启动时注册表照常构建；目录拉取时机：登录后、启动后（后台）、每 6 小时、收到 `SUPPLIER_CATALOG_STALE` 时。
 - **Bot 覆盖**：托管模式下，Bot Profile 中指向 KepCup 目录的模型覆盖照常生效；指向 DIY 厂商的覆盖**保留但不生效**，Bot 面板提示「高级配置下生效」。Bot 选择外部智能体引擎（D72）始终生效——那是用户自己的订阅通道，不属于模型覆盖。
-- **后台 loop 路由**：`LlmRouter` 照旧「有内置模型优先内置」。托管模式下「内置」即 KepCup，因此「我有订阅」用户登录后，后台 loop 将改为消耗 KepCup 信用金。登录确认页必须写明这一点；希望后台继续走订阅的用户使用高级配置。
+- **后台 loop 路由**：`LlmRouter` 默认「有内置模型优先内置」；用户在设置里明确指定了外部 Agent 时优先该 Agent（选定即生效）。托管模式下「内置」即 KepCup，因此「我有订阅」用户登录后，后台 loop 将改为消耗 KepCup 信用金。登录确认页必须写明这一点；希望后台继续走订阅的用户使用高级配置。
 
 ### 5.4 能力模型、检索与并发
 

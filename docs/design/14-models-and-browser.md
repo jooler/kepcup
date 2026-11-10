@@ -12,7 +12,9 @@
 
 ### API key
 
-- 由 pi 在每次请求时通过 `getApiKey` 获取；核心服务从加密的敏感数据表中解密后提供，见 [11-storage.md](11-storage.md#敏感数据api-key-等凭据)。
+- 由 pi 在每次请求时通过 `CredentialStore.read(providerId)` 解析；核心服务从加密的敏感数据表中解密后提供，见 [11-storage.md](11-storage.md#敏感数据api-key-等凭据)（DEV-002）。
+- 同一供应商可存多个 Key，逐个请求在**启用中**的 Key 间轮换；停用的 Key 调用时跳过，别名只影响展示。
+- 有已存 Key 但**全部停用**时视为明确的停用意图：模型调用直接以 `PROVIDER_AUTH_FAILED` 失败，**不回退**环境变量凭据、也不带占位 Key 发请求（否则看起来像「停用的 Key 仍在使用」）。从未配置 Key 时保持原行为（本地兼容端点可无鉴权）。
 - 不写入环境变量，也不写入 pi 自己的配置文件。
 
 ### 配置层级

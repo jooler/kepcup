@@ -235,6 +235,19 @@ class TasksState {
       ...(values !== undefined ? { values } : {}),
     });
   }
+
+  /**
+   * D115 任务直注（docs/design/56 §1）：用户在任务详情页注入坞追加指令，直达
+   * `TaskHost.injectById`（复用 inject_task 语义）。返回 `delivery`：
+   * `delivered`（时间线出现 steer 气泡 / 未启动并入简报）或 `queued`（外部
+   * Agent 不支持中途插入，任务结束后生效）。
+   */
+  async inject(taskId: string, text: string): Promise<'delivered' | 'queued'> {
+    const result = (await core.call('tasks.inject', { taskId, text })) as {
+      delivery: 'delivered' | 'queued';
+    };
+    return result.delivery;
+  }
 }
 
 export const tasks = new TasksState();

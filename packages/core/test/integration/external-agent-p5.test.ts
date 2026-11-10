@@ -64,7 +64,6 @@ async function start(
   });
   stacks.push(stack);
   await stack.core.rpc.call('settings.update', {
-    experimental: { externalAgents: true },
     agents: Object.fromEntries(Object.keys(scripts).map((id) => [id, { enabled: true }])),
     // The agent's rounds serve the tasks only (no background agent sessions).
     backgroundTasks: { agentEnabled: false },
@@ -744,7 +743,9 @@ describe('agent sessions of tasks (P5-2 re-review 复审 #1, #7; D75 §8.5)', ()
       const { stack, started } = await start(
         {
           'fake-restore': [
-            { resume: true, history: [], modes: CLAUDE_MODES, turns: [agentTurn().crash()] },
+            // 输出后崩溃（D118）：无输出的崩溃会触发引擎的一次透明重试并多起一个进程，
+            // 本用例只验证第三轮 #9 的删除竞态，进程映射须保持确定。
+            { resume: true, history: [], modes: CLAUDE_MODES, turns: [agentTurn().text('半截').crash()] },
             restoring,
           ],
         },

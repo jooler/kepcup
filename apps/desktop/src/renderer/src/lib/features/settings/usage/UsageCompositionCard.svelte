@@ -1,20 +1,22 @@
 <script lang="ts">
-  import type { UsageBotTotal, UsageLoopTotal } from '@kepcup/shared';
+  import type { UsageBotTotal, UsageLoopTotal, UsageToolTotal } from '@kepcup/shared';
   import { i18n, t } from '$lib/i18n';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { formatCompact, formatFull } from './usage-format';
   import { loopLabel } from './usage-labels';
 
-  /** 使用构成：按任务类型 / Bot 的 Token 拆分，条内再分输入与输出。 */
+  /** 使用构成：按任务类型 / Bot / 工具的 Token 拆分，条内再分输入与输出。 */
   let {
     byLoop,
     byBot,
+    byTool,
   }: {
     byLoop: UsageLoopTotal[];
     byBot: UsageBotTotal[];
+    byTool: UsageToolTotal[];
   } = $props();
 
-  type Mode = 'loop' | 'bot';
+  type Mode = 'loop' | 'bot' | 'tool';
   let mode = $state<Mode>('loop');
   const locale = $derived(i18n.locale);
 
@@ -36,6 +38,19 @@
           label: loopLabel(row.loopType),
           inputTokens: row.inputTokens,
           outputTokens: row.outputTokens,
+          tokens: row.tokens,
+          calls: row.calls,
+        }));
+    }
+    if (mode === 'tool') {
+      return byTool
+        .filter((row) => row.tokens > 0)
+        .map((row) => ({
+          key: row.toolName,
+          label: row.toolName,
+          // 工具返回内容进上下文（输入侧），调用参数是模型输出侧。
+          inputTokens: row.resultTokens,
+          outputTokens: row.callTokens,
           tokens: row.tokens,
           calls: row.calls,
         }));
@@ -66,7 +81,11 @@
     <div>
       <h4 class="text-sm font-medium">{t('settings.usageComposition')}</h4>
       <p class="mt-0.5 text-xs text-muted-foreground">
-        {mode === 'loop' ? t('settings.usageByLoopHint') : t('settings.usageByBotHint')}
+        {mode === 'loop'
+          ? t('settings.usageByLoopHint')
+          : mode === 'bot'
+            ? t('settings.usageByBotHint')
+            : t('settings.usageByToolHint')}
       </p>
     </div>
     <div class="ml-auto inline-flex rounded-md border p-0.5" role="group">
@@ -88,15 +107,28 @@
         data-testid="usage-composition-bot"
         onclick={() => (mode = 'bot')}>{t('settings.usageByBot')}</button
       >
+      <button
+        type="button"
+        class="rounded px-2 py-1 text-xs transition-colors {mode === 'tool'
+          ? 'bg-accent text-accent-foreground'
+          : 'text-muted-foreground hover:text-foreground'}"
+        aria-pressed={mode === 'tool'}
+        data-testid="usage-composition-tool"
+        onclick={() => (mode = 'tool')}>{t('settings.usageByTool')}</button
+      >
     </div>
   </div>
 
   <div class="mt-3 flex items-center gap-3 text-[11px] text-muted-foreground">
     <span class="inline-flex items-center gap-1"
-      ><span class="size-2 rounded-sm bg-blue-500"></span>{t('settings.usageInput')}</span
+      ><span class="size-2 rounded-sm bg-blue-500"></span>{t(
+        mode === 'tool' ? 'settings.usageToolResult' : 'settings.usageInput',
+      )}</span
     >
     <span class="inline-flex items-center gap-1"
-      ><span class="size-2 rounded-sm bg-emerald-500"></span>{t('settings.usageOutput')}</span
+      ><span class="size-2 rounded-sm bg-emerald-500"></span>{t(
+        mode === 'tool' ? 'settings.usageToolCall' : 'settings.usageOutput',
+      )}</span
     >
   </div>
 

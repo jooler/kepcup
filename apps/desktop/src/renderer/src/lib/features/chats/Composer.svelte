@@ -69,6 +69,25 @@
   import { isCapabilityError, sendVoiceRecording, type VoiceSendDeps } from './voice-send';
   import { SPEECH_TEXT_LIMIT } from './extractSpeechText';
   import { createBargeInMonitor, type BargeInSession } from './voice-barge-in';
+  import { presence } from '$lib/features/collab/presence.svelte';
+  import { createSharedDraftStore } from '$lib/features/collab/shared-draft.svelte';
+  import { clientIdentity } from '$lib/features/collab/client-identity';
+  import ComposerPresenceRow from './ComposerPresenceRow.svelte';
+  import ComposerTakeoverBanner from './ComposerTakeoverBanner.svelte';
+  import { RemoteCaretExtension, setRemoteCaret } from './remote-caret';
+  import { remoteCaretFrom } from './remote-caret-model';
+
+  /** D119：本输入框实例的在线状态来源标识（多输入框共存时只有当前实例生效）。 */
+  const presenceSource = Symbol('composer-presence');
+  /** D120：每个 Composer 自己的共享草稿会话（主对话 / 看板卡片可同时挂载）。 */
+  const sharedDraft = createSharedDraftStore();
+  const otherClients = $derived(
+    presence.entries.filter((entry) => entry.clientId !== clientIdentity.id),
+  );
+  /** D120：共享草稿被另一个客户端持有时，输入框只读并展示镜像与远端光标。 */
+  const collabReader = $derived(sharedDraft.state === 'reader');
+  /** 应用远端草稿时抑制本地 update → 共享草稿上传的回声。 */
+  let applyingRemote = false;
 
   let {
     readOnly = false,
@@ -382,6 +401,20 @@
     });
   }
 
+  /** 本地编辑 → 共享草稿（只有租约持有者会真正上传；防抖在 store 内）。 */
+  function noteSharedDraftChange(ed: Editor): void {
+    if (sharedDraft.state !== 'owner') return;
+    const conversationId = chatSession.view?.conversation.id ?? null;
+    if (conversationId === null) return;
+    const doc = ed.getJSON();
+    sharedDraft.noteLocalChange({
+      doc,
+      mentions: collectMentionTokens(doc),
+      replyTo: chatSession.replyTo?.id ?? null,
+      attachments: composerDrafts.attachmentsMetadata(conversationId),
+    });
+  }
+
   /** suggestion 弹层：纯 DOM 渲染（插件负责定位/外点关闭），键盘导航在此。 */
   function suggestionRender(): {
     onStart: (props: SuggestionProps) => void;
@@ -673,6 +706,7 @@
               },
             }),
             ...composerNodes,
+            RemoteCaretExtension,
           ],
           editorProps: {
             attributes: {
@@ -685,10 +719,12 @@
             handleDOMEvents: {
               compositionstart: () => {
                 composing = true;
+                sharedDraft.setComposing(true);
                 return false;
               },
               compositionend: () => {
                 composing = false;
+                sharedDraft.setComposing(false);
                 return false;
               },
             },
@@ -734,7 +770,21 @@
           content: docJson,
         }),
     );
-    ed.on('update', () => syncFromEditor(ed));
+    ed.on('update', () => {
+      syncFromEditor(ed);
+      // 只有用户焦点内的编辑才算「正在输入」；读端镜像与程序化回填不触发。
+      if (ed.isFocused && sharedDraft.state !== 'reader') presence.noteTyping();
+      if (!applyingRemote) noteSharedDraftChange(ed);
+    });
+    ed.on('selectionUpdate', () => {
+      if (!ed.isFocused || sharedDraft.state !== 'owner') return;
+      const { from, to } = ed.state.selection;
+      presence.noteSelection(from, to, sharedDraft.version);
+    });
+    ed.on('focus', () => {
+      if (sharedDraft.state === 'no-owner') void sharedDraft.claimIfFree();
+    });
+    ed.on('blur', () => presence.clearSelection());
     editorInstance = ed;
     editor = ed;
     return () => {
@@ -783,12 +833,26 @@
 
   /** 会话草稿的按会话缓存：水合（JSON → 编辑器）与保存（编辑器 → JSON）。 */
   let activeConversationId: string | null = null;
+  /** 本 Composer 的共享草稿会话（事件订阅 / 定时器随组件挂载生命周期）。 */
+  $effect(() => {
+    sharedDraft.start();
+    return () => sharedDraft.stop();
+  });
+  /** 组件卸载时清掉本输入框的在线状态 / 释放草稿租约（切换视图 / 关闭看板对话）。 */
+  $effect(() => () => {
+    presence.leave(presenceSource);
+    sharedDraft.leave(presenceSource);
+  });
   $effect(() => {
     const conversationId = chatSession.view?.conversation.id ?? null;
     const ed = editor;
     const currentDoc = docJson;
     const currentMentionTokens = mentionTokens;
     const currentReply = chatSession.replyTo;
+    // D119：进入 / 切换会话即上报在线状态（同一会话重复调用幂等）。
+    presence.enter(conversationId, presenceSource);
+    // D120：加载共享草稿并 claim（被占用则转只读镜像）。
+    void sharedDraft.enter(conversationId, presenceSource);
     if (conversationId !== activeConversationId) {
       activeConversationId = conversationId;
       if (conversationId === null || ed === null) return;
@@ -809,7 +873,104 @@
       return;
     }
     if (conversationId === null || ed === null) return;
+    // 读端不写本地草稿：编辑器里是对方的镜像，不是本机输入。
+    if (collabReader) return;
     composerDrafts.saveComposerDoc(conversationId, currentDoc, currentMentionTokens, currentReply);
+  });
+
+  /** 只读镜像：他人持有共享草稿租约时禁止编辑。 */
+  $effect(() => {
+    const ed = editor;
+    if (ed === null) return;
+    const editable = !collabReader;
+    if (ed.isEditable !== editable) ed.setEditable(editable);
+  });
+
+  /** 失去编辑权（接管 / 租约过期 / 发送后）时不再广播自己的光标。 */
+  $effect(() => {
+    if (sharedDraft.state !== 'owner') presence.clearSelection();
+  });
+
+  /** 版本推进后重发一次光标，避免读端因 docVersion 落后而长期隐藏。 */
+  $effect(() => {
+    const version = sharedDraft.version;
+    const ed = editor;
+    if (ed === null || sharedDraft.state !== 'owner' || !ed.isFocused) return;
+    const { from, to } = ed.state.selection;
+    presence.noteSelection(from, to, version);
+  });
+
+  /** 服务端草稿被应用时切换编辑器内容（初载 / 读端镜像 / 发送后清空）。 */
+  $effect(() => {
+    const revision = sharedDraft.revision;
+    const ed = editor;
+    const conversationId = chatSession.view?.conversation.id ?? null;
+    if (ed === null || conversationId === null || revision === 0) return;
+    // 只有“本会话的服务端快照已加载”才动编辑器；enter() 的未加载重置（doc=null）
+    // 不能清掉用户正在输入的内容。
+    if (!sharedDraft.loaded || sharedDraft.docConversationId !== conversationId) return;
+    const doc = sharedDraft.doc;
+    if (doc === null) return;
+    if (JSON.stringify(ed.getJSON()) === JSON.stringify(doc)) return;
+    untrack(() => {
+      applyingRemote = true;
+      try {
+        ed.commands.setContent(doc);
+        syncFromEditor(ed);
+        chatSession.replyTo = composerDrafts.loadDraft(conversationId).reply;
+        composerDrafts.setSyncState(conversationId, {
+          version: sharedDraft.version,
+          dirty: false,
+        });
+      } finally {
+        applyingRemote = false;
+      }
+    });
+  });
+
+  /** 回复 / 附件变化不走编辑器 update，单独同步到共享草稿。 */
+  $effect(() => {
+    const ed = editor;
+    const conversationId = chatSession.view?.conversation.id ?? null;
+    void chatSession.replyTo;
+    void pendingUploads;
+    if (
+      ed === null ||
+      conversationId === null ||
+      collabReader ||
+      applyingRemote ||
+      sharedDraft.state !== 'owner'
+    ) {
+      return;
+    }
+    noteSharedDraftChange(ed);
+  });
+
+  /** 空闲租约（上一位编辑者离开 / 刚清空）时，聚焦中的输入框自动接管。 */
+  $effect(() => {
+    if (sharedDraft.state !== 'no-owner') return;
+    const ed = editor;
+    if (ed !== null && ed.isFocused) void sharedDraft.claimIfFree();
+  });
+
+  /** 读端绘制租约持有者的远端光标（docVersion 必须匹配）。 */
+  $effect(() => {
+    const ed = editor;
+    const owner = sharedDraft.owner;
+    const state = sharedDraft.state;
+    const version = sharedDraft.version;
+    if (ed === null) return;
+    if (state !== 'reader' || owner === null) {
+      setRemoteCaret(ed, null);
+      return;
+    }
+    const entry = presence.entries.find((candidate) => candidate.clientId === owner.id);
+    if (entry === undefined) {
+      setRemoteCaret(ed, null);
+      return;
+    }
+    const caret = remoteCaretFrom(presence.entries, owner.id, version);
+    setRemoteCaret(ed, caret);
   });
 
   /**
@@ -872,7 +1033,15 @@
     const ed = editor;
     const conversationId = chatSession.view?.conversation.id;
     if (ed === null || !conversationId) return;
+    // 读端只镜像，不发送；接管后才能发。
+    if (collabReader) return;
     if (sendGuard.isBusy(conversationId)) return;
+    // 等共享草稿的 get + claim 落定，避免在 loading 窗口里读到旧版本。
+    await sharedDraft.whenReady();
+    if (collabReader) return;
+    if (sharedDraft.state === 'no-owner') await sharedDraft.claimIfFree();
+    if (collabReader) return;
+    const viaCollab = sharedDraft.state === 'owner';
     const markdown = ed.getMarkdown();
     const trimmed = markdown.trim();
     if (trimmed.length === 0 && pendingUploads.length === 0) return;
@@ -886,14 +1055,25 @@
         settle: () => composerDrafts.settle(conversationId),
         // 显式只发往发起发送时的会话：等上传期间用户可能已切走。
         send: (text, attachmentIds) =>
-          chatSession.send(conversationId, text, {
-            ...(tokens.length > 0 ? { mentions: tokens } : {}),
-            ...(replyToId !== null ? { replyTo: replyToId } : {}),
-            ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
-          }),
+          viaCollab
+            ? sharedDraft.send({
+                text,
+                ...(tokens.length > 0 ? { mentions: tokens } : {}),
+                ...(replyToId !== null ? { replyTo: replyToId } : {}),
+                ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+              })
+            : chatSession.send(conversationId, text, {
+                ...(tokens.length > 0 ? { mentions: tokens } : {}),
+                ...(replyToId !== null ? { replyTo: replyToId } : {}),
+                ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+                client: { id: clientIdentity.id, name: clientIdentity.name },
+              }),
         commit: (attachmentIds) => {
           composerDrafts.commitSent(conversationId, attachmentIds);
-          if (replyToId !== null) composerDrafts.clearReply(conversationId);
+          if (replyToId !== null) {
+            composerDrafts.clearReply(conversationId);
+            chatSession.replyTo = null;
+          }
         },
         restore: () => restoreComposerContent(ed, docSnapshot, conversationId),
         inspectAttachments: (attachmentIds) =>
@@ -1446,6 +1626,7 @@
           chatSession.send(conversationId, body, {
             ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
             ...(opts?.voiceMode === true ? { voiceMode: true } : {}),
+            client: { id: clientIdentity.id, name: clientIdentity.name },
           }),
         commit: (attachmentIds) => composerDrafts.commitSent(conversationId, attachmentIds),
         // 语音内容不进输入框，无草稿可回填：发送失败时附件 chip 原样留在
@@ -1767,6 +1948,15 @@
     </div>
   {:else}
     <div class="mx-auto w-full max-w-3xl">
+      {#if collabReader}
+        <ComposerTakeoverBanner
+          owner={sharedDraft.owner}
+          onTakeover={() => void sharedDraft.takeover()}
+        />
+      {/if}
+      {#if otherClients.length > 0}
+        <ComposerPresenceRow entries={otherClients} />
+      {/if}
       <div class="relative flex flex-col">
         {#if voiceModeOwned}
           <!-- 语音对话条（53 号 D106）：语音模式占输入坞原位（同层替换，不走
@@ -1953,7 +2143,7 @@
                 style:background={botAccentPaint?.background}
                 style:color={botAccentPaint?.color}
                 onclick={onSendClick}
-                disabled={readOnly}
+                disabled={readOnly || collabReader}
                 data-testid="composer-send"
                 aria-label={t('composer.send')}
               >

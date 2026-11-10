@@ -22,11 +22,11 @@ export const settingsSectionSources: SettingsSectionSource[] = [
   { id: 'profile', labelKey: 'settings.navProfile' },
   { id: 'general', labelKey: 'settings.navGeneral' },
   { id: 'hardware', labelKey: 'settings.navHardware' },
-  { id: 'models', labelKey: 'settings.navModels' },
+  { id: 'models', labelKey: 'settings.navModelsAgents' },
   { id: 'search', labelKey: 'settings.navWebSearch' },
   { id: 'browser', labelKey: 'settings.navBrowserProfiles' },
   { id: 'computer-use', labelKey: 'settings.navComputerUse' },
-  { id: 'agents', labelKey: 'settings.navAgents' },
+  { id: 'agents', labelKey: 'settings.navModelsAgents' },
   { id: 'contacts', labelKey: 'settings.navContacts' },
   { id: 'unattended', labelKey: 'settings.navUnattended' },
   { id: 'remote', labelKey: 'settings.navRemote' },
@@ -35,11 +35,19 @@ export const settingsSectionSources: SettingsSectionSource[] = [
   { id: 'diagnostics', labelKey: 'settings.navDiagnostics' },
 ];
 
+/**
+ * 左栏不单独列出的分区：`agents` 与 `models` 合并为「模型与智能体」一个条目，
+ * 内容由 ModelsAgentsSection 用页签切换。两个 id 仍是有效深链（分区标题按同一
+ * 名字显示，页签落在对应一侧）。
+ */
+const NAV_MERGED_SECTIONS: ReadonlySet<SettingsViewSection> = new Set(['agents']);
+
 /** 可见分区源：窄屏隐藏「通讯录」「个人资料」（提取为底部 tab，33-narrow-layout）。 */
 export function visibleSectionSources(narrow: boolean): SettingsSectionSource[] {
-  return narrow
+  const sources = narrow
     ? settingsSectionSources.filter((section) => !NARROW_HIDDEN_SETTINGS_SECTIONS.has(section.id))
     : settingsSectionSources;
+  return sources.filter((section) => !NAV_MERGED_SECTIONS.has(section.id));
 }
 
 /** 分区标题，调用时翻译（未知 id 兜底「设置」）。 */

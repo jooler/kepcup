@@ -103,7 +103,6 @@ async function setupEnv(
   const { core, llm } = stack;
   fake.configure({ idTokenClaims: { ...ACCOUNT } });
   await core.rpc.call('settings.update', {
-    experimental: { externalAgents: true },
     agents: { fake: { enabled: true } },
   });
   const flowEvents: AppConnectFlowPayload[] = [];

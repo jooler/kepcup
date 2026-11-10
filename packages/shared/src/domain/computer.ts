@@ -106,6 +106,8 @@ export const computerScreenshotDataSchema = z.object({
   width: z.number().int(),
   height: z.number().int(),
   scale: z.number(),
+  /** 落盘文件路径（0600，按数量/时效轮换）：给没有图像能力的客户端做像素读回。 */
+  path: z.string().optional(),
 });
 export type ComputerScreenshotData = z.infer<typeof computerScreenshotDataSchema>;
 

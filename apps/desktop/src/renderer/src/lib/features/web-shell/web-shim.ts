@@ -67,11 +67,16 @@ export function installWebShim(version: string): void {
     sensorPermissionRequest: () => Promise.resolve(false),
     sensorOpenSettings: noop,
     onAutostartResult: () => unbind,
-    // D105 计算机操控（docs/design/52 §6）：helper 与被操控的桌面都在本机——
+    // D105 / P-B2 计算机操控（docs/design/52 §6）：CuaDriver 与被操控的桌面都在本机——
     // 远程端点一律 desktop-only 拒绝（endpointCapabilityIdSchema 'computer-use'）。
     computerStop: () => Promise.resolve({ stopped: false }),
     computerPermissionStatus: () =>
-      Promise.resolve({ accessibility: 'unknown', screenRecording: 'unknown' }),
+      Promise.resolve({ accessibility: 'unknown', screenRecording: 'unknown', directCapture: 'unknown' }),
+    computerPermissionProbeCapture: () =>
+      Promise.resolve({
+        status: { accessibility: 'unknown', screenRecording: 'unknown', directCapture: 'unknown' },
+        reason: null,
+      }),
     computerPermissionOpen: noop,
     computerCapabilitiesStatus: () =>
       Promise.resolve({ available: false, error: null, checkedAt: 0 }),

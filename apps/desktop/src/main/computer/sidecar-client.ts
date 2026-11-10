@@ -11,6 +11,7 @@ import {
   normalizeComputerActionResult,
   rejectContradictedComputerAction
 } from './computer-action-verification-normalization'
+import type { CuaDriverCaptureProbe } from './cua-driver-permissions'
 import { isComputerSidecarDiagnostic, logComputerDiagnostic } from './computer-sidecar-diagnostics'
 import { validateComputerSidecarPasteText } from './computer-sidecar-paste-validation'
 import { RuntimeClientError } from './runtime-client-error'
@@ -21,6 +22,7 @@ export const COMPUTER_SIDECAR_ENTRY_FILENAME = 'computer-sidecar.js'
 
 type ComputerSidecarMethod =
   | 'capabilities'
+  | 'probeDirectCapture'
   | 'listApps'
   | 'listWindows'
   | 'getAppState'
@@ -53,6 +55,15 @@ type PendingRequest = {
 const REQUEST_TIMEOUT_MS = 60_000
 let sidecar: ComputerSidecarProcess | null = null
 
+// cua-driver provider 的 socket 目录父级（WP6）：provider 跑在 sidecar 进程里，
+// sidecar 不知道 userData 路径——main 装配处经 setComputerSidecarUserDataDirectory
+// 注入，fork 环境变量带给 sidecar。
+let sidecarUserDataDirectory: string | null = null
+
+export function setComputerSidecarUserDataDirectory(userDataDirectory: string | null): void {
+  sidecarUserDataDirectory = userDataDirectory
+}
+
 // Suppress stale child errors without retaining the owner or crashing the process.
 function ignoreStaleChildError(): void {}
 
@@ -62,6 +73,17 @@ export async function callComputerSidecarListApps(): Promise<ComputerListAppsRes
 
 export async function callComputerSidecarCapabilities(): Promise<ComputerProviderCapabilities> {
   return (await getComputerSidecar().call('capabilities', {})) as ComputerProviderCapabilities
+}
+
+/**
+ * 截屏自检：经 sidecar 让 CuaDriver 真抓一帧（首次可能触发系统直采同意框）。
+ * 只允许用户在设置页主动触发——会短暂抢焦点，不挂在状态轮询里。
+ */
+export async function callComputerSidecarDirectCaptureProbe(): Promise<CuaDriverCaptureProbe> {
+  return (await getComputerSidecar().call(
+    'probeDirectCapture',
+    {}
+  )) as CuaDriverCaptureProbe
 }
 
 export async function callComputerSidecarListWindows(
@@ -79,7 +101,7 @@ export async function callComputerSidecarSnapshot(
 export async function callComputerSidecarAction(
   method: Exclude<
     ComputerSidecarMethod,
-    'capabilities' | 'listApps' | 'listWindows' | 'getAppState'
+    'capabilities' | 'probeDirectCapture' | 'listApps' | 'listWindows' | 'getAppState'
   >,
   params: unknown
 ): Promise<ComputerActionResult> {
@@ -94,9 +116,14 @@ export async function callComputerSidecarAction(
   )
 }
 
-export function resetComputerSidecarForTest(): void {
+/** 杀掉 sidecar 子进程；其 disconnect 处理会终止 provider 与 CuaDriver daemon。 */
+export function shutdownComputerSidecar(): void {
   sidecar?.shutdown()
   sidecar = null
+}
+
+export function resetComputerSidecarForTest(): void {
+  shutdownComputerSidecar()
 }
 
 function getComputerSidecar(): ComputerSidecarProcess {
@@ -214,7 +241,10 @@ class ComputerSidecarProcess {
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: '1',
-        ORCA_COMPUTER_SIDECAR: '1'
+        ORCA_COMPUTER_SIDECAR: '1',
+        ...(sidecarUserDataDirectory
+          ? { KEPCUP_COMPUTER_USER_DATA_DIR: sidecarUserDataDirectory }
+          : {})
       },
       ...(process.platform === 'win32' ? { windowsHide: true } : {})
     })

@@ -114,6 +114,8 @@ import {
 import { WslSandboxBackend } from './sandbox/backend-wsl.js';
 import type { MountRegistration } from './sandbox/wsl/mounts.js';
 import { WslSetup, createWslRunner, type WslRunner } from './sandbox/wsl/setup.js';
+import { LimaSetup } from './sandbox/lima/setup.js';
+import { createLimaRunner } from './sandbox/lima/runner.js';
 import { createWslFixtureRunner, wslFixtureScenarioFromEnv } from './sandbox/wsl/fixture-runner.js';
 import { WSL_DISTRO_NAME } from './sandbox/wsl/constants.js';
 import { type DistroToolchainInstaller } from './env/distro.js';
@@ -246,6 +248,8 @@ import {
 } from './apps/shell-facade.js';
 import { bindAppMethods } from './rpc/bindings.js';
 import { RemoteHub, type RemoteHostOptions } from './remote/hub.js';
+import { PresenceService } from './collab/presence.js';
+import { DraftService } from './collab/drafts.js';
 import type { CoreEventsMap } from './start-types.js';
 
 /** Test hooks for the environment manager's system-item guidance (P06). */
@@ -585,6 +589,11 @@ export interface CoreServices {
    * to prepare: non-Windows hosts without the e2e fixture seam.
    */
   wslSetup: WslSetup | null;
+  /**
+   * macOS 增强沙箱（Lima）准备状态机：沙箱准备向导里创建 / 启动 / 初始化
+   * 虚拟机。非 macOS 为 null（sandbox.lima* 返回 applicable:false）。
+   */
+  limaSetup: LimaSetup | null;
   mainDb: SqliteDatabase | null;
   runsDb: SqliteDatabase | null;
   /**
@@ -710,6 +719,10 @@ export interface CoreServices {
   platformMethods: Record<string, RpcMethodSpec>;
   /** D96 远程遥控收发中枢（端点注册表 / 事件扇出 / remote.* 处理）；成功启动后非空。 */
   remote: RemoteHub | null;
+  /** D119 多客户端在线状态（纯内存；连接关闭由宿主 leave，TTL 兜底）。 */
+  collabPresence: PresenceService;
+  /** D120 共享草稿（单写者租约 + 版本化快照）；locked / errored 时为 null。 */
+  collabDrafts: DraftService | null;
   /** Re-announce the current status to a freshly bound RPC client. */
   pushStatusTo(server: RpcServerHandle): void;
   /**
@@ -787,6 +800,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
   // 查询函数在域服务建好后赋值，锁定/未解锁期间原样放行。
   let lookupDirectBot: ((botId: string) => Bot | null) | null = null;
   const events = withDirectConversationBots(createEventBus<CoreEventsMap>(), () => lookupDirectBot);
+  // 多客户端在线状态（D119）：纯内存，宿主连接关闭时调用 leave，TTL 兜底。
+  const collabPresence = new PresenceService({
+    clock,
+    publish: (name, payload) => events.emit(name, payload),
+  });
   // BR-P13-007 test seam: production restore by default; tests inject a
   // failing wrapper to pin the honest migration-failure statusReason.
   const restoreBackup = options.restoreBackup ?? restoreDatabaseBackup;
@@ -828,6 +846,12 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
   const wslSetup =
     wslFixtureScenario !== null || (process.platform === 'win32' && !wslSetupSuppressedByTestSeam)
       ? new WslSetup({ paths, runner: wslRunner })
+      : null;
+  // macOS 增强沙箱（Lima）：向导内创建 / 启动 / 初始化虚拟机。仅 darwin
+  // 构造；其他平台 sandbox.lima* 返回 applicable:false。
+  const limaSetup =
+    process.platform === 'darwin'
+      ? new LimaSetup({ paths, runner: createLimaRunner(), env })
       : null;
   const sandbox = createSandboxBackend({
     paths,
@@ -922,6 +946,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     sandbox,
     sandboxEnhanced,
     wslSetup,
+    limaSetup,
     mainDb: null,
     runsDb: null,
     keystoreKind: 'unavailable',
@@ -979,6 +1004,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     appMethods: {},
     platformMethods: {},
     remote: null,
+    collabPresence,
+    collabDrafts: null,
     pushStatusTo(server) {
       server.pushEvent(
         'core.status',
@@ -996,6 +1023,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     refreshEnhancedAvailability: enhancedAvailability.refresh,
     async close() {
       servicesClosed.closed = true;
+      services.collabPresence.close();
+      services.collabDrafts?.close();
       await services.remote?.close();
       services.jobsRunner?.stop();
       services.marketplace?.stop();
@@ -1199,15 +1228,13 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // Test/e2e-only seam: absent from the packaged artifact (P13 产物剔除).
     if (__KEPCUP_TEST_HOOKS__) seedMockLlm(settings, env, logger);
 
-    // D72 P4：onboarding「我有订阅」写入的默认 Agent——仅在没有默认主模型、
-    // 实验开关打开且该 Agent 已启用时用于新建 Bot（预览档默认 ask）。
+    // D72 P4：onboarding「我有订阅」写入的默认 Agent——仅在没有默认主模型且
+    // 该 Agent 已启用时用于新建 Bot（预览档默认 ask）。
     const bots = new BotsService(mainDb, clock, () => {
       const current = settings.get();
       const agentId = current.defaultAgentId;
       if (agentId.length === 0 || current.defaultMainModel.length > 0) return null;
-      if (!current.experimental.externalAgents || current.agents[agentId]?.enabled !== true) {
-        return null;
-      }
+      if (current.agents[agentId]?.enabled !== true) return null;
       const entry = findAgentEntry(effectiveAgentCatalog(extraAgentEntries), agentId);
       if (entry === null) return null;
       return {
@@ -2200,10 +2227,15 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         if (read.entries.length === 0) return null;
         const lines = read.entries
           .slice(0, 8)
-          .map((entry) => `- [v${entry.version}] ${entry.code} ×${entry.count}（${entry.phase}）${entry.detail}`);
+          .map(
+            (entry) =>
+              `- [v${entry.version}] ${entry.code} ×${entry.count}（${entry.phase}）${entry.detail}`,
+          );
         return [
           ...lines,
-          ...(read.truncated ? ['-（更多条目省略；可用 micro_app_diagnostics_read 工具看全量）'] : []),
+          ...(read.truncated
+            ? ['-（更多条目省略；可用 micro_app_diagnostics_read 工具看全量）']
+            : []),
         ].join('\n');
       },
       // GATE 的 app.capability-unavailable（55 §11）：宿主缺配置的能力提前标出 + 设置深链。
@@ -2220,7 +2252,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           if (media === null) return { available: false, reason: '媒体模块未就绪' };
           const kind = capability === 'media.listen' ? 'asr' : 'tts';
           if (!media.capabilityConfigured(kind)) {
-            return { available: false, reason: kind === 'asr' ? '未配置语音识别（ASR）模型' : '未配置语音合成（TTS）模型' };
+            return {
+              available: false,
+              reason: kind === 'asr' ? '未配置语音识别（ASR）模型' : '未配置语音合成（TTS）模型',
+            };
           }
           return { available: true };
         }
@@ -2663,7 +2698,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
             .listForBot(input.botId)
             .some((item) => item.widgetId === input.widgetId);
           if (!owned) {
-            return { ok: false, message: '找不到这个微应用（或它不是你创建的）', code: 'FORBIDDEN' as const };
+            return {
+              ok: false,
+              message: '找不到这个微应用（或它不是你创建的）',
+              code: 'FORBIDDEN' as const,
+            };
           }
           const result = microAppStore.diagnosticsRead(input.widgetId);
           const entries =
@@ -3119,11 +3158,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       }
     };
     const handoverModelOptions = () => chatModelOptions(providers.list());
-    // 换外部智能体时的规则与 bots.update / 新建 Bot 同源（实验开关、目录、默认权限档）。
+    // 换外部智能体时的规则与 bots.update / 新建 Bot 同源（目录、默认权限档）。
     const handoverAgents: HandoverAgentPolicy = {
       selectable: (agentId) => {
         try {
-          assertAgentSelectable(settings.get(), agentCatalog, agentId);
+          assertAgentSelectable(agentCatalog, agentId);
           return null;
         } catch (error) {
           return error instanceof Error ? error.message : String(error);
@@ -3657,7 +3696,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       skills,
       agentSelectable: (agentId) => {
         try {
-          assertAgentSelectable(settings.get(), agentCatalog, agentId);
+          assertAgentSelectable(agentCatalog, agentId);
           return true;
         } catch {
           return false;
@@ -3695,6 +3734,23 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       browserProfiles,
     };
     services.orchestrator = orchestrator;
+    // D120 共享草稿：正文进 main.db，租约纯内存；发送复用 orchestrator 的落库 / 路由。
+    const collabDrafts = new DraftService({
+      db: mainDb,
+      clock,
+      publish: (name, payload) => events.emit(name as never, payload as never),
+      sendMessage: (conversationId, input, onPersisted) =>
+        orchestrator.sendMessage(conversationId, {
+          text: input.text,
+          ...(input.mentions !== undefined ? { mentions: input.mentions } : {}),
+          ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}),
+          ...(input.attachmentIds !== undefined ? { attachmentIds: input.attachmentIds } : {}),
+          ...(input.voiceMode !== undefined ? { voiceMode: input.voiceMode } : {}),
+          ...(input.client !== undefined ? { client: input.client } : {}),
+          onPersisted,
+        }),
+    });
+    services.collabDrafts = collabDrafts;
     // D94 分享接收：Share Extension 投递的目标解析、附件落盘与失败恢复。
     const shareIntake = new ShareIntakeService({
       db: mainDb,
@@ -3835,6 +3891,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       clock,
       logger,
       appMethods: () => services.appMethods,
+      presence: collabPresence,
+      releaseDrafts: (clientId) => collabDrafts.releaseClient(clientId),
       ...(options.remote ?? {}),
       pushInitialEventsTo: (server) => {
         services.pushStatusTo(server);
@@ -4207,6 +4265,9 @@ function createSystemMethods(
                 ? enhancedAvailability.backend
                 : null,
             enhancedAvailable: enhancedAvailability?.available ?? null,
+            ...(enhancedAvailability?.state !== undefined
+              ? { enhancedState: enhancedAvailability.state }
+              : {}),
           },
           toolchain,
         };

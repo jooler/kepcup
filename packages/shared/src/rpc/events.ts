@@ -31,6 +31,13 @@ import {
   pendingPairingRequestSchema,
   remoteAnchorStateSchema,
 } from '../domain/remote.js';
+import { collabPresenceChangedPayloadSchema } from '../domain/collab.js';
+import {
+  collabClientRefSchema,
+  collabDraftChangedPayloadSchema,
+  collabDraftClearedPayloadSchema,
+  collabDraftOwnerChangedPayloadSchema,
+} from '../domain/collab.js';
 import {
   shareFailedChangedPayloadSchema,
   shareTargetsChangedPayloadSchema,
@@ -89,7 +96,10 @@ export const approvalCreatedPayloadSchema = z.object({
   conversationId: z.string().nullable(),
   approval: approvalSchema,
 });
-export const approvalResolvedPayloadSchema = approvalCreatedPayloadSchema;
+export const approvalResolvedPayloadSchema = approvalCreatedPayloadSchema.extend({
+  /** D121：谁做的决定（用户亲手决定时才有）。 */
+  decidedBy: collabClientRefSchema.optional(),
+});
 
 export const grantChangedPayloadSchema = z.object({
   conversationId: z.string(),
@@ -475,6 +485,12 @@ export const rpcEventSchemas = {
   'remote.anchorState': remoteAnchorStatePayloadSchema,
   /** D96: 遥控设备上线 / 下线 / 新配对 / 撤销。 */
   'remote.deviceChanged': remoteDeviceChangedPayloadSchema,
+  /** D119: 多客户端在线状态（按会话广播全量条目）。 */
+  'collab.presenceChanged': collabPresenceChangedPayloadSchema,
+  /** D120: 共享草稿快照 / 编辑权变化 / 发送后清空。 */
+  'collab.draftChanged': collabDraftChangedPayloadSchema,
+  'collab.draftOwnerChanged': collabDraftOwnerChangedPayloadSchema,
+  'collab.draftCleared': collabDraftClearedPayloadSchema,
   /** D96: 配对请求到达、等桌面确认（确认卡）。 */
   'remote.pairingRequested': remotePairingRequestedPayloadSchema,
   /** 插件（D104）：安装 / 卸载 / 启停 / 更新后，渲染端重拉全部投影视图。 */

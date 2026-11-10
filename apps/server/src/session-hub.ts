@@ -5,6 +5,7 @@ import { RELAY_MAX_FRAME_BYTES, RPC_EVENT_NAMES, type RpcMethodSpec } from '@kep
 import {
   createRpcServer,
   LOCAL_ONLY_METHODS,
+  withClientIdentityBinding,
   withRemoteSource,
   type CoreLogger,
   type CoreServices,
@@ -34,6 +35,10 @@ interface SessionConnection {
   unsubscribers: Array<() => void>;
   coalesced: Map<string, { name: string; payload: unknown }>;
   coalesceTimer: ReturnType<typeof setTimeout> | null;
+  /** D119：该连接上报过的客户端身份（clientId → connectionId）。 */
+  presenceConnections: Map<string, string>;
+  /** 该连接绑定的客户端身份（首个带 clientId 的调用；之后不可更换）。 */
+  boundClientId: string | null;
 }
 
 export interface SessionHubOptions {
@@ -115,6 +120,8 @@ export class SessionHub {
       unsubscribers: [],
       coalesced: new Map(),
       coalesceTimer: null,
+      presenceConnections: new Map(),
+      boundClientId: null,
     };
     // 与 RemoteHub 端点同一份 handlers + 远程来源审计标记 + 本机专用方法剔除。
     const methods: Record<string, RpcMethodSpec> = {};
@@ -125,6 +132,16 @@ export class SessionHub {
         handle: (input) => withRemoteSource(sessionAuditId(username), () => spec.handle(input)),
       };
     }
+    // D119/D120：presence / 草稿 / 归属方法都绑定到该连接的首个 clientId。
+    const boundMethods = withClientIdentityBinding(methods, {
+      get boundClientId() {
+        return connection.boundClientId;
+      },
+      bindClient: (clientId, connectionId) => {
+        connection.boundClientId = clientId;
+        if (connectionId !== null) connection.presenceConnections.set(clientId, connectionId);
+      },
+    });
     connection.server = createRpcServer({
       transport: {
         post: (data) => {
@@ -145,7 +162,7 @@ export class SessionHub {
         },
         close: () => ws.close(1000, 'session closed'),
       },
-      methods,
+      methods: boundMethods,
       onError: (method, error) => {
         this.#logger.warn({ user: username, method, code: error.code }, 'session rpc failed');
       },
@@ -174,6 +191,14 @@ export class SessionHub {
 
   #detach(connection: SessionConnection): void {
     if (!this.#sessions.delete(connection)) return;
+    for (const [clientId, connectionId] of connection.presenceConnections) {
+      this.#services.collabPresence.leave({ clientId, connectionId });
+      this.#services.collabDrafts?.releaseClientConnection(clientId, connectionId);
+    }
+    if (connection.boundClientId !== null && connection.presenceConnections.size === 0) {
+      this.#services.collabDrafts?.releaseClient(connection.boundClientId);
+    }
+    connection.presenceConnections.clear();
     for (const unsubscribe of connection.unsubscribers) unsubscribe();
     if (connection.coalesceTimer !== null) clearTimeout(connection.coalesceTimer);
     try {
@@ -181,7 +206,10 @@ export class SessionHub {
     } catch {
       // 关闭中的 birpc 再关会抛，忽略。
     }
-    this.#logger.info({ user: connection.username, sessions: this.#sessions.size }, 'session closed');
+    this.#logger.info(
+      { user: connection.username, sessions: this.#sessions.size },
+      'session closed',
+    );
   }
 
   #fanOut(connection: SessionConnection, name: string, payload: unknown): void {

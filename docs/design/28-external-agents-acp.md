@@ -2,7 +2,7 @@
 
 许多用户已经订阅了 Claude Pro/Max、ChatGPT Plus/Pro、GitHub Copilot、GLM Coding Plan 等，却拿不到通用的 `base_url` / `api_key`，无法使用基于 pi 的内置 loop。本文规定：**用户可在设置中像 ACP Registry 那样启用外部编码智能体（Agent），并为某个 Bot 指定由哪个 Agent 驱动其执行 loop**；外部 Agent 主要通过 [ACP（Agent Client Protocol）](https://agentclientprotocol.com) 驱动，内置 pi loop 保持默认与不变。
 
-决策：D72。执行方案见 [todo/acp-external-agents.md](../../todo/acp-external-agents.md)。**状态（2026-10-08）**：P1–P6 已实现（实验开关下）；待办只剩需要真实账号的人工项——各 Agent 登录后的 P0 spike、原生优先遵守度真机运行（§9.2 末）与三平台人工验收（todo §9.1 末项）。
+决策：D72。执行方案见 [todo/acp-external-agents.md](../../todo/acp-external-agents.md)。**状态（2026-11-06）**：P1–P6 已实现；原「外部智能体（实验）」开关已移除——目录恒可见，「智能体」设置页为左右两栏（全局配置 + 全部智能体）。待办只剩需要真实账号的人工项——各 Agent 登录后的 P0 spike、原生优先遵守度真机运行（§9.2 末）与三平台人工验收（todo §9.1 末项）。
 
 相关：D2（执行中注入）、D4（@ 连锁预算）、D21（pi 封装在 `AgentEngine` 之后）、D35/D36（访问范围）、D27（沙箱）、D29/D30（写入租约 / 检查点）、D41（无人值守）、D45（模型配置）、D48/D54（Bot 发消息 / 中间说明）、D56（Loop 续接）、D58（对话内设置引导）、D62/D68（检索与能力补位工具）、D65（MCP）、D66（SubAgent）、D67（durable）、D71（跨 Bot 委派）。
 
@@ -14,7 +14,7 @@
   3. **能力注入可选**：KepCup 的宿主能力（记忆、Wiki、定时、浏览器、检索、图像 / 语音 / 视频生成、图片理解、语音转写、委派、技能、宿主操作、用户 MCP 等）按**能力包**组织，经**宿主 MCP 桥**注入外部 Agent。Bot 使用外部 Agent 时，用户逐包勾选注入哪些能力；默认值 = 「该 Agent 不具备的能力全部注入」（由 Agent 描述符声明其原生能力，未知按不具备处理）。对话核心能力（`send_message` / `skip_reply` / 消息与执行记录查询）必选。能力包分两类：**宿主语义类**（对话、记忆、Wiki、定时、协作、技能、宿主操作）以 KepCup 工具为准，Agent 不得用自带的近似手段替代；**补位类**（检索、浏览器、图像 / 语音 / 视频生成、图片理解、语音转写、用户 MCP）**原生优先**——注入的补位工具在工具描述与平台规则中都明确标为「仅当你没有等价的内置能力，或内置能力不可用 / 失败时才使用」（§4.2）。
   4. **可扩展的 Agent 供应商**：每个 Agent 是一个 **Provider**（目录条目 + 可选的行为覆盖模块），通用 ACP Provider 覆盖协议标准部分，各家只写差异（启动参数、指令注入方式、权限模式映射、原生能力、条款提示）；不支持 ACP 的 Agent 以**进程内协议垫片**（把其私有协议翻译为 ACP 语义）接入同一管道。新增 Agent = 加一个目录条目 + 一个 Provider 模块 + 在登记表里加一行，并通过统一的 Provider 契约测试。
   5. **本期 Agent**：Claude Agent、Codex、OpenCode、DeepSeek Harness、Cursor、Google Antigravity（ACP 均已具备，ACP Registry 均已收录）；Antigravity 因其条款禁止第三方软件使用 Google 个人账号登录，**只开放 API key / Vertex / Enterprise 登录方式**（个人订阅登录在 Provider 层过滤）；ZCode 无 ACP，原计划以进程内垫片接入；P0 只读评估曾认为可完整覆盖，P5 实现前复核推翻（订阅鉴权须由宿主读取 / 中转凭据）→ 按「不能完整覆盖即放弃」**已放弃**（`docs/dev/DEVIATIONS.md` DEV-008，§9.2）。
-  6. **不变的原则**：换的是 loop，不换 Bot——对话、mailbox、执行记录、续接、中间说明、人设 / 记忆 / Wiki / Skills 注入、项目组沟通、委派、审批与审计全部留在宿主；外部 Agent 自带的文件 / 命令工具在其**自身沙箱**内运行，权限请求进入 KepCup 的分级与审批卡；**KepCup 不接触、不存储、不中转**任何订阅凭据，登录走厂商官方流程，进程使用厂商**未修改**的官方二进制。功能以「实验」开关发布。**Claude Agent 在开发期间与其他 Agent 同等对待（默认可启用、全部功能走通）**，是否随发行版发布在发行前由产品确认后决定（目录条目带 `releaseGate`，未放行时发行构建不收录该条目，代码保留）（§9.3）。
+  6. **不变的原则**：换的是 loop，不换 Bot——对话、mailbox、执行记录、续接、中间说明、人设 / 记忆 / Wiki / Skills 注入、项目组沟通、委派、审批与审计全部留在宿主；外部 Agent 自带的文件 / 命令工具在其**自身沙箱**内运行，权限请求进入 KepCup 的分级与审批卡；**KepCup 不接触、不存储、不中转**任何订阅凭据，登录走厂商官方流程，进程使用厂商**未修改**的官方二进制。功能已正式发布（原「实验」开关已于 2026-11-06 移除）。**Claude Agent 在开发期间与其他 Agent 同等对待（默认可启用、全部功能走通）**，是否随发行版发布在发行前由产品确认后决定（目录条目带 `releaseGate`，未放行时发行构建不收录该条目，代码保留）（§9.3）。
 
 
 
@@ -88,9 +88,10 @@ interface AgentCatalogEntry {
   transport: 'acp' | 'shim';       // shim = 进程内协议垫片
   tier: 'supported' | 'preview';   // 预览档默认权限更严、UI 标注
   nativeCapabilities: Partial<Record<CapabilityId, string[]>>;  // 自带能力 → 原生工具名（用于默认值与 §4.2 原生优先提示）
-  auth: { kinds: Array<'subscription' | 'api-key' | 'gateway'>; note: string };
+  auth: { kinds: Array<'subscription' | 'api-key' | 'gateway' | 'anonymous'>; note: string };
   terms?: { noticeKey: string };   // 条款提示文案 key（可随版本下线某个 Agent）
   releaseGate?: string;            // 发行门禁：未放行时发行构建不收录该条目（开发构建照常可用）
+  initTimeoutMs?: number;          // 启动 + initialize 的超时上限覆盖（KepCup 扩展，D118；缺省 AGENT_INIT_TIMEOUT_MS=60s，dsh 设 120s）
 }
 ```
 
@@ -244,6 +245,8 @@ interface AgentCatalogEntry {
 - **事件映射**：文本块累积，遇顶层 `tool_call` 以 `stopReason=toolUse` 发 `assistant`（带 `parentToolUseId` 的子代理内部调用与文本不切分、不落步骤，只进状态行；状态行文案取 `tool_call.title`）；原生 `tool_call` / `tool_call_update` → `tool_call` / `tool_result`（`tool_call_update` 的 diff 内容另算 `diffStats`：新增 / 删除行数，任务详情页工具行展示）；`agent_thought_chunk` 累积到该轮 `assistant` 的 `thinking` 字段（任务详情页展示，子代理的思考不落库）；`plan` → `progress`；`stopReason`：`end_turn`→completed、`cancelled`→cancelled（`skip_reply` 例外）、`refusal`/`max_tokens`/`max_turn_requests`→failed。
 - **steering**：prompt 进行中且 Provider 声明支持时发 `_session/steering`（固定 `idleBehavior:'promptRequired'`），应答 `injected` 才算送达；被拒、出错或 Agent 无视 `promptRequired` 自开新 turn（codex-acp 2.1.1，宿主立即取消该 turn）都经 `onSteerRejected` 交还 pending steer，在 run 结束后续投；不支持时直接回落。prompt 发出前 / 后台工具 follow-up 之前到达的消息并入下一个 prompt。每会话同一时刻只允许一个 prompt 的 Agent（如 DeepSeek Harness）只能回落。
 - **长耗时宿主工具**：桥调用超过 `AGENT_BRIDGE_TOOL_DETACH_MS`（45 s，低于 Codex 不可调的约 60 s MCP 超时）先应答「已转入后台」并继续执行；prompt 结束后 run 等待其完成，再以 follow-up prompt 把结果送回同一会话、同一 run（等待用户审批的工具因此不会被超时取消）。等待与 follow-up 都受 run 自身的时间上限约束（自 run 开始算；follow-up 只得到剩余时间，有下限）：到期中止仍在后台的调用，只发一次报告超时的 follow-up 即结算。
+- **turn 停滞看门狗**（D118）：prompt 在途期间超过 `AGENT_TURN_STALL_MS`（5 分钟）没有任何 `session/update`、且没有等待用户 / 权限桥的请求时，判为停滞：`session/cancel`（尽力而为）后 run 以超时失败——僵死的 Agent 不烧满 run 的 60 分钟上限；跨 prompt 的间隙（等待后台工具的 follow-up）不看门狗，仍由 run deadline 兜底。
+- **无输出崩溃 / 会话丢失的一次透明重试**（D118）：Agent 进程在 run 中途消失、或 prompt 以「会话不存在」失败（协议 `-32002`，或 Provider 的 `sessionNotFound` hook 命中其私有错误形态），且 run 里**还没有产生任何 agent 输出**（消息 / 思考 / 工具事件）时，整个 run 尝试流程透明地重跑一次（每个 run 至多一次）：重新 acquire（新进程）→ `#openSession` 自然走到 resume / load（Agent 侧会话若还在则恢复，否则新建）→ 重发 prompt，`external.onSession` 以新会话 id 再回调。已产生输出后的崩溃**不**重试（透明重试会重复已流式给用户的内容），维持失败（`AGENT_PROCESS_EXITED`）。
 - **跨会话并发**（2026-10-08）：同一 Agent 的所有会话共用一个进程，同一时刻有几个会话在跑 prompt 由 `features.parallelSessions` 决定——声明 true（经锁定版本源码核对：会话表、逐会话的取消 / 轮次状态、没有进程级「当前 prompt」，§9.2）的 Agent 按 `agent:{id}` 并发上限（缺省 `AGENT_DEFAULT_CONCURRENCY`）并行；false 的 Agent 并发恒为 1，用户在设置里调高也被钳到 1（fail-safe，设置页显示生效值）。调度器、后台路由与设置视图共用 `providers/index.ts` 的 `agentConcurrency()`。
 - **执行记录**：`runs.engine`（`builtin` | `agent:{id}`）、`runs.agent_session_id`。
 - **中断 / 删除**：进程退出或崩溃 → 活跃 run 失败（应用退出时按 D49 标中断）；该会话不再留在（已不存在的）进程里、桥 token 吊销，但会话行保留，下次 run 经 `session/resume` / `session/load` 恢复（Provider / Agent 不支持则新建）——崩溃本身不算「中毒」；只有 run 在崩溃前已因自身原因中毒（超时、取消后不应答、会话设置调用不应答、模式纠偏失败）才删行；对话 / Bot 删除或移出项目组时 `session/delete`（Agent 支持且会话仍开在活进程里时，尽力而为）并删行；删除发生在会话建立 / 恢复期间（级联时会话尚不存在）时，会话建好后 orchestrator 拒绝记录并丢弃它——不发 prompt、释放时 `session/delete`；复核期间的进程崩溃同样不算中毒；Agent 自己的磁盘历史不归 KepCup 管理，删除提示中说明。
@@ -254,13 +257,13 @@ interface AgentCatalogEntry {
 
 - **并发**：调度器 provider 键 `agent:{id}`，并发沿用 `settings.providerConcurrency`，缺省 `AGENT_DEFAULT_CONCURRENCY`（2）——仅限 `features.parallelSessions` 的 Agent，其余恒为 1（§7「跨会话并发」）。
 - **用量**：`usage_ledger` 沿用现有列（`provider='agent:{id}'`、费用为空）；token 取 `PromptResponse.usage`（ACP 不稳定字段；口径由 Provider 声明——Claude / Codex 实为本 turn，其余按会话累计做差），缺失时每个模型轮记一条零 token 行（只记轮数）；连锁预算对零 token 行按 `AGENT_TURN_BUDGET_TOKENS` 折算；用量页单列「订阅 / 外部 Agent」。
-- **后台 loop**（P6 已实现，P6 审查修复后）：有内置模型则照旧；只有外部 Agent 时由 `agent/llm-router.ts` 改走外部 Agent。`complete()` 用一次性精简会话（Claude 替换式系统提示词字符串、`tools: []`、`settingSources: []`；以新建的空私有临时目录作 cwd、结束即删；不挂宿主桥、不复用任何会话、结束即 `session/close`），只输出 JSON（Schema 写进系统提示词），复用 `structured.ts` 文本 JSON 回退 + zod，**只在输出无法解析时**重试 1 次（重试提示「只输出 JSON」；调用失败 / 超时 / 取消不重试）；Wiki 维护 / 技能生成这类带工具的 loop 以同样的后台精简会话 `startRun`（时限 `AGENT_BACKGROUND_RUN_TIMEOUT_MS`，10 分钟），工具只经宿主桥注入，原生工具的权限请求不弹卡、一律拒绝。
+- **后台 loop**（P6 已实现，P6 审查修复后）：明确指定了外部 Agent 时「选定即生效」——即使配置了内置模型也由 `agent/llm-router.ts` 走该 Agent（不可用则跳过，不换用别家）；否则有内置模型则照旧，没有内置模型时回落到各 Bot 自己的 Agent。`complete()` 用一次性精简会话（Claude 替换式系统提示词字符串、`tools: []`、`settingSources: []`；以新建的空私有临时目录作 cwd、结束即删；不挂宿主桥、不复用任何会话、结束即 `session/close`），只输出 JSON（Schema 写进系统提示词），复用 `structured.ts` 文本 JSON 回退 + zod，**只在输出无法解析时**重试 1 次（重试提示「只输出 JSON」；调用失败 / 超时 / 取消不重试）；Wiki 维护 / 技能生成这类带工具的 loop 以同样的后台精简会话 `startRun`（时限 `AGENT_BACKGROUND_RUN_TIMEOUT_MS`，10 分钟），工具只经宿主桥注入，原生工具的权限请求不弹卡、一律拒绝。
   - **后台会话没有原生工具**：只有 Provider 声明 `backgroundNoNativeTools`（经核对能为该会话完全关闭原生工具）的 Agent 可用于后台——本期只有 Claude（`tools: []`，会话级）与 testkit 假 Agent；引擎对其他 Agent 拒绝开后台会话（第二道防线）。私有临时 cwd 只说明工作目录不是用户 workspace，**不等于**读不到用户文件：能否读取取决于工具——后台会话没有原生工具，只能经宿主桥工具（受网关 / 数据目录规则约束）访问。OpenCode 1.18.35 理论上可用 `"*":"deny"` + 只放行 `{server}_*` 关掉全部原生工具（`Permission.disabled` 对末条命中为 `"*"`/deny 的工具直接下架，离线核对内嵌源码），但其权限配置是进程级（`OPENCODE_CONFIG_CONTENT`），需要单独的后台进程，本期不做（届时后台会话同样先过 Provider 的 `checkConfig`——引擎在每次建 / 恢复 / 复用会话前都调用，后台会话走同一路径）；Codex / Cursor / DeepSeek Harness / Antigravity 未核实能否关闭，均不可用于后台。
   - **合格条件**（`agentBackgroundBlocker`，设置页逐个列出原因）：上一条；未开启「加载我的个人配置」（OpenCode / Cursor 按进程加载个人配置，Claude 虽是会话级也一并排除，从严）；能同进程并行会话（`features.parallelSessions`，否则「该智能体未验证可并行会话」）；并发上限 ≥ 2。
   - **不跨厂商**：「自动」**只用该 Bot 自己的 Agent**，不可用即跳过，永不换用别家；无所属 Bot 的任务（画像整理——跨 Bot 的全局画像；项目组对话的摘要）只在设置里**明确指定**后台 Agent 时运行；明确指定的 Agent 处理所有 Bot 的后台任务，不可用时跳过、不换用别家。设置页说明会发给所选厂商的内容（Bot 记忆、全局画像、对话内容与摘要、Wiki 资料）并消耗订阅额度。
   - **调度**：调度器对 `agent:*` 键上的后台任务（priority 2）至多用 并发-1 个名额（总在用数 < 并发-1 才启动），为对话 / 定时响应（priority 0/1）留一个；并发为 1 时不预留（路由器本就不把后台任务派给并发 1 的 Agent）。`JobsRunner` 的调度键只在路由到 Agent 时用 `agent:{id}`，内置路由保持 P6 前的键（全局轻量 / 主模型的厂商）；直聊摘要按其 Bot 取路由。
   - **项目组路由判断**：默认不经 Agent（`backgroundTasks.projectMentionOnly` 默认开 = 仅 @ / 回复响应）；用户关掉后才跑：时限 `AGENT_TRIAGE_TIMEOUT_MS`（60 s，超时 `no_action`）、同一 Bot 在同一项目组每 `AGENT_TRIAGE_MIN_INTERVAL_MS`（2 分钟）至多判断一次（期间仅 @ / 回复）、计入该 Bot 的每日后台预算（用完即不跑；内置模型的路由判断仍不计）。
-  - 续接 L2 仲裁关闭；反思 / 摘要每 `AGENT_BACKGROUND_EVERY_N_RUNS`（5）次触发一跑（按 Bot / 对话计数，进程内，归零即删计数）；技能生成默认关。设置页「后台任务」：自动 / 指定 Agent / 关闭；哪些用途仍走内置模型按全局主 / 轻量模型逐用途提示。
+  - 续接 L2 仲裁关闭；反思 / 摘要每 `AGENT_BACKGROUND_EVERY_N_RUNS`（5）次触发一跑（按 Bot / 对话计数，进程内，归零即删计数）；技能生成默认关。设置页「后台任务」：内置智能体（默认；没有内置模型时回落各 Bot 自己的智能体）/ 指定 Agent / 关闭；指定的 Agent 优先于内置模型（选定即生效），`builtinEnabled` 只控制内置路由。
   - **用量与预算**：用量照常记 `agent:{id}`（未报 token 记零行）；每日后台预算把零 token 行按 `AGENT_TURN_BUDGET_TOKENS` 折算（协作回合已无 token 预算，D92）（`complete()` 每次调用一行——多轮也只按一轮计；后台 run 每个模型轮一行）。Agent 路由的直聊摘要与记忆整理行记在所属 Bot 名下（计入其每日预算，`JobsRunner` 也按它推迟）；画像整理、项目组对话摘要无所属 Bot，不计入任何 Bot 的预算。内置路由的归属不变。
   - **核心关闭**：后台会话（`complete()`、后台 run）在 `AgentHost.dispose()` 时以失败结算（`AGENT_UNAVAILABLE`）并删除临时目录，调用方不会永远等待；对话 run 照旧不结算（重启恢复标中断）。
   - **待用户确认的默认**（P6 审查修复，协调会话按保守原则决定）：只有 Claude 可用于后台；开启「加载我的个人配置」即不可用于后台；「自动」只用 Bot 自己的 Agent，画像整理 / 项目组对话摘要需明确指定；项目组路由判断默认不经 Agent；并发须 ≥ 2；上述时限与节流值。
@@ -314,22 +317,41 @@ interface AgentCatalogEntry {
 
 目录条目带条款提示，可随应用更新调整或下线某个 Agent，不影响内置引擎。
 
+### 9.2.1 候选接入清单（D118，2026-11-06 OpenBot 对比调研）
+
+对同类应用 OpenBot 0.62.0 的预置 ACP 目标做过对比，Registry（`cdn.agentclientprotocol.com/registry/v1/latest/registry.json`）已收录、本设计尚缺的目标（全部 `preview` 档 + `releaseGate`，真机 spike + 合规确认后才放行发行；接入步骤照 §10 手册）：
+
+| 目标 | Registry 条目 | 启动 | 认证 | Provider |
+| --- | --- | --- | --- | --- |
+| Cline | `cline` 3.0.74（npx） | `--acp` | Cline 账号（authenticate `cline`）或设备码；各家 API key | generic-acp（暂无差异） |
+| GitHub Copilot | `github-copilot-cli` 1.0.105（npx `@github/copilot`） | `--acp` | Copilot 订阅（`copilot login`）；登出走 ACP `logout` 方法 | generic-acp |
+| goose | `goose` 1.57.0（binary，Registry 带 sha256） | `acp` | goose 配置内各家 provider key | generic-acp |
+| Qwen Code | `qwen-code` 0.26.7（npx） | `--acp --experimental-skills` | Qwen OAuth 免费档或各家 API key | generic-acp |
+| Kimi CLI | `kimi` 1.52.0（binary，Registry 带 sha256；无 darwin-x86_64 归档） | `acp` | Kimi 会员 / API key（`kimi login`） | `kimi`（sessionNotFound 形态待 spike 复核） |
+| Grok Build | `grok-build` 1.0.77（npx `@xai-official/grok`） | `--no-auto-update agent stdio` | grok.com 登录或 xAI API key | generic-acp |
+| Devin | `devin` 3000.11.234（binary，Registry 无 sha256 → 导入脚本 `--hash` 计算） | `acp` | Devin 账号（authenticate `devin-browser`） | `devin`（sessionNotFound 形态待 spike 复核） |
+
+暂缓 / 不做：hermes（官方 install.sh 安装，无 Registry 条目）、omp / Oh My Pi；Gemini CLI（与已接入的 Antigravity 同厂，条款同源另评）；用户自定义 ACP agent 入口（OpenBot CustomAcpAgentDialog 的 command/args/env 形态）——未经实测的 Agent 无法进入本设计的权限 / 沙箱模型，策展目录路线不变。锁定版本已落后 Registry 的既有条目（claude-acp 0.86.0→0.100.0、codex-acp 2.1.1→2.5.0、cursor、antigravity-acp、opencode）升版前须重新过离线源码核对。
+
 ## 10 可扩展性：Provider 架构
 
 ```text
 shared/src/domain/agent-catalog.ts      目录条目（数据，含 ACP Registry 同构字段 + 扩展字段）
 shared/src/domain/host-capabilities.ts  能力包登记表
 core/src/agent/external/
-  ├─ engine.ts            ExternalAgentEngine（AgentEngine 实现，协议无关的 run 编排、事件映射、steer/abort）
-  ├─ host.ts              进程管理（每个 Agent 一个进程，多会话，空闲退出）
-  ├─ acp/client.ts        ACP 连接（ClientSideConnection + 宿主 Client 实现：permission / fs 拒绝 / terminal 拒绝）
+  ├─ engine.ts            ExternalAgentEngine（AgentEngine 实现，协议无关的 run 编排、事件映射、steer/abort、
+  │                       turn 停滞看门狗、无输出崩溃 / 会话丢失的一次透明重试——D118）
+  ├─ host.ts              进程管理（每个 Agent 一个进程，多会话，空闲退出；stdout 行长上限包装）
+  ├─ acp/client.ts        ACP 连接（ClientSideConnection + 宿主 Client 实现：permission / fs 拒绝 / terminal 拒绝；
+  │                       isSessionNotFound + Provider 的 sessionNotFound hook——D118）
+  ├─ acp/line-limit.ts    stdout 单行字节上限（透传计数，超限 error 掉流——SDK ndJsonStream 无限制，D118）
   ├─ mcp-bridge.ts        宿主 MCP 桥
   ├─ permission-bridge.ts 权限分级
   ├─ installer.ts         npx / binary / system 三种分发的安装与校验
   └─ providers/
        ├─ index.ts        PROVIDERS 登记表
        ├─ generic-acp.ts  通用实现（只用 ACP 标准 + 已核对扩展）
-       └─ claude.ts  codex.ts  opencode.ts  dsh.ts  cursor.ts  antigravity.ts
+       └─ claude.ts  codex.ts  opencode.ts  dsh.ts  cursor.ts  antigravity.ts  kimi.ts  devin.ts
           （shim 型 Provider 以 `connect(proc, client)` 返回进程内 ACP Agent；ZCode 已放弃，见 §9.2）
 ```
 
@@ -346,6 +368,7 @@ interface AgentProvider {
   agentSideConfigFiles: string[];                                  // 无法关闭、需确认的 workdir 内配置文件
   forbiddenModes?: string[]; safeModes?: string[];                 // 叠加 / 豁免全局禁止模式表（Antigravity 禁 auto_edit；Cursor 的 agent 与 Codex 同名不同义）
   authMethods?(advertised: AuthMethod[]): AuthMethod[];            // 过滤 / 排序登录方式（如 Antigravity 去掉 oauth-personal）
+  sessionNotFound?(err: unknown): boolean;                         // 该 Agent「会话不存在」的私有错误形态（协议 -32002 之外的各家变体，D118）
   classifyError?(err: unknown, phase: 'initialize' | 'session' | 'prompt'): 'auth_required' | 'not_installed' | 'incompatible' | 'other'; // 各家未登录的错误形态不同（todo 附录 A.4）
   extRequests?: Record<string, (params, ctx) => Promise<unknown>>; // 厂商扩展请求（如 cursor/ask_question、cursor/create_plan）
   connect?(proc, client): AcpAgentLike;                            // 仅 shim 型 Provider 提供（client = 垫片发 session/update / 权限请求的一侧）
@@ -371,7 +394,7 @@ interface AgentProvider {
 | 2   | 能力包默认值                       | 「Agent 原生没有的全部注入」；未知原生能力视为没有                                |
 | 3   | 是否加载用户个人 Agent 配置            | 默认否，提供开关                                                    |
 | 4   | 无 OS 沙箱的 Agent               | `workspace` / `ask` 档命令逐条确认；Windows 上一律 `ask`（有 OS 沙箱的 Agent：两档的沙箱内命令都自动放行，f2b9627） |
-| 5   | 后台 loop 走外部 Agent            | 仅当无内置模型时；L2 仲裁关、反思 / 摘要降频、技能生成默认关                           |
+| 5   | 后台 loop 走外部 Agent            | 明确指定时优先（选定即生效）；否则仅当无内置模型时；L2 仲裁关、反思 / 摘要降频、技能生成默认关 |
 | 6   | 管家可否用外部 Agent                | 可以；onboarding 只有订阅的新用户默认如此                                  |
 | 7   | 社区 Agent（运行时同步 ACP Registry） | 本期不做；架构上已支持（通用 Provider）                                    |
 | 8   | ZCode                        | **已决定**：放弃（P5 复核：订阅鉴权须由宿主读取 / 中转凭据，见 §9.2、DEV-008） |

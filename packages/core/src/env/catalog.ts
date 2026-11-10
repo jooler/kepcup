@@ -302,7 +302,7 @@ export function platformKey(platform: string, arch: string): CatalogPlatformKey 
 // ---------------------------------------------------------------------------
 
 const UV_VERSION = '0.12.21';
-const NODE_VERSION = '24.21.0';
+export const NODE_VERSION = '24.21.0';
 const PYTHON_VERSION = '3.12.11';
 const GIT_VERSION = '2.56.0';
 /** ONNX Runtime（本地向量推理的运行库）版本，与 onnxruntime-common 同版。 */

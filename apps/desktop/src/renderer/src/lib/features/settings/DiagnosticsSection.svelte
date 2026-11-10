@@ -196,7 +196,10 @@
               {t('diagnostics.sandboxEnhanced', { backend: diag.sandbox.enhancedBackend })}:
               {diag.sandbox.enhancedAvailable
                 ? t('settings.sandboxEnhancedAvailable')
-                : t('settings.sandboxEnhancedMissing')}
+                : diag.sandbox.enhancedState === undefined ||
+                    diag.sandbox.enhancedState === 'cli_missing'
+                  ? t('settings.sandboxEnhancedMissing')
+                  : t('settings.sandboxEnhancedNotReady')}
             </span>
           {/if}
           {#if diag.sandbox.reason && !diag.sandbox.available}

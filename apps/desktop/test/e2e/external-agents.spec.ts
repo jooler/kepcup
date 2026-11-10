@@ -98,6 +98,14 @@ async function openSettings(page: Page, section: string): Promise<void> {
   await page.locator('[data-testid="user-menu-trigger"]').click();
   await page.locator('[data-testid="menu-settings"]').click();
   await expect(page.locator('[data-testid="settings-page-content"]')).toBeVisible();
+  // 「模型」「智能体」合并为「模型与智能体」一个左栏条目，内部分页切换。
+  if (section === 'models' || section === 'agents') {
+    await page.locator('[data-testid="settings-nav-models"]').click();
+    if (section === 'agents') {
+      await page.locator('[data-testid="models-agents-tab-agents"]').click();
+    }
+    return;
+  }
   await page.locator(`[data-testid="settings-nav-${section}"]`).click();
 }
 
@@ -107,15 +115,15 @@ async function closeSettings(page: Page): Promise<void> {
 }
 
 /**
- * 设置页「智能体」：开实验开关 → 目录卡片启用（安装确认卡）→ 就绪；后台任务
- * 关闭（假 Agent 的剧本只给对话用，反思 / 摘要不消耗它的回合）。
+ * 设置页「智能体」：左栏选中该智能体 → 目录卡片启用（安装确认卡）→ 就绪；
+ * 回「全局配置」把后台任务关闭（假 Agent 的剧本只给对话用，反思 / 摘要不
+ * 消耗它的回合）。
  */
 async function enableFakeAgent(page: Page, agentId = 'fake'): Promise<void> {
   await openSettings(page, 'agents');
   const section = page.locator('[data-testid="agents-section"]');
   await expect(section).toBeVisible();
-  const experimental = page.locator('[data-testid="agents-experimental"] button[role="checkbox"]');
-  if ((await experimental.getAttribute('aria-checked')) !== 'true') await experimental.click();
+  await page.locator(`[data-testid="agents-nav-agent-${agentId}"]`).click();
   const card = page.locator(`[data-testid="agent-card-${agentId}"]`);
   await expect(card).toBeVisible({ timeout: 15_000 });
   await page.locator(`[data-testid="agent-enable-${agentId}"]`).click();
@@ -124,11 +132,16 @@ async function enableFakeAgent(page: Page, agentId = 'fake'): Promise<void> {
   await expect(page.locator(`[data-testid="agent-status-${agentId}"]`)).toHaveText('就绪', {
     timeout: 30_000,
   });
-  // 后台任务（P6）：选「关闭」并确认已保存——降配项只随保存成功后的设置
-  // 消失；重新打开设置页仍为「关闭」（选择框取自已保存的设置，保存失败会
-  // 复原，审查 C9）。
+  // 左栏「可用」绿点。
+  await expect(page.locator(`[data-testid="agents-nav-available-${agentId}"]`)).toBeVisible();
+  // 后台任务（P6）在左栏第一条「全局配置」里：选「关闭」并确认已保存——降配项
+  // 只随保存成功后的设置消失；重新打开设置页仍为「关闭」（选择框取自已保存的
+  // 设置，保存失败会复原，审查 C9）。
+  await page.locator('[data-testid="agents-nav-config"]').click();
   const background = page.locator('[data-testid="background-tasks-agent-select"]');
   await expect(background).toBeVisible();
+  // 默认是内置智能体（即使没有内置模型，也先落在这个默认条目上）。
+  await expect(background).toHaveValue('builtin');
   await background.selectOption('off');
   await expect(page.locator('[data-testid="background-tasks-skill-authoring"]')).toHaveCount(0);
   await expect(page.locator('[data-testid="background-tasks-project-mention-only"]')).toHaveCount(
@@ -283,6 +296,7 @@ test('in-chat agent setup card: a disabled agent holds the message; enabling in 
 
     // 设置页停用（有 Bot 在用 → 确认框）。
     await openSettings(page, 'agents');
+    await page.locator('[data-testid="agents-nav-agent-fake"]').click();
     const card = page.locator('[data-testid="agent-card-fake"]');
     await card.getByRole('button', { name: '停用' }).click();
     await page.locator('[data-testid="agent-confirm"]').click();
@@ -326,10 +340,9 @@ test('onboarding subscription branch: enable an agent, the butler runs on it', a
     await page.locator('[data-testid="onboarding-start"]').click();
     await expect(wizard).toHaveAttribute('data-step', 'model');
 
-    // 「我有订阅」：先说明（实验功能）→ 开启 → 目录里只列订阅登录的 Agent。
+    // 「我有订阅」：目录里只列订阅登录的 Agent（设置页同一张卡片）。
     await page.locator('[data-testid="onboarding-subscription-open"]').click();
     await expect(page.locator('[data-testid="onboarding-subscription"]')).toBeVisible();
-    await page.locator('[data-testid="onboarding-subscription-enable"]').click();
     const subCard = page.locator('[data-testid="agent-card-fake-sub"]');
     await expect(subCard).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('[data-testid="agent-card-fake"]')).toHaveCount(0);

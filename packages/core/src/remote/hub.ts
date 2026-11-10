@@ -27,6 +27,8 @@ import { withRemoteSource } from './audit.js';
 import { FrameCodec, RelayProtocolError, type SessionKeys } from './codec.js';
 import { PairingService, type PairingOutcomeFrames } from './pairing.js';
 import { RelayClient, type RelayClientOptions } from './relay-client.js';
+import type { PresenceService } from '../collab/presence.js';
+import { withClientIdentityBinding } from '../collab/identity-binding.js';
 
 /**
  * 收发中枢（D96 §4.2）：端点注册表（`remote:{deviceId}`），每个在线遥控端点
@@ -94,6 +96,10 @@ export interface RemoteHubDeps extends RemoteHostOptions {
   logger: CoreLogger;
   /** 与本机 renderer 同一份 handlers（bindAppMethods 产物）；getter 保证拿到最终版。 */
   appMethods: () => Record<string, RpcMethodSpec>;
+  /** D119：端点断开时清该设备的在线状态（配对模式 clientId = deviceId）。 */
+  presence: Pick<PresenceService, 'leave'>;
+  /** D120：端点断开时释放该设备持有的草稿租约。 */
+  releaseDrafts: (clientId: string) => void;
   /**
    * 端点建立（hello 校验通过）时推当前状态快照（core.status / platform.autostart）。
    * 与本地通道绑定时 pushStatusTo 的契约对齐：App 的启动门槛等的是 core.status，
@@ -576,9 +582,17 @@ export class RemoteHub {
         handle: (input) => withRemoteSource(deviceId, () => spec.handle(input)),
       };
     }
+    // D119/D120：配对端点的客户端身份恒等于已认证 deviceId；presence、草稿、
+    // 消息与审批归属都不接受自报的其它 id。
+    const boundMethods = withClientIdentityBinding(methods, {
+      boundClientId: deviceId,
+      bindClient: () => {
+        // 已认证 deviceId 不可更换。
+      },
+    });
     endpoint.server = createRpcServer({
       transport: endpoint.transport,
-      methods,
+      methods: boundMethods,
       onError: (method, error) => {
         this.#deps.logger.warn({ did: deviceId, method, code: error.code }, 'remote rpc failed');
       },
@@ -593,6 +607,8 @@ export class RemoteHub {
     const endpoint = this.#endpoints.get(deviceId);
     if (endpoint === undefined) return;
     this.#endpoints.delete(deviceId);
+    this.#deps.presence.leave({ clientId: deviceId });
+    this.#deps.releaseDrafts(deviceId);
     try {
       endpoint.server.close();
     } catch {

@@ -136,13 +136,13 @@
   }
 </script>
 
-<div class="board flex min-h-0 flex-1 flex-col" data-testid="board-view" use:blockNativeDrag>
+<div class="board flex min-h-0 min-w-0 flex-1 flex-col" data-testid="board-view" use:blockNativeDrag>
   {#if board.error}
     <p class="shrink-0 px-6 pt-4 text-sm text-muted-foreground" role="alert">{board.error}</p>
   {/if}
   <div
     bind:this={trackEl}
-    class="flex min-h-0 flex-1 gap-6 overflow-x-auto overflow-y-hidden px-6 pt-4 pb-4"
+    class="flex min-h-0 min-w-0 flex-1 gap-6 overflow-x-auto overflow-y-hidden px-6 pt-4 pb-4"
     data-testid="board-track"
     onscroll={onTrackScroll}
   >

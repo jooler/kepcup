@@ -31,9 +31,9 @@
    * 状态机双向：每一步都可「上一步」。完成状态写既有 settings 行
    * （onboarding.*），无新迁移。
    *
-   * 模型步骤的「我有订阅」分支（D72 P4，design 28 §3 / §9.1）：打开实验开关
-   * 「外部智能体」→ 列出支持订阅登录的目录 Agent（设置页同一张卡片：条款
-   * 提示、启用 = 安装确认、登录、测试连接）→ 选用后写 settings.defaultAgentId
+   * 模型步骤的「我有订阅」分支（D72 P4，design 28 §3 / §9.1）：列出支持订阅
+   * 登录的目录 Agent（设置页同一张卡片：条款提示、启用 = 安装确认、登录、
+   * 测试连接）→ 选用后写 settings.defaultAgentId
    * ——没有内置模型时，管家与之后新建的 Bot 默认由它驱动。管家的组队访谈
    * 只在内置引擎上跑，订阅分支下管家直接以欢迎语开场（不访谈）。
    */
@@ -57,12 +57,6 @@
   const SWITCH_ACK_KEY = 'kepcup.agentSwitchAcknowledged';
   let modelMode = $state<'key' | 'subscription'>('key');
   let subscriptionLoading = $state(false);
-  /** 实验开关已开（本流程确认打开或原本就开），可以列目录。 */
-  let subscriptionStarted = $state(false);
-  /** 实验开关是本流程打开的（离开订阅分支时关回）。 */
-  let experimentalByFlow = false;
-  /** 进入订阅分支时已启用的 Agent（离开时据此判断用户是否在分支内启用过）。 */
-  let enabledAtStart: string[] = [];
   let chosenAgentId = $state('');
   let savingAgent = $state(false);
   /** 支持订阅登录的目录 Agent（`auth.kinds` 含 subscription）。 */
@@ -226,31 +220,10 @@
     goto('permissions');
   }
 
-  /**
-   * 「我有订阅」：先只显示说明（含「这是实验功能」）；实验开关已开时直接
-   * 加载目录，否则等用户点「开启并继续」才打开（审查 #5）。
-   */
+  /** 「我有订阅」：列出支持订阅登录的目录 Agent（设置页同一张卡片）。 */
   function openSubscription(): void {
     modelMode = 'subscription';
-    subscriptionStarted = settingsStore.settings?.experimental.externalAgents === true;
-    if (subscriptionStarted) void loadSubscriptionAgents();
-  }
-
-  /** 显式确认后打开实验开关；由本流程打开的，返回 API key 时关回。 */
-  async function confirmSubscription(): Promise<void> {
-    subscriptionLoading = true;
-    try {
-      await agentsStore.setExperimental(true);
-      experimentalByFlow = true;
-      subscriptionStarted = true;
-    } catch (error) {
-      toast.error(
-        t('agents.actionFailed', { error: error instanceof Error ? error.message : String(error) }),
-      );
-    } finally {
-      subscriptionLoading = false;
-    }
-    if (subscriptionStarted) await loadSubscriptionAgents();
+    void loadSubscriptionAgents();
   }
 
   async function loadSubscriptionAgents(): Promise<void> {
@@ -258,7 +231,6 @@
     try {
       agentsStore.start();
       await agentsStore.refresh();
-      enabledAtStart = agentsStore.agents.filter((agent) => agent.enabled).map((agent) => agent.id);
       const current = settingsStore.settings?.defaultAgentId ?? '';
       if (chosenAgentId.length === 0 && current.length > 0) chosenAgentId = current;
     } catch (error) {
@@ -270,26 +242,9 @@
     }
   }
 
-  /**
-   * 回到 API key：本流程打开的实验开关关回去——除非用户已在分支内启用（安装）
-   * 了某个 Agent（那是他自己的选择，保留，设置页可见）。
-   */
-  async function leaveSubscription(): Promise<void> {
+  /** 回到 API key。 */
+  function leaveSubscription(): void {
     modelMode = 'key';
-    subscriptionStarted = false;
-    if (!experimentalByFlow) return;
-    experimentalByFlow = false;
-    const enabledInFlow = agentsStore.agents.some(
-      (agent) => agent.enabled && !enabledAtStart.includes(agent.id),
-    );
-    if (enabledInFlow) return;
-    try {
-      await agentsStore.setExperimental(false);
-    } catch (error) {
-      toast.error(
-        t('agents.actionFailed', { error: error instanceof Error ? error.message : String(error) }),
-      );
-    }
   }
 
   /** 选用的 Agent 写为新建 Bot（含管家）的默认引擎，进入下一步。 */
@@ -298,8 +253,6 @@
     savingAgent = true;
     try {
       await settingsStore.update({ defaultAgentId: chosenAgent.id });
-      // 选用即保留实验开关（不再随返回关回）。
-      experimentalByFlow = false;
       await persist({ onboarding: { modelConfigured: true, modelSkipped: false } });
       try {
         localStorage.setItem(SWITCH_ACK_KEY, '1');
@@ -460,60 +413,45 @@
     {:else if step === 'model' && modelMode === 'subscription'}
       <div data-testid="onboarding-subscription">
         <p class="text-sm text-muted-foreground">{t('onboarding.subscriptionBody')}</p>
-        <p class="mt-2 text-xs text-amber-600 dark:text-amber-400">
-          {t('onboarding.subscriptionExperimental')}
-        </p>
-        {#if !subscriptionStarted}
-          <Button
-            size="sm"
-            class="mt-3"
-            disabled={subscriptionLoading}
-            onclick={() => void confirmSubscription()}
-            data-testid="onboarding-subscription-enable"
-          >
-            {t('onboarding.subscriptionEnable')}
-          </Button>
-        {:else}
-          <div class="mt-3 max-h-[46vh] space-y-3 overflow-y-auto pr-1">
-            {#if subscriptionLoading}
-              <p class="text-xs text-muted-foreground">{t('setupCard.agentLoading')}</p>
-            {:else if subscriptionAgents.length === 0}
-              <p class="text-xs text-muted-foreground">{t('onboarding.subscriptionEmpty')}</p>
-            {/if}
-            {#each subscriptionAgents as agent (agent.id)}
-              <div class="space-y-1.5">
-                <AgentCard {agent} embedded />
-                <label class="flex items-center gap-2 pl-1 text-sm">
-                  <input
-                    type="radio"
-                    name="onboarding-agent"
-                    value={agent.id}
-                    bind:group={chosenAgentId}
-                    data-testid={`onboarding-agent-choose-${agent.id}`}
-                  />
-                  {t('onboarding.subscriptionChoose', { name: agent.name })}
-                </label>
-              </div>
-            {/each}
-          </div>
-          {#if chosenAgent !== null}
-            <details class="mt-3 text-xs" data-testid="onboarding-agent-notice">
-              <summary class="cursor-pointer text-muted-foreground">
-                {t('contacts.agentSwitchTitle', { name: chosenAgent.name })}
-              </summary>
-              <ul class="mt-1.5 space-y-1 text-muted-foreground">
-                <li>· {t('contacts.agentSwitchTools')}</li>
-                <li>· {t('contacts.agentSwitchReads')}</li>
-                <li>· {t('contacts.agentSwitchPrompt')}</li>
-                <li>· {t('contacts.agentSwitchFeatures')}</li>
-                <li>· {t('contacts.agentSwitchHistory')}</li>
-              </ul>
-            </details>
-            {#if !chosenAgent.enabled}
-              <p class="mt-2 text-xs text-muted-foreground">
-                {t('onboarding.subscriptionEnableFirst')}
-              </p>
-            {/if}
+        <div class="mt-3 max-h-[46vh] space-y-3 overflow-y-auto pr-1">
+          {#if subscriptionLoading}
+            <p class="text-xs text-muted-foreground">{t('setupCard.agentLoading')}</p>
+          {:else if subscriptionAgents.length === 0}
+            <p class="text-xs text-muted-foreground">{t('onboarding.subscriptionEmpty')}</p>
+          {/if}
+          {#each subscriptionAgents as agent (agent.id)}
+            <div class="space-y-1.5">
+              <AgentCard {agent} embedded />
+              <label class="flex items-center gap-2 pl-1 text-sm">
+                <input
+                  type="radio"
+                  name="onboarding-agent"
+                  value={agent.id}
+                  bind:group={chosenAgentId}
+                  data-testid={`onboarding-agent-choose-${agent.id}`}
+                />
+                {t('onboarding.subscriptionChoose', { name: agent.name })}
+              </label>
+            </div>
+          {/each}
+        </div>
+        {#if chosenAgent !== null}
+          <details class="mt-3 text-xs" data-testid="onboarding-agent-notice">
+            <summary class="cursor-pointer text-muted-foreground">
+              {t('contacts.agentSwitchTitle', { name: chosenAgent.name })}
+            </summary>
+            <ul class="mt-1.5 space-y-1 text-muted-foreground">
+              <li>· {t('contacts.agentSwitchTools')}</li>
+              <li>· {t('contacts.agentSwitchReads')}</li>
+              <li>· {t('contacts.agentSwitchPrompt')}</li>
+              <li>· {t('contacts.agentSwitchFeatures')}</li>
+              <li>· {t('contacts.agentSwitchHistory')}</li>
+            </ul>
+          </details>
+          {#if !chosenAgent.enabled}
+            <p class="mt-2 text-xs text-muted-foreground">
+              {t('onboarding.subscriptionEnableFirst')}
+            </p>
           {/if}
         {/if}
       </div>

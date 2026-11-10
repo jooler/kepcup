@@ -349,6 +349,28 @@ CREATE INDEX usage_by_bot_day ON usage_ledger(bot_id, created_at);
 
 媒体调用（`MediaService`：embed / rerank / 图片理解 / 语音转写与合成 / 图片与视频生成）成功后各记一行：一次调用一行，`provider` = 厂商 id，`model` = 实际模型 id，token 为 0（适配器暂不上报）、`cost_usd` 为 NULL；次数按行统计，`usage.summary` 的 `calls` 即行数。无所属 run 的调用（记忆、语音输入）`run_id` 取 `media_` 前缀的合成 id。连通性测试（`testCapability`）不记账。
 
+### tool_usage_ledger（main 0073）
+
+按工具的**内置任务上下文消耗**（`usage.stats` 的 `range.byTool`，「设置 → 用量 → 使用构成 → 按工具」）。一次工具调用一行，仅内置 pi 任务（`loop_type='task'`）；对话轮、子代理与外部 Agent 任务不记（外部 Agent 的工具内容只是宿主侧渲染，会系统性低估）。
+
+```sql
+CREATE TABLE tool_usage_ledger (
+  id              TEXT PRIMARY KEY,       -- tus_...
+  run_id          TEXT NOT NULL,
+  bot_id          TEXT,
+  conversation_id TEXT,
+  loop_type       TEXT NOT NULL,          -- 目前恒为 task
+  tool_name       TEXT NOT NULL,
+  call_tokens     INTEGER NOT NULL DEFAULT 0,  -- 调用参数（模型输出侧）
+  result_tokens   INTEGER NOT NULL DEFAULT 0,  -- 返回内容进入上下文（输入侧）
+  calls           INTEGER NOT NULL DEFAULT 1,
+  created_at      INTEGER NOT NULL
+);
+CREATE INDEX tool_usage_by_day ON tool_usage_ledger(created_at);
+```
+
+口径是**内容估算，不是计费 token**：`call_tokens = estimateTokens(JSON(args))`；`result_tokens = estimateTokens(truncateToBudget(content, TOOL_OUTPUT_MAX_CHARS)) + 图片数 × 1000`（模型不接受图片时不计）。只估算一次性进入上下文的大小，不按后续请求重发次数放大；用于定位哪个工具把上下文顶到压缩阈值。采样在 `dispatch/orchestrator.ts` 的 run 事件监听里完成（`agent/tool-usage.ts` 的 `ToolUsageTracker` 配对 tool_call / tool_result），记账失败不影响任务。
+
 ### audit_log（P02）
 
 ```sql
@@ -1342,6 +1364,7 @@ projects/{projectId}/            # 项目数据根（projectId = 根会话 id）
 | 该 Bot 的 app_tool_grants（对话级与 Bot 级） | 撤销（写 `revoked_at`，行保留作审计；`AppToolGrants.revokeForBot`） | D73 P1 |
 | 该 Bot 贡献的 profile_items | **保留** | — |
 | usage_ledger | **保留**（用量统计） | — |
+| tool_usage_ledger | **保留**（按工具的用量统计） | — |
 | plugins / plugin_items | 保留（全局数据，不随对话 / Bot 删除） | D104 |
 
 删除前的弹框需要列出：记忆条数、Wiki 页面数、Skills 数、workspace 数量与占用空间。

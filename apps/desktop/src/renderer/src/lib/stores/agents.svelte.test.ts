@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { handlers, listPayload } = vi.hoisted(() => ({
   handlers: new Map<string, (payload: unknown) => void>(),
-  listPayload: { experimental: true, agents: [] as unknown[] },
+  listPayload: { agents: [] as unknown[] },
 }));
 
 vi.mock('$lib/rpc/client.svelte', () => ({

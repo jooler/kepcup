@@ -105,63 +105,72 @@
   });
 </script>
 
-<!-- 任务执行过程页 / 委派详情视图（docs/design/42-task-run-view.md、27 §3.2）：
-     原对话组件保留在 DOM 里（display:none），避免卸载导致草稿、滚动位置与右栏
-     状态丢失。详情视图同样常驻：详情里的任务卡点击进入任务页时详情只是隐藏
-     （不卸载，返回后滚动位置与会话状态都在），离开聊天区或切会话才关闭。 -->
-<div
-  class="relative flex min-h-0 flex-1"
-  style:display={tasks.openTaskId !== null || delegations.openDetailId !== null ? 'none' : 'flex'}
->
-  {#if narrow}
-    <ChatView />
-  {:else}
-    <Resizable.PaneGroup direction="horizontal" class="min-h-0 flex-1">
-      <Resizable.Pane defaultSize={65} minSize={40} class={paneTransition}>
-        <ChatView />
-      </Resizable.Pane>
-      {#if !rightCollapsed}
-        <!-- 分割线即右栏 border-l（1px）；hover / 拖拽时 Handle 组件内的高亮
-             分隔线条会盖住它并亮出指示胶囊与提示气泡。拖拽中关掉 flex-grow
-             过渡才能跟手。 -->
-        <Resizable.Handle
-          label={t('chats.resizeHandleDrag')}
-          onDraggingChange={(dragging) => (resizing = dragging)}
-        />
-      {/if}
-      <!-- 收起态 defaultSize 0：挂载即闭合，展开时 resize 到 41% 才有动画。 -->
-      <Resizable.Pane
-        bind:this={rightPane}
-        defaultSize={0}
-        minSize={20}
-        collapsible
-        collapsedSize={0}
-        class={paneTransition}
-      >
-        {#if panelPresent}
-          <!-- 收起时宽度为 0，内容留到折叠动画结束；inert 防止焦点落到不可见控件上。 -->
-          <div class="h-full min-h-0" inert={rightCollapsed}>
-            <RightPanel />
-          </div>
-        {/if}
-      </Resizable.Pane>
-    </Resizable.PaneGroup>
-  {/if}
-</div>
-
-{#if delegations.openDetailId !== null}
-  <!-- 委派详情视图常驻挂载；任务页压上时隐藏（保留滚动与后台会话订阅）。 -->
+<!-- 中间区的三个互斥视图（对话 / 委派详情 / 任务详情，docs/design/42、27 §3.2）：
+     原对话组件保留在 DOM 里（display:none），避免卸载导致草稿、滚动位置丢失。
+     委派详情同样常驻：详情里的任务卡点击进入任务页时详情只是隐藏（不卸载，返回
+     后滚动位置与会话状态都在），离开聊天区或切会话才关闭。
+     D116 修订：任务详情页不再占满除左栏外的整区——三个视图都收进中间对话 pane，
+     右栏（Bot 详情）保持可见；窄屏仍是单栏全屏层。 -->
+{#snippet mainViews()}
   <div
-    class="relative flex min-h-0 flex-1"
-    style:display={tasks.openTaskId !== null ? 'none' : 'flex'}
+    class="relative flex min-h-0 min-w-0 flex-1"
+    style:display={tasks.openTaskId !== null || delegations.openDetailId !== null ? 'none' : 'flex'}
   >
-    {#key delegations.openDetailId}
-      <DelegationDetailView delegationId={delegations.openDetailId} />
-    {/key}
+    <ChatView />
   </div>
-{/if}
-{#if tasks.openTaskId !== null}
-  {#key tasks.openTaskId}
-    <TaskRunView taskId={tasks.openTaskId} />
-  {/key}
+  {#if delegations.openDetailId !== null}
+    <div
+      class="relative flex min-h-0 min-w-0 flex-1"
+      style:display={tasks.openTaskId !== null ? 'none' : 'flex'}
+    >
+      {#key delegations.openDetailId}
+        <DelegationDetailView delegationId={delegations.openDetailId} />
+      {/key}
+    </div>
+  {/if}
+  {#if tasks.openTaskId !== null}
+    {#key tasks.openTaskId}
+      <TaskRunView taskId={tasks.openTaskId} />
+    {/key}
+  {/if}
+{/snippet}
+
+{#if narrow}
+  <!-- 窄屏（33-narrow-layout）：单栏，视图互斥占满；Bot 详情走全屏覆盖层。 -->
+  <div class="relative flex min-h-0 min-w-0 flex-1">
+    {@render mainViews()}
+  </div>
+{:else}
+  <Resizable.PaneGroup direction="horizontal" class="min-h-0 flex-1">
+    <Resizable.Pane defaultSize={65} minSize={40} class={paneTransition}>
+      <div class="flex h-full min-h-0 flex-col">
+        {@render mainViews()}
+      </div>
+    </Resizable.Pane>
+    {#if !rightCollapsed}
+      <!-- 分割线即右栏 border-l（1px）；hover / 拖拽时 Handle 组件内的高亮
+           分隔线条会盖住它并亮出指示胶囊与提示气泡。拖拽中关掉 flex-grow
+           过渡才能跟手。 -->
+      <Resizable.Handle
+        label={t('chats.resizeHandleDrag')}
+        onDraggingChange={(dragging) => (resizing = dragging)}
+      />
+    {/if}
+    <!-- 收起态 defaultSize 0：挂载即闭合，展开时 resize 到 41% 才有动画。 -->
+    <Resizable.Pane
+      bind:this={rightPane}
+      defaultSize={0}
+      minSize={20}
+      collapsible
+      collapsedSize={0}
+      class={paneTransition}
+    >
+      {#if panelPresent}
+        <!-- 收起时宽度为 0，内容留到折叠动画结束；inert 防止焦点落到不可见控件上。 -->
+        <div class="h-full min-h-0" inert={rightCollapsed}>
+          <RightPanel />
+        </div>
+      {/if}
+    </Resizable.Pane>
+  </Resizable.PaneGroup>
 {/if}

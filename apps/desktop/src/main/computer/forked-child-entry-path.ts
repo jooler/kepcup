@@ -11,9 +11,8 @@ import { fileURLToPath } from 'node:url'
  * 2026-10-31 冒烟测试实测）。打包后 out/ 进 app.asar，`ELECTRON_RUN_AS_NODE=1`
  * 的子进程不能读 asar 内的 ESM 文件，按 stdio-proxy 先例
  * （packages/core/src/infra/asar-path.ts）换到 app.asar.unpacked（正则本地复制：
- * main 不依赖 core 包）；electron-builder asarUnpack 与 helper 的 socket peer
- * 校验（main.swift 按 /out/main/computer-sidecar.js 前缀识别 sidecar）都锚定
- * 这个同目录布局。
+ * main 不依赖 core 包）；electron-builder asarUnpack 锚定这个同目录布局，
+ * CuaDriver 的 daemon 也按 sidecar 的启动路径识别父进程。
  */
 
 /** `…/app.asar/…` → `…/app.asar.unpacked/…`（asarUnpack 的落点）；不在 asar 内则原样返回。 */

@@ -47,6 +47,7 @@
 | 市场卡片显示插件图标（D104 收尾补全） | 已完成 | 2026-10-29 | — | 市场卡片不再显示名称首字：签名脚本从包内读取 `icon` 并内联到索引条目 `summary.icon`（`data:image/…;base64`，原始图标 ≤64 KiB），`MarketplaceSync` → `PluginMarketEntry.iconDataUri` 透出，卡片统一 `PluginIcon`，缺失 / 不可用时回落拼图默认图标；全程不发起远程图片请求。校验器把「未声明图标」从 warn 改为 **error**（市场监管局发布必须带图标），超过 64 KiB 的图标给市场化 warning；core / shared 共用 `pluginIconDataUriFromBytes` 与 `isPluginIconDataUri`（含 magic-byte / 体积 / data URI 校验）。文档同步 `write-a-plugin.md` §2.4 / §2.7 / 检查项表、`plugins/README.md`、设计 51 §3 / §6.1、DEV-053 修订。验证：22 个官方插件 validate 全部 0 error / 0 warning；本地打包 + dev key 签名 22 条索引全部带图标（索引 36 KiB）且验签通过；shared / core / app-validator / desktop typecheck 0 error；定向 57 例 + marketplace 集成 10 例全绿。**已按发布流程重新签名并部署线上索引**：22 个包重新打包后 sha256 / 大小与线上 1.0.1 完全一致（R2 内容寻址对象全部已在位，无需重传），新索引 `generatedAt=2026-10-29T09:15:19.816Z`（严格大于旧索引）、36,313 字节、22/22 条目带 `summary.icon`，生产密钥 `kepcup-plugins-2026-1` 签名；`wrangler deploy` 首次遇到 Cloudflare API 500，重试成功（Worker version `a7280fdc-4268-4118-ab75-b3083c3ac47e`）；部署后从 `dl.kepcup.com/plugins/v1/` 拉回索引与签名，`--verify` 通过、22/22 图标在位。 |
 | 语音对话模式（D106） | 待验收 | 2026-11-01 | — | 26 号暂缓的语音对话模式开发完成（WP1–WP3 提交 b806479f / 25133a07 / f69007b7，WP4 收口）。WP1 记账：`loopType` 加 `voice_reply`、`media.synthesizeSpeech` 绑定打标、用量页「语音播报」归类。WP2 发送侧：入口键（仅私聊非 readOnly、asr+tts 双预检缺哪个置哪个卡）、`VoiceModeBar` 语音条（idle/recording/transcribing/speaking 四态、Esc 分档、输入坞原位替换不走 Portal）、录音→`transcribeSpeech`→WAV 附件+转写文本经 `performComposerSend`/sendGuard 发送（guard 忙时 `waitForIdle` 排队串行、不丢转写文本；转写先于上传，缺设置无附件可撤只置卡；不走 `gateForSend`，由 core 结构化 setup 失败出卡 + `continueAfterSetup` 续跑）。WP3 播报侧：chat-session `onIncomingMessage` 订阅口 + `extractSpeechText` 剥 Markdown（围栏代码块整体跳过、>2000 字截断 toast 每条一次）+ 顺序播报队列（`isVisibleInTranscript` 可见性口径、插话作废清队绑定「拿到流」而非点击、首条失败停队 +「打开设置」深链、objectURL 播完即 revoke / 退出清队无泄漏）。新增 / 增补单测：`extractSpeechText` / `voice-announce` / `voice-mode` / `voice-send` / `composer-send`（waitForIdle 排队）/ `chat-session`（订阅口）+ `locales` 全绿。收口全量 `pnpm test`：**7277 通过 / 3 失败 / 42 跳过**——`deep-link.test.ts` 为真实失败（9defc083 新增 computer-use 设置分区时漏登 `deep-link.ts` 深链白名单，`computer.control` 设置卡「在设置中打开」回落「通用」；本阶段补一行修复，定向 6/6 绿，settings 四件套 90/90 一并复核绿），`permission-bridge` / `workdirs` 单跑 29/29、18/18 全绿（全量负载下偶发，不超出既有负载敏感基线）；desktop typecheck 0 error。**待真机验收**（麦克风 + asr/tts 真实能力，清单见 [todo/voice-conversation.md](../../todo/voice-conversation.md) WP4）；实现与设计偏差已在 [design/53](../design/53-voice-conversation.md) 就地加「实现修订」注。 |
 | 插件启用说明 + 激活通报 + IM 分类（D104/D107 补全） | 已完成 | 2026-11-03 | — | 插件清单新增**必填** `usage`（启用说明：启用即用 / 需要连接账号 / 需要先添加账号再勾选绑定），`PluginSummary.usage`（清洗后）透出到 Bot 详情卡片与添加弹框；23 个官方插件全部补齐并升版 `1.1.0`，`engines.kepcup` 统一抬到 `>=0.5.7`（`usage` 是 strict schema 新字段，旧宿主必须被索引过滤而不是下载后解析失败），`kepcup-app init/validate` 与签名脚本同步强制。core 新增 `PluginBotNotice`：`bot.updated` 的 `plugin_ids` / `app_connection_ids` 变化、`plugins.changed`（安装 / 更新 / 全局启停 / 卸载 / 撤销）、`mail.accounts.setBots` / `mail.bots.setAccounts` / `im.accounts.setBots`、`plugins.instances.delete` / `im.accounts.delete` 都进入**按 Bot 合并的 30 秒**通报；比较整份状态签名（启用集 + 启停 + usage + 就绪状态），绑定 / 全局停用 / 删账号也能触发，净变化为空不唤醒；无直聊时 `openDirect` 创建落点；插件文案经 `sanitizeDisplayText` + `untrustedBlock` 防闭合。Bot 侧规则：全部就绪 `skip_reply` 静默，有遗漏主动提醒补步骤。扩展中心市场 / 已安装筛选与同意卡新增「即时通讯」分类（`im`），已安装卡片 IM 标签 / 管理入口按插件圈定。独立审查 P1/P2 全部修正（状态签名、injection、engines、同意卡 IM、纯技能 usage 展开、账号删除 / 全局停用触发、IM 权限文案、测试补强）。验证：shared / core / app-validator / desktop typecheck 0 error；23 个插件 validate 全绿；定向 449 例全绿。**已发布**：23 个包重新打包 → `kepcup-plugins-2026-1` 签名（`generatedAt=2026-11-03T09:28:38.920Z`，严格递增）→ R2 上传 → `wrangler deploy`（Worker version `1482ed01-0ec3-4990-8889-7f8145c20d43`）；线上索引 + 23 个包拉回 `--verify` 通过（sha256 / 大小逐一核对），索引 `engines.kepcup` 为 `>=0.5.7`。 |
+| 任务直注 + Bot 详情三栏（D115–D117） | 待验收 | 2026-11-06 | — | 补齐用户对任务的掌控感（设计 [56](../design/56-task-steering-and-bot-detail-tabs.md)，实施记录见 [todo/task-steering-and-bot-tabs.md](../../todo/task-steering-and-bot-tabs.md)）。**D115 任务直注**：任务详情页最底部注入坞（非终态渲染，Enter 发送 / awaiting 提示），`tasks.inject` RPC → `TaskHost.injectById`（从 run 行组装 identity 复用 `inject()`，等问即回答 / steer / 入简报 / queued 语义零改动，条目照写 Bot 私有时间线）。**D116 Bot 详情三栏**：右栏头部资料卡下手写三 tab（详情〔默认，原二级菜单〕/ 组件 / 任务）；`tasks.listByBot`（跨对话全集倒序 ≤200）+ 共享 `botTasks` store（`task.updated` 按 botId 原位续期）驱动任务 tab（进行中 / 已完成分组、行点击开详情页）与 tab 触发器进行中徽标（30 §6.3 两项未实现界面的任务部分落实）；深链归位详情 tab。**D117 组件直接运行**：组件 tab 卡片化（底部说明 section + 「…」下拉：发卡 / 详情与管理 / 删除对话框），点卡 `widgets.runCard`（publish 同款列投影、不落消息行）+ core 虚拟卡片登记表（合成 id，`cardOf()` 虚拟分支），`open / source / poster / storage / query / reply` 与新窗口打开沿虚拟 id 全链路可用，iframe 运行时零改动。手动创建任务本期不做。测试：core 定向（tasks 18 / widgets-service 53 / task-cards / external-agent / supervisor-turns / runs-tasks）全绿；desktop 定向（task-run-view 源码契约锁 / tasks store / botTasks store）+ i18n 全绿；e2e tasks 4 例 + schedules / bot-profile-autosave / narrow-layout 6 例全绿；settings-catalog 覆盖扫描随三 tab 扩展（`PANEL_TABS` 并入扫描 + detail/widgets/tasks 排除登记）；收口全量 `pnpm test` **7891 通过 / 0 失败 / 48 跳过**；shared / core / desktop typecheck 0 error、eslint 干净。**待真机验收**（真组件直运行含查询模板审查流、双 Bot 任务列表、真外部 Agent 任务的 queued 未送达提示）。 |
 
 
 ## 验收记录
@@ -2140,3 +2141,122 @@ botId + name 落到首字母占位。
   纯提示文案改动，未跑全量（无跨包公共面改动）。
 
 
+
+## 任务直注与 Bot 详情三栏（2026-11-06）
+
+产品判断先行：任务详情页输入框是补委托模式的纠错闭环（接近必要），Bot 任务列表是透明度补齐，用户手动创建 session 缓做——用户拍板按此落地，并追加决策「组件 tab 点击直接运行组件本体」。
+
+- **契约（W0）**：`tasks.inject`（`{taskId, text ≤ TASK_INSTRUCTION_MAX_CHARS}` → `{delivery}`）、`tasks.listByBot`（`{botId, limit≤200 默认 100}` → `TaskView[]`）、`widgets.runCard`（`{botId, widgetId, conversationId?}` → `{messageId, card}`）；契约 map + `APP_METHODS` 登记。
+- **core（W1/W2）**：`TaskHost.injectById`（身份从 run 行取，仿 `cancelById`，复用 `inject()` 全部分支）与 `listByBotViews`；`runs.listTasksByBotRecent`（desc 查询）；`WidgetService.runCard` + `#virtualCards` 虚拟卡片登记表——`cardOf()` 改为返回 `{messageId, conversationId, card}` 并先查虚拟表（`open()` 的消息锚点由此而来），scope='bot' anchor 当前对话、scope='conversation' anchor 自己的会话；审查门 / 双指针 / reply / storage 语义零改动。
+- **渲染层（W3–W6）**：`TaskInjectDock`（Enter 发送、IME 保护、awaiting 提示、delivered/queued toast）挂 TaskRunView 最后一位；`tasks.inject` store action；RightPanel 三 tab（手写 pill，`PanelDetail` 去 widget、组件详情下钻移入组件 tab、深链归位详情 tab、换 Bot 重置）；`BotMenu` 瘦身；`BotWidgetsTab`（卡片直运行 + 说明 section + 「…」下拉：发卡 / 详情与管理 / 删除对话框确认）；`BotTasksPanel` + 共享 `botTasks` store（`task.updated` 按 botId 原位续期）；tab 触发器进行中徽标；i18n zh/en 同步。
+- **文档**：设计 [56](../design/56-task-steering-and-bot-detail-tabs.md)（D115–D117）+ design README 索引与决策表；30 §4.1（D115 修订块）与 §6.3（两项未实现标注落实情况）、42（注入坞小节 + 代码位置）、32（组件 tab D117 修订）、12（右栏三 tab 修订）就地修订；todo/task-steering-and-bot-tabs.md 执行文档。
+- **测试**：core——tasks.test.ts 新增 3 例（直注 delivered + 私有条目 + 无对话消息；终态拒绝；跨对话倒序 + limit + 跨 Bot 隔离），widgets-service.test.ts 新增 2 例（虚拟卡 open/source/幂等；anchor 语义与越权拒绝）；desktop——task-run-view 源码契约锁注入坞、tasks store inject、botTasks store 三态续期；e2e——tasks.spec.ts 新增注入坞直注 → steer 气泡 → 三 tab 冒烟 1 例（共 4 例全绿），schedules / bot-profile-autosave / narrow-layout 6 例回归绿；settings-catalog 覆盖扫描扩展（`scanSettingsUi` 把 RightPanel 的 `PANEL_TABS` 并入 `botPanelTabs`，排除表登记 detail / widgets / tasks，替换原 widget 条目）。
+- **验证**：收口全量 `pnpm test`（shared 契约变更，跑一次）：**746 文件，7891 例通过 / 48 跳过 / 0 失败**；shared / core / desktop typecheck 0 error；eslint 干净。
+- **踩坑记录**：e2e 首跑注入报「内部错误」——electron 主进程经 `externalizeDepsPlugin` 外置加载 `@kepcup/core` 的 dist 产物，dist 未重建导致新 RPC 不存在（core 定向测试直接引源码，掩盖了这一点）；`pnpm --filter @kepcup/core build` 后恢复。另 `llm.script()` 为整体替换语义，held 步骤未消费时重挂脚本会把后续步骤顶掉，单脚本序列更稳。
+- **待真机验收**：真实 bot 组件直运行（含带查询模板版本的审查流与「新窗口打开」）、双 Bot 多对话的任务列表与徽标、真实外部 Agent（不支持 steering）任务的 queued「未送达」提示。
+
+## 三栏精简与中间区收拢（2026-11-06，用户实测一轮修正）
+
+用户实测三处体验问题，按拍板精简：
+
+- **组件 tab 精简**：原「详情与管理」落点（BotWidgetDetail）只比卡片多一段 metadata——
+  metadata（v 版本 · 版本数 · 体积 · 更新时间 · 查询模板数〔>0〕· 自检状态）移到卡片
+  上，「…」下拉只留**删除**（对话框确认）；BotWidgetDetail 组件与其独有 i18n 键删除
+  （微应用管理段〔用量 / 回退 / 上下文清除〕随之无入口——BotWidgetCard 卡内的上下文
+  清除与 MicroAppControls 运行时控件不受影响；发卡仍由 Bot 经 `widget_publish` 工具
+  发起，`widgets.publish` RPC 保留）。孤立键 zh/en 同步清理（widgetsTab.hint /
+  conversationSection / publish 三件 / manage；botWidget.microApp.manage* / rollback* /
+  contextCleared）。
+- **任务详情页只占中间对话区**：ChatsArea 重构为「中间区三视图」snippet（对话 / 委派
+  详情 / 任务详情互斥 display:none 共存），宽屏下任务页与委派详情都收进中间 pane，
+  **右栏 Bot 详情保持可见**；窄屏仍是单栏全屏层。42 号（入口与层级 / 布局）、27 §3.1 /
+  §3.2（委派详情「整体替换对话区」→「替换中间对话区」）、56 §2 同步修订。
+- **tab 条居中 + 图标**：详情 = Info、组件 = Blocks、任务 = ListTodo，容器
+  `justify-center`。
+- **验证**：desktop svelte-check 0 error、eslint 干净；定向单测 45 例全绿；e2e tasks
+  4 例（steer 用例补「任务页打开期间右栏保持可见」断言）+ narrow-layout 2 例 +
+  bot-profile-autosave 1 例全绿。本轮无 shared 契约改动（settings-catalog 扫描不受
+  影响），未再跑全量。
+
+## 外部智能体：连接加固与 7 个新目标（2026-11-06，D118）
+
+对 OpenBot 0.62.0 的 ACP 实现做对比调研后加固 + 扩目录（执行文档 [todo/acp-hardening-and-new-targets.md](../../todo/acp-hardening-and-new-targets.md)，设计 28 §7 / §9.2.1 / §10 已同步）：
+
+- **连接加固（core `agent/external/`）**：stdout 单行 256 MiB 上限（新 `acp/line-limit.ts`，SDK `ndJsonStream` 无限制）；turn 停滞看门狗（prompt 在途 5 分钟无 update 且无等待中的权限 → cancel + `TIMEOUT` 失败，权限等待暂停、答复后重新武装）；无输出崩溃 / prompt 报「会话不存在」的一次透明重试（`start()` 主体提取为 `#attempt()`，`#resetForRetry` 强制新会话 + 还原已消费 steer；`onClosed` 对 prompting/before 延迟结算让失败流进 catch；宿主崩溃报告 `#hostClosedError` 优先于模糊的 prompt 拒绝）；`isSessionNotFound`（协议 -32002）+ Provider `sessionNotFound` hook。
+- **小事项**：SDK `@agentclientprotocol/sdk` 1.7.0 → 1.9.0（零适配；npm latest 已 2.4.0 属 v2 草案，按 design 28 §12 不追）；目录条目新增可选 `initTimeoutMs`（dsh 120s，离线 spike 记录冷启动 77s > 缺省 60s）。
+- **新目标**（Registry 已收录，全部 preview + releaseGate 未放行）：cline 3.0.74、github-copilot-cli 1.0.105、goose 1.57.0、qwen-code 0.26.7、kimi 1.52.0、grok-build 1.0.77（`--no-auto-update agent stdio`）、devin 3000.11.234；专属 Provider 只带 sessionNotFound 形态（kimi `-32602+session_id`、devin `-32016+errorKind`，取自 OpenBot flavor 表、未真机复核）；图标 7 枚入 `resources/agents/`；i18n 条款键 zh/en；npx 锁文件重生成（4 个新包）；parallel-sessions EXPECTED 表补 kimi/devin false。
+- **测试**：新增 `agent-hardening-d118`（12：限长、看门狗含权限等待、重试 5 例、dsh 超时）与 `agent-targets-d118`（7：条目结构 / 门禁 fail-closed / provider 登记 / grok args / sessionNotFound 形态）；外部智能体全套 293 例全绿。
+- **踩坑记录**：把 `#release()` 从 `#attempt` 的 finally 挪到 `start()` 会让它晚一个微任务——`done` 的续延先于释放执行，6 个 P5 时序测试立刻失败；结算与释放必须在同一微任务，重试路径用局部标记跳过。
+- **待真机**（todo §3.3）：7 个新目标逐个 spike（安装 / 登录 / modes / 权限 optionId / 原生工具 / sessionNotFound 形态复核）；合规确认后才把 releaseGate 加进 `agent-release-gates.json`；kimi Intel Mac 无官方构建（条款已披露）；dsh 真机首启验证 `initTimeoutMs: 120s`。全量收口 748 文件 7910 过 / 2 失败（集成 #9 用例的崩溃脚本与重试新语义冲突，已修，单文件复核 11/11 绿）。
+
+## 独立审查轮：两 P1 + 五 P2 全部修复（2026-11-06）
+
+两个独立子代理（core/契约、渲染层）并行审查 D115–D117 全部改动，结论一致：**无 P0，需修复后合入**。修复清单：
+
+- **core P1-1 虚拟卡片登记表生命周期脱钩**：`delete()` / `deleteForBot()` 不清 `#virtualCards`，组件删除后 `cardOf` 仍命中已删组件（不崩溃、不越权，但报错口径失真且条目留到重启）→ 新增 `#purgeVirtualCards(widgetId)` 挂进两条删除路径。
+- **渲染层 P1-1 覆盖层形态任务 tab 行点击无反馈**：窄屏 / 宽屏放不下并排右栏时右栏是全屏 `BotDetailOverlay`，任务详情页在它背后——`BotTasksPanel.open()` 现在先 `narrowLayout.closeBotDetail()` 再 `openDetail`（与右栏关闭按钮同款写法）。
+- **渲染层 P1-2 botTasks 换 Bot 错配**：拉取失败会把上一个 Bot 的任务列表与徽标算到新 Bot 头上 → `load()` 换 Bot 先清空 items（items 只可能为空或属于当前 botId），失败也保持空。
+- **P2 五条**：① runCard 校验 anchor 会话存在（悬空会话原来要到回传一步才暴露）+ 会话级组件缺归属会话的报错口径修正；② 回归测试补齐——runCard 后删除再 open（锁 P1-1）、审查门沿虚拟 id 生效（未审查 open 抛 WIDGET_REVIEW_REQUIRED、source 后重试成功）、runCard 三处负例断言到错误文案、injectById 终态断言错误码 + NOT_FOUND 分支；③ botTasks 响应与在途推送 upsert 合并（快照不覆盖期间到达的行，仿 tasks store 口径）；④ queued toast 中性文案（两种成因——外部 Agent 拒绝 steer / 任务收尾——`task_event` 只存二值无法区分，「任务结束后生效」对两者都成立；56 §1.2 同步）；⑤ 任务 tab 点击时重拉（设计「tab 激活时重拉」落实）+ RightPanel 过时注释修正 + bindings shorthand 还原。
+- **验证**：core 定向（widgets-service 55 / tasks 集成 18）+ desktop 定向（45）全绿；desktop typecheck 0 error、eslint 干净；e2e 10 例（tasks 4 + narrow-layout 2 + bot-profile-autosave 1 + schedules 3）全绿。
+
+## 外部智能体 D118 独立审查轮：两 P1 等七项修复（2026-11-06）
+
+三路独立只读子代理审查 D118（连接加固核心 / 测试质量 / 新目标+文档同步）：目标接入与文档仅 7 条 P3；核心实现 2 P1 + 5 P2；测试 2 P1 覆盖缺口。核实后全部属实，七项修复（清单见 [todo/acp-hardening-and-new-targets.md](../../todo/acp-hardening-and-new-targets.md) §4.3）：
+
+- **P1 `#resetForRetry` 漏清 `#graceTimer`**：停滞取消的 10s 宽限计时器跨重试边界触发——停滞后进程死亡走进重试，残留计时器到期以空文案 settle 并释放重试的租约（透明重试被上一轮看门狗杀死）。修复：reset 清计时器 + 文案按值捕获进 grace 闭包。
+- **P1 256 MiB 行长上限实际不可达**：SDK 1.9.0 `ndJsonStream` 自带 32 MiB 默认行上限且在前 → 自定义限长层与 onLimit 日志永不触发。修复：`ndJsonStream` 传 `maxMessageBytes = 256 MiB + 1 MiB`，`limitAgentLines` 保持唯一权威。
+- **P2 三条**：`isSessionNotFound` 的 Provider hook 包 try/catch（hook 抛错原会从 `#attempt` 的 catch 逃逸 → run 永不结算）；重试前对旧 mapper `abandon()`（已发 tool_call 补失败结果，run_steps 保持配对）；`onClosed` 延迟结算从 `prompting || before` 收窄到 `prompting`（`before` 的延迟对重试无意义，且 `buildSystemPrompt` / `applyPermissionTier` 不因连接关闭 reject → 崩溃可挂死）。
+- **测试**：权限等待看门狗用例改判别形（decide 独占超 stallMs 后放行 → completed；删守卫必 TIMEOUT）+ silent-agent 恢复拆独立用例；新增读真实 `agent-release-gates.json` 的 fail-closed 用例（原手抄列表测不出有人把新 gate 加进文件）；注释/幽灵导出清理。
+- **文档**：design 28 §9.2.1 交叉引用 §11→§10、§10 providers 清单补 kimi/devin、§2.1 auth.kinds 补 'anonymous'；testkit SDK 1.7.0 → 1.9.0 与 core 对齐（消除双版本并存）。
+- **记录在案不修**：重试后新会话的 reusable 静默降级（release close/forget，下次走 resume/load）、已注入未应答 steer 重试丢失、initTimeoutMs 行为链缺 testkit `initDelayMs` 旋钮、新 binary 条目缺 sizeBytes、copilot api-key 待 spike 确认、parallel-sessions 预存在的 `catalogEntry('antigravity')` 空转断言（实际 id `antigravity-acp`）。
+- **验证**：hardening 13 + targets 8 + engine 36 = 57 单测全绿；P5 集成 + parallel-sessions 19/19；core typecheck 0 错；testkit / core dist 重建。未跑全量（AGENTS.md：本轮只动了 core 外部智能体内部与测试，无跨包公共契约变更）。
+
+## 计算机操控 P-B2：全面切换为 CuaDriver-only（2026-11-10）
+
+用户确认「只使用 CuaDriver，不再自行实现」，据此把 provider 层收敛为单一上游实现，并按 CuaDriver 实际能力修订设计：
+
+- **唯一 provider**：`computer-provider-lifecycle.ts` 删除 `KEPCUP_COMPUTER_PROVIDER` 与 native/script 分支；darwin → `CuaDriverProviderClient`，其它平台报未启用。
+- **删除自研栈**：`apps/desktop/native/`（vendored orca Swift helper）、`macos-native-provider-*`、`desktop-script-*`、helper 权限检测/引导模块、构建与冒烟脚本、相关测试全部移除；`NativeActionMethod` 抽成 `computer-action-method.ts`（`ComputerActionMethod`）。
+- **权限改宿主 TCC**：新增 `computer-use-permissions.ts`，主进程用 Electron `systemPreferences` 读 AX/屏幕录制状态；`permissionsOpen` 触发 AX 提示并打开系统设置面板；打开后停止 sidecar，下一次调用重建 daemon 读取新 TCC。顺带修复 `computer:stop`（主进程此前调 `shutdownComputerProviders()`，实际 provider 在 sidecar 子进程里，停不掉）。
+- **打包**：`CuaDriver.app` 成为唯一且必需产物；`electron-builder.yml` 删除 helper、增加 `cua-driver.lock.json` 随包；`fetch-cua-driver.mjs` 增加 `--arch`；`dist.mjs` 每架构 fetch；`dev.mjs` 改为 fetch + `--rebuild` 重取；`pack-hooks.cjs` 强制校验 bundle/lock/签名。
+- **设计妥协**（docs/design/52 修订节 + DEV-083~086）：TCC 归主应用、无独立 helper、跨快照索引失效、`focusedElementId` 固定 null、`annotatedScreenshot`/`ocr` false、scroll/drag 保持 unverified、后台修饰键点击与 web 内容元素直写显式拒绝、`max_elements` 截断如实上报、macOS 26+ direct-capture 二段同意、安装包每架构约 +60MB、Win/Linux 后续按上游启用。
+- **验证**：`apps/desktop/src/main/computer/` + `computer-host.test.ts` + `pack-hooks.test.ts` 定向 140 passed / 1 skipped；core 硬验收 `computer-tools.test.ts` + `computer-use.test.ts` 19/19 零改动通过；desktop typecheck 0 error；`fetch-cua-driver.mjs --arch arm64/x64` 均成功。真机验收清单见 `todo/computer-use.md` / `todo/computer-use-cua-adapter.md`（重授权、二段同意、stop 杀 daemon、发布包 lock 随包）。
+
+## 计算机操控：直采同意（macOS 26+）真机复检与修复（2026-11-10）
+
+真机复检发现：「屏幕录制」已授权、`check_permissions` 也报 `source.attribution: "host"`，但 `get_window_state(include_screenshot)` 仍报 `px_capture_unavailable` / `direct_capture_consent_required`。用 dev 壳自己的 daemon（pid 实测）复现：AX 树正常、只卡采集。根因是 macOS 26+ 的 ScreenCaptureKit「直接采集」同意——独立于系统设置里的「屏幕录制」开关，key 在 `CuaDriver.app`（`com.trycua.driver`）上，embedded 也不继承宿主 TCC，且只能由采集进程触发。
+
+- **daemon**：`baseDaemonEnvironment()` 增加 `CUA_DRIVER_ALLOW_CAPTURE_CONSENT_ALERT=1`，让 driver 敢于真去采集（复检机上宿主已有屏幕录制，采集中直接成功、系统不弹框；若系统要求同意则由这次采集弹一次框）。不设时 driver 永久静默跳过截图。
+- **状态如实上报**：`computer.permissionsStatus` 新增 `directCapture` 三态；设置页状态直接读宿主 TCC（`systemPreferences`），不走 sidecar；`cua-driver-permissions.ts` 的只读 `check_permissions`（`prompt:false`）把 `direct_capture_status` 映射为 granted / not-granted / unknown（`timed_out` 等未定论不谎报未授权），供 live 诊断与自检复用。
+- **截屏自检**：embedded 下 `check_permissions{prompt:true}` 被 driver 忽略（复检确认），状态只能靠真抓一帧判断——设置页「检测截屏」（`computer:permissions-probe-capture` → sidecar `probeDirectCapture`：取在屏窗口、不取 AX 树、截图到临时文件后删除）；抓到文件=已授权，`screenshot_error`=未授权并带回原因。
+- **文案**：截图失败提示改为「在系统弹窗里选允许，或到 设置 › 计算机操控 点检测截屏；同意后无需重启」；设置页说明同步。
+- **验证**：`apps/desktop/src/main/computer/` + `computer-host.test.ts` 定向 118 passed / 1 skipped；desktop typecheck（tsc + svelte-check）0 error；core 定向 typecheck 通过。真机「允许后截图可用」仍需在重启 dev 壳后手验（同意框要人点）。
+
+## 计算机操控：拖拽与窗口绑定真机复检（2026-11-10）
+
+用 dev 壳自己的 daemon（socket 直连，pid 实测）对 Finder 复现外部 Bot 报告的三条问题，并修掉其中两条我们这侧的缺陷：
+
+- **拖拽**：`delivery_mode:"background"` 的合成拖拽在 Finder 内容区**完全无效**（文件不动、框选也不响应，只回 `effect:"unverifiable"`；驱动文档说的 `background_unavailable / drag_and_drop_session` 未触发）；`foreground` 能恢复框选与窗口缩放（920×436 → 870×386 实测成功）；**文件拖放**（`probe.txt` → `dst`）后台/前台、500–2500ms/20–60 步都不落盘，Finder 把按下/抬起当两次单击（双选）。结论：系统级文件拖放不是我们的映射错误，是 macOS 拖放会话需要真实指针。
+- **窗口绑定**：`cmd+n` 第二窗口时 `list_windows` 正常返回两个窗口（z_index 排序可用），未复现「无在屏窗口」；但「旧窗口关闭后动作仍绑旧 id」属实——向已关闭的 `window_id` 发 `press_key` 得到 `window_not_found` /「WindowServer has no record of window N」。我们的错误映射已把 `window_not_found` 落到 `WINDOW_NOT_FOUND`，模型能拿到重新选窗引导。
+- **我们自己的一处真 bug**：`get_window_state` 在 `include_screenshot:false` 时**不回任何像素元数据**（`screenshot_width/height/scale`、`window_bounds` 实测均 undefined），而动作后的补观察会用这些字段重建几何 → 几何被清零，下一次坐标寻址被误判成「还没拿过截屏」。修复：`cua-driver-observer.ts` 新增 `resolveGeometry`——窗口尺寸未变时沿用上一帧栅格（driver 自身也保留上一帧），尺寸变了才清空。
+- **`computer_drag` 增加 `delivery`**：默认 `background`，可显式 `foreground` 重试；动作元数据如实标注；工具描述写明系统级文件拖放不可用、改用「移动到」或文件系统操作。不做自动重试（拖拽无读回，自动重放会重复执行）。
+- **截屏落盘并暴露路径**：外部 Bot 没有图像能力，只拿 base64 做不了像素读回。截图改为写到 provider socket 目录下 `computer-screenshots/`（0700 / 文件 0600，保留最近 20 张且不超过 30 分钟，读入新帧后修剪；sidecar 停止时随 socket 目录整体删除）；`computer_get_app_state` 文本提示追加「文件：<路径>」，base64 照旧返回。
+- **三路独立只读审查后的修正**：① 自检前消费 `#restartSidecarBeforeNextInvoke`（授权后旧 daemon 还缓存着旧 TCC，会让「检测截屏」假阴性）；② 屏幕录制被撤销时把 `directCapture` 重置为 unknown；③ 自检失败原因随结果返回并在设置页就地显示；④ **请求截图但失败**时不再沿用旧像素栅格（只有本来没要截图才复用）；⑤ 动作后失效窗口缓存（zoom/缩放后用旧尺寸判断会沿用废栅格）；⑥ 截图文件改为驱动写入前预创建 0600；⑦ sidecar 停止时**同步**删 socket 目录（SIGTERM 后直接 `process.exit`，异步清理等不到）；⑧ 删除无调用方的 sidecar `permissions` 分支，并把 `probeDirectCapture` 排除出 action 联合；⑨ 设置页刷新补 catch、刷新成功清除旧探测错误。
+- **验证**：`apps/desktop/src/main/computer/` + core 硬验收 `computer-tools.test.ts` + `computer-use.test.ts` 定向 148 passed / 1 skipped（新增：补观察沿用栅格、尺寸变化作废旧栅格、截图失败作废旧栅格、动作后窗口缓存失效、drag foreground 透传与元数据、截屏落盘路径与轮换、自检原因回传 / 授权后重启 sidecar / 撤销后重置直采状态）；desktop / core typecheck 0 error；eslint 干净；全量 `pnpm test` 8046 passed / 44 skipped（755 文件）。记入 DEV-088 / DEV-089 / DEV-090。
+
+## 计算机操控：CuaDriver 升版 0.40.1 → 0.46.1（2026-11-10）
+
+- **上游 stable 判定**：npm 与 PyPI 的 `@trycua/cua-driver` / `cua-driver` 都是 0.46.1；0.40.1 自带的 `check-update` 报 0.44.0，是旧版内嵌清单滞后（GitHub 的 Pre-release 标记只用于避免 monorepo 的 repository Latest 指针漂移，发布说明里明确「SemVer 即稳定版」）。
+- **lock 回填**：version/tag 3 个字段 + 两个架构的 asset sha256（arm64 `f7f226…`、x64 `5eb85d…`）；两个 darwin tarball 内是同一个 universal 可执行文件，哈希 `b6a541…`；LICENSE 未变，`licenseSha256` 不动。`fetch-cua-driver.mjs` 复跑显示 already up to date。
+- **契约复核**（0.40.1 ↔ 0.46.1 逐工具 `describe` diff）：输入 schema 只有 `type_text.delay_ms` 默认 30 → 0（KepCup 不传该参数，影响仅限 CGEvent 回退路径的键入节奏）；其余工具 schema 不变；描述新增 `run_steps` 批处理建议与遥测提示（我们已用 `CUA_DRIVER_RS_TELEMETRY_ENABLED=0` 关闭遥测）。输出面用 0.46.1 daemon 实跑核对：`check_permissions` / `list_apps` / `list_windows` / `get_window_state` 字段与 0.40.1 一致，新增 `capture_id`、`direct_capture_error` 为加法；`drag` 仍不返回 verification。
+- **验证**：`apps/desktop/src/main/computer/` + `computer-host.test.ts` + `pack-hooks.test.ts` 定向 157 passed / 1 skipped。
+- **未做**：真机 live（测试进程无 AX 授权，与上轮同因）；dev 壳需重启才会换上新二进制。
+
+## 计算机操控：窗口目标与拖拽默认值的复检修正（2026-11-10）
+
+外部 Bot 在 c134e06f 上复检后的三条缺陷，逐条修复：
+
+- **sheet / 无标题窗口不再是默认目标**：`pickMainWindow` 改为「有标题窗口优先 + z_index」。sheet 同样以 layer-0 进 `list_windows` 且常带最高 z，按 z 选会让默认目标落成 sheet、动作随即报 `off_space_or_ax_unresolved`；该码现映射为 `WINDOW_NOT_FOUND`，模型拿到的是「重新选窗」而不是 accessibility_error。
+- **关窗后按键不再绑死旧 id**：按键类动作（pressKey / hotkey / pasteText / 无元素索引的 typeText）在 driver 报窗口失效、且调用方没指定窗口时，丢弃陈旧快照、重新枚举换窗口重试一次。坐标与元素寻址**不**自动换目标（像素栅格与 element_token 都绑定旧窗口，换目标会打到别的位置）；显式 `windowId` 同样不重绑。
+- **drag 默认前台**：后台合成拖拽拿不到 macOS 拖放会话，默认即静默无效（复检实证：前台移动文件成功、后台无任何变化）。`delivery:'background'` 保留给「不能抢焦点」的场景；不做失败后自动重试（拖拽无读回，重放有重复执行风险）。
+- **验证**：provider + host 定向 73 passed；新增用例：关窗后按键自动换窗口并落到新 id、显式 windowId 不换目标、默认目标跳过 sheet、drag 默认前台 / 显式后台。

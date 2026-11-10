@@ -14,6 +14,7 @@ import {
   AGENT_SESSION_CALL_TIMEOUT_MS,
   AGENT_SESSION_OPEN_TIMEOUT_MS,
   AGENT_TURN_BUDGET_TOKENS,
+  AGENT_TURN_STALL_MS,
   AppError,
   findAgentEntry,
   lineDiffCounts,
@@ -38,6 +39,7 @@ import {
   ACP_STEERING_METHOD,
   advertisesSteering,
   hostBridgeToolOf,
+  isSessionNotFound,
   type SessionBridge,
   type AcpContentBlock,
   type AcpInitializeResponse,
@@ -124,6 +126,11 @@ export interface ExternalAgentEngineDeps {
   sessionOpenTimeoutMs?: number;
   /** Minimum budget of a follow-up prompt near / past the run deadline. */
   followUpMinMs?: number;
+  /**
+   * Turn-stall watchdog (D118): a prompt in flight with no `session/update`
+   * for this long is cancelled and failed. Tests inject a small value.
+   */
+  turnStallMs?: number;
 }
 
 export class ExternalAgentEngine implements AgentEngine {
@@ -875,6 +882,8 @@ class ExternalRunHandle implements RunHandle {
   #poisoned = false;
   /** The agent process / connection went away under this run (crash, exit). */
   #hostClosed = false;
+  /** The host's own failure report (stderr detail); beats a vague prompt rejection. */
+  #hostClosedError: { code: string; message: string } | null = null;
   /** Tier / model applied (or re-confirmed on reuse): only then is the session kept. */
   #tierApplied = false;
   /** A prompt was really sent on the session. */
@@ -909,6 +918,23 @@ class ExternalRunHandle implements RunHandle {
   #resolved = false;
   #graceTimer: NodeJS.Timeout | null = null;
   #phase: PromptPhase = 'before';
+  /**
+   * Turn-stall watchdog (D118): armed while a prompt is in flight, refreshed
+   * by any `session/update` the run receives; a pending permission request
+   * (the user deciding) does not count as a stall.
+   */
+  #stallTimer: NodeJS.Timeout | null = null;
+  #pendingPermissions = 0;
+  /** The stall watchdog fired (its cancel is answered by the agent or grace). */
+  #stalled = false;
+  /** The watchdog's failure message (set when it fired). */
+  #stallMessage: string | null = null;
+  /** The agent produced output in this run (message / thought / tool events). */
+  #agentProduced = false;
+  /** The run's one transparent retry (host-less crash / lost session) is used. */
+  #recovered = false;
+  /** Steers consumed into the current attempt's prompt (restored on retry). */
+  #consumedSteers: readonly string[] = [];
   /** Steers waiting for the next prompt (before the first / between prompts). */
   readonly #queuedSteers: string[] = [];
   /** Bridge calls answered "moved to the background", still running. */
@@ -961,10 +987,23 @@ class ExternalRunHandle implements RunHandle {
         return;
       }
     }
+    await this.#attempt();
+  }
+
+  /**
+   * One full attempt of the run (D118 retry): acquire → session → prompt
+   * loop → settle. A host-less crash or a lost session **before any agent
+   * output** retries once (`#retryWorthy`): the fresh attempt re-opens the
+   * session (resume / load when the agent still has it, else new) and re-sends
+   * the same prompt. With output already streamed a crash stays a failure —
+   * a transparent retry would duplicate what the user already saw.
+   */
+  async #attempt(): Promise<void> {
     const spec = this.#spec;
     // Where a failure happened: providers classify errors per phase (each
     // agent reports "not logged in" at a different step, todo 附录 A.4).
     let phase: AgentErrorPhase = 'initialize';
+    let retrying = false;
     try {
       const external = spec.external;
       if (external === undefined || spec.cwd === undefined) {
@@ -1065,6 +1104,7 @@ class ExternalRunHandle implements RunHandle {
       // (and no session prompt: prompt-prefix sent it with its first prompt).
       const continued = opened.mode !== 'new';
       const steers = this.#queuedSteers.splice(0);
+      this.#consumedSteers = steers;
       let prompt = this.#promptBlocks(
         {
           session: continued || metaAppend ? '' : parts.session,
@@ -1139,6 +1179,23 @@ class ExternalRunHandle implements RunHandle {
       for (const event of events) this.emit(event);
       this.#settle(this.#outcomeOf(response.stopReason, finalText));
     } catch (error) {
+      // One transparent retry (D118): the process died under the run, or the
+      // prompt hit "session not found" — before any agent output. The retry
+      // releases this attempt's lease itself (through its own path).
+      if (this.#retryWorthy(error, phase)) {
+        retrying = true;
+        this.#recovered = true;
+        this.#warn(
+          {
+            runId: spec.identity.runId,
+            agentSessionId: this.#sessionId,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          'external agent run lost before any output; retrying once',
+        );
+        this.#resetForRetry();
+        return this.#attempt();
+      }
       // A session that failed half-way (tier refused, prompt error, timeout)
       // is not reused — unless its process died: the session itself is fine
       // and is resumed / loaded by the next run (复审 #1).
@@ -1156,8 +1213,14 @@ class ExternalRunHandle implements RunHandle {
         this.#lease !== null ? classifierFor(this.#lease.provider) : undefined,
         phase,
       );
+      // The host's own report (exit code, stderr detail) says more than the
+      // prompt's "connection closed" rejection it defers to (D118).
+      const failure =
+        this.#hostClosedError !== null && this.#hostGone()
+          ? this.#hostClosedError
+          : { code: appError.code, message: appError.message };
       this.#warn(
-        { runId: spec.identity.runId, code: appError.code, error: appError.message },
+        { runId: spec.identity.runId, code: failure.code, error: failure.message },
         'external agent run failed',
       );
       this.#settle(
@@ -1170,12 +1233,105 @@ class ExternalRunHandle implements RunHandle {
                 finalText: '',
                 skipReply: false,
                 usage: this.#usage,
-                error: { code: appError.code, message: appError.message },
+                error: failure,
               },
       );
     } finally {
-      this.#release();
+      // Same-task release (P5 invariant): settles and its bookkeeping land in
+      // one microtask, before anything awaiting `done` observes them. Skipped
+      // only when the retry continues in its own attempt.
+      if (!retrying) this.#release();
     }
+  }
+
+  /**
+   * Whether the failed attempt may transparently retry once (D118): the
+   * prompt itself failed — the process died mid-turn, or the agent said the
+   * session is gone — and the run has produced no agent output yet (nothing
+   * to duplicate), was not cancelled / terminated / settled, and the retry
+   * has not been used. Session-setup crashes stay a failure (the next run
+   * resumes / re-creates the session, P5 semantics). Background sessions
+   * never retry (their private cwd does not survive a release).
+   */
+  #retryWorthy(error: unknown, phase: AgentErrorPhase): boolean {
+    if (this.#recovered || this.#resolved || this.#aborted || this.#terminated !== null) {
+      return false;
+    }
+    if (this.#agentProduced || this.#spec.external?.background === true) return false;
+    if (phase !== 'prompt') return false;
+    return this.#hostGone() || isSessionNotFound(error, this.#provider ?? undefined);
+  }
+
+  /**
+   * Tears the failed attempt down without the run-level release (D118): the
+   * lease goes back with the host-gone session semantics (no keep, no close,
+   * the row stays for the retry's resume / load), the bridge run-binding and
+   * token are revoked (the retry re-issues both), and per-attempt state
+   * resets. Unchanged: listeners, usage rows, steers not yet consumed, the
+   * abort controller (the retry keeps serving bridge calls with it).
+   */
+  #resetForRetry(): void {
+    const lease = this.#lease;
+    const sessionId = this.#sessionId;
+    if (lease !== null) {
+      if (sessionId !== null) {
+        lease.detach(sessionId, this.#sinkObj ?? undefined);
+        lease.forgetSession(sessionId);
+        this.#control.prompting.delete(sessionId);
+      }
+      this.#lease = null;
+      lease.release();
+    }
+    if (this.#bridge !== null) {
+      this.#deps.bridge?.unbindRun(this.#bridge.sessionKey, this.#spec.identity.runId);
+      this.#deps.bridge?.revoke(this.#bridge.sessionKey, this.#bridge.token);
+      this.#bridge = null;
+    }
+    this.#bridgeInfo = null;
+    this.#sessionId = null;
+    this.#sinkObj = null;
+    this.#kept = null;
+    // Tool calls the dying attempt never answered get their failed results so
+    // run_steps stay paired (审查 D118); the retry's mapper starts clean.
+    for (const event of this.#mapper.abandon()) this.emit(event);
+    this.#mapper = new AcpEventMapper();
+    this.#phase = 'before';
+    this.#hostClosed = false;
+    this.#hostClosedError = null;
+    this.#poisoned = false;
+    this.#tierApplied = false;
+    this.#prompted = false;
+    this.#stalled = false;
+    this.#stallMessage = null;
+    // The retry always opens a fresh session with the full context (D118):
+    // the lost attempt's prompt never reached the agent, so neither a resumed
+    // disk state nor a delta is trustworthy. `onSession` reports the new id
+    // with mode 'new' — the orchestrator resets the row's seen-state for it.
+    const external = this.#spec.external;
+    if (external !== undefined) {
+      this.#spec = { ...this.#spec, external: { ...external, session: undefined } };
+    }
+    // Steers consumed into the lost prompt go back into the queue: the retry's
+    // first prompt carries them again (their `steer` events are emitted twice
+    // — an honest record of the re-send).
+    this.#queuedSteers.unshift(...this.#consumedSteers);
+    this.#consumedSteers = [];
+    this.#sessionUsage = null;
+    this.#expectedMode = null;
+    this.#expectedModeOption = null;
+    this.#modeReverts = 0;
+    this.#deadlinePassed = false;
+    this.#detachedPending.clear();
+    this.#detachedResults.length = 0;
+    this.#toolCalls.clear();
+    // A stall's cancel-grace timer must not fire into the retry: it would
+    // settle the fresh attempt (its message already reset to null) and
+    // release its lease (审查 D118).
+    if (this.#graceTimer !== null) {
+      clearTimeout(this.#graceTimer);
+      this.#graceTimer = null;
+    }
+    this.#clearStallWatch();
   }
 
   /**
@@ -1506,6 +1662,8 @@ class ExternalRunHandle implements RunHandle {
     }
     const prompting = this.#control.prompting;
     prompting.set(sessionId, (prompting.get(sessionId) ?? 0) + 1);
+    // The stall watchdog (D118) covers exactly the in-flight prompt.
+    this.#armStallWatch();
     try {
       const response = await this.#withRunTimeout(
         connection.prompt(sessionId, slashSafePrompt(prompt)),
@@ -1515,11 +1673,64 @@ class ExternalRunHandle implements RunHandle {
       this.#recordUsage(response);
       return response;
     } finally {
+      this.#clearStallWatch();
       const left = (prompting.get(sessionId) ?? 1) - 1;
       if (left > 0) prompting.set(sessionId, left);
       else prompting.delete(sessionId);
       if (this.#phase === 'prompting') this.#phase = 'between';
     }
+  }
+
+  // —— turn 停滞看门狗（D118） ——
+
+  #armStallWatch(): void {
+    if (this.#resolved || this.#aborted || this.#terminated !== null) return;
+    this.#clearStallWatch();
+    const stallMs = this.#deps.turnStallMs ?? AGENT_TURN_STALL_MS;
+    this.#stallTimer = setTimeout(() => this.#onStall(stallMs), stallMs);
+    this.#stallTimer.unref?.();
+  }
+
+  #clearStallWatch(): void {
+    if (this.#stallTimer === null) return;
+    clearTimeout(this.#stallTimer);
+    this.#stallTimer = null;
+  }
+
+  /** Any `session/update` the run receives proves the agent is alive (D118). */
+  #noteAgentActivity(): void {
+    if (this.#phase === 'prompting') this.#armStallWatch();
+  }
+
+  /**
+   * The watchdog fired: no update for `stallMs` while the prompt was in
+   * flight. A permission waiting for the user is not a stall — re-check when
+   * it resolves (its updates re-arm the watchdog anyway). Cancel the prompt;
+   * the agent answering the cancel still settles failed (stalled, not a user
+   * cancellation), an agent ignoring it ends at the cancel grace.
+   */
+  #onStall(stallMs: number): void {
+    this.#stallTimer = null;
+    if (this.#pendingPermissions > 0 || this.#resolved || this.#aborted) return;
+    if (this.#phase !== 'prompting' || this.#terminated !== null || this.#graceTimer !== null) {
+      return;
+    }
+    this.#stalled = true;
+    const message = `智能体「${this.#agentName}」超过 ${Math.round(stallMs / 60_000)} 分钟没有任何更新，已取消本次执行`;
+    this.#stallMessage = message;
+    this.#warn(
+      { runId: this.#spec.identity.runId, sessionId: this.#sessionId, stallMs },
+      'agent turn stalled; cancelling the prompt',
+    );
+    // The message is captured by value: a retry resets `#stallMessage`, and
+    // the grace closure must still settle with the real reason (审查 D118).
+    this.#cancelPrompt(() => ({
+      status: 'failed' as const,
+      finalText: '',
+      skipReply: false,
+      usage: this.#usage,
+      error: { code: 'TIMEOUT', message },
+    }));
   }
 
   /**
@@ -1823,12 +2034,24 @@ class ExternalRunHandle implements RunHandle {
     return {
       bridge,
       onUpdate: (update) => {
-        if (update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update') {
+        // Liveness (D118): every update refreshes the stall watchdog; output
+        // kinds also disable the one transparent retry for this run.
+        const kind = update.sessionUpdate;
+        if (
+          kind === 'agent_message_chunk' ||
+          kind === 'agent_thought_chunk' ||
+          kind === 'tool_call' ||
+          kind === 'tool_call_update'
+        ) {
+          this.#agentProduced = true;
+        }
+        this.#noteAgentActivity();
+        if (kind === 'tool_call' || kind === 'tool_call_update') {
           this.#noteToolCall(update);
         }
-        if (update.sessionUpdate === 'current_mode_update') {
+        if (kind === 'current_mode_update') {
           this.#onModeUpdate(update.currentModeId);
-        } else if (update.sessionUpdate === 'config_option_update') {
+        } else if (kind === 'config_option_update') {
           this.#onConfigOptionUpdate(update.configOptions);
         }
         for (const event of this.#mapper.map(update)) this.emit(event);
@@ -1836,20 +2059,44 @@ class ExternalRunHandle implements RunHandle {
       onPermission: (title, decision) => this.#notePermission(title, decision),
       ...(permissions !== undefined
         ? {
-            requestPermission: (request: AcpRequestPermissionRequest) =>
-              permissions.decide(this.#enrichPermission(request), {
-                identity: this.#spec.identity,
-                entry: this.#entry!,
-                provider: this.#provider!,
-                tier: this.#spec.external!.permission,
-                cwd: this.#spec.cwd!,
-                signal: this.#toolAbort.signal,
-                bridge,
-              }),
+            requestPermission: async (request: AcpRequestPermissionRequest) => {
+              // Waiting for the user (or the bridge) is not a stall (D118).
+              this.#pendingPermissions += 1;
+              try {
+                return await permissions.decide(this.#enrichPermission(request), {
+                  identity: this.#spec.identity,
+                  entry: this.#entry!,
+                  provider: this.#provider!,
+                  tier: this.#spec.external!.permission,
+                  cwd: this.#spec.cwd!,
+                  signal: this.#toolAbort.signal,
+                  bridge,
+                });
+              } finally {
+                this.#pendingPermissions -= 1;
+                // The decision's outcome reaches the agent as an update, but
+                // an agent that stays silent after it must not outlive the
+                // watchdog: re-arm (no-op once the prompt is over).
+                this.#noteAgentActivity();
+              }
+            },
           }
         : {}),
       onClosed: (error) => {
         this.#hostClosed = true;
+        this.#hostClosedError = { code: error.code, message: error.message };
+        // An in-flight prompt rejects on the closed connection and carries the
+        // failure into #attempt's catch — where the one transparent retry
+        // (D118) applies; settling here would beat it. Session setup (`before`)
+        // never retries (its attempt phases are `initialize` / `session_new`),
+        // so it settles immediately: a host dying inside the provider /
+        // prompt-parts awaits — which do not reject on a closed connection —
+        // must not hang the run (审查 D118). Nothing pending (between prompts,
+        // done): settle now.
+        if (this.#phase === 'prompting') {
+          this.#wakeDetached();
+          return;
+        }
         this.#settle(
           this.#aborted
             ? this.#cancelledOutcome()
@@ -2257,6 +2504,11 @@ class ExternalRunHandle implements RunHandle {
 
   #outcomeOf(stopReason: AcpStopReason, finalText: string): RunOutcome {
     const base = { finalText: '', skipReply: false, usage: this.#usage };
+    // The stall watchdog cancelled the prompt (D118): failed, never a user
+    // cancellation — even when the agent wakes up and answers the cancel.
+    if (this.#stalled && this.#stallMessage !== null) {
+      return { ...base, status: 'failed', error: { code: 'TIMEOUT', message: this.#stallMessage } };
+    }
     if (this.#aborted) return { ...base, status: 'cancelled' };
     // skip_reply's session/cancel is not a cancellation (todo §13).
     if (this.#terminated !== null) return this.#terminatedOutcome();
@@ -2284,6 +2536,7 @@ class ExternalRunHandle implements RunHandle {
     // mapper.finish: pair the dangling tool calls before settling.
     for (const event of this.#mapper.abandon()) this.emit(event);
     this.#resolved = true;
+    this.#clearStallWatch();
     if (this.#graceTimer !== null) clearTimeout(this.#graceTimer);
     // No bridge call is accepted for a settled run, even before release (审查 #9).
     if (this.#bridge !== null) {
