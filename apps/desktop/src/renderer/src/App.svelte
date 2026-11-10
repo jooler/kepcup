@@ -26,6 +26,7 @@
   import GlobalSearchDialog from '$lib/features/search/GlobalSearchDialog.svelte';
   import MissingSkillDialog from '$lib/features/right-panel/MissingSkillDialog.svelte';
   import RemotePairDialog from '$lib/features/remote/RemotePairDialog.svelte';
+  import ClientNameDialog from '$lib/features/collab/ClientNameDialog.svelte';
   import WorkbenchNudge from '$lib/features/workbench/WorkbenchNudge.svelte';
   import ShareRecoveryPanel from '$lib/features/share/ShareRecoveryPanel.svelte';
   import FileViewer from '$lib/features/files/FileViewer.svelte';
@@ -37,6 +38,7 @@
   import ChatsArea from '$lib/features/chats/ChatsArea.svelte';
   import WorkbenchView from '$lib/features/workbench/WorkbenchView.svelte';
   import { composerDrafts } from '$lib/features/chats/composer-drafts.svelte';
+  import { presence } from '$lib/features/collab/presence.svelte';
   import { stickies } from '$lib/features/chats/stickies.svelte';
   import SettingsPage from '$lib/features/settings/SettingsPage.svelte';
   import PlaceholderPage from '$lib/features/shell/PlaceholderPage.svelte';
@@ -147,6 +149,8 @@
     chat.start();
     // 输入框草稿缓存的事件接线（conversation.deleted → 丢弃该会话的缓存条目）。
     composerDrafts.start();
+    // 多客户端在线状态（D119）：事件订阅 + 心跳；具体会话由 Composer 上报。
+    presence.start();
     // 便签：事件接线（conversation.deleted → 修剪本地缓存）+ 恢复已钉便签。
     stickies.start();
     contacts.start();
@@ -246,7 +250,7 @@
   <!-- 顶层高度收敛到视口并裁剪溢出：各页面自己有滚动区，内容再宽/再高也不能把
        document 撑出全局滚动条（含横向）。 -->
   <div class="flex h-screen min-h-0 flex-col overflow-hidden" data-testid="app-shell">
-    <div class="flex min-h-0 flex-1" inert={layerCoversMain}>
+    <div class="flex min-h-0 min-w-0 flex-1" inert={layerCoversMain}>
       {#if core.connection === 'failed'}
         <CoreErrorPage />
       {:else if narrowLayout.narrow}
@@ -318,6 +322,8 @@
       <MissingSkillDialog />
       <!-- D96: 配对二维码小窗（托盘与设置页共用；托盘路径经 onOpenRemotePairing）。 -->
       <RemotePairDialog bind:this={remotePair} />
+      <!-- D121 P3：本机设备名（只存本机；协作里其他设备看到的名字）。 -->
+      <ClientNameDialog />
       <WorkbenchNudge />
       <!-- D94：系统分享导入失败时的恢复面板（重选目标 / 重试 / 删除）。 -->
       <ShareRecoveryPanel />

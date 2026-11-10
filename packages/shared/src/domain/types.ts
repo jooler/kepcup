@@ -18,6 +18,7 @@ import { widgetCardSchema } from './widgets-ui.js';
 import { presentCardSchema } from './present.js';
 import { SHARE_INTAKE_ID_PATTERN } from './share.js';
 import { DEFAULT_RELAY_URL, relayEndpointSchema } from './remote.js';
+import { collabClientRefSchema } from './collab.js';
 import { askUserFieldSchema, askUserModeSchema } from './ask-user.js';
 import {
   settingCardContentSchema,
@@ -348,9 +349,7 @@ export const CUSTOM_INSTANCE_PREFIX = 'custom:';
 /** 自定义实例裸 id（去 `custom:` 前缀）的字符集，与 legacy customProviderSchema 一致。 */
 export const customInstanceIdPattern = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 /** 供应商实例 id：自定义带 `custom:` 前缀，其余为厂商实例（`dashscope`、`dashscope-2`…）。 */
-export const providerInstanceIdSchema = z
-  .string()
-  .regex(/^(custom:)?[a-z0-9][a-z0-9_-]{0,63}$/);
+export const providerInstanceIdSchema = z.string().regex(/^(custom:)?[a-z0-9][a-z0-9_-]{0,63}$/);
 
 /** 供应商实例上单个模型的登记：对话模型标 `chat`，专有模型标各自能力。 */
 export const providerModelSchema = z.object({
@@ -370,6 +369,17 @@ export const providerModelSchema = z.object({
   capabilities: z.array(modelCapabilitySchema).min(1).default(['chat']),
 });
 export type ProviderModel = z.infer<typeof providerModelSchema>;
+
+/**
+ * 从供应商拉取的可用模型条目（providers.fetchModels）：远端清单只保证有 id，
+ * 展示名与上下文提示各家口径不一，缺省由 UI 落默认值（128k）。
+ */
+export const fetchedProviderModelSchema = z.object({
+  id: z.string().min(1).max(200),
+  name: z.string().min(1).max(200).optional(),
+  contextWindow: z.number().int().positive().max(10_000_000).optional(),
+});
+export type FetchedProviderModel = z.infer<typeof fetchedProviderModelSchema>;
 
 /**
  * 供应商实例：内置厂商模板（`vendor` 指向厂商描述符）、ZCode 式模板
@@ -437,12 +447,25 @@ export function createInstanceFromTemplate(
     api: template.api,
     builtinCatalog: template.builtinCatalog === true,
     ...(template.logo !== undefined ? { logo: template.logo } : {}),
-    models: template.builtinCatalog === true ? [] : template.presets.map((id) => ({
-      id,
-      contextWindow: 128_000,
-      capabilities: ['chat'],
-    })),
+    models:
+      template.builtinCatalog === true
+        ? []
+        : template.presets.map((id) => ({
+            id,
+            contextWindow: 128_000,
+            capabilities: ['chat'],
+          })),
   };
+}
+
+/** 已存 Key 的单条预览（设置页渲染 + 标注）：掩码与元数据，明文永不出 core。 */
+export interface ProviderKeyPreview {
+  /** 掩码（maskApiKey：前缀 + ....... + 后四位）。 */
+  mask: string;
+  /** 用户标注的别名；未设置时缺省。 */
+  alias?: string;
+  /** 停用的 Key 在调用时跳过。 */
+  enabled: boolean;
 }
 
 export interface ProviderInfo {
@@ -462,8 +485,10 @@ export interface ProviderInfo {
     /** 能力声明；对话下拉只取含 `chat` 的模型，其余能力按槽位路由。 */
     capabilities: ModelCapability[];
   }>;
-  /** Whether an API key is stored. Never the key itself. */
+  /** 存在启用中的 Key（全部停用视为无可用 Key）。明文永不出 core。 */
   hasKey: boolean;
+  /** 已存 Key 的掩码与标注（与存储顺序一致，含停用条目）。 */
+  keyPreviews: ProviderKeyPreview[];
 }
 
 /** One choice of the bot model dropdown: `{provider}/{model}` ref + display label. */
@@ -1004,27 +1029,29 @@ export const agentSettingInputSchema = z
   })
   .strict();
 
-/** 实验开关（D72 以「实验」开关发布）。 */
-export const experimentalSettingsSchema = z
-  .object({
-    /** 外部智能体引擎：关时 RPC 拒绝把 Bot 设为外部 Agent，目录不可见。 */
-    externalAgents: z.boolean().default(false).catch(false),
-  })
-  .catch({ externalAgents: false });
-export type ExperimentalSettings = z.infer<typeof experimentalSettingsSchema>;
-
 /**
- * 后台任务（D72 P6，design 28 §8）：只配了外部 Agent、没有内置模型时，后台
- * loop 是否改用外部 Agent 以及降配项。有内置模型时这些开关不起作用。
+ * 后台任务（D72 P6，design 28 §8）：摘要 / 反思 / 记忆整理等后台 loop 由内置
+ * 智能体还是外部 Agent 执行，以及外部 Agent 的降配项。
+ *
+ * 默认是内置智能体（`agentEnabled=true` + 未指定 Agent；没有内置模型时回落到
+ * 各 Bot 自己的智能体）；明确指定 `backgroundAgentId` 时「选定即生效」，即使
+ * 配置了内置模型也走该 Agent。`builtinEnabled=false` + `agentEnabled=false`
+ * 才是整块跳过后台任务。
  */
 export const backgroundTasksSettingsSchema = z
   .object({
-    /** 无内置模型时后台任务改用外部 Agent（关 = 跳过，同 P4 兜底）。 */
+    /**
+     * 是否允许内置模型执行后台任务（缺省 true；false = 跳过内置路由）。
+     * 旧值只有 `agentEnabled=false`、没有本字段：仍视作内置智能体——升级前它在
+     * 有内置模型时本就跑内置，迁移成 false 会静默停掉后台任务。
+     */
+    builtinEnabled: z.boolean().optional().catch(undefined),
+    /** 是否允许改用外部 Agent（关 = 只用内置智能体）。 */
     agentEnabled: z.boolean().default(true).catch(true),
-    /** 只有外部 Agent 时也运行技能生成（最耗额度，默认关）。 */
+    /** 外部 Agent 也运行技能生成（最耗额度，默认关）。 */
     agentSkillAuthoring: z.boolean().default(false).catch(false),
     /**
-     * 只有外部 Agent 时项目组只在被 @ / 回复时响应（不跑路由判断）。默认开
+     * 外部 Agent 的项目组路由判断默认关：项目组只在被 @ / 回复时响应。默认开
      * （审查 C2）：路由判断经 Agent 只在用户明确关掉此项后运行。
      */
     projectMentionOnly: z.boolean().default(true).catch(true),
@@ -1275,11 +1302,10 @@ export const settingsSchema = z.object({
   // 预留字段的存储形态宽松（条目 schema 由读取方按 agentCatalogEntrySchema
   // 逐条 safeParse），避免未来格式变化让 settings 整体解析失败。
   customAgents: z.array(z.unknown()).default([]).catch([]),
-  experimental: experimentalSettingsSchema.prefault({}),
   /**
-   * 无内置模型时后台 loop 选用的 Agent（P6）；缺省 / '' = 自动：只用该 Bot
-   * 自己的 Agent（不换用别家，审查 S2）；无所属 Bot 的任务（画像整理、项目组
-   * 摘要）只在这里明确指定了 Agent 时运行。
+   * 后台 loop 选用的 Agent（P6）；缺省 / '' = 内置智能体（没有内置模型时回落到
+   * 各 Bot 自己的 Agent，不换用别家，审查 S2）；明确指定时即使有内置模型也走它
+   * （选定即生效）；无所属 Bot 的任务（画像整理、项目组摘要）只在明确指定时运行。
    */
   backgroundAgentId: z.string().optional().catch(undefined),
   /** 后台任务（P6）：改用外部 Agent 的开关与降配项。 */
@@ -1540,6 +1566,11 @@ export const textContentSchema = z.object({
    * workspace 副本路径（按查看 Bot 物化）；UI 据此显示「通过系统分享导入」。
    */
   shareIntakeId: z.string().regex(SHARE_INTAKE_ID_PATTERN).optional(),
+  /**
+   * 多客户端协作（D121）：发这条用户消息的客户端（设备）。纯展示元数据，
+   * 不进模型上下文；多端在线时 UI 显示「来自 X」。
+   */
+  client: collabClientRefSchema.optional(),
   /**
    * Bot 在本轮回答中创建 / 修改的本地文件（消息下方的文件卡列表）。路径是
    * 工具实际写入的绝对路径；渲染层按扩展名选择预览方式，用户点击后在覆盖层
@@ -2799,6 +2830,8 @@ export const approvalDecisionSchema = z.object({
   via: z.enum(['unattended', 'auto', 'bypass']).optional(),
   /** Set when status = 'failed': why the post-approval action errored (P08). */
   error: z.string().optional(),
+  /** 多客户端协作（D121）：谁做的决定（用户亲手决定时才有）。 */
+  decidedBy: collabClientRefSchema.optional(),
 });
 export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>;
 
@@ -3654,6 +3687,21 @@ export const usageBotTotalSchema = z.object({
 });
 export type UsageBotTotal = z.infer<typeof usageBotTotalSchema>;
 
+/**
+ * Per tool totals inside the selected range (built-in task loops only).
+ * Estimated context contribution, not billing: `resultTokens` is tool output
+ * entering the prompt, `callTokens` is the tool-call arguments the model
+ * produced.
+ */
+export const usageToolTotalSchema = z.object({
+  toolName: z.string(),
+  resultTokens: z.number(),
+  callTokens: z.number(),
+  tokens: z.number(),
+  calls: z.number().int(),
+});
+export type UsageToolTotal = z.infer<typeof usageToolTotalSchema>;
+
 /** Longest continuous chat session (messages ≤ 30 min apart). */
 export const usageChatSessionSchema = z.object({
   conversationId: z.string(),
@@ -3707,6 +3755,7 @@ export const usageStatsOutputSchema = z.object({
     byModel: z.array(usageModelTotalSchema),
     byLoop: z.array(usageLoopTotalSchema),
     byBot: z.array(usageBotTotalSchema),
+    byTool: z.array(usageToolTotalSchema),
   }),
   longestChat: usageChatSessionSchema.nullable(),
 });
@@ -3834,3 +3883,30 @@ export const taskViewSchema = z.object({
   result: taskResultViewSchema.nullable().optional(),
 });
 export type TaskView = z.infer<typeof taskViewSchema>;
+
+/**
+ * 任务用量（`tasks.usage`，任务详情页「上下文用量」）：来自 usage_ledger 的
+ * 该任务（run_id = task.id）聚合。全部数值可空——没有账本行、查不到模型上下文
+ * 窗口、没有 prompt token 时分母都可能是未知，前端按字段分别降级。
+ */
+export const taskRunUsageSchema = z.object({
+  /** 账本行数（模型调用次数）。 */
+  calls: z.number().int().nonnegative(),
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  cacheReadTokens: z.number().int().nonnegative(),
+  cacheWriteTokens: z.number().int().nonnegative(),
+  /**
+   * 当前上下文占用的近似值：最近一次主循环调用的 prompt 总量
+   * （input + cacheRead + cacheWrite）。没有账本行时为 null。
+   */
+  contextTokens: z.number().int().nonnegative().nullable(),
+  /** 最近一次主循环所用模型的上下文窗口；查不到时为 null（不猜默认值）。 */
+  contextWindow: z.number().int().positive().nullable(),
+  /**
+   * 加权缓存命中率 = ΣcacheRead / (Σinput + ΣcacheRead + ΣcacheWrite)，取值 0..1。
+   * 分母是全部 prompt token（与 contextTokens 同口径）；为 0 时为 null。
+   */
+  cacheHitRate: z.number().min(0).max(1).nullable(),
+});
+export type TaskRunUsage = z.infer<typeof taskRunUsageSchema>;

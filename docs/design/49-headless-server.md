@@ -40,6 +40,7 @@
 ### 2.1 目标（P1）
 
 - `kepcup-server` 一条命令起服务：`kepcup-server --data-dir ~/.kepcup-server`（或全默认）→ 监听、打印配对二维码 → 手机扫码 → 完整客户端可用（对话、审批、工作台、设置——与 D96 手机端同一份 `APP_RPC_METHODS`）。
+- 多客户端同时在线：账号密码模式最多 8 条 `SessionHub` 连接、配对模式最多 5 个 viewer，事件广播让所有客户端随后收敛；在线状态、共享草稿与协作输入见 [57](57-multi-client-collaboration.md)。
 - 常驻可用：调度、邮件轮询、watch 等在服务端 7×24 跑；客户端断线重连自举（既有 hello/token 重连路径）。
 - 不破坏现状：桌面全部测试与行为不变；core 改动默认路径零差异；新增代码全部在 `apps/server` + 三处增量。
 - CI/Release 自动化：发版时 server 产物随桌面产物一起出现在 GitHub Release。
@@ -47,7 +48,7 @@
 ### 2.2 非目标
 
 - 旧数据迁移 / 向后兼容（用户明确不需要；服务端从空库开始）。
-- 多租户：一个数据目录 = 一个用户一份 core；多人多实例。
+- 多租户：一个数据目录 = 一个用户一份 core；多人多实例。**同一用户的多客户端在线不是多租户**（见 57）。
 - 客户端本地能力回传（浏览器、本地 skills 在客户端执行并回传）——P2 另案。
 - 服务端工具以 MCP server 形式对第三方 agent 暴露（HostMcpBridge 扩展）——P3 另案。
 - 离线 Web Push（客户端不在线时的事件推送）——P2；v1 靠重连自举 + `approvals.list`（落库）。
@@ -109,7 +110,10 @@ hub 的 `relayClientFactory` DI 缝（`remote/hub.ts`，测试注入假中转的
 ### 3.5 与桌面的关系
 
 - 桌面应用 = 现状不动（本机 core 宿主）。桌面与 headless 服务端**不互通、不同步**（单一大脑原则：用户选定哪个设备当大脑，其他都是客户端）。
-- 桌面作为 headless 客户端：打开服务端托管的 PWA（浏览器 / PWA 安装）即是——web 构建与 Electron renderer 同源（D96 WP5）。独立「桌面远程模式」壳（Electron 里加载远程端点）留 P2 便利项。
+- **同一 headless 可以被多个客户端同时连接**（账号模式 8 路 / 配对模式 5 个 viewer）；它们共享同一个大脑与同一份数据，事件广播保证收敛。在线状态、共享输入框草稿、远端光标与操作归属见 [57](57-multi-client-collaboration.md)。
+- 桌面作为 headless 客户端有两条路：
+  - 浏览器 / PWA：打开服务端托管的 web 构建即是——web 构建与 Electron renderer 同源（D96 WP5）。
+  - 桌面远程模式壳（2026-11-09 落地）：`KEPCUP_REMOTE_URL=http://<host>:<port> pnpm --filter @kepcup/desktop dev`（已构建的 app 设同名环境变量启动即可）。主进程不启动本地 core、窗口不挂 preload，直接加载该 URL；渲染层由 web 垫片打标 `isWeb`，RPC 走服务端 WebSocket，与浏览器客户端完全同路。本地宿主能力（文件对话框 / 浏览器工具 / 计算机操控）在该模式下不存在；userData 隔离到 `<userData>/remote`，可与本地实例同时运行（多客户端协作验证见 [57](57-multi-client-collaboration.md)）。
 
 ## 4 发布与部署
 
@@ -124,11 +128,12 @@ hub 的 `relayClientFactory` DI 缝（`remote/hub.ts`，测试注入假中转的
 
 - **单元**（`apps/server/test/`）：直连适配层路由（did 定向 / 广播 / pong 回复 / viewer_left / replaced / 越界帧拒绝）用真 `ws` socket 对打；CLI 参数解析。
 - **集成**：临时数据目录 + memory keystore 起完整服务端 → 用 core 的 `FrameCodec` + `PairingService` 原语编写脚本化 viewer 客户端走完 配对（auto-accept）→ hello 自举 → `system.ping` RPC → 事件扇出 → 断线重连 全链路。
+- **多客户端**：同一 `SessionHub` 起 2–3 条连接，验证事件广播、在线状态与共享草稿（见 [57](57-multi-client-collaboration.md) §11）。
 - **回归**：core 定向测试（remote / settings 相关文件）+ hub 默认路径（alwaysOn=false）行为不变；阶段收口跑一次全量。
 - **发版验收**：本地跑 `scripts/pack-server.mjs` 产出 tar.gz，解压后在干净目录 `./dist/cli.js` 冒烟（起服务、出码、admin pair）。
 
 ## 6 分期
 
 - **P1（本期）**：上述全部。core 改动 = `RemoteHostOptions`（start 选项）+ hub `alwaysOn` + 类型导出；其余在 `apps/server`。
-- **P2**：客户端本地能力回传（browser-over-WS：直连富客户端声明能力，core 的 deferred facade 绑定到该客户端通道）；离线 Web Push；桌面「远程模式」壳。
+- **P2**：客户端本地能力回传（browser-over-WS：直连富客户端声明能力，core 的 deferred facade 绑定到该客户端通道）；离线 Web Push；桌面「远程模式」壳（`KEPCUP_REMOTE_URL`，2026-11-09 落地，见 §3.5）；多客户端协作（[57](57-multi-client-collaboration.md)，P1–P3 已落地）。
 - **P3**：服务端工具以 MCP server 对外暴露（HostMcpBridge 模式扩展，token 认证）；多实例管理 CLI。

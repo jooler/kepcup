@@ -64,6 +64,28 @@ export interface UsageBotTotalRow {
   calls: number;
 }
 
+/** 按工具的任务上下文消耗（内容估算，仅内置任务；不是计费 token）。 */
+export interface ToolUsageRecordInput {
+  runId: string;
+  botId: string | null;
+  conversationId: string | null;
+  loopType: LoopType;
+  toolName: string;
+  /** 工具调用参数（模型输出侧）。 */
+  callTokens: number;
+  /** 工具返回内容进入上下文的估算 token（输入侧）。 */
+  resultTokens: number;
+  calls?: number;
+}
+
+export interface UsageToolTotalRow {
+  toolName: string;
+  resultTokens: number;
+  callTokens: number;
+  tokens: number;
+  calls: number;
+}
+
 export interface UsageChatSessionRow {
   conversationId: string;
   botId: string | null;
@@ -77,6 +99,21 @@ export const CHAT_SESSION_GAP_MS = 30 * 60 * 1000;
 
 /** Local-day expression shared by every usage aggregation (SQLite localtime). */
 const LOCAL_DAY = "date(created_at / 1000, 'unixepoch', 'localtime')";
+
+/** One usage ledger row rolled up per run (任务详情页的上下文用量). */
+export interface RunUsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  calls: number;
+  /** 最近一次主循环调用的 prompt 总量（input + cacheRead + cacheWrite），上下文占用的近似值。 */
+  contextTokens: number | null;
+  /** 最近一次主循环所用模型的上下文窗口，由调用方解析；查不到为 null。 */
+  contextWindow: number | null;
+  /** 加权命中率 = ΣcacheRead / (Σinput + ΣcacheRead + ΣcacheWrite)；分母为 0 时为 null。 */
+  cacheHitRate: number | null;
+}
 
 /** Append-only usage ledger (docs/design/14-models-and-browser.md). */
 export class UsageService {
@@ -107,6 +144,26 @@ export class UsageService {
       );
   }
 
+  /** 按工具的内置任务上下文消耗：一次工具调用一行（仅 task loop）。 */
+  recordTool(input: ToolUsageRecordInput): void {
+    this.db
+      .prepare(
+        'insert into tool_usage_ledger (id, run_id, bot_id, conversation_id, loop_type, tool_name, call_tokens, result_tokens, calls, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(
+        newId('tus'),
+        input.runId,
+        input.botId,
+        input.conversationId,
+        input.loopType,
+        input.toolName,
+        Math.max(0, Math.round(input.callTokens)),
+        Math.max(0, Math.round(input.resultTokens)),
+        Math.max(1, Math.round(input.calls ?? 1)),
+        this.clock.now(),
+      );
+  }
+
   totalByRun(runId: string): { input: number; output: number } {
     const row = this.db
       .prepare(
@@ -114,6 +171,72 @@ export class UsageService {
       )
       .get(runId) as { i: number; o: number };
     return { input: row.i, output: row.o };
+  }
+
+  /**
+   * 任务详情页的上下文用量（`tasks.usage`）：按 run_id 聚合账本行；没有行时 null。
+   *
+   * - `contextTokens` 是「当前上下文占用」的**近似值**：最近一次主循环调用的
+   *   prompt 总量（input + cache_read + cache_write）。主循环行优先
+   *   loop_type='task'（后台任务经 TaskHost 记账即为此值；同一 run 的压缩调用
+   *   也记在 'task' 下、无法区分，取最新一行已是最接近的口径）；没有 'task' 行
+   *   时退回该 run 的最新一行（如轻判定 / 子能力直接挂在 run 上记账）。
+   * - `cacheHitRate` 用**加权**口径：prompt token 中命中缓存的比例
+   *   = ΣcacheRead / (Σinput + ΣcacheRead + ΣcacheWrite)，与 `contextTokens`
+   *   的 prompt 总量口径一致，不是各次命中率求平均；分母为 0 时 null。
+   * - `contextWindow` 由调用方按该行的 provider+model 解析（UsageService 不依赖
+   *   模型注册表）；查不到留 null，不猜默认窗口。
+   */
+  usageForRun(
+    runId: string,
+    resolveContextWindow?: (provider: string, model: string) => number | null,
+  ): RunUsageTotals | null {
+    const totals = this.db
+      .prepare(
+        `select coalesce(sum(input_tokens), 0) as i,
+                coalesce(sum(output_tokens), 0) as o,
+                coalesce(sum(cache_read_tokens), 0) as cr,
+                coalesce(sum(cache_write_tokens), 0) as cw,
+                count(*) as calls
+           from usage_ledger
+          where run_id = ?`,
+      )
+      .get(runId) as { i: number; o: number; cr: number; cw: number; calls: number };
+    if (totals.calls === 0) return null;
+    const latest = this.db
+      .prepare(
+        `select provider, model, input_tokens, cache_read_tokens, cache_write_tokens
+           from usage_ledger
+          where run_id = ?
+          order by case when loop_type = 'task' then 0 else 1 end, created_at desc, rowid desc
+          limit 1`,
+      )
+      .get(runId) as
+      | {
+          provider: string;
+          model: string;
+          input_tokens: number;
+          cache_read_tokens: number;
+          cache_write_tokens: number;
+        }
+      | undefined;
+    if (latest === undefined) return null;
+    const contextTokens =
+      latest.input_tokens + latest.cache_read_tokens + latest.cache_write_tokens;
+    const resolvedWindow = resolveContextWindow?.(latest.provider, latest.model) ?? null;
+    // prompt 总量口径与 contextTokens 一致：input + cacheRead + cacheWrite。
+    // 漏掉 cacheWrite 会把「写了缓存但还没读」的轮次当成全额命中，命中率虚高。
+    const promptTokens = totals.i + totals.cr + totals.cw;
+    return {
+      inputTokens: totals.i,
+      outputTokens: totals.o,
+      cacheReadTokens: totals.cr,
+      cacheWriteTokens: totals.cw,
+      calls: totals.calls,
+      contextTokens,
+      contextWindow: resolvedWindow !== null && resolvedWindow > 0 ? resolvedWindow : null,
+      cacheHitRate: promptTokens > 0 ? totals.cr / promptTokens : null,
+    };
   }
 
   /** Raw entries since a point in time (usage.summary aggregation, P07). */
@@ -297,6 +420,34 @@ export class UsageService {
       outputTokens: row.o,
       tokens: row.i + row.o,
       calls: row.calls,
+    }));
+  }
+
+  /**
+   * 按工具的上下文消耗（内容估算，仅内置任务）。`tokens` 是调用参数与返回
+   * 内容的估算之和，不是 usage_ledger 的计费 token，也不按重发次数放大。
+   * 外部 Agent 的工具内容只是宿主侧渲染，不记账；查询仍显式限定
+   * `loop_type='task'`，防止其他调用方写进来的行混进页签。
+   */
+  toolTotals(since: number): UsageToolTotalRow[] {
+    const rows = this.db
+      .prepare(
+        `select tool_name,
+                coalesce(sum(result_tokens), 0) as r,
+                coalesce(sum(call_tokens), 0) as c,
+                coalesce(sum(calls), 0) as n
+           from tool_usage_ledger
+          where created_at >= ? and loop_type = 'task'
+          group by tool_name
+          order by (sum(result_tokens) + sum(call_tokens)) desc, tool_name`,
+      )
+      .all(since) as Array<{ tool_name: string; r: number; c: number; n: number }>;
+    return rows.map((row) => ({
+      toolName: row.tool_name,
+      resultTokens: row.r,
+      callTokens: row.c,
+      tokens: row.r + row.c,
+      calls: row.n,
     }));
   }
 

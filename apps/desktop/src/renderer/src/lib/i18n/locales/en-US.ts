@@ -19,6 +19,7 @@ export const enUS = {
   'menu.settings': 'Settings',
   'menu.contacts': 'Contacts',
   'menu.connectPhone': 'Connect phone',
+  'menu.deviceName': 'Device name',
   'narrow.tabBarLabel': 'Global navigation',
   'narrow.tabChats': 'Chats',
   'narrow.tabContacts': 'Contacts',
@@ -339,10 +340,21 @@ export const enUS = {
   'settings.providerKey': 'API Key',
   'settings.providerKeyPlaceholder': 'Enter API key (hidden after saving)',
   'settings.providerKeySet': 'Configured (not shown)',
+  'settings.providerKeyAddPlaceholder': 'Paste a new API key and press Enter',
+  'settings.providerKeyCount': 'Keys configured: {count} (used in rotation)',
+  'settings.providerKeyRemove': 'Remove this key',
+  'settings.providerKeyAlias': 'Alias',
+  'settings.providerKeyAliasPlaceholder': 'Alias (optional)',
+  'settings.providerKeyAliasAdd': 'Add alias',
+  'settings.providerKeyAliasEdit': 'Edit alias',
+  'settings.providerKeyEnabled': 'Enabled',
+  'settings.providerKeyToggle': 'Enable or disable this key; disabled keys are skipped',
+  'settings.providerKeyDisabledCount': '{count} more key(s) disabled and skipped',
   'settings.save': 'Save',
   'settings.remove': 'Remove',
   // --- Models section two-pane rework (v0.5.6: "Model config" + provider instances)
   'settings.modelsNavConfig': 'Model Config',
+  'settings.agentsNavConfig': 'Global settings',
   'settings.modelsOverviewHint':
     'Manage model providers and defaults; a provider can be added multiple times (different baseUrls for different model capabilities).',
   'settings.templateHintVendor':
@@ -362,6 +374,25 @@ export const enUS = {
   'settings.providerTestNote': 'Tests chat when chat models exist, otherwise probes by capability',
   'settings.providerModelsLabel': 'Models',
   'settings.providerAddModel': 'Add model',
+  'settings.providerApiLabel': 'API style',
+  'settings.providerApiHint': 'Wire protocol for requests / responses; changes apply immediately',
+  'settings.providerApi.openai-completions': 'OpenAI-compatible (Chat Completions)',
+  'settings.providerApi.openai-responses': 'OpenAI (Responses)',
+  'settings.providerApi.anthropic-messages': 'Anthropic (Messages)',
+  'settings.fetchModels': 'Fetch models',
+  'settings.fetchingModels': 'Fetching…',
+  'settings.fetchModelsFailed': 'Failed to fetch models: {reason}',
+  'settings.fetchModelsEmpty': 'No models found',
+  'settings.fetchModelsPicked': '{count} models selected',
+  'settings.fetchModelsDialogTitle': 'Select models to enable',
+  'settings.fetchModelsDialogHint':
+    'Check the models to register — checks persist while you refine the search and all apply on confirm. Existing entries are untouched (adds only, never overwrites).',
+  'settings.fetchModelsSearch': 'Search models',
+  'settings.fetchModelsAll': 'Select all',
+  'settings.fetchModelsNone': 'Clear',
+  'settings.fetchModelsSelected': '{count} selected',
+  'settings.fetchModelsExisting': 'Registered',
+  'settings.confirm': 'OK',
   'settings.providerModelsEmpty':
     'No models yet. Click "Add model" to register chat or specialized models.',
   'settings.providerModelsCatalogEmpty':
@@ -580,6 +611,7 @@ export const enUS = {
   'contacts.boundaries': 'What not to do (one per line)',
   'contacts.mainModel': 'Main model (leave blank to use the default)',
   'contacts.lightModel': 'Lightweight model (leave blank to use the default)',
+  'contacts.modelDefault': 'Default',
   'contacts.mcpServers': 'MCP tool servers',
   'contacts.mcpAutoApproveTag': 'Auto-approve',
   'contacts.browserProfile': 'Browser profile',
@@ -646,6 +678,13 @@ export const enUS = {
   'rightPanel.tabSkills': 'Skills',
   'rightPanel.tabWidgets': 'Widgets',
   'rightPanel.tabWiki': 'Wiki',
+  // --- D116 three tabs (docs/design/56 §2): detail / widgets / tasks ------------
+  'rightPanel.tabDetail': 'Details',
+  'rightPanel.tabTasks': 'Tasks',
+  'rightPanel.tasksHint': 'All tasks this bot has started (across conversations).',
+  'rightPanel.tasksEmpty': 'This bot has not started any task yet.',
+  'rightPanel.tasksActiveGroup': 'In progress ({count})',
+  'rightPanel.tasksDoneGroup': 'Finished ({count})',
   // --- Config tab secondary menu (grouped entries + drill-down details) ---------
   'rightPanel.configSectionWidgets': 'Widgets',
   'rightPanel.configSectionPersona': 'Persona & engine',
@@ -657,6 +696,7 @@ export const enUS = {
   'rightPanel.configRowNetwork': 'Network access',
   'rightPanel.configRowBrowser': 'Browser profile',
   'rightPanel.configNotSet': 'Not set',
+  'rightPanel.configFollowDefault': 'Uses default settings',
   'rightPanel.configNetworkOpen': 'Open',
   'rightPanel.configBrowserPrivate': 'Private',
   'rightPanel.appsAdd': 'Add apps',
@@ -1340,6 +1380,11 @@ export const enUS = {
   'settings.usageByBot': 'By Bot',
   'settings.usageByLoopHint': 'Which loops consume tokens (input / output split)',
   'settings.usageByBotHint': 'Which Bots consume tokens (input / output split)',
+  'settings.usageByTool': 'By tool',
+  'settings.usageByToolHint':
+    'Which tools fill the context (result / call args, estimated; built-in tasks only)',
+  'settings.usageToolResult': 'Result',
+  'settings.usageToolCall': 'Call args',
   'settings.usageInput': 'Input',
   'settings.usageOutput': 'Output',
   'settings.usageOther': 'Other',
@@ -1626,6 +1671,9 @@ export const enUS = {
   'task.run.missing': 'Task record not found or was cleaned up.',
   'task.run.startedAt': 'Started {time}',
   'task.run.duration': 'Took {time}',
+  'task.run.contextUsage': 'Context {used} / {window} ({percent}%)',
+  'task.run.contextUsageTokens': 'Context {used}',
+  'task.run.cacheHit': 'Cache hit {percent}%',
   'task.run.writes': 'Write task',
   'task.run.readOnly': 'Read-only task',
   'task.run.workdir': 'Working directory',
@@ -1664,6 +1712,13 @@ export const enUS = {
   'task.run.action.call': 'Called',
   'task.run.action.plan': 'Updated plan',
   'task.run.steer': 'Add instruction',
+  // D115 inject dock (docs/design/56 §1): user steering entry at the bottom of the task page.
+  'task.run.injectPlaceholder': 'Add an instruction, Enter to send…',
+  'task.run.injectSend': 'Send',
+  'task.run.injectHintAwaiting': 'The task is waiting for your answer: what you send is the answer',
+  'task.run.injectSent': 'Added to the task',
+  'task.run.injectQueued': 'Not delivered: it takes effect once the task ends',
+  'task.run.injectFailed': 'Failed to add',
   'task.run.system': 'System',
   'task.run.live': 'Live',
   'task.run.noOutput': 'No output',
@@ -2155,6 +2210,7 @@ export const enUS = {
   'settings.sandboxEnhancedLabel': 'Enhanced ({backend})',
   'settings.sandboxEnhancedAvailable': 'Available',
   'settings.sandboxEnhancedMissing': 'Not installed',
+  'settings.sandboxEnhancedNotReady': 'Not ready',
   'settings.sandboxSharedVmNote':
     'Known limitation: all WSL2 distros on the same machine share one virtual machine.',
   'settings.sandboxWizardOpen': 'Sandbox setup wizard…',
@@ -2186,6 +2242,18 @@ export const enUS = {
   'wizard.skip': 'Skip and keep per-command confirmation',
   'wizard.enhancedIntro':
     'Skills that declare "requires enhanced sandbox" need this backend level; when it isn\'t installed, those skills are marked incompatible.',
+  'wizard.limaCreate': 'Create and prepare VM',
+  'wizard.limaStart': 'Start VM',
+  'wizard.limaProvision': 'Initialize sandbox tools',
+  'wizard.limaRetry': 'Retry',
+  'wizard.limaActionNone': 'No action needed',
+  'wizard.limaPhaseNotCreated': 'Not created',
+  'wizard.limaPhaseStopped': 'Not running',
+  'wizard.limaPhaseUnprovisioned': 'Not initialized',
+  'wizard.limaPhaseWorking': 'Preparing',
+  'wizard.limaPhaseFailed': 'Preparation failed',
+  'wizard.limaFirstRunNote':
+    'First-time setup downloads the Debian 12 image and installs the sandbox tools (about 1GB, several minutes).',
   'prompt.title': 'Finish sandbox setup',
   'prompt.body':
     'After a one-time admin approval and restart, the Bot can run commands without per-command confirmation. You can set it up now or skip (keeping per-command confirmation mode).',
@@ -2254,9 +2322,6 @@ export const enUS = {
   'onboarding.subscriptionOpen': 'I have a subscription (Claude / ChatGPT / Copilot / GLM…)',
   'onboarding.subscriptionBody':
     "Use your existing subscription to power Bots: choose an agent as the Bot's task engine, enable (install) it, and sign in following the provider's official process. KepCup doesn't access or store your subscription credentials.",
-  'onboarding.subscriptionEnable': 'Turn on external agents (experimental) and continue',
-  'onboarding.subscriptionExperimental':
-    "This is an experimental feature: continuing turns on External agents (experimental) (switching back to an API key turns it off). External agents' file and command tools run in their own sandbox; KepCup's sandbox, working directory protections, and network policies don't apply to them.",
   'onboarding.subscriptionEmpty': 'This version has no agents that support subscription sign-in.',
   'onboarding.subscriptionChoose': 'Let {name} run tasks for the butler and new Bots',
   'onboarding.subscriptionEnableFirst':
@@ -2366,21 +2431,24 @@ export const enUS = {
   // --- D105 computer use ------------------------------------------------------
   'settings.computerUseSectionTitle': 'Computer use',
   'settings.computerUseSectionHint':
-    'Let bots read and drive native desktop apps in tasks: accessibility-tree first, screenshots and synthetic input as fallback, without stealing focus. First use needs Accessibility & Screen Recording granted to "KepCup Computer Use" (macOS only, off by default).',
+    'Let bots read and drive native desktop apps in tasks: accessibility-tree first, screenshots and synthetic input as fallback, without stealing focus. First use needs Accessibility & Screen Recording granted to KepCup (macOS only, off by default).',
   'settings.computerUseGranted': 'Granted',
   'settings.computerUseNotGranted': 'Not granted',
   'settings.computerUseUnknown': 'Unknown',
-  'settings.computerUseAvailability': 'Availability (helper & sidecar handshake)',
+  'settings.computerUseAvailability': 'Availability (CuaDriver & sidecar handshake)',
   'settings.computerUseAvailable': 'Available',
   'settings.computerUseUnavailable': 'Unavailable',
   'settings.computerUseChecking': 'Checking…',
   'settings.computerUseAccessibility': 'Accessibility (read & drive app UIs)',
   'settings.computerUseScreenRecording': 'Screen Recording (capture app windows)',
+  'settings.computerUseDirectCapture': 'Direct capture (macOS 26+ screenshot availability)',
+  'settings.computerUseProbeCapture': 'Test capture',
+  'settings.computerUseProbingCapture': 'Capturing…',
   'settings.computerUseOpenSettings': 'Open System Settings',
   'settings.computerUseOpening': 'Opening…',
   'settings.computerUseRefresh': 'Refresh',
   'settings.computerUsePermissionHint':
-    'Permissions go to the standalone "KepCup Computer Use" helper (not the main app); checking its status briefly launches it to register with TCC.',
+    'Permissions go to the KepCup main app (CuaDriver runs embedded; there is no standalone helper). Test capture grabs one real frame to confirm screenshots work; macOS 26+ may show a consent dialog the first time — choose Allow. If a grant does not take effect, restart KepCup.',
   // --- D96 remote control -----------------------------------------------------
   'settings.navRemote': 'Remote',
   'settings.remoteSectionTitle': 'Remote control',
@@ -2466,8 +2534,6 @@ export const enUS = {
   'setupCard.dismiss': 'Not now',
   'setupCard.agentTitle':
     "{name} isn't usable yet; the conversation will continue automatically once it's set up",
-  'setupCard.agentReason.experimental_off':
-    "This Bot's tasks are run by an external agent, but External agents (experimental) isn't turned on.",
   'setupCard.agentReason.not_enabled':
     "This agent isn't enabled yet: enabling it will install it first (you'll need to confirm).",
   'setupCard.agentReason.not_installed':
@@ -2486,7 +2552,6 @@ export const enUS = {
     'On Linux, install the sandbox dependencies first: sudo apt install bubblewrap socat (Debian / Ubuntu) or sudo dnf install bubblewrap socat (Fedora). Once installed, click Test connection, then Finish setup and continue.',
   'setupCard.agentSandboxAsk':
     'Switching to the "ask" (confirm each step) permission level doesn\'t bypass this step: every level requires the sandbox to be active (confirming commands one by one still means running them inside the sandbox). If you can\'t install it right now, you can switch this Bot to another agent or the built-in model in the Bot configuration.',
-  'setupCard.agentEnableExperimental': 'Enable external agents (experimental)',
   'setupCard.agentMissing':
     "This agent isn't in the catalog: reselect a model or agent in the Bot configuration.",
   'setupCard.agentLoading': 'Reading agent status…',
@@ -2807,8 +2872,9 @@ export const enUS = {
   'search.themeDark': 'Dark mode',
   'search.themeApplied': 'Appearance switched to "{mode}"',
   'settings.navAgents': 'Agents',
+  'settings.navModelsAgents': 'Models & agents',
   'approvals.environmentLicense': 'License',
-  'agents.title': 'External agents',
+  'agents.available': 'Available',
   'agents.defaultAgent': 'Agent used by default for new Bots',
   'agents.defaultAgentNone': 'None (use built-in model)',
   'agents.defaultAgentHint':
@@ -2819,14 +2885,17 @@ export const enUS = {
     "Once enabled, you can pick an agent (such as Claude Agent or Codex) as a Bot's task engine in its run settings: it runs tasks dispatched by that Bot (the conversation itself still uses the built-in model). Sign-in goes through the vendor's official flow; KepCup never accesses or stores your subscription credentials.",
   'agents.background.title': 'Background tasks',
   'agents.background.hint':
-    "Background tasks such as summaries, reflection, memory cleanup, profile building, routing decisions, and Wiki maintenance use the built-in model when one is configured; if only an agent is configured, the agent is used instead. When an agent is selected, these tasks send the relevant content to that agent's vendor: the Bot's memories, your profile (the global profile shared across Bots), conversation content and summaries, and Wiki material, consuming your subscription quota. Background tasks run in a fresh private temporary directory, with none of the agent's own file, command, or network tools (only tools KepCup provides for that task); only agents that support this are selectable.",
-  'agents.background.builtinActive':
-    'A built-in model is configured: background tasks use the built-in model, and the settings below have no effect.',
+    "Background tasks such as summaries, reflection, memory cleanup, profile building, routing decisions, and Wiki maintenance use the built-in agent by default. Once an external agent is selected, these tasks send the relevant content to that agent's vendor (the Bot's memories, your profile, conversation content and summaries, and Wiki material) and consume your subscription quota. Background tasks run in a fresh private temporary directory, with none of the agent's own file, command, or network tools (only tools KepCup provides for that task); only agents that support this are selectable.",
   'agents.background.builtinLightOnly':
-    'Only a built-in lightweight model is configured: summaries, reflection, memory cleanup, and routing decisions use it; profile building, Wiki maintenance, and skill generation (which require a main model) still use an agent as configured below.',
+    'Only a built-in lightweight model is configured: summaries, reflection, memory cleanup, and routing decisions use it; profile building, Wiki maintenance, and skill generation (which require a main model) fall back to each Bot’s own agent.',
+  'agents.background.builtinLightOnlyNoAgent':
+    'Only a built-in lightweight model is configured and external agents are not allowed: summaries, reflection, memory cleanup, and routing decisions use it; purposes that need a main model are skipped.',
+  'agents.background.builtinUnavailable':
+    'No built-in model is configured: background tasks fall back to each Bot’s own agent; when a Bot has no agent, or it cannot run background tasks, they are skipped.',
+  'agents.background.builtinUnavailableNoAgent':
+    'No built-in model is configured and external agents are not allowed: background tasks are skipped.',
   'agents.background.agent': 'Agent for background tasks',
-  'agents.background.auto':
-    "Auto (use each Bot's own agent only; profile building and project group summaries don't run)",
+  'agents.background.builtin': 'Built-in agent',
   'agents.background.off': 'Off (skip background tasks)',
   'agents.background.unavailable': '(unavailable)',
   'agents.background.notInCatalog': '(not in catalog; background tasks skipped)',
@@ -2840,9 +2909,6 @@ export const enUS = {
     'In project groups, respond only when @mentioned or replied to',
   'agents.background.projectMentionOnlyHint':
     "On by default. When off, the agent decides whether to join in: one session per batch of project group messages (at most once every 2 minutes per project group); if the decision times out, it's treated as no response.",
-  'agents.experimental': 'External agents (experimental)',
-  'agents.experimentalHint':
-    "Experimental feature. An external agent's file and command tools run in its own sandbox; KepCup's sandbox, working directory protections, and network policy don't apply to them.",
   'agents.empty': 'No agents are available in this version',
   'agents.tier.supported': 'Supported',
   'agents.tier.preview': 'Preview',
@@ -2874,6 +2940,20 @@ export const enUS = {
     "Don't sign in with a personal Google account: Google's terms prohibit third-party software from accessing Antigravity through personal accounts, and violations may result in account suspension (including Gemini CLI). KepCup currently only offers Gemini API key sign-in (the project configuration needed for Vertex AI isn't available yet).",
   'agents.terms.inkcop':
     "InkCop must be running and signed in, with the bridge enabled in InkCop under Settings → Services → ACP Agents; tasks attach to its main conversation through the local inkcop-acp. LLM keys stay inside the InkCop app; KepCup doesn't inject or store them. Writing tasks go through ACP; for standalone knowledge base management, connect directly to LoomVec instead of going through this agent.",
+  'agents.terms.cline':
+    'Cline uses your Cline account or the provider API keys you configure, signing in through the official Cline program; usage counts against the respective vendor.',
+  'agents.terms.copilot':
+    'GitHub Copilot uses your Copilot subscription and signs in through the official GitHub program; usage counts against your Copilot plan quota.',
+  'agents.terms.goose':
+    "goose is Block's open-source agent; keys and providers are managed in goose's own config, which KepCup neither injects nor stores.",
+  'agents.terms.qwen-code':
+    'Qwen Code uses your Qwen account (free quota) or provider API keys, signing in through the official Qwen program.',
+  'agents.terms.kimi':
+    "Kimi CLI uses your Kimi membership or Moonshot API key, signing in through Moonshot's official program; no official Intel Mac (darwin-x86_64) build is available.",
+  'agents.terms.grok-build':
+    'Grok Build uses your grok.com account or xAI API key, signing in through the official xAI program; usage counts against your xAI plan quota.',
+  'agents.terms.devin':
+    'Devin uses your Cognition account and signs in through the official Devin program; usage counts against your Cognition plan quota.',
   'agents.enable': 'Enable',
   'agents.update': 'Update',
   'agents.retry': 'Retry',
@@ -3125,11 +3205,13 @@ export const enUS = {
     "A passing self-check only means it runs; it doesn't mean it's safe. You still need to review before loading.",
   // Micro-app consent card (D112, design 55 §5.2: the network line is its own line, ahead of the capability list, never collapsed)
   'botWidget.microApp.kind': 'Micro-app',
-  'botWidget.microApp.netOpen': 'Can access the internet (no domain restrictions) · not filtered per domain',
+  'botWidget.microApp.netOpen':
+    'Can access the internet (no domain restrictions) · not filtered per domain',
   'botWidget.microApp.netNone': 'No internet access',
   'botWidget.microApp.netAllowlist': 'Can access the internet (only {domains})',
   'botWidget.microApp.newerVersion': 'Version v{version} available; reopen to apply',
-  'botWidget.microApp.codeUpdated': 'Code updated, permissions unchanged (your previous consent carries over)',
+  'botWidget.microApp.codeUpdated':
+    'Code updated, permissions unchanged (your previous consent carries over)',
   'botWidget.microApp.canDo': 'What it can do:',
   'botWidget.microApp.cost':
     'Up to {n} tokens per session, billed to the Bot that wrote it ({bot})',
@@ -3142,25 +3224,15 @@ export const enUS = {
   'botWidget.microApp.confirmAndOpen': 'Confirm and open',
   'botWidget.microApp.netBadge': 'Network access',
   'botWidget.microApp.netBadgeOnline': 'Online',
-  'botWidget.microApp.netInfoOpen': 'Can access the internet (no domain restrictions) · not filtered per domain',
+  'botWidget.microApp.netInfoOpen':
+    'Can access the internet (no domain restrictions) · not filtered per domain',
   'botWidget.microApp.netInfoNone': 'No internet access',
   'botWidget.microApp.netInfoAllowlist': 'Can access the internet (only {domains})',
   'botWidget.microApp.micOn': 'Microphone in use (click to revoke)',
   'botWidget.microApp.micOff': 'Enable microphone',
   'botWidget.microApp.displayMode': 'Toggle fullscreen / inline',
   'botWidget.microApp.stop': 'Stop voice (capture and playback)',
-  'botWidget.microApp.manageTitle': 'Micro-app management',
-  'botWidget.microApp.manageNet': 'Network',
-  'botWidget.microApp.manageUsage':
-    'Today: model {calls} calls / {tokens} tokens · ASR {asr}s · TTS {tts} chars',
-  'botWidget.microApp.manageIssues': 'Runtime issues (24h)',
-  'botWidget.microApp.manageContext': 'Synced progress',
   'botWidget.microApp.clearContext': 'Clear',
-  'botWidget.microApp.contextCleared': 'Synced progress summary cleared',
-  'botWidget.microApp.rollback': 'Roll back to v{version}',
-  'botWidget.microApp.rollbackConfirm':
-    'Confirm rollback to v{version}? (running instances unaffected; reopen to apply)',
-  'botWidget.microApp.rolledBack': 'Rolled back to v{version} (reopen to apply)',
   'botWidget.microApp.contextLine': 'Synced progress: {headline}',
   'settings.widgetReviewModel': 'Widget review model',
   'settings.widgetReviewModelFollow': "Use Bot's main model",
@@ -3183,24 +3255,23 @@ export const enUS = {
   'botWidget.replyCancel': 'Cancel',
   'botWidget.replyFailed': 'Failed to send',
   'botWidget.queriesTitle': 'Database query templates (reviewed by you per version)',
-  'widgetsTab.hint':
-    "Interactive widgets made by this Bot. Cross-conversation assets aren't deleted with a conversation and can be sent to any conversation; deleting one removes all versions and data, and past cards will no longer open.",
   'widgetsTab.empty':
     'No widgets yet. Ask a Bot to build one for you (try "make a small expense tracker"); it will appear here when ready.',
   'widgetsTab.assetBadge': 'Cross-conversation asset',
   'widgetsTab.conversationScopedBadge': 'This conversation only',
-  'widgetsTab.conversationSection': 'Conversation widgets (deleted with their conversation)',
   'widgetsTab.versionCount': '{n} versions',
   'widgetsTab.queriesCount': '{n} query templates',
-  'widgetsTab.publish': 'Send to current conversation',
-  'widgetsTab.published':
-    'Card sent to the current conversation; waiting for you to confirm loading',
-  'widgetsTab.publishCardFailed':
-    'The widget was referenced, but the card failed to send, so no new card appeared in the conversation. Try again later.',
   'widgetsTab.delete': 'Delete',
   'widgetsTab.deleteConfirm': 'Confirm delete',
   'widgetsTab.deleted': 'Widget deleted',
   'widgetsTab.actionFailed': 'Widget action failed',
+  // --- D117 widgets tab cards (docs/design/56 §3): run on click + “…” menu ------
+  'widgetsTab.runHint': 'Click to run this widget directly',
+  'widgetsTab.runNoConversation': 'No conversation to anchor the widget run',
+  'widgetsTab.moreMenu': 'More actions',
+  'widgetsTab.deleteTitle': 'Delete widget “{title}”?',
+  'widgetsTab.deleteBody':
+    'Deleting removes every version and its data; historical cards will no longer open.',
   'chats.errorCode.WIDGET_INVALID':
     "The widget card doesn't match its version record or is corrupted, so it can't be loaded",
   'chats.errorCode.WIDGET_RESOURCE_EXPIRED': 'The widget UI has expired. Reload this card.',
@@ -3219,7 +3290,8 @@ export const enUS = {
   'chats.errorCode.WIDGET_CRAFT_FAILED':
     "The widget couldn't be built (self-check failed, timed out, or was cancelled); the draft was kept",
   'chats.errorCode.WIDGET_CRAFT_UNAVAILABLE': 'No model is available to build widgets',
-  'chats.errorCode.MICRO_APP_MANIFEST_INVALID': "The micro-app's manifest (micro-app.json) is invalid and can't be delivered",
+  'chats.errorCode.MICRO_APP_MANIFEST_INVALID':
+    "The micro-app's manifest (micro-app.json) is invalid and can't be delivered",
   'chats.errorCode.MICRO_APP_UNSUPPORTED_SPEC':
     "This KepCup doesn't recognize the micro-app manifest version; please upgrade the app",
   'chats.errorCode.MICRO_APP_CAPABILITY_NOT_DECLARED':
@@ -3229,8 +3301,10 @@ export const enUS = {
   'chats.errorCode.MICRO_APP_CAPABILITY_NOT_CONFIGURED':
     'The host lacks configuration this capability needs (e.g. model / voice); configure it in settings first',
   'chats.errorCode.MICRO_APP_AI_QUOTA': "The micro-app's model usage is over budget",
-  'chats.errorCode.MICRO_APP_AI_BUSY': 'The micro-app already has a model call in flight; try again shortly',
-  'chats.errorCode.MICRO_APP_AI_UNAVAILABLE': 'The model is temporarily unavailable; your progress is saved',
+  'chats.errorCode.MICRO_APP_AI_BUSY':
+    'The micro-app already has a model call in flight; try again shortly',
+  'chats.errorCode.MICRO_APP_AI_UNAVAILABLE':
+    'The model is temporarily unavailable; your progress is saved',
   'chats.errorCode.MICRO_APP_BRIDGE_CLOSED':
     'The host closed the micro-app capability bridge; please reopen it',
   'chats.errorCode.MICRO_APP_UNRESPONSIVE': 'The micro-app is unresponsive; please reopen it',
@@ -3528,12 +3602,17 @@ export const enUS = {
   'workbench.memo.groupCancel': 'Cancel',
   'workbench.memo.groupSaveFailed': "Couldn't save the group",
   'workbench.memo.ungrouped': 'Ungrouped',
-  'workbench.memo.groupEmptyHint': 'No memos yet — drop them here.',
+  'workbench.memo.groupEmptyHint':
+    'No memos in this group yet. Type above, or drag another card onto this tab.',
   'workbench.memo.renameGroup': 'Rename group',
   'workbench.memo.deleteGroup': 'Delete group',
-  'workbench.memo.toggleGroup': 'Expand or collapse "{name}"',
-  'workbench.memo.groupHandle': 'Drag to reorder groups',
+  'workbench.memo.tabsLabel': 'Memo groups',
+  'workbench.memo.tabHandle': '"{name}": click to switch, drag to reorder, double-click to rename',
+  'workbench.memo.groupMenu': 'More actions for "{name}"',
   'workbench.memo.cardHandle': 'Drag to reorder memos',
+  'workbench.memo.more': 'More',
+  'workbench.memo.moveTo': 'Move to',
+  'workbench.memo.moveToMore': 'More groups',
   'workbench.memo.groupDeleteTitle': 'Delete "{title}"?',
   'workbench.memo.groupDeleteBody':
     'The {count} memos in this group will move back to ungrouped; they are not deleted.',
@@ -3806,7 +3885,7 @@ export const enUS = {
     '0 means unlimited; default is 240 minutes.',
   'settingsItem.background.tasks.title': 'Background task agent',
   'settingsItem.background.tasks.summary':
-    'Whether background upkeep (memory, profile, skill distillation) uses an external agent, and which one',
+    'Whether background upkeep (memory, profile, skill distillation) uses the built-in agent or an external agent',
   'settingsItem.background.tasks.field.agentEnabled': 'Use external agent',
   'settingsItem.background.tasks.field.agent': 'Agent',
   'settingsItem.unattended.enable.title': 'Turn on unattended mode',
@@ -4112,6 +4191,23 @@ export const enUS = {
   'web.failed.title': 'Cannot reach the relay',
   'web.failed.body':
     'The relay is unreachable right now (the pairing link itself is still valid). Check your connection and retry.',
+  'collab.online': '{count} online in this chat',
+  'collab.typing': '{name} is typing…',
+  'collab.typingMany': '{count} people are typing…',
+  'collab.draftOwner': '{name} is editing — you are read-only for now',
+  'collab.draftReadonly': 'Another user is editing — you are read-only for now',
+  'collab.takeover': 'Take over',
+  'collab.takeoverConfirm': 'The other user will become read-only. Take over?',
+  'collab.messageFrom': 'From {name}',
+  'collab.approvalDecidedBy': 'Handled by {name}',
+  'collab.approvalAlreadyDecided': 'This approval was already handled by {name}',
+  'collab.clientNameTitle': 'This device’s name',
+  'collab.clientNameHint':
+    'The name other clients see in presence and message attribution. Stored only on this device.',
+  'collab.clientNamePlaceholder': 'e.g. Ming’s MacBook',
+  'collab.clientNameSave': 'Save',
+  'collab.clientNameCancel': 'Cancel',
+  'collab.clientNameSaved': 'Device name updated',
 } as const;
 
 export type MessageKey = keyof typeof enUS;

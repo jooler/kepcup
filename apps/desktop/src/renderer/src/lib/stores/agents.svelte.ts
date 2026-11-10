@@ -31,7 +31,6 @@ function normalizeAgent(payload: AgentView): AgentView {
  * core 后台进行，RPC 立即返回当前视图。
  */
 class AgentsState {
-  experimental = $state(false);
   agents = $state<AgentView[]>([]);
   options = $state<Record<string, AgentOptions>>({});
   /** `${agentId}\0${model}` → 该模型下的推理强度选项（模型切换后按需探测）。 */
@@ -74,17 +73,10 @@ class AgentsState {
 
   async refresh(): Promise<void> {
     const result = (await core.call('agents.list')) as {
-      experimental: boolean;
       agents: AgentView[];
     };
-    this.experimental = result.experimental;
     this.agents = result.agents.map((agent) => normalizeAgent(agent));
     this.loaded = true;
-  }
-
-  async setExperimental(enabled: boolean): Promise<void> {
-    await settingsStore.update({ experimental: { externalAgents: enabled } });
-    await this.refresh();
   }
 
   async enable(id: string, source?: 'managed' | 'system'): Promise<AgentView> {

@@ -623,6 +623,16 @@ describe('P07 记忆与画像（集成）', () => {
       usage.record({ ...base, loopType: 'voice_input', inputTokens: 500, outputTokens: 500 });
       usage.record({ ...base, loopType: 'memory', inputTokens: 7, outputTokens: 0 });
       usage.record({ ...base, loopType: 'memory', inputTokens: 0, outputTokens: 0 });
+      // 按工具的任务上下文消耗（内容估算，独立于计费账本）。
+      usage.recordTool({
+        runId: 'task_tool_x',
+        botId: bot.id,
+        conversationId: conv.id,
+        loopType: 'task',
+        toolName: 'read',
+        callTokens: 12,
+        resultTokens: 345,
+      });
       const again = (await stack.core.rpc.call('usage.summary', { days: 3 })) as {
         entries: Array<{ botId: string | null; loopType: string; calls?: number }>;
       };
@@ -647,6 +657,13 @@ describe('P07 记忆与画像（集成）', () => {
           byModel: Array<{ model: string; tokens: number }>;
           byLoop: Array<{ loopType: string; calls: number; tokens: number }>;
           byBot: Array<{ botId: string | null; tokens: number }>;
+          byTool: Array<{
+            toolName: string;
+            resultTokens: number;
+            callTokens: number;
+            tokens: number;
+            calls: number;
+          }>;
         };
       };
       expect(stats.totals.calls).toBeGreaterThanOrEqual(3);
@@ -663,6 +680,12 @@ describe('P07 记忆与画像（集成）', () => {
       expect(stats.range.byBot.find((row) => row.botId === bot.id)?.tokens).toBeGreaterThanOrEqual(
         1000,
       );
+      expect(stats.range.byTool.find((row) => row.toolName === 'read')).toMatchObject({
+        resultTokens: 345,
+        callTokens: 12,
+        tokens: 357,
+        calls: 1,
+      });
     } finally {
       await stack.cleanup();
     }

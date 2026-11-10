@@ -455,7 +455,6 @@ describe('M5: §8.4 downgrade never drops a message', () => {
     });
     stacks.push(stack);
     await stack.core.rpc.call('settings.update', {
-      experimental: { externalAgents: true },
       agents: { 'fake-steer': { enabled: true } },
       backgroundTasks: { agentEnabled: false },
     });
@@ -536,7 +535,6 @@ describe('an external-agent task records its engine even when it fails before st
     });
     stacks.push(stack);
     // The experiment is on, the agent itself is not enabled.
-    await stack.core.rpc.call('settings.update', { experimental: { externalAgents: true } });
     const created = await makeBot(stack.core, '外援');
     const bot = (
       (await stack.core.rpc.call('bots.update', {

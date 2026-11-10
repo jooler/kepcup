@@ -8,6 +8,8 @@ import {
   widgetsListOutputSchema,
   widgetsPublishInputSchema,
   widgetsPublishOutputSchema,
+  widgetsRunCardInputSchema,
+  widgetsRunCardOutputSchema,
   widgetsUiCloseInputSchema,
   widgetsUiOpenInputSchema,
   widgetsUiOpenLinkInputSchema,
@@ -118,6 +120,11 @@ export function bindWidgetsUiMethods(services: CoreServices): {
             ...(cardMessageId !== null ? { cardMessageId } : {}),
           };
         },
+      ),
+      // D117 组件直接运行（Bot 详情「组件」tab 卡片点击，docs/design/56 §3）：
+      // 不落消息行，构建描述符登记虚拟卡片登记表，渲染端沿 widgetViewer 打开。
+      'widgets.runCard': method(widgetsRunCardInputSchema, widgetsRunCardOutputSchema, async (input) =>
+        ui().runCard(input),
       ),
     },
     platform: {

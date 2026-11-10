@@ -13,7 +13,7 @@ import { isSingleBotConversation } from './single-bot-conversation';
  * `continueAfterSetup` 自动冲掉草稿。返回 null = 放行。
  *
  * - 内置引擎：Bot 未指定模型且全局无默认主模型 → `main-model`；
- * - 外部 Agent（D72 P4）：实验开关关闭 / 未启用 / 未安装 / 未登录 / 不兼容 →
+ * - 外部 Agent（D72 P4）：未启用 / 未安装 / 未登录 / 不兼容 →
  *   `{kind:'agent'}`（与 core run 门禁同一份 `agentSetupReasonOf` 判定）。
  *   Agent 视图未加载时只按 settings 的启用开关判断，其余交给 core 的结构化
  *   失败兜底；对话式访谈期间恒走内置引擎。
@@ -23,7 +23,7 @@ import { isSingleBotConversation } from './single-bot-conversation';
 export function sendGateRequirement(input: {
   conversationType: string;
   bot: Pick<Bot, 'profile' | 'setupState'> | null | undefined;
-  settings: Pick<Settings, 'defaultMainModel' | 'experimental' | 'agents'> | null;
+  settings: Pick<Settings, 'defaultMainModel' | 'agents'> | null;
   agents: { loaded: boolean; get(id: string): Pick<AgentView, 'enabled' | 'status'> | null };
 }): SetupRequirement | null {
   const { bot, settings } = input;
@@ -35,7 +35,7 @@ export function sendGateRequirement(input: {
     const view = input.agents.loaded
       ? input.agents.get(agentId)
       : { enabled: settings.agents[agentId]?.enabled === true, status: 'ready' as const };
-    const reason = agentSetupReasonOf(view, settings.experimental.externalAgents);
+    const reason = agentSetupReasonOf(view);
     return reason === null ? null : { kind: 'agent', agentId, reason };
   }
   if (bot.profile.runtime.model.length > 0) return null;

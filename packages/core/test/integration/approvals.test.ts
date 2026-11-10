@@ -1272,4 +1272,52 @@ describe('approval effect dedupe and receipts (W4)', () => {
     expect(failed.error).toContain('等待确认「上次结果未知」的重复操作超时');
     expect((await mcpApprovals(core, conv.id)).at(-1)!.status).toBe('cancelled');
   }, 120_000);
+
+  it('records the deciding client and reports it on conflict (D121)', async () => {
+    const { core } = await start();
+    const bot = await makeBot(core, '小设');
+    const conv = await openDirect(core, bot.id);
+    const approvals = core.services.domain!.approvals;
+    const identity = {
+      runId: 'run_client_attribution',
+      botId: bot.id,
+      conversationId: conv.id,
+      loopType: 'turn' as const,
+    };
+    const approval = approvals.submitNonBlocking(
+      identity,
+      'profile_change',
+      { changes: [{ field: 'persona.tone', value: '更简洁' }], reason: '测试' },
+      () => {},
+    );
+    const decided = (await core.rpc.call('approvals.decide', {
+      id: approval.id,
+      approve: true,
+      client: { id: 'client-a', name: 'A 的 MacBook' },
+    })) as { approval: Approval };
+    expect(decided.approval.decision?.decidedBy).toEqual({
+      id: 'client-a',
+      name: 'A 的 MacBook',
+    });
+
+    // RPC 列表读回同一份决定（不是只在内存里）。
+    const listed = (await core.rpc.call('approvals.list', {
+      conversationId: conv.id,
+    })) as { approvals: Approval[] };
+    expect(listed.approvals.find((item) => item.id === approval.id)?.decision?.decidedBy).toEqual({
+      id: 'client-a',
+      name: 'A 的 MacBook',
+    });
+
+    let conflict: unknown = null;
+    try {
+      await core.rpc.call('approvals.decide', { id: approval.id, approve: false });
+    } catch (error) {
+      conflict = error;
+    }
+    expect(
+      (conflict as { details?: { decidedBy?: { id?: string } } } | null)?.details?.decidedBy,
+    ).toEqual({ id: 'client-a', name: 'A 的 MacBook' });
+  }, 60_000);
+
 });

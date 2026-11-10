@@ -1,8 +1,45 @@
 # 计算机操控（D105）— 执行方案
 
-> 状态：**待实施**（2026-10-31 设计定稿）。设计见 [docs/design/52-computer-use.md](../docs/design/52-computer-use.md)（D105，先读它的 §1 构成、§2 架构、§4-§6 集成设计再开工）。
+> 状态：**已实施**（P0 原生 helper 2026-10-31 落地；P-B1 cua-driver provider 适配 2026-11-07 落地；
+> **P-B2 2026-11-10 全面切换为 CuaDriver-only，原生 helper / script provider 已删除**，
+> 见 [computer-use-cua-adapter.md](computer-use-cua-adapter.md) 与
+> [computer-use-cua-adapter-findings.md](computer-use-cua-adapter-findings.md)）。
+> 设计见 [docs/design/52-computer-use.md](../docs/design/52-computer-use.md)（D105，先读它的 §1 构成、§2 架构、§4-§6 集成设计再开工）。
 > 上游参照：stablyai/orca 快照 commit `55507b87`（v1.4.214），本机只读镜像 `~/www/orca-mirror/orca`（浅克隆，勿改动、勿提交进 KepCup 仓库）。vendored 时在该 commit 基础上搬运。
 > 约定：迭代中只跑定向测试（AGENTS.md：`node scripts/run-tests.mjs run <文件>`）；涉及 shared 契约先 `pnpm --filter @kepcup/shared build`；收口跑一次全量 `pnpm test`。改设置相关代码至少跑 settings 四件套定向测试。
+
+## P-B1 真机人工验收清单（CI 覆盖不到的部分，发布前必跑）
+
+CI 的 macOS runner 无 GUI 会话与 TCC 授权，`cua-driver-provider.live.test.ts` 在无
+`KEPCUP_CUA_DRIVER_BIN` 时自动 skip——以下项只能在真机人工验收，不要假装 CI 覆盖了它：
+
+1. **授权流**：干净机器上首次使用 → 系统设置的辅助功能 /
+   屏幕录制行出现的是 **KepCup**（embedded 语义，不是 CuaDriver）→ 授权后工具即恢复。
+   ⚠️ **禁止 `cua-driver permissions grant`**：embedded daemon 下它把 TCC 记到
+   com.trycua.driver 名下，破坏授权归属且难还原（findings「授权语义」节）。授权只能
+   走系统设置给 KepCup，或对系统弹出的同意框点允许；授权后重启 KepCup（TCC 按进程缓存）。
+2. **macOS 26+ direct-capture 二段同意**：首次截图会如实报 `screenshot_failed`（findings
+   0.40.1 新增发现 2）——验证错误文案可行动（2026-11-07 复检补：截屏失败与被挡的
+   scroll/drag 报错现在都带「系统设置 › 屏幕录制给 KepCup 授权 + 重启」指引）、
+   授权后截图恢复、设置页权限状态正确。
+3. **唯一 provider**：darwin 上只有 CuaDriver（不再有 native / script 分支）；非 darwin
+   报「尚未启用」。`KEPCUP_COMPUTER_PROVIDER` 开关已删除，不要再按旧文档设置。
+4. **安装包**：含 CuaDriver.app 的包（+约 60MB/架构）在 release note 写明体积变化；
+   pack-hooks 对 cua 产物做「存在才校验」的签名 + lock 哈希检查。
+5. **升级重授权**：cua 期的 TCC 记在 KepCup 主应用名下——原生 helper 时代（独立
+   `app.kepcup.desktop.computer-use`）的授权行不再被使用，老用户升级后需按新语义重新授权
+   （release note 写明）。
+
+### 复检遗留（2026-11-07 真机复检，待排期）
+
+- **原生 provider drag 无读回**：`drag(rows)` 只回 `{path:synthetic, actionName:null,
+  delivery:background}`，没有 verification 字段——拖错位置（实测把目录拖进另一目录）
+  无从发现，与「防重放语义不可省」的硬要求有差距。候选方案：helper 侧复用
+  ScrollReadback 的布局指纹做 drag 前后对比（Swift + 编排层 + core 三层改动，
+  超出 P-B1 范围，列入后续工作包）。
+- **wiki「computer-use-smoke-script」页失实**：写的 `scripts/computer-use-smoke.mjs`
+  实际在 `apps/desktop/scripts/`；页里标「已退役」但文件仍在且有用（P-B1 复检正是靠它
+  验证 scroll 读回）。wiki 在仓库外，待修正页面（改路径 + 状态改「M1 独立冒烟，仍可用」）。
 
 ## 0 工作包总览与依赖
 

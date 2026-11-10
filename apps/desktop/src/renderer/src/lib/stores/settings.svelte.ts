@@ -1,10 +1,12 @@
 import type {
   AppAuthReason,
   AppFlowLogEntry,
+  FetchedProviderModel,
   OAuthClientView,
   McpToolRisksOutput,
   ModelCapability,
   OnboardingStatePatch,
+  ProviderApi,
   ProviderInfo,
   SandboxStatusOutput,
   Settings,
@@ -152,6 +154,32 @@ class SettingsState {
     await this.refresh();
   }
 
+  /** 追加一个 Key（多 Key 轮询）；刷新后 providers.list 带上新的掩码预览。 */
+  async addKey(provider: string, key: string): Promise<void> {
+    await core.call('providers.addKey', { provider, key });
+    await this.refresh();
+  }
+
+  async removeKeyAt(provider: string, index: number): Promise<void> {
+    await core.call('providers.removeKeyAt', { provider, index });
+    await this.refresh();
+  }
+
+  /** 更新单个 Key 的标注：别名（空串清除）与启停；刷新后 providers.list 带上新值。 */
+  async setKeyMeta(
+    provider: string,
+    index: number,
+    patch: { alias?: string; enabled?: boolean },
+  ): Promise<void> {
+    await core.call('providers.setKeyMeta', {
+      provider,
+      index,
+      ...(patch.alias !== undefined ? { alias: patch.alias } : {}),
+      ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
+    });
+    await this.refresh();
+  }
+
   async removeKey(provider: string): Promise<void> {
     await core.call('providers.removeKey', { provider });
     await this.refresh();
@@ -175,6 +203,25 @@ class SettingsState {
       ...(capability !== undefined ? { capability } : {}),
       ...(key !== undefined && key.length > 0 ? { keyOverride: key } : {}),
     });
+  }
+
+  /**
+   * 拉取供应商可用模型列表（设置页「获取模型」）：详情页传 provider（core 从
+   * secrets 解析已存 Key），新增表单传 keyOverride（未保存的 Key 直接探测，
+   * 与 test 同一取向）；keyOverride 为空串时省略（本地服务匿名拉取）。
+   */
+  async fetchModels(input: {
+    provider?: string;
+    baseUrl: string;
+    api: ProviderApi;
+    keyOverride?: string;
+  }): Promise<FetchedProviderModel[]> {
+    const { keyOverride, ...rest } = input;
+    const out = (await core.call('providers.fetchModels', {
+      ...rest,
+      ...(keyOverride !== undefined && keyOverride.length > 0 ? { keyOverride } : {}),
+    })) as { models: FetchedProviderModel[] };
+    return out.models;
   }
 
   // --- 联网检索（docs/design/21-web-search.md） ------------------------------

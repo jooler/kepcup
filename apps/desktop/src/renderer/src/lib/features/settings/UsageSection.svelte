@@ -266,7 +266,11 @@
 
     <UsageTrendCard {stats} />
     <UsageModelDonut byModel={stats.range.byModel} />
-    <UsageCompositionCard byLoop={stats.range.byLoop} byBot={stats.range.byBot} />
+    <UsageCompositionCard
+      byLoop={stats.range.byLoop}
+      byBot={stats.range.byBot}
+      byTool={stats.range.byTool}
+    />
     <UsageAgentsCard {entries} />
   {/if}
 </section>

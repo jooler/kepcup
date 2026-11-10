@@ -1,5 +1,5 @@
 import { flushSync } from 'svelte';
-import type { TodoEntry } from '@kepcup/shared';
+import type { Memo, TodoEntry } from '@kepcup/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -12,6 +12,22 @@ const handlers = new Map<string, Set<(payload: unknown) => void>>();
 let todosResult: unknown[] = [];
 let failTodos = false;
 let failMemos = false;
+
+function memoFx(id: string, patch: Partial<Memo> = {}): Memo {
+  return {
+    id,
+    body: id,
+    pinned: false,
+    source: 'user',
+    createdAt: 1,
+    updatedAt: 1,
+    sortAt: 1,
+    deletedAt: null,
+    groupId: null,
+    position: 1,
+    ...patch,
+  };
+}
 
 vi.mock('$lib/rpc/client.svelte', () => ({
   core: {
@@ -33,6 +49,20 @@ vi.mock('$lib/rpc/client.svelte', () => ({
         case 'memos.list':
           if (failMemos) throw new Error('boom');
           return { memos: [] };
+        case 'memos.move': {
+          const p = params as { id: string; groupId: string | null };
+          return { memo: { ...memoFx(p.id), groupId: p.groupId, position: 0 } };
+        }
+        case 'memos.groups.create':
+          return {
+            group: {
+              id: 'mmg_new',
+              title: (params as { title: string }).title,
+              position: 1024,
+              createdAt: 1,
+              updatedAt: 1,
+            },
+          };
         default:
           return {};
       }
@@ -169,6 +199,57 @@ describe('输入草稿（切到对话再切回不丢）', () => {
     expect(workbench.memoDraft).toBe('买咖啡豆');
     expect(workbench.memoQuery).toBe('咖啡');
     expect(workbench.todoDraft).toBe('周五前交周报');
+  });
+});
+
+describe('备忘 tab 与「移动到」', () => {
+  beforeEach(() => {
+    workbench.memos = [];
+    workbench.memoGroups = [];
+    workbench.activeMemoTabId = null;
+  });
+
+  it('当前 tab 挂载 / 卸载都不清：切到对话再切回，停在原 tab', () => {
+    workbench.activeMemoTabId = 'mmg_work';
+    detach = workbench.attach();
+    detach();
+    detach = null;
+    expect(workbench.activeMemoTabId).toBe('mmg_work');
+  });
+
+  it('moveMemoToGroup：落到目标组顶部（锚点 = 目标组第一条）并乐观上屏', async () => {
+    workbench.memos = [
+      memoFx('a', { groupId: 'g1', position: 10 }),
+      memoFx('b', { groupId: 'g1', position: 20 }),
+      memoFx('c', { position: 5 }),
+    ];
+    const moving = workbench.moveMemoToGroup('c', 'g1');
+    // RPC 返回前已上屏：c 进 g1，position 落在 a 之前。
+    const optimistic = workbench.memos.find((m) => m.id === 'c');
+    expect(optimistic?.groupId).toBe('g1');
+    expect(optimistic!.position).toBeLessThan(10);
+    await moving;
+    expect(calls.filter((c) => c.method === 'memos.move').map((c) => c.params)).toEqual([
+      { id: 'c', groupId: 'g1', beforeId: 'a' },
+    ]);
+  });
+
+  it('moveMemoToGroup：移回未分组（空组 → 锚点 null = 组尾）；已在目标组 / 不存在则不发请求', async () => {
+    workbench.memos = [memoFx('a', { groupId: 'g1' })];
+    await workbench.moveMemoToGroup('a', 'g1');
+    await workbench.moveMemoToGroup('memo_missing', 'g1');
+    expect(count('memos.move')).toBe(0);
+    await workbench.moveMemoToGroup('a', null);
+    expect(calls.filter((c) => c.method === 'memos.move').map((c) => c.params)).toEqual([
+      { id: 'a', groupId: null, beforeId: null },
+    ]);
+    expect(workbench.memos.find((m) => m.id === 'a')?.groupId).toBeNull();
+  });
+
+  it('createGroup 返回新分组（调用方据此关弹框并切到新 tab），并追加到分组列表', async () => {
+    const group = await workbench.createGroup('工作');
+    expect(group?.id).toBe('mmg_new');
+    expect(workbench.memoGroups.map((g) => g.title)).toEqual(['工作']);
   });
 });
 

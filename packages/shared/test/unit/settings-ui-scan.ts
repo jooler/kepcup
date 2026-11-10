@@ -91,14 +91,15 @@ export function scanSettingsUi(featuresDir: string = FEATURES_DIR): SettingsUiSc
   const tabsList = /EXTENSION_CENTER_TABS[^=]*=\s*\[([^\]]*)\]/.exec(tabsSource)?.[1] ?? '';
 
   const panel = readFileSync(join(featuresDir, 'right-panel', 'RightPanel.svelte'), 'utf8');
-  // Bot 详情已无 tabs：下钻详情的 kind（profile / skills / access / schedules /
-  // memory / wiki / widget / watches）就是可深链的位置清单。只认 PanelDetail 联合
-  // 类型的成员行（`| { kind: '…'`），不误捕 `owner={{ kind: 'bot' }}` 之类。
-  const botPanelTabs = [
-    ...new Set(
-      [...panel.matchAll(/^\s*\|\s*\{\s*kind:\s*['"]([a-z-]+)['"]/gm)].map((match) => match[1]!),
-    ),
-  ];
+  // Bot 详情的顶层可深链位置（D116 起为两部分并集）：下钻详情的 kind（只认
+  // PanelDetail 联合类型的成员行 `| { kind: '…'`，不误捕 `owner={{ kind: 'bot' }}`
+  // 之类）+ 三 tab 条的 `PANEL_TABS`（详情 / 组件 / 任务）。
+  const drillKinds = [
+    ...panel.matchAll(/^\s*\|\s*\{\s*kind:\s*['"]([a-z-]+)['"]/gm),
+  ].map((match) => match[1]!);
+  const panelTabsMatch = /const PANEL_TABS[^=]*=\s*\[([^\]]*)\]/.exec(panel);
+  const panelTabs = panelTabsMatch !== null ? quoted(panelTabsMatch[1]!) : [];
+  const botPanelTabs = [...new Set([...drillKinds, ...panelTabs])];
 
   return {
     settingsSections,

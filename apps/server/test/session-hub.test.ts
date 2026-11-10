@@ -143,6 +143,10 @@ class RpcClient {
   call(method: string, id: string): void {
     this.ws.send(JSON.stringify({ t: 'q', m: method, a: [], i: id }));
   }
+
+  callWith(method: string, input: unknown, id: string): void {
+    this.ws.send(JSON.stringify({ t: 'q', m: method, a: [input], i: id }));
+  }
 }
 
 it('密码模式：RemoteHub 保持关闭（配对端点不建）', () => {
@@ -225,6 +229,183 @@ it('/rpc 会话：未登录升级被拒；登录后 bootstrap + system.ping + �
   reconnected.call('system.ping', 'it-2');
   await reconnected.next((message) => (message as { i?: string })?.i === 'it-2');
   reconnected.ws.close();
+});
+
+it('多客户端在线状态：两条 /rpc 连接互相可见，断开后清理', async () => {
+  const login = await post('/api/auth/login', {
+    username: 'tester',
+    password: 'a-long-enough-passphrase',
+  });
+  const freshCookie = (login.setCookie ?? []).find((value) => value.startsWith(SESSION_COOKIE));
+  expect(freshCookie).toBeDefined();
+  const cookieHeader = freshCookie?.split(';')[0] ?? '';
+
+  const first = await new RpcClient({ cookie: cookieHeader }).open();
+  const second = await new RpcClient({ cookie: cookieHeader }).open();
+  await first.next((message) => (message as { m?: string })?.m === 'core.status');
+  await second.next((message) => (message as { m?: string })?.m === 'core.status');
+
+  const entry = (clientId: string, connectionId: string, name: string) => ({
+    clientId,
+    clientName: name,
+    connectionId,
+    conversationId: 'conv-presence',
+    state: 'typing',
+  });
+  const presenceEvent =
+    (clientIds: string[]) =>
+    (message: unknown): boolean => {
+      const record = message as { m?: string; a?: unknown[] };
+      if (record.m !== 'collab.presenceChanged') return false;
+      const payload = record.a?.[0] as { entries?: Array<{ clientId: string }> } | undefined;
+      const ids = payload?.entries?.map((item) => item.clientId) ?? [];
+      return ids.length === clientIds.length && clientIds.every((id) => ids.includes(id));
+    };
+
+  first.callWith('collab.presence.update', entry('client-a', 'conn-a', 'A 的 MacBook'), 'pa-1');
+  await first.next((message) => (message as { i?: string })?.i === 'pa-1');
+  await first.next(presenceEvent(['client-a']));
+  await second.next(presenceEvent(['client-a']));
+
+  second.callWith('collab.presence.update', entry('client-b', 'conn-b', 'B 的 iPhone'), 'pb-1');
+  await second.next((message) => (message as { i?: string })?.i === 'pb-1');
+  await first.next(presenceEvent(['client-a', 'client-b']));
+  await second.next(presenceEvent(['client-a', 'client-b']));
+
+  // 断开第二条连接：宿主立即 leave，第一条收到只剩自己的列表。
+  second.ws.close(1000);
+  await first.next(presenceEvent(['client-a']));
+
+  first.ws.close(1000);
+});
+
+it('共享草稿：claim / update / force 接管 / 发送清空经会话端点同步', async () => {
+  const login = await post('/api/auth/login', {
+    username: 'tester',
+    password: 'a-long-enough-passphrase',
+  });
+  const freshCookie = (login.setCookie ?? []).find((value) => value.startsWith(SESSION_COOKIE));
+  expect(freshCookie).toBeDefined();
+  const cookieHeader = freshCookie?.split(';')[0] ?? '';
+
+  const first = await new RpcClient({ cookie: cookieHeader }).open();
+  const second = await new RpcClient({ cookie: cookieHeader }).open();
+  await first.next((message) => (message as { m?: string })?.m === 'core.status');
+  await second.next((message) => (message as { m?: string })?.m === 'core.status');
+
+  // 真实会话（管家私聊）：保证草稿表的外键与发送路径都是生产形态。
+  first.callWith('butler.ensure', {}, 'draft-butler');
+  const ensured = await first.next((message) => (message as { i?: string })?.i === 'draft-butler');
+  const conversationId = (ensured as { r?: { conversationId?: string } }).r?.conversationId;
+  expect(conversationId).toBeTruthy();
+  const conv = conversationId as string;
+
+  const claim = (clientId: string, force = false) => ({
+    conversationId: conv,
+    clientId,
+    clientName: clientId.toUpperCase(),
+    ...(force ? { force: true } : {}),
+  });
+
+  first.callWith('collab.draft.claim', claim('client-a'), 'draft-claim-a');
+  const claimed = await first.next((message) => (message as { i?: string })?.i === 'draft-claim-a');
+  expect((claimed as { r?: { lease: { ownerClientId: string } } }).r).toMatchObject({
+    lease: { ownerClientId: 'client-a' },
+  });
+
+  first.callWith(
+    'collab.draft.update',
+    {
+      conversationId: conv,
+      clientId: 'client-a',
+      baseVersion: 0,
+      doc: {
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: 'draft text' }] }],
+      },
+      mentions: [],
+    },
+    'draft-update-a',
+  );
+  const updated = await first.next(
+    (message) => (message as { i?: string })?.i === 'draft-update-a',
+  );
+  expect((updated as { r?: { version?: number } }).r?.version).toBe(1);
+
+  const changed = await second.next((message) => {
+    const record = message as { m?: string; a?: unknown[] };
+    if (record.m !== 'collab.draftChanged') return false;
+    const payload = record.a?.[0] as { draft?: { version?: number } } | undefined;
+    return payload?.draft?.version === 1;
+  });
+  expect(changed).toBeDefined();
+
+  // 竞争失败（服务端回 DRAFT_BUSY）；随后显式接管，持有者 A 收到 ownerChanged。
+  second.callWith('collab.draft.claim', claim('client-b'), 'draft-claim-b');
+  const busy = await second.next((message) => (message as { i?: string })?.i === 'draft-claim-b');
+  expect((busy as { e?: unknown }).e).toBeDefined();
+
+  // 同一连接不能冒用另一个 clientId（身份绑定覆盖草稿，不只 presence）。
+  first.callWith('collab.draft.claim', claim('client-b'), 'draft-claim-spoof');
+  const spoof = await first.next(
+    (message) => (message as { i?: string })?.i === 'draft-claim-spoof',
+  );
+  expect((spoof as { e?: unknown }).e).toBeDefined();
+
+  second.callWith('collab.draft.claim', claim('client-b', true), 'draft-force-b');
+  await second.next((message) => (message as { i?: string })?.i === 'draft-force-b');
+
+  const owner = await first.next((message) => {
+    const record = message as { m?: string; a?: unknown[] };
+    if (record.m !== 'collab.draftOwnerChanged') return false;
+    const payload = record.a?.[0] as { owner?: { id?: string } } | undefined;
+    return payload?.owner?.id === 'client-b';
+  });
+  expect(owner).toBeDefined();
+
+  second.callWith(
+    'collab.draft.send',
+    {
+      conversationId: conv,
+      clientId: 'client-b',
+      baseVersion: 1,
+      text: 'hello from draft',
+      client: { id: 'client-b', name: 'B 的 iPhone' },
+    },
+    'draft-send-b',
+  );
+  const sent = await second.next((message) => (message as { i?: string })?.i === 'draft-send-b');
+  expect(sent).toBeDefined();
+  const cleared = await first.next((message) => {
+    const record = message as { m?: string; a?: unknown[] };
+    if (record.m !== 'collab.draftCleared') return false;
+    const payload = record.a?.[0] as { conversationId?: string } | undefined;
+    return payload?.conversationId === conv;
+  });
+  expect(cleared).toBeDefined();
+
+  second.callWith('collab.draft.get', { conversationId: conv }, 'draft-get-b');
+  const got = await second.next((message) => (message as { i?: string })?.i === 'draft-get-b');
+  expect((got as { r?: { lease: unknown; draft: { version: number } } }).r).toMatchObject({
+    lease: null,
+    draft: { version: 0 },
+  });
+
+  // D121：消息带发送客户端归属。
+  first.callWith('messages.list', { conversationId: conv, limit: 20 }, 'draft-messages');
+  const listed = await first.next((message) => (message as { i?: string })?.i === 'draft-messages');
+  const messages = (
+    listed as {
+      r?: {
+        messages: Array<{ content?: { text?: string; client?: { id: string; name: string } } }>;
+      };
+    }
+  ).r?.messages;
+  const sentMessage = messages?.find((message) => message.content?.text === 'hello from draft');
+  expect(sentMessage?.content?.client).toEqual({ id: 'client-b', name: 'B 的 iPhone' });
+
+  first.ws.close(1000);
+  second.ws.close(1000);
 });
 
 it('跨源 /rpc 升级被拒（CSWSH 纵深，即使带上有效 Cookie）', async () => {

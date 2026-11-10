@@ -17,7 +17,7 @@
     DialogHeader,
     DialogTitle,
   } from '$lib/components/ui/dialog';
-  import { agentIconUrl } from './agent-icons';
+  import AgentIcon from './AgentIcon.svelte';
 
   /**
    * 一个外部智能体的目录卡片（D72，design 28 §2.2）：图标、名称、简介、许可、
@@ -65,7 +65,6 @@
   let loginInputDraft = $state('');
   let optionsBusy = $state(false);
 
-  const icon = $derived(agentIconUrl(agent.icon));
   const detected = $derived(agentsStore.options[agent.id]);
   /**
    * 默认模型：core 与渲染层版本不一致时载荷可能缺这个字段（契约里它是可选的
@@ -216,15 +215,7 @@
   data-settings-anchor={`agent-${agent.id}`}
 >
   <div class="flex items-start gap-3">
-    {#if icon !== null}
-      <img src={icon} alt="" class="size-9 shrink-0 rounded-lg" />
-    {:else}
-      <div
-        class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-sm font-medium"
-      >
-        {agent.name.slice(0, 1)}
-      </div>
-    {/if}
+    <AgentIcon icon={agent.icon} name={agent.name} size="lg" />
     <div class="min-w-0 flex-1 space-y-1">
       <div class="flex flex-wrap items-center gap-2">
         <span class="text-sm font-medium">{agent.name}</span>

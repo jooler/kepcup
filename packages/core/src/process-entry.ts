@@ -9,14 +9,12 @@ import {
 import { createCoreServices, type CoreServicesOptions } from './start.js';
 import { createRpcServer } from './rpc/server.js';
 import { AppPortRegistry } from './app-port-registry.js';
+import { withClientIdentityBinding } from './collab/identity-binding.js';
 
 /** Structural subset of Electron's MessagePortMain (core does not import Electron). */
 export interface ElectronPortLike {
   postMessage(data: unknown): void;
-  on(
-    event: 'message' | 'close',
-    listener: (event: { data: unknown }) => void,
-  ): unknown;
+  on(event: 'message' | 'close', listener: (event: { data: unknown }) => void): unknown;
   start(): void;
   close(): void;
 }
@@ -103,16 +101,34 @@ export function startCoreProcess(options: StartCoreProcessOptions = {}): void {
       wireEventBridge(services);
       if (type === 'app-port') {
         appPorts ??= new AppPortRegistry();
+        // D119/D120：记录该 app-port 上出现的客户端身份，端口关闭时清在线状态
+        // 与草稿租约；同一连接绑定首个 clientId。
+        let boundClientId: string | null = null;
+        const presenceConnections = new Map<string, string>();
+        const appMethods = withClientIdentityBinding(services.appMethods, {
+          get boundClientId() {
+            return boundClientId;
+          },
+          bindClient: (clientId, connectionId) => {
+            boundClientId = clientId;
+            if (connectionId !== null) presenceConnections.set(clientId, connectionId);
+          },
+        });
         const server = appPorts.bind({
           createServer: () =>
             createRpcServer({
               transport,
-              methods: services.appMethods,
+              methods: appMethods,
               // The renderer only sees the envelope (and often maps the code to a
               // generic i18n string): log every failed call here so the full
               // message / details land in logs/kepcup.log.
               onError: (method, error) => {
-                const record = { method, code: error.code, error: error.message, details: error.details };
+                const record = {
+                  method,
+                  code: error.code,
+                  error: error.message,
+                  details: error.details,
+                };
                 if (error.code === 'INTERNAL') services.logger.error(record, 'rpc method failed');
                 else services.logger.warn(record, 'rpc method rejected');
               },
@@ -122,6 +138,14 @@ export function startCoreProcess(options: StartCoreProcessOptions = {}): void {
         // 渲染窗口销毁 / reload 后旧端口自然关闭：出清对应 server（不再主动 close 旧绑定）。
         port.on('close', () => {
           appPorts?.remove(server);
+          for (const [clientId, connectionId] of presenceConnections) {
+            services.collabPresence.leave({ clientId, connectionId });
+            services.collabDrafts?.releaseClientConnection(clientId, connectionId);
+          }
+          if (boundClientId !== null && presenceConnections.size === 0) {
+            services.collabDrafts?.releaseClient(boundClientId);
+          }
+          presenceConnections.clear();
           services.logger.info('app port unbound');
         });
         services.logger.info('app port bound');

@@ -131,15 +131,24 @@ const api = {
   closeBotBrowser: (botId: string, conversationId: string): Promise<void> =>
     ipcRenderer.invoke('browser:close', botId, conversationId),
   /**
-   * D105 计算机操控（docs/design/52 §3）：用户 kill switch 直达 main（不经 core，
-   * core 卡死也要能停）+ helper 的 TCC 权限三态与系统设置深链（设置页引导区块）。
+   * D105 / P-B2 计算机操控（docs/design/52 §3）：用户 kill switch 直达 main（不经 core，
+   * core 卡死也要能停）+ 宿主 TCC 权限三态与系统设置深链（设置页引导区块）。
    */
   computerStop: (reason?: string): Promise<{ stopped: boolean }> =>
     ipcRenderer.invoke('computer:stop', reason),
   computerPermissionStatus: (): Promise<{
     accessibility: 'granted' | 'not-granted' | 'unknown';
     screenRecording: 'granted' | 'not-granted' | 'unknown';
+    directCapture: 'granted' | 'not-granted' | 'unknown';
   }> => ipcRenderer.invoke('computer:permissions-status'),
+  computerPermissionProbeCapture: (): Promise<{
+    status: {
+      accessibility: 'granted' | 'not-granted' | 'unknown';
+      screenRecording: 'granted' | 'not-granted' | 'unknown';
+      directCapture: 'granted' | 'not-granted' | 'unknown';
+    };
+    reason: string | null;
+  }> => ipcRenderer.invoke('computer:permissions-probe-capture'),
   computerPermissionOpen: (permission: 'accessibility' | 'screen-recording'): Promise<void> =>
     ipcRenderer.invoke('computer:permissions-open', permission),
   /** 设置页可用性行：重新握手并落盘（computer-use-capabilities.json），失败原因随结果返回。 */

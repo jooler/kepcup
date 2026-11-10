@@ -8,7 +8,7 @@ import {
   TASK_IDLE_WINDOW_CALLS,
 } from '@kepcup/shared';
 import { executeToolSafely, toolResultBlocks } from './tool-execution.js';
-import { buildModelRegistry, mapProviderError, resolveModel } from './models.js';
+import { buildModelRegistry, mapProviderError, resolveModel, type AnyModel } from './models.js';
 import { modelSessionId } from './model-session-id.js';
 import { TaskContextCompactor } from './context/compaction.js';
 import { LoopGuard } from './loop-guard.js';
@@ -66,6 +66,42 @@ function retryContext(
   };
 }
 
+/** `provider/modelId` of a resolved model (the ref form used by settings). */
+function modelKey(model: { provider: string; id: string }): string {
+  return `${model.provider}/${model.id}`;
+}
+
+/** Status-line label: the model's display name, falling back to its ref. */
+function modelDisplayName(model: { name?: string; provider: string; id: string }): string {
+  const name = typeof model.name === 'string' ? model.name.trim() : '';
+  return name.length > 0 ? name : modelKey(model);
+}
+
+/** Route re-resolutions allowed in one run (settings flapping guard). */
+const MAX_ROUTE_RESTARTS = 3;
+
+type RouteRestartResult =
+  { model: AnyModel; switched: boolean } | { failure: 'unusable' | 'limit' };
+
+/**
+ * Route-change restart wiring for one run: the retry layer reports that a
+ * same-model backoff stopped because settings / the Bot's model changed, and
+ * the handle then re-points the loop at the new route.
+ */
+interface RunRouteRestart {
+  /** A retry was stopped because the model it was for is no longer current. */
+  pending(): boolean;
+  /** The route changed but this caller cannot follow it (fixed-route run). */
+  stopped(): boolean;
+  /**
+   * New model to continue on, or why the run cannot follow the change
+   * (`unusable` = no resolvable model; `limit` = too many switches).
+   */
+  prepare(): RouteRestartResult;
+  /** Rebuild run-scoped state that was bound to the previous model / transcript. */
+  switched?(): void;
+}
+
 interface UsageShape {
   input?: number;
   output?: number;
@@ -87,21 +123,96 @@ export class PiEngine implements AgentEngine {
   }
 
   startRun(spec: RunSpec): RunHandle {
-    const models = buildModelRegistry({
+    let models = buildModelRegistry({
       settings: this.#deps.settings.get(),
       secrets: this.#deps.secrets,
       logger: this.#deps.logger,
     });
-    const model = resolveModel(models, spec.model);
+    let model = resolveModel(models, spec.model);
     // P11 browser_screenshot: images only reach models that accept them
-    // (docs/dev/phases/P11-browser.md: 不支持时只返回页面快照文本).
-    const acceptsImages =
+    // (docs/dev/phases/P11-browser.md: 不支持时只返回页面快照文本). Updated on
+    // a route restart so later tool results follow the new model.
+    let acceptsImages =
       ((model as { input?: unknown }).input as readonly string[] | undefined)?.includes('image') ===
       true;
 
     // The handle does not exist when tools are built, so tools capture it
     // through this mutable reference (assigned right after construction).
     let handleRef: RunHandleImpl | null = null;
+
+    // Route-change restart (RunSpec.currentModelRef): a retry is abandoned as
+    // soon as the Bot's model changes, and this run continues on the new model
+    // instead of failing after the countdown. `routeChanged` is only set when
+    // this run can follow a route change; fixed-route callers keep the old
+    // "stop retrying, fail" behaviour.
+    let routeChanged = false;
+    /** A fixed-route caller's model changed: stop retrying, do not restart. */
+    let routeStale = false;
+    let routeRestarts = 0;
+    const routeIsCurrent = (m: AnyModel): boolean => {
+      if (spec.currentModelRef !== undefined) {
+        const ref = spec.currentModelRef();
+        return ref !== null && ref.length > 0 && ref === modelKey(m);
+      }
+      return spec.isRouteCurrent?.() ?? true;
+    };
+    const continueRetry =
+      (m: AnyModel): (() => boolean) =>
+      () => {
+        const current = routeIsCurrent(m);
+        if (!current) {
+          if (spec.currentModelRef !== undefined) routeChanged = true;
+          else routeStale = true;
+        }
+        return current;
+      };
+    const prepareRouteRestart = (): RouteRestartResult => {
+      if (spec.currentModelRef === undefined) return { failure: 'unusable' };
+      if (routeRestarts >= MAX_ROUTE_RESTARTS) {
+        this.#deps.logger.warn(
+          { runId: spec.identity.runId, restarts: routeRestarts },
+          'model route restart limit reached; not restarting the run',
+        );
+        return { failure: 'limit' };
+      }
+      const ref = spec.currentModelRef();
+      if (ref === null || ref.length === 0) {
+        this.#deps.logger.warn(
+          { runId: spec.identity.runId },
+          'model route changed to no model; not restarting the run',
+        );
+        return { failure: 'unusable' };
+      }
+      try {
+        // Settings may have changed (a new provider instance / key), so the
+        // registry is rebuilt rather than reusing the run-start snapshot.
+        const nextModels = buildModelRegistry({
+          settings: this.#deps.settings.get(),
+          secrets: this.#deps.secrets,
+          logger: this.#deps.logger,
+        });
+        const next = resolveModel(nextModels, ref);
+        const switched = modelKey(next) !== modelKey(model);
+        models = nextModels;
+        model = next;
+        acceptsImages =
+          ((next as { input?: unknown }).input as readonly string[] | undefined)?.includes(
+            'image',
+          ) === true;
+        // Every restart counts (a ref that keeps flipping would otherwise
+        // restart without bound).
+        routeRestarts += 1;
+        routeChanged = false;
+        return { model: next, switched };
+      } catch (error) {
+        this.#deps.logger.warn(
+          { runId: spec.identity.runId, model: ref, err: error },
+          'model route changed to an unusable model; not restarting the run',
+        );
+        return { failure: 'unusable' };
+      }
+    };
+    const trackRoutes = spec.currentModelRef !== undefined || spec.isRouteCurrent !== undefined;
 
     // D93: run-scoped plan state. Only built-in pi tasks get update_plan;
     // external agents have native todo tools and subagents have bounded runs.
@@ -219,6 +330,10 @@ export class PiEngine implements AgentEngine {
             ...(result.sensitiveParams !== undefined && result.sensitiveParams.length > 0
               ? { sensitiveParams: result.sensitiveParams }
               : {}),
+            // 按工具用量估算：只有模型真的收到图片时才计入图片成本。
+            ...(acceptsImages && result.images !== undefined && result.images.length > 0
+              ? { imageCount: result.images.length }
+              : {}),
           },
         });
         return {
@@ -230,52 +345,55 @@ export class PiEngine implements AgentEngine {
 
     // D93: automatic context compaction for built-in task / subagent runs.
     // The compactor only shapes the transcript this request sees; run_steps
-    // keep the full process (design 43 §3.4).
+    // keep the full process (design 43 §3.4). Rebuilt on a route switch: the
+    // window/output limits follow the model now in use, and its cached summary
+    // indexes into the old transcript shape.
     const compaction = spec.compaction;
-    const compactor =
-      compaction !== undefined &&
-      (spec.identity.loopType === 'task' || spec.identity.loopType === 'subagent')
-        ? new TaskContextCompactor({
-            contextWindow: Number((model as { contextWindow?: unknown }).contextWindow ?? 0),
-            maxOutputTokens: Number((model as { maxTokens?: unknown }).maxTokens ?? 0),
-            toolSchemaReserveTokens: Math.max(
-              0,
-              estimateTokens(
-                JSON.stringify(
-                  piTools.map((tool) => ({
-                    name: tool.name,
-                    description: tool.description,
-                    parameters: tool.parameters,
-                  })),
-                ),
-              ),
+    const buildCompactor = (): TaskContextCompactor | null => {
+      if (compaction === undefined) return null;
+      if (spec.identity.loopType !== 'task' && spec.identity.loopType !== 'subagent') return null;
+      return new TaskContextCompactor({
+        contextWindow: Number((model as { contextWindow?: unknown }).contextWindow ?? 0),
+        maxOutputTokens: Number((model as { maxTokens?: unknown }).maxTokens ?? 0),
+        toolSchemaReserveTokens: Math.max(
+          0,
+          estimateTokens(
+            JSON.stringify(
+              piTools.map((tool) => ({
+                name: tool.name,
+                description: tool.description,
+                parameters: tool.parameters,
+              })),
             ),
-            taskBrief: spec.messages[0]?.content ?? '',
-            currentPlan: () => currentPlanText(planState),
-            complete: async ({ systemPrompt, userText, signal }) => {
-              if (compaction.modelRef.length === 0) throw new Error('no compaction model');
-              const result = await (compaction.engine ?? this).complete({
-                identity: spec.identity,
-                model: compaction.modelRef,
-                systemPrompt,
-                messages: [{ role: 'user', content: userText, timestamp: Date.now() }],
-                maxTokens: TASK_CONTEXT_SUMMARY_OUTPUT_TOKENS,
-                signal,
-                ...(compaction.isRouteCurrent !== undefined
-                  ? { isRouteCurrent: compaction.isRouteCurrent }
-                  : {}),
-              });
-              if (result.usage !== null) compaction.onUsage?.([result.usage]);
-              return { text: result.text, usage: result.usage };
-            },
-            onProgress: (text) => handleRef?.emit({ type: 'progress', payload: { text } }),
-            logger: this.#deps.logger,
-          })
-        : null;
+          ),
+        ),
+        taskBrief: spec.messages[0]?.content ?? '',
+        currentPlan: () => currentPlanText(planState),
+        complete: async ({ systemPrompt, userText, signal }) => {
+          if (compaction.modelRef.length === 0) throw new Error('no compaction model');
+          const result = await (compaction.engine ?? this).complete({
+            identity: spec.identity,
+            model: compaction.modelRef,
+            systemPrompt,
+            messages: [{ role: 'user', content: userText, timestamp: Date.now() }],
+            maxTokens: TASK_CONTEXT_SUMMARY_OUTPUT_TOKENS,
+            signal,
+            ...(compaction.isRouteCurrent !== undefined
+              ? { isRouteCurrent: compaction.isRouteCurrent }
+              : {}),
+          });
+          if (result.usage !== null) compaction.onUsage?.([result.usage]);
+          return { text: result.text, usage: result.usage };
+        },
+        onProgress: (text) => handleRef?.emit({ type: 'progress', payload: { text } }),
+        logger: this.#deps.logger,
+      });
+    };
+    let compactor = buildCompactor();
 
     const agent = new Agent({
       initialState: {
-        systemPrompt: '', // refreshed by prepareRequest before every request
+        systemPrompt: '', // set by prepareRequest on the first request (frozen per run)
         model,
         tools: piTools as unknown as AgentTool[],
         messages: spec.messages.map((m) => ({
@@ -297,14 +415,15 @@ export class PiEngine implements AgentEngine {
           }),
           // Retries (network + 408/409/429/5xx, Retry-After, backoff) happen
           // before the first token; each one shows on the run status line.
-          // A model change for this run's Bot (spec.isRouteCurrent) stops us
-          // hammering the old provider mid-backoff.
+          // A model change for this run's Bot stops us hammering the old
+          // provider mid-backoff (≤ 1 s); the handle then re-issues the
+          // request on the new model.
           fetch: createRetryingFetch({
             ...(this.#deps.modelRetry ? { policy: this.#deps.modelRetry } : {}),
             logger: this.#deps.logger,
-            context: retryContext(model, spec.identity.runId),
+            context: retryContext(m, spec.identity.runId),
             ...(options?.fetch ? { inner: options.fetch } : {}),
-            ...(spec.isRouteCurrent ? { shouldContinueRetry: spec.isRouteCurrent } : {}),
+            ...(trackRoutes ? { shouldContinueRetry: continueRetry(m) } : {}),
             onRetry: (notice) =>
               handleRef?.emit({ type: 'progress', payload: { text: retryProgressText(notice) } }),
             onRecovered: () =>
@@ -314,20 +433,54 @@ export class PiEngine implements AgentEngine {
       steeringMode: 'all',
     });
 
-    // The transcript's leading system message is the prompt; refresh it right
-    // before every request so stateful sections stay current.
+    // One run = one conversation, and prompt caching is prefix-based: pi puts a
+    // cache breakpoint on the last tool, on the system block and on the last
+    // message (pi-ai anthropic-messages.ts buildParams). Anything that changes
+    // before a breakpoint invalidates everything after it, so the system prompt
+    // is built exactly once per run — the first request — and reused
+    // byte-for-byte. A fresh run (new turn / task continuation) rebuilds it, so
+    // "每次新对话重建" still holds; run-scoped state that does change mid-run
+    // rides along as a trailing message instead of rewriting the prompt.
+    let frozenSystemPrompt: string | null = null;
+    // D93: the plan lives in run memory. It is delivered as a trailing user
+    // message, and only when it actually changed — appending never moves the
+    // prefix, so the cache survives; the compaction summary also carries it.
+    let injectedPlan = '';
     agent.prepareRequest = async ({ context }) => {
-      const basePrompt = await spec.buildSystemPrompt();
-      // D93: the plan is model-owned execution state, re-injected every turn
-      // (and never part of the compaction summary).
-      const plan = currentPlanPrompt(planState);
-      const systemPrompt = plan.length > 0 ? `${basePrompt}\n\n${plan}` : basePrompt;
+      if (frozenSystemPrompt === null) {
+        try {
+          frozenSystemPrompt = await spec.buildSystemPrompt();
+        } catch (error) {
+          // Never cache a failed build: the run cannot send a request now, and
+          // the next attempt should rebuild rather than reuse the failure.
+          this.#deps.logger.warn(
+            { error: error instanceof Error ? error.message : String(error) },
+            'run system prompt build failed',
+          );
+          throw error;
+        }
+      }
       const messages = [...context.messages];
       const first = messages[0] as { role: string } | undefined;
       if (first?.role === 'system') {
-        messages[0] = { ...(first as object), content: systemPrompt } as (typeof messages)[number];
+        messages[0] = {
+          ...(first as object),
+          content: frozenSystemPrompt,
+        } as (typeof messages)[number];
       } else {
-        messages.unshift({ role: 'system', content: systemPrompt } as (typeof messages)[number]);
+        messages.unshift({
+          role: 'system',
+          content: frozenSystemPrompt,
+        } as (typeof messages)[number]);
+      }
+      const plan = currentPlanPrompt(planState);
+      if (plan.length > 0 && plan !== injectedPlan) {
+        messages.push({
+          role: 'user',
+          content: plan,
+          timestamp: Date.now(),
+        } as (typeof messages)[number]);
+        injectedPlan = plan;
       }
       return { context: { ...context, messages } };
     };
@@ -382,7 +535,34 @@ export class PiEngine implements AgentEngine {
       return undefined;
     };
 
-    const handle = new RunHandleImpl(spec, agent, () => loopGuard?.reset());
+    const handle = new RunHandleImpl(spec, agent, () => loopGuard?.reset(), {
+      pending: () => routeChanged,
+      stopped: () => routeStale,
+      prepare: prepareRouteRestart,
+      switched: () => {
+        // Run-scoped state shaped for the previous model / transcript:
+        // - the plan was injected into the loop context as a trailing message,
+        //   which state.messages does not carry — re-inject it;
+        // - image blocks in the trigger messages depend on the model's input
+        //   capability — rebuild them for the model now in use;
+        // - the compactor's window and cached summary belong to the old model.
+        injectedPlan = '';
+        const initial = spec.messages.map((m) => ({
+          role: 'user' as const,
+          content: buildUserMessageContent(m.content, m.images, acceptsImages),
+          timestamp: m.timestamp,
+        }));
+        // The agent seeds a leading system message (tool declarations) ahead
+        // of spec.messages; keep it, replace only the trigger messages.
+        const offset = agent.state.messages[0]?.role === 'system' ? 1 : 0;
+        agent.state.messages = [
+          ...agent.state.messages.slice(0, offset),
+          ...initial,
+          ...agent.state.messages.slice(offset + spec.messages.length),
+        ];
+        compactor = buildCompactor();
+      },
+    });
     handleRef = handle;
     // The transcript already carries the trigger messages; continue() starts
     // the loop from them (prompt() would append a duplicate user message).
@@ -428,13 +608,19 @@ export class PiEngine implements AgentEngine {
           }),
         },
       );
+      // 供应商错误在非流式补全里以 stopReason='error' 返回，不抛异常。不在这里
+      // 转成 AppError，调用方（结构化输出、后台 loop）会把空回复当成「模型没按
+      // 格式回答」，真实的 429 / 401 就丢失了。
+      if (result.stopReason === 'error') {
+        throw mapProviderError(new Error(result.errorMessage ?? '模型请求失败'));
+      }
       return {
         text: textOf(result.content),
         toolCalls: result.content
           .map((b) => b as { type?: string; name?: string; arguments?: unknown })
           .filter((b) => b.type === 'toolCall')
           .map((b) => ({ name: b.name ?? '', arguments: b.arguments })),
-        usage: toUsage(result.usage),
+        usage: toUsage(result.usage, model),
         stopReason: result.stopReason,
       };
     } catch (error) {
@@ -453,16 +639,20 @@ class RunHandleImpl implements RunHandle {
   readonly #listeners = new Set<(e: EngineEvent) => void>();
   readonly #usage: EngineUsage[] = [];
   readonly #onSteer: (() => void) | undefined;
+  readonly #restart: RunRouteRestart | undefined;
   #aborted = false;
   #failure: { code: string; message: string } | null = null;
+  /** The route moved but this run could not follow it. */
+  #routeRestartFailure: 'unusable' | 'limit' | 'fixed' | null = null;
   #terminatedReason: string | null = null;
   #resolved = false;
   readonly done: Promise<RunOutcome>;
   #resolveDone!: (outcome: RunOutcome) => void;
 
-  constructor(spec: RunSpec, agent: Agent, onSteer?: () => void) {
+  constructor(spec: RunSpec, agent: Agent, onSteer?: () => void, restart?: RunRouteRestart) {
     this.#agent = agent;
     this.#onSteer = onSteer;
+    this.#restart = restart;
     this.done = new Promise<RunOutcome>((resolve) => {
       this.#resolveDone = resolve;
     });
@@ -473,6 +663,15 @@ class RunHandleImpl implements RunHandle {
       if (event.type === 'message_end') {
         const message = event.message as PiAgentMessage;
         if (message.role !== 'assistant') return;
+        // The synthetic error turn of a retry stopped by a model change is not
+        // this run's result: #tryRouteRestart drops it (restart) or settles
+        // with the route reason (fixed-route run).
+        if (
+          message.stopReason === 'error' &&
+          (this.#restart?.pending() === true || this.#restart?.stopped() === true)
+        ) {
+          return;
+        }
         this.#recordUsage(message as PiAgentMessage & { usage?: UsageShape });
         this.emit({
           type: 'assistant',
@@ -498,12 +697,75 @@ class RunHandleImpl implements RunHandle {
     });
     agent.subscribe(async (event) => {
       if (event.type === 'agent_end') {
+        // A model change stopped the retry: continue the same transcript on
+        // the new model instead of settling this attempt as failed.
+        if (this.#tryRouteRestart()) return;
         // After this point a queued steer would never be consumed — steer()
         // reports "not accepted" and the orchestrator buffers the batch.
         this.#agentEnded = true;
         this.#settle();
       }
     });
+  }
+
+  /**
+   * A retry stopped because the route changed: drop the synthetic error turn
+   * the aborted attempt appended, point the loop at the new model and continue
+   * the same transcript. The retry happens inside fetch, before the SDK sees a
+   * response, so nothing was streamed and no tool was executed for that
+   * attempt — continuing cannot duplicate visible output or replay effects.
+   */
+  #tryRouteRestart(): boolean {
+    if (this.#restart === undefined || this.#aborted || this.#failure !== null) return false;
+    if (!this.#restart.pending()) {
+      // A fixed-route caller (one that only supplied isRouteCurrent) must not
+      // follow the change; settle with a readable reason instead of the SDK's
+      // "Connection error." from the aborted attempt.
+      if (this.#restart.stopped()) this.#routeRestartFailure = 'fixed';
+      return false;
+    }
+    const messages = this.#agent.state.messages;
+    const last = messages.at(-1) as { role?: string; stopReason?: string } | undefined;
+    if (last?.role !== 'assistant' || last.stopReason !== 'error') return false;
+    const result = this.#restart.prepare();
+    if ('failure' in result) {
+      // The route moved to something this run cannot use (model removed, no
+      // provider instance, restart limit): fail with the real reason, not the
+      // aborted request's transport/SDK message.
+      this.#routeRestartFailure = result.failure;
+      return false;
+    }
+    const next = result.model;
+    this.#agent.state.messages = messages.slice(0, -1);
+    this.#agent.state.model = next;
+    this.#restart.switched?.();
+    this.emit({ type: 'route_switched', payload: { provider: next.provider, model: next.id } });
+    this.emit({
+      type: 'progress',
+      payload: {
+        text: result.switched
+          ? `模型已切换（${modelDisplayName(next)}），正在用新模型重试`
+          : '模型设置已更新，正在重试',
+      },
+    });
+    // agent_end listeners run before pi releases the active run; waitForIdle
+    // resolves right after that, then the same agent can continue.
+    void this.#agent.waitForIdle().then(() => {
+      if (this.#aborted || this.#failure !== null) {
+        this.#settle();
+        return;
+      }
+      return this.#agent.continue().catch((error: unknown) => {
+        // continue() only rejects when the transcript cannot be resumed;
+        // settle instead of leaving the run hanging with no agent_end.
+        this.#failure = {
+          code: 'PROVIDER_UNAVAILABLE',
+          message: error instanceof Error ? error.message : String(error),
+        };
+        this.#settle();
+      });
+    });
+    return true;
   }
 
   /** Called by skip_reply while a tool executes. */
@@ -551,18 +813,27 @@ class RunHandleImpl implements RunHandle {
   #recordUsage(message: PiAgentMessage & { usage?: UsageShape }): void {
     const usage = message.usage;
     if (!usage) return;
+    // Carry the model that actually produced these tokens: a run can switch
+    // models mid-way (route restart), and billing must follow the real one.
+    const source = message as { provider?: unknown; model?: unknown };
+    const provider = typeof source.provider === 'string' ? source.provider : undefined;
+    const model = typeof source.model === 'string' ? source.model : undefined;
     this.#usage.push({
       input: usage.input ?? 0,
       output: usage.output ?? 0,
       cacheRead: usage.cacheRead ?? 0,
       cacheWrite: usage.cacheWrite ?? 0,
       costUsd: usage.cost?.total ?? null,
+      ...(provider !== undefined ? { provider } : {}),
+      ...(model !== undefined ? { model } : {}),
     });
   }
 
   #settle(): void {
     if (this.#resolved) return;
     this.#resolved = true;
+    // No further loop will consume steering once this attempt settles.
+    this.#agentEnded = true;
 
     if (this.#failure !== null) {
       this.#resolveDone({
@@ -581,6 +852,25 @@ class RunHandleImpl implements RunHandle {
         finalText: '',
         skipReply: false,
         usage: this.#usage,
+      });
+      return;
+    }
+
+    if (this.#routeRestartFailure !== null) {
+      this.#resolveDone({
+        status: 'failed',
+        finalText: '',
+        skipReply: false,
+        usage: this.#usage,
+        error: {
+          code: 'PROVIDER_UNAVAILABLE',
+          message:
+            this.#routeRestartFailure === 'limit'
+              ? '本次已连续切换多次模型，没能继续；请检查模型设置后重试'
+              : this.#routeRestartFailure === 'fixed'
+                ? '模型设置已变更，本次执行已停止；请重试'
+                : '模型设置已变更，但没能切换到新模型；请检查模型设置后重试',
+        },
       });
       return;
     }
@@ -696,7 +986,7 @@ function thinkingOf(content: unknown): string {
   return result;
 }
 
-function toUsage(usage: unknown): EngineUsage | null {
+function toUsage(usage: unknown, model?: { provider: string; id: string }): EngineUsage | null {
   const u = usage as
     | {
         input?: number;
@@ -713,6 +1003,7 @@ function toUsage(usage: unknown): EngineUsage | null {
     cacheRead: u.cacheRead ?? 0,
     cacheWrite: u.cacheWrite ?? 0,
     costUsd: u.cost?.total ?? null,
+    ...(model !== undefined ? { provider: model.provider, model: model.id } : {}),
   };
 }
 

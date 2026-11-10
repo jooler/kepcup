@@ -49,7 +49,12 @@ function setup(fetchImpl: typeof fetch, usage?: Pick<UsageService, 'record'>) {
   };
   const service = new MediaService({
     settings: { get: () => SETTINGS } as unknown as SettingsService,
-    secrets: { getValue: (name: string) => KEYS[name] ?? null } as unknown as SecretsService,
+    secrets: {
+      getValue: (name: string) => KEYS[name] ?? null,
+      hasValue: (name: string) => name in KEYS,
+      names: () => Object.keys(KEYS),
+      registerRedactValue: () => {},
+    } as unknown as SecretsService,
     logger: LOGGER,
     usage: recorder as UsageService,
     fetchImpl,

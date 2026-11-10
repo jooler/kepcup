@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { SettingValues } from '@kepcup/shared';
+  import type { SandboxStatusOutput, SettingValues } from '@kepcup/shared';
   import { sandboxReasonText, t } from '$lib/i18n';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { sandboxWizard } from '$lib/stores/sandbox-wizard.svelte';
@@ -74,6 +74,18 @@
     if (backend === 'podman') return 'Podman';
     return 'WSL2';
   }
+
+  /**
+   * 「未安装」只在 CLI 缺失时成立；Lima/Podman 已装但 VM/镜像未就绪是另一回事
+   * （core 用 state 区分，旧版 core 没有 state 时保持原标签）。
+   */
+  function enhancedStatusLabel(enhanced: NonNullable<SandboxStatusOutput['enhanced']>): string {
+    if (enhanced.available) return t('settings.sandboxEnhancedAvailable');
+    if (enhanced.state === undefined || enhanced.state === 'cli_missing') {
+      return t('settings.sandboxEnhancedMissing');
+    }
+    return t('settings.sandboxEnhancedNotReady');
+  }
 </script>
 
 <section
@@ -106,9 +118,7 @@
           variant={status.enhanced.available ? 'default' : 'outline'}
           data-testid="sandbox-enhanced-state"
         >
-          {status.enhanced.available
-            ? t('settings.sandboxEnhancedAvailable')
-            : t('settings.sandboxEnhancedMissing')}
+          {enhancedStatusLabel(status.enhanced)}
         </Badge>
         <span class="text-xs text-muted-foreground" data-testid="sandbox-enhanced-backend">
           {t('settings.sandboxEnhancedLabel', { backend: enhancedLabel(status.enhanced.backend) })}

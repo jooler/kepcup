@@ -128,11 +128,9 @@ const wakeWith = (fragment: string) => (req: MockChatRequest) =>
  * 模型，消息原样派成任务，失败发一条简短说明、结果原文转发。
  */
 describe('external agent in-chat setup (P4-B, D58)', () => {
-  it('experimental off / not enabled fail the task with a structured agent setup; retry continues it after setup', async () => {
+  it('not enabled fails the task with a structured agent setup; retry continues it after enabling', async () => {
     const stack = await start({ turns: [agentTurn().text('你好，我是外援。')] });
-    await stack.core.rpc.call('settings.update', { experimental: { externalAgents: true } });
     const bot = await useAgent(stack, await makeBot(stack.core, '外援'), 'fake');
-    await stack.core.rpc.call('settings.update', { experimental: { externalAgents: false } });
     const conv = await openDirect(stack.core, bot.id);
     const sourceIds = () =>
       stack.core.services
@@ -155,15 +153,14 @@ describe('external agent in-chat setup (P4-B, D58)', () => {
         .inTurn()
         .expect((req) => triggerOf(req).includes('在吗'))
         .replyText('ACK 我问问外援'),
-      step().inTurn().expect(wakeWith('（失败）')).replyText('FAIL-1 外援还没设置好'),
-      step().inTurn().expect(wakeWith('（失败）')).replyText('FAIL-2 外援还没启用'),
+      step().inTurn().expect(wakeWith('（失败）')).replyText('FAIL-1 外援还没启用'),
       step().inTurn().expect(wakeWith('（结果）')).replyText('RELAY 外援说：你好，我是外援。'),
     ]);
 
     await sendBatch(stack.core, conv.id, ['在吗']);
-    const off = await waitForRun(stack.core, conv.id, 'failed', { loopType: 'task' });
-    expect(off.setup).toEqual({ kind: 'agent', agentId: 'fake', reason: 'experimental_off' });
-    expect(off.error ?? '').toContain('实验');
+    const notEnabled = await waitForRun(stack.core, conv.id, 'failed', { loopType: 'task' });
+    expect(notEnabled.setup).toEqual({ kind: 'agent', agentId: 'fake', reason: 'not_enabled' });
+    expect(notEnabled.error ?? '').toContain('未启用');
     await waitForMessage(stack.core, conv.id, (m) => textOf(m).includes('FAIL-1'));
     // The turns themselves ran on the built-in engine and succeeded.
     const turns = await waitFor(
@@ -174,27 +171,20 @@ describe('external agent in-chat setup (P4-B, D58)', () => {
       { label: 'starting and waking turns settled' },
     );
     expect(turns.map((r) => r.engine)).toEqual(['builtin', 'builtin']);
-
-    // 设置卡第一步：打开实验开关 → 自动重试（接续的新任务），此时 Agent 尚未启用。
-    await stack.core.rpc.call('settings.update', { experimental: { externalAgents: true } });
-    const retried = await retry(stack, off.id);
-    expect(retried).toMatchObject({ loopType: 'task', continuedFromRunIds: [off.id] });
-    const notEnabled = await nextSettledTask(stack, conv.id, [off.id]);
-    expect(notEnabled.id).toBe(retried.id);
-    expect(notEnabled.status).toBe('failed');
-    expect(notEnabled.setup).toEqual({ kind: 'agent', agentId: 'fake', reason: 'not_enabled' });
     // 门禁在开跑前拦下：Agent 进程从未被启动。
     expect(stack.record().sessions).toHaveLength(0);
 
-    // 设置卡第二步：启用 → 自动重试 → 原消息得到 Agent 的回复（经对话轮转发）。
+    // 设置卡：启用 → 自动重试 → 原消息得到 Agent 的回复（经对话轮转发）。
     await stack.core.rpc.call('settings.update', { agents: { fake: { enabled: true } } });
-    await retry(stack, notEnabled.id);
-    const done = await nextSettledTask(stack, conv.id, [off.id, notEnabled.id]);
+    const retried = await retry(stack, notEnabled.id);
+    expect(retried).toMatchObject({ loopType: 'task', continuedFromRunIds: [notEnabled.id] });
+    const done = await nextSettledTask(stack, conv.id, [notEnabled.id]);
+    expect(done.id).toBe(retried.id);
     expect(done.status).toBe('completed');
     expect(done.setup).toBeNull();
     expect(done.engine).toBe('agent:fake');
-    expect(done.triggerMessageIds).toEqual(off.triggerMessageIds);
-    expect(off.triggerMessageIds).toHaveLength(1);
+    expect(done.triggerMessageIds).toEqual(notEnabled.triggerMessageIds);
+    expect(notEnabled.triggerMessageIds).toHaveLength(1);
     // §6.1 2026-11 修订：the report stays on the card; the turn's reply is the
     // summary, and no verbatim task-origin message appears in the chat.
     const summary = await waitForMessage(
@@ -215,7 +205,6 @@ describe('external agent in-chat setup (P4-B, D58)', () => {
       { KEPCUP_MOCK_LLM_URL: '' },
     );
     await stack.core.rpc.call('settings.update', {
-      experimental: { externalAgents: true },
       agents: { 'fake-sub': { enabled: true } },
       backgroundTasks: { agentEnabled: false },
     });
@@ -292,7 +281,6 @@ describe('agent failures after visible work stay ordinary failures (review #4)',
       { KEPCUP_MOCK_LLM_URL: '' },
     );
     await stack.core.rpc.call('settings.update', {
-      experimental: { externalAgents: true },
       agents: { fake: { enabled: true } },
       backgroundTasks: { agentEnabled: false },
     });
@@ -321,7 +309,6 @@ describe('onboarding default agent (P4-B)', () => {
       stack.core.rpc.call('settings.update', { defaultAgentId: 'not-in-catalog' }),
     ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
     await stack.core.rpc.call('settings.update', {
-      experimental: { externalAgents: true },
       agents: { 'fake-sub': { enabled: true }, fake: { enabled: true } },
       defaultAgentId: 'fake-sub',
     });
@@ -356,7 +343,6 @@ describe('background loops without a built-in model (P4-B minimal fallback)', ()
   it('reflection / summary jobs are skipped when background agents are off: no failed run, jobs done', async () => {
     const stack = await start({ turns: [agentTurn().text('收到。')] }, { KEPCUP_MOCK_LLM_URL: '' });
     await stack.core.rpc.call('settings.update', {
-      experimental: { externalAgents: true },
       agents: { fake: { enabled: true } },
       // P6：后台任务默认改走外部 Agent；关闭后回到 P4 的优雅跳过。
       backgroundTasks: { agentEnabled: false },

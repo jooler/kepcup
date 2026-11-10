@@ -1723,6 +1723,31 @@ describe('工作台备忘', () => {
     expect(codeOf(() => memos.update('memo_none', { body: 'x' }))).toBe('NOT_FOUND');
   });
 
+  it('create 带 groupId：分组必须存在；缺省 = 未分组（tab 新建落当前分组）', () => {
+    const { rig, memos } = memoRig();
+    expect(codeOf(() => memos.create({ body: 'x', groupId: 'mmg_none' }))).toBe('NOT_FOUND');
+    const g = memos.createGroup('工作');
+    const a = memos.create({ body: '进工作', groupId: g.id });
+    expect(a).toMatchObject({ groupId: g.id, source: 'user' });
+    rig.clock.advance(1000);
+    const b = memos.create({ body: '未分组' });
+    expect(b.groupId).toBeNull();
+    const inGroup = (groupId: string | null): string[] =>
+      memos
+        .list()
+        .filter((m) => m.groupId === groupId)
+        .map((m) => m.id);
+    // 列表（跨组）置顶在前；分组归属互不干扰。
+    expect(memos.list().map((m) => m.id)).toEqual([b.id, a.id]);
+    expect(inGroup(g.id)).toEqual([a.id]);
+    expect(inGroup(null)).toEqual([b.id]);
+    // 组内再建一条：插到组顶。
+    rig.clock.advance(1000);
+    const c = memos.create({ body: '再进工作', groupId: g.id });
+    expect(inGroup(g.id)).toEqual([c.id, a.id]);
+    expect(inGroup(null)).toEqual([b.id]);
+  });
+
   it('软删进最近删除、可恢复回原位；删除 / 恢复幂等；最近删除里的备忘不能编辑', () => {
     const { rig, memos } = memoRig();
     const a = memos.create({ body: 'A' });

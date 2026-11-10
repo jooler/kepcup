@@ -5,7 +5,7 @@
 ## 入口与层级
 
 - 任务卡卡面（按钮、链接、输入控件以外）点击打开任务详情页；卡底入口是同一入口，也是键盘入口（Enter / Space）：已完成的任务显示「任务已完成，点击查看执行报告」，其余状态显示「查看执行过程 ›」。拖选卡片文字不会触发打开。
-- 打开后主区的当前对话组件保留在 DOM 中，以 `display: none` 隐藏；任务执行过程页占用同一主区。右栏随对话组件一起隐藏。
+- 打开后主区的当前对话组件保留在 DOM 中，以 `display: none` 隐藏；任务执行过程页占用中间对话区。**D116 修订：右栏（Bot 详情）保持可见**——任务详情与对话同属中间区视图，右栏不再随之隐藏（窄屏无并排右栏，任务页仍是全屏详情层）。
 - 顶部返回按钮或 Esc 返回对话，焦点回到触发入口（卡底按钮）。任务详情页**按会话记忆**：切换会话（`chat.select`）只切到目标会话自己的页面（它没有打开任务页时显示消息列表），离开的会话保留原页面，切回来原地恢复、不再回到消息列表。显式返回（返回按钮 / Esc）才丢弃该会话的记忆；关闭会话（`chat.close`，含删除会话 / 删除 Bot）一并丢弃。窄屏返回列表（`chat.leaveCurrent`）与主区卸载（切工作台、窄屏换 tab、宽窄切换）只退出可见层、不丢弃记忆，重新进入该会话时恢复。除显式返回外都不回焦。
 
 实现位置：
@@ -59,6 +59,14 @@ metadata 行按可用字段展示：
 - 数据源是当前会话 session 的 messages（主页面回退 `chat.main`，卡片弹层是弹层自己的 ChatSession），经 `pendingTaskQuestionOf(messages, taskId)` 取该任务绑定、`content.answer` 尚未回写的最新一条；`message.created` / `message.updated` 事件保持与对话同源实时。
 - 卡片复用对话里的 `TaskQuestionCard`，点选 / 多选 / 表单回答直接注入任务（`tasks.answer`），答完卡带上 `answer`，提问条随之收起；没有未答提问或任务已终态（提问作废，时间线里有终态说明）时不渲染。
 - core 保证一个任务同时最多一个未答问题（上一个没答时 `ask_user` 直接拒绝），提问条至多一张卡。
+
+## 注入坞（D115 用户直注）
+
+页面最底部（提问卡条、审批条之下，最后一位）固定渲染**注入坞**（`task-run-inject`）：非终态任务（`isActiveTask`：submitted / running，含等待审批 / 等租约 / 等提问的运行中形态）才渲染，终态隐藏。用户在此直接给任务追加指令，经 `tasks.inject` RPC 直达 `TaskHost.injectById`（[56](56-task-steering-and-bot-detail-tabs.md) §1）——语义与对话轮的 `inject_task` 完全一致：
+
+- 文本上限 `TASK_INSTRUCTION_MAX_CHARS`（8000）；Enter 发送、Shift+Enter 换行，发送中禁用。
+- 任务在等提问时提示「发送的内容将作为回答」——自由文本走注入（core 内部转 `#resolveQuestion`），结构化选项走上方提问卡，两者并存。
+- `delivered` → toast「已追加到任务」（运行中的任务随即出现右对齐「追加指令」steer 气泡；未启动的并入简报）；`queued` → toast 警示「未送达：该任务使用的智能体不支持中途插入，任务结束后生效」，与任务卡注入行「未送达」同一口径；失败 toast 错误原文。
 
 ## 执行报告
 
@@ -115,7 +123,7 @@ metadata 行按可用字段展示：
 
 ## 布局
 
-- 宽屏：执行过程页占满原对话区（含原本右栏的位置），内容区居中，最大宽度与消息列表一致（`max-w-3xl`）。
+- 宽屏：执行过程页只占原对话区（中间 pane；D116 修订——右栏保持可见），内容区居中，最大宽度与消息列表一致（`max-w-3xl`）。
 - 窄屏：沿用窄屏详情层——占满详情区、不渲染底部 tab 栏；macOS 下顶栏为红绿灯留出左侧空间。
 - 顶部为拖动区（`app-drag`），返回按钮等交互元素为 `app-no-drag`。
 
@@ -123,7 +131,8 @@ metadata 行按可用字段展示：
 
 | 文件 | 内容 |
 |---|---|
-| `apps/desktop/src/renderer/src/lib/features/tasks/TaskRunView.svelte` | 执行过程页外壳、顶部 metadata、步骤读取与实时刷新、时间线渲染、提问卡条、审批卡条 |
+| `apps/desktop/src/renderer/src/lib/features/tasks/TaskRunView.svelte` | 执行过程页外壳、顶部 metadata、步骤读取与实时刷新、时间线渲染、提问卡条、审批卡条、注入坞接线 |
+| `apps/desktop/src/renderer/src/lib/features/tasks/TaskInjectDock.svelte` | D115 注入坞：文本框 + 发送（`tasks.inject`），delivered / queued / 失败反馈 |
 | `apps/desktop/src/renderer/src/lib/features/tasks/TaskPlanPanel.svelte` | D93 计划入口：右上角绿色「任务清单」按钮 + 浮层（`update_plan` 的最新计划；完成计数、只读清单） |
 | `apps/desktop/src/renderer/src/lib/features/tasks/TaskRunToolGroup.svelte` | 连续工具调用的分组卡：标题计数、单行命令条目、逐条展开 |
 | `apps/desktop/src/renderer/src/lib/features/tasks/TaskRunToolCard.svelte` | 展开后的单次调用卡：原始命令 + hover 复制按钮 + 结果 |

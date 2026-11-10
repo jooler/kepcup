@@ -46,8 +46,16 @@ export class MemoService {
     return this.#getOrThrow(id);
   }
 
-  create(input: { body: string; source?: TodoSource | undefined }): Memo {
-    const memo = this.#deps.store.insert({ body: cleanBody(input.body), source: input.source ?? 'user' });
+  create(input: { body: string; source?: TodoSource | undefined; groupId?: string | undefined }): Memo {
+    const groupId = input.groupId;
+    if (groupId !== undefined && this.#deps.store.getGroup(groupId) === null) {
+      throw new AppError('NOT_FOUND', `备忘分组 ${groupId} 不存在`);
+    }
+    const memo = this.#deps.store.insert({
+      body: cleanBody(input.body),
+      source: input.source ?? 'user',
+      ...(groupId !== undefined ? { groupId } : {}),
+    });
     this.#changed(memo.id);
     return memo;
   }

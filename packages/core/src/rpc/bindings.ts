@@ -15,9 +15,14 @@ import {
   settingsUpdateInputSchema,
   inkcopHealthOutputSchema,
   inkcopListAgentsOutputSchema,
+  providersAddKeyInputSchema,
+  providersRemoveKeyAtInputSchema,
   providersSetKeyInputSchema,
+  providersSetKeyMetaInputSchema,
   providerNameInputSchema,
   providersTestInputSchema,
+  providersFetchModelsInputSchema,
+  providersFetchModelsOutputSchema,
   providersListOutputSchema,
   okOutputSchema,
   shareFailedListInputSchema,
@@ -35,6 +40,18 @@ import {
   remoteConfigGetOutputSchema,
   remoteConfigSetInputSchema,
   remoteConfigSetOutputSchema,
+  collabPresenceUpdateInputSchema,
+  collabPresenceLeaveInputSchema,
+  collabPresenceListInputSchema,
+  collabPresenceListOutputSchema,
+  collabDraftClaimInputSchema,
+  collabDraftClaimOutputSchema,
+  collabDraftGetInputSchema,
+  collabDraftGetOutputSchema,
+  collabDraftReleaseInputSchema,
+  collabDraftSendInputSchema,
+  collabDraftUpdateInputSchema,
+  collabDraftUpdateOutputSchema,
   botsListOutputSchema,
   botGetOutputSchema,
   botsCreateInputSchema,
@@ -75,6 +92,11 @@ import {
   tasksActiveInputSchema,
   tasksActiveOutputSchema,
   tasksAnswerInputSchema,
+  tasksInjectInputSchema,
+  tasksInjectOutputSchema,
+  tasksListByBotInputSchema,
+  tasksListByBotOutputSchema,
+  tasksUsageOutputSchema,
   interviewAnswerInputSchema,
   interviewAnswerOutputSchema,
   interviewAnswerPathInputSchema,
@@ -149,6 +171,7 @@ import {
   sandboxStatusOutputSchema,
   sandboxWslStatusOutputSchema,
   sandboxWslSkipOutputSchema,
+  sandboxLimaStatusOutputSchema,
   approvalsListInputSchema,
   approvalsListOutputSchema,
   approvalsDecideInputSchema,
@@ -326,6 +349,7 @@ import {
 } from '@kepcup/shared';
 import type { CoreServices } from '../start.js';
 import type { RemoteHub } from '../remote/hub.js';
+import type { DraftService } from '../collab/drafts.js';
 import { assertPluginServersIntact } from '../plugins/guards.js';
 import type { WatchService } from '../watch/service.js';
 import type { MemoService } from '../workbench/memo-service.js';
@@ -333,6 +357,7 @@ import type { TodoService } from '../workbench/todo-service.js';
 import type { BoardService } from '../board/board-service.js';
 import type { RpcMethodSpec } from './server.js';
 import type { WslStatusReport } from '../sandbox/wsl/setup.js';
+import type { LimaStatusReport } from '../sandbox/lima/setup.js';
 import { localDateKey } from '../memory/local-date.js';
 import { buildUsageStats } from '../domain/usage-stats.js';
 import { assertAgentSelectable } from '../agent/external/catalog.js';
@@ -384,6 +409,26 @@ const WSL_NOT_APPLICABLE = {
   install: 'not_installed',
   distro: 'absent',
 } as const;
+
+/** macOS 增强沙箱向导在非 darwin 上的输出（向导显示只读增强级状态）。 */
+const LIMA_NOT_APPLICABLE = {
+  applicable: false,
+  phase: 'idle',
+  instance: 'missing',
+  action: 'none',
+} as const;
+
+function limaStatusOutput(report: LimaStatusReport): z.infer<typeof sandboxLimaStatusOutputSchema> {
+  return {
+    applicable: true,
+    phase: report.phase,
+    instance: report.instance,
+    action: report.action,
+    ...(report.reason !== undefined ? { reason: report.reason } : {}),
+    ...(report.fixHint !== undefined ? { fixHint: report.fixHint } : {}),
+    ...(report.progress !== undefined ? { progress: report.progress } : {}),
+  };
+}
 
 /** Maps the state-machine report to the wizard RPC output shape. */
 function wslStatusOutput(
@@ -552,7 +597,6 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
           const current = domain.settings.get();
           const {
             onboarding: onboardingPatch,
-            experimental: experimentalPatch,
             apps: appsPatch,
             agents: agentsPatch,
             backgroundTasks: backgroundTasksPatch,
@@ -586,14 +630,6 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
                         agentSettingSchema.parse({ ...(current.agents[id] ?? {}), ...value }),
                       ]),
                     ),
-                  },
-                }
-              : {}),
-            ...(experimentalPatch !== undefined
-              ? {
-                  experimental: {
-                    externalAgents:
-                      experimentalPatch.externalAgents ?? current.experimental.externalAgents,
                   },
                 }
               : {}),
@@ -667,6 +703,29 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       domain.providers.setKey(input.provider, input.key);
       return { ok: true as const };
     }),
+    'providers.addKey': method(providersAddKeyInputSchema, okOutputSchema, async (input) => {
+      domain.providers.addKey(input.provider, input.key);
+      return { ok: true as const };
+    }),
+    'providers.removeKeyAt': method(
+      providersRemoveKeyAtInputSchema,
+      okOutputSchema,
+      async (input) => {
+        domain.providers.removeKeyAt(input.provider, input.index);
+        return { ok: true as const };
+      },
+    ),
+    'providers.setKeyMeta': method(
+      providersSetKeyMetaInputSchema,
+      okOutputSchema,
+      async (input) => {
+        domain.providers.setKeyMeta(input.provider, input.index, {
+          ...(input.alias !== undefined ? { alias: input.alias } : {}),
+          ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+        });
+        return { ok: true as const };
+      },
+    ),
     'providers.removeKey': method(providerNameInputSchema, okOutputSchema, async (input) => {
       domain.providers.removeKey(input.provider);
       return { ok: true as const };
@@ -675,6 +734,11 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       await domain.providers.test(input.provider, input.model, input.capability, input.keyOverride);
       return { ok: true as const };
     }),
+    'providers.fetchModels': method(
+      providersFetchModelsInputSchema,
+      providersFetchModelsOutputSchema,
+      async (input) => ({ models: await domain.providers.fetchModels(input) }),
+    ),
 
     // --- 统一媒体调用：网关按模型引用的厂商自动路由 -------------------------
     'media.generateImage': method(
@@ -848,11 +912,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       bot: domain.bots.get(input.id),
     })),
     'bots.create': method(botsCreateInputSchema, botGetOutputSchema, async (input) => {
-      assertAgentSelectable(
-        domain.settings.get(),
-        services.agents?.catalog() ?? [],
-        input.profile.runtime.agent.id,
-      );
+      assertAgentSelectable(services.agents?.catalog() ?? [], input.profile.runtime.agent.id);
       // The setup interview drives save_profile / finish_setup host tools that
       // an external agent never receives (P1/P2) — it would stay interviewing.
       if (input.interview && input.profile.runtime.agent.id.length > 0) {
@@ -1253,6 +1313,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}),
         ...(input.attachmentIds !== undefined ? { attachmentIds: input.attachmentIds } : {}),
         ...(input.voiceMode !== undefined ? { voiceMode: input.voiceMode } : {}),
+        ...(input.client !== undefined ? { client: input.client } : {}),
       }),
     ),
 
@@ -1387,6 +1448,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
               available: enhanced.available,
               ...(enhanced.reason !== undefined ? { reason: enhanced.reason } : {}),
               ...(enhanced.fixHint !== undefined ? { fixHint: enhanced.fixHint } : {}),
+              ...(enhanced.state !== undefined ? { state: enhanced.state } : {}),
             }
           : null;
       return {
@@ -1443,6 +1505,20 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       return { skipped: true };
     }),
 
+    // --- macOS 增强沙箱准备（Lima：创建 → 启动 → 初始化） ---------------------
+    // 与 wsl* 一样是 void-input；prepare 立即返回、向导轮询进度。
+    'sandbox.limaStatus': method(voidInput, sandboxLimaStatusOutputSchema, async () => {
+      const setup = services.limaSetup;
+      if (setup === null) return LIMA_NOT_APPLICABLE;
+      return limaStatusOutput(await setup.status());
+    }),
+
+    'sandbox.limaPrepare': method(voidInput, sandboxLimaStatusOutputSchema, async () => {
+      const setup = services.limaSetup;
+      if (setup === null) return LIMA_NOT_APPLICABLE;
+      return limaStatusOutput(await setup.prepare());
+    }),
+
     'approvals.list': method(
       approvalsListInputSchema,
       approvalsListOutputSchema,
@@ -1463,6 +1539,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
           input.routineSelection,
           input.handoverSelection,
           input.leadBotId,
+          input.client,
         ),
       }),
     ),
@@ -1497,6 +1574,33 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       orchestrator.tasks.answerQuestion(input.messageId, input.answer, input.values);
       return { ok: true as const };
     }),
+    // D115 任务直注（任务详情页注入坞，docs/design/56 §1）：用户自由文本直达
+    // TaskHost.injectById，复用 inject_task 全部语义。
+    'tasks.inject': method(tasksInjectInputSchema, tasksInjectOutputSchema, async (input) =>
+      orchestrator.tasks.injectById(input.taskId, input.text),
+    ),
+    // D116 Bot 详情「任务」tab：该 Bot 拉起的任务全集（跨对话），最新在前。
+    'tasks.listByBot': method(
+      tasksListByBotInputSchema,
+      tasksListByBotOutputSchema,
+      async (input) => ({
+        tasks: orchestrator.tasks.listByBotViews(input.botId, input.limit),
+      }),
+    ),
+    // 任务详情页的上下文用量：账本按 run_id（= task.id）聚合。上下文窗口按最近
+    // 一次主循环的 provider/model 从模型目录查（内置目录 + 供应商实例都覆盖）；
+    // 查不到留空——前端只显示 token 数，不套默认窗口。
+    'tasks.usage': method(taskIdInputSchema, tasksUsageOutputSchema, async (input) => ({
+      usage: services.domain!.usage.usageForRun(input.taskId, (provider, model) => {
+        try {
+          const info = services.domain!.providers.list().find((entry) => entry.id === provider);
+          const found = info?.models.find((entry) => entry.id === model);
+          return found !== undefined ? found.contextWindow : null;
+        } catch {
+          return null;
+        }
+      }),
+    })),
     // W2 外部副作用台账（W3 检查后重试面板）：任务沿续接链的 tool_effects 行。
     'effects.list': method(taskIdInputSchema, effectsListOutputSchema, async (input) => ({
       effects: domain.effects.listForTask(input.taskId),
@@ -2115,7 +2219,11 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       groups: input.trashed === true ? [] : requireMemos(services).listGroups(),
     })),
     'memos.create': method(memosCreateInputSchema, memosMemoOutputSchema, async (input) => ({
-      memo: requireMemos(services).create({ body: input.body, source: 'user' }),
+      memo: requireMemos(services).create({
+        body: input.body,
+        source: 'user',
+        ...(input.groupId !== undefined ? { groupId: input.groupId } : {}),
+      }),
     })),
     'memos.update': method(memosUpdateInputSchema, memosMemoOutputSchema, async (input) => ({
       memo: requireMemos(services).update(input.id, {
@@ -2358,6 +2466,53 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       remoteConfigSetOutputSchema,
       async (input) => requireRemote(services).configSet(input),
     ),
+    // D119 多客户端在线状态：纯内存，本机与远程端点同一份 handlers。
+    'collab.presence.update': method(
+      collabPresenceUpdateInputSchema,
+      okOutputSchema,
+      async (input) => {
+        services.collabPresence.update(input);
+        return { ok: true as const };
+      },
+    ),
+    'collab.presence.leave': method(
+      collabPresenceLeaveInputSchema,
+      okOutputSchema,
+      async (input) => {
+        services.collabPresence.leave(input);
+        return { ok: true as const };
+      },
+    ),
+    'collab.presence.list': method(
+      collabPresenceListInputSchema,
+      collabPresenceListOutputSchema,
+      async (input) => ({ entries: services.collabPresence.list(input.conversationId) }),
+    ),
+    // D120 共享草稿：单写者租约 + 版本化快照；发送原子清草稿。
+    'collab.draft.get': method(
+      collabDraftGetInputSchema,
+      collabDraftGetOutputSchema,
+      async (input) => requireCollabDrafts(services).get(input.conversationId),
+    ),
+    'collab.draft.claim': method(
+      collabDraftClaimInputSchema,
+      collabDraftClaimOutputSchema,
+      async (input) => requireCollabDrafts(services).claim(input),
+    ),
+    'collab.draft.update': method(
+      collabDraftUpdateInputSchema,
+      collabDraftUpdateOutputSchema,
+      async (input) => requireCollabDrafts(services).update(input),
+    ),
+    'collab.draft.release': method(collabDraftReleaseInputSchema, okOutputSchema, async (input) => {
+      requireCollabDrafts(services).release(input);
+      return { ok: true as const };
+    }),
+    'collab.draft.send': method(
+      collabDraftSendInputSchema,
+      messagesSendOutputSchema,
+      async (input) => requireCollabDrafts(services).send(input),
+    ),
     // 对话内应用设置：settings.items.apply 与设置卡动作。
     ...bindSettingsCatalogMethods(services),
   };
@@ -2379,6 +2534,11 @@ function requireBoard(services: CoreServices): BoardService {
 function requireRemote(services: CoreServices): RemoteHub {
   if (!services.remote) throw new AppError('NOT_IMPLEMENTED', '远程遥控服务未就绪');
   return services.remote;
+}
+
+function requireCollabDrafts(services: CoreServices): DraftService {
+  if (services.collabDrafts === null) throw new AppError('NOT_IMPLEMENTED', '共享草稿服务未就绪');
+  return services.collabDrafts;
 }
 
 function requireMemos(services: CoreServices): MemoService {

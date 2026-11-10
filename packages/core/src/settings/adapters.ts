@@ -27,7 +27,6 @@ import {
   type UnattendedState,
 } from '@kepcup/shared';
 import { homedir } from 'node:os';
-import { providerSecretName } from '../agent/models.js';
 import type { Bot } from '@kepcup/shared';
 
 /**
@@ -492,8 +491,10 @@ function capabilityOf(item: SettingItem): CapabilityModelKey | null {
 }
 
 export function capabilityAdapter(deps: AdapterDeps): ItemAdapter {
+  // 是否已配 Key 以 providers.list 为准（同一供应商可有多个 Key）。
   const keyed = (provider: string): boolean =>
-    provider.length > 0 && deps.secrets.hasValue(providerSecretName(provider));
+    provider.length > 0 &&
+    (deps.providers.list().find((entry) => entry.id === provider)?.hasKey ?? false);
   const providerName = (id: string): string =>
     deps.providers.list().find((p) => p.id === id)?.name ?? id;
 
@@ -504,8 +505,9 @@ export function capabilityAdapter(deps: AdapterDeps): ItemAdapter {
     const apiById = new Map(
       deps.settings.get().modelProviders.map((p) => [p.id, p.api] as const),
     );
-    return deps.providers
-      .list()
+    const providers = deps.providers.list();
+    const keyedIds = new Set(providers.filter((provider) => provider.hasKey).map((p) => p.id));
+    return providers
       .filter((provider) => {
         if (provider.kind === 'builtin' || !provider.enabled) return false;
         if (provider.vendor !== undefined) {
@@ -515,7 +517,7 @@ export function capabilityAdapter(deps: AdapterDeps): ItemAdapter {
           capability === 'embedding' && apiById.get(provider.id) !== 'anthropic-messages'
         );
       })
-      .sort((a, b) => Number(keyed(b.id)) - Number(keyed(a.id)));
+      .sort((a, b) => Number(keyedIds.has(b.id)) - Number(keyedIds.has(a.id)));
   };
 
   return {
@@ -851,13 +853,18 @@ export function backgroundTasksAdapter(deps: AdapterDeps): ItemAdapter {
     read: () => {
       const settings = deps.settings.get();
       const agentEnabled = settings.backgroundTasks.agentEnabled;
+      const builtinEnabled = settings.backgroundTasks.builtinEnabled !== false;
       const agent = settings.backgroundAgentId ?? '';
       return snapshot(
         'configured',
         { agentEnabled, agent },
-        agentEnabled
-          ? `无内置模型时改用外部智能体${agent.length > 0 ? `（${clean(agent, 30)}）` : '（自动）'}`
-          : '不改用外部智能体',
+        !builtinEnabled && !agentEnabled
+          ? '关闭后台任务'
+          : agentEnabled && agent.length > 0
+            ? `后台任务改用外部智能体（${clean(agent, 30)}）`
+            : !builtinEnabled
+              ? '各 Bot 自己的智能体'
+              : '内置智能体',
       );
     },
     options: (field) =>
@@ -876,10 +883,15 @@ export function backgroundTasksAdapter(deps: AdapterDeps): ItemAdapter {
     },
     write: (_item, { next }) => {
       const latest = deps.settings.get();
+      const agentEnabled = bool(next.agentEnabled) ?? latest.backgroundTasks.agentEnabled;
       deps.settings.update({
         backgroundTasks: {
           ...latest.backgroundTasks,
-          agentEnabled: bool(next.agentEnabled) ?? latest.backgroundTasks.agentEnabled,
+          // 目录卡片没有「关闭」概念：打开「改用外部智能体」时必须同时打开内置
+          // 路由，否则会留下「内置智能体」显示与「只用各 Bot 自己的智能体」
+          // 路由不一致的状态。
+          builtinEnabled: agentEnabled ? true : latest.backgroundTasks.builtinEnabled,
+          agentEnabled,
         },
         backgroundAgentId: str(next.agent) ?? latest.backgroundAgentId ?? '',
       });

@@ -50,7 +50,6 @@ async function start(script: FakeAgentScript) {
   });
   stacks.push(stack);
   await stack.core.rpc.call('settings.update', {
-    experimental: { externalAgents: true },
     agents: { fake: { enabled: true } },
   });
   return { ...stack, record: () => readFakeAgentRecord(recordFile) };
@@ -194,6 +193,15 @@ describe('background loops on an external agent (P6 llm-router)', () => {
 
   it('background agent off / skill authoring default off: requestAuthoring refuses, loops skip', async () => {
     const stack = await start({ turns: [] });
+    // 默认是内置智能体（没有内置模型时回落各 Bot 自己的 Agent）；本用例显式
+    // 打开后台 Agent，验证自动 / 关闭语义。
+    await stack.core.rpc.call('settings.update', {
+      backgroundTasks: {
+        agentEnabled: true,
+        agentSkillAuthoring: false,
+        projectMentionOnly: true,
+      },
+    });
     const bot = await useAgent(stack, await makeBot(stack.core, '外援'), 'fake');
     const facade = stack.core.services.llmRouter!;
     expect(facade.resolveForBot(bot.id, 'reflection')).toMatchObject({
@@ -314,7 +322,6 @@ describe('background loops on an external agent (P6 llm-router)', () => {
     });
     stacks.push(stack);
     const key = 'sk-p6-credential-scan-7f3a9c';
-    await stack.core.rpc.call('settings.update', { experimental: { externalAgents: true } });
     await stack.core.rpc.call('agents.enable', { id: 'fake-key' });
     await stack.core.rpc.call('agents.login', { id: 'fake-key', apiKey: key });
     const bot = await useAgent(stack, await makeBot(stack.core, '外援'), 'fake-key');

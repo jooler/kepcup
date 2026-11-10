@@ -14,6 +14,7 @@ import { buildRunDigest } from './context/continuation.js';
 import { persistEngineSteps } from './step-persistence.js';
 import type {
   AgentEngine,
+  EngineUsage,
   RunHandle,
   RunIdentity,
   ToolContext,
@@ -58,6 +59,13 @@ export interface SubagentFacadeInput {
   modelRef: string;
   /** Whether `modelRef` is still the parent's model (settings / Bot change → stop retrying the old provider). */
   isRouteCurrent?: () => boolean;
+  /**
+   * The parent run's model ref right now ('' / null = none). New sub runs use
+   * it so a delegate started after the parent switched models does not go back
+   * to the provider the user just moved away from; sub runs also follow later
+   * changes through it.
+   */
+  currentModelRef?: () => string | null;
   /** Compression model ('' = no light model → skip compression, truncate instead). */
   lightModelRef: string;
   /** Same, for `lightModelRef`. */
@@ -666,11 +674,22 @@ async function runSubagent(
   let handle: RunHandle | null = null;
   let unsubscribeSteps: (() => void) | null = null;
   let outcome;
+  // The parent may have switched models since this facade was created; the
+  // sub run starts on what the parent uses now. A sub run is always built-in
+  // pi: an external-agent pseudo ref (the Bot switched agents mid-run) cannot
+  // be resolved here, so the parent's start model stays in use.
+  const requested = input.currentModelRef?.() ?? '';
+  const modelRef =
+    requested.length > 0 && parseAgentModelRef(requested) === null ? requested : input.modelRef;
   try {
     handle = engine.startRun({
       identity,
-      model: input.modelRef,
-      ...(input.isRouteCurrent ? { isRouteCurrent: input.isRouteCurrent } : {}),
+      model: modelRef,
+      ...(input.currentModelRef !== undefined
+        ? { currentModelRef: input.currentModelRef }
+        : input.isRouteCurrent !== undefined
+          ? { isRouteCurrent: input.isRouteCurrent }
+          : {}),
       // D93: subagents get the same automatic compaction (deterministic
       // trimming still works when no light model is available).
       compaction: {
@@ -705,7 +724,7 @@ async function runSubagent(
     status: outcome.status,
     ...(outcome.error !== undefined ? { error: outcome.error.message } : {}),
   });
-  recordSubagentUsage(deps, input, identity, input.modelRef, outcome.usage);
+  recordSubagentUsage(deps, input, identity, modelRef, outcome.usage);
 
   if (outcome.status === 'failed') {
     const content = `子任务执行失败：${outcome.error?.message ?? '未知错误'}`;
@@ -864,24 +883,19 @@ function recordSubagentUsage(
   input: SubagentFacadeInput,
   identity: RunIdentity,
   modelRef: string,
-  usage: Array<{
-    input: number;
-    output: number;
-    cacheRead: number;
-    cacheWrite: number;
-    costUsd: number | null;
-  }>,
+  usage: EngineUsage[],
 ): void {
   if (identity.botId === null || identity.conversationId === null) return;
-  const provider = deps.providerForRef(modelRef);
+  const fallbackProvider = deps.providerForRef(modelRef);
   for (const entry of usage) {
     deps.usage.record({
       runId: identity.runId,
       botId: identity.botId,
       conversationId: identity.conversationId,
       loopType: 'subagent',
-      provider,
-      model: modelRef.slice(provider.length + 1),
+      // A route restart can move the sub run onto another model mid-way.
+      provider: entry.provider ?? fallbackProvider,
+      model: entry.model ?? modelRef.slice(fallbackProvider.length + 1),
       inputTokens: entry.input,
       outputTokens: entry.output,
       cacheReadTokens: entry.cacheRead,

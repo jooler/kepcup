@@ -1,13 +1,11 @@
 <script lang="ts">
   /**
-   * Bot 详情的统一二级菜单（tabs 已移除，所有内容收进这一张分组列表）：行尾展示
-   * 当前值摘要，点行由 RightPanel 下钻到对应详情，返回回菜单。组件不做下钻——
-   * 只要该 Bot 有组件，就把每个组件行放在菜单最上方，点行直接查看
-   * （BotWidgetDetail）；完整管理（发卡 / 删除）就在组件详情里。
+   * Bot 详情「详情」tab 的统一二级菜单（D116）：行尾展示当前值摘要，点行由
+   * RightPanel 下钻到对应详情，返回回菜单。组件条目已移入「组件」tab
+   * （BotWidgetsTab，卡片直运行），这里不再列组件。
    */
   import {
     AppWindow,
-    Blocks,
     BookOpen,
     Bot,
     Brain,
@@ -23,9 +21,8 @@
     ShieldCheck,
     Trash2,
   } from '@lucide/svelte';
-  import type { BotProfile, WidgetsListItem } from '@kepcup/shared';
+  import type { BotProfile } from '@kepcup/shared';
   import { t } from '$lib/i18n';
-  import { core } from '$lib/rpc/client.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { workdirs } from '$lib/stores/workdirs.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
@@ -51,7 +48,6 @@
     /** 管家（D70）不可删除：不渲染「移除 Bot」行。 */
     deletable = true,
     onOpenSection,
-    onOpenWidget,
     onOpenWorkdir,
     onOpenMemory,
     onOpenSkills,
@@ -68,7 +64,6 @@
     workdirDisabled?: boolean;
     deletable?: boolean;
     onOpenSection: (section: BotConfigSection) => void;
-    onOpenWidget: (widget: WidgetsListItem) => void;
     onOpenWorkdir: () => void;
     onOpenMemory: () => void;
     onOpenSkills: () => void;
@@ -78,28 +73,6 @@
     onOpenWatches: () => void;
     onRemoveBot: () => void;
   } = $props();
-
-  // --- 组件（菜单最上方的直查入口；发卡 / 删除在组件详情里） --------------------
-  let widgets = $state<WidgetsListItem[]>([]);
-  let widgetsLoaded = $state(false);
-
-  $effect(() => {
-    void refresh();
-  });
-
-  /** 详情里删除 / 发卡后由 RightPanel 调，菜单行随之增删。 */
-  export async function refresh(): Promise<void> {
-    try {
-      const result = (await core.call('widgets.list', { botId })) as {
-        widgets: WidgetsListItem[];
-      };
-      widgets = result.widgets;
-    } catch {
-      // 菜单是辅助入口：拉不到就不显示组件区。
-    } finally {
-      widgetsLoaded = true;
-    }
-  }
 
   // 行摘要依赖的 store（与配置表单 / 各详情同一批；列表载入即可读计数）。
   $effect(() => {
@@ -142,7 +115,8 @@
 
   const modelSummary = $derived.by(() => {
     const value = engineValue(profile.runtime);
-    if (value.length === 0) return t('rightPanel.configNotSet');
+    // 模型 / 智能体留空 = 跟随设置里的默认主模型，不是「没设置」。
+    if (value.length === 0) return t('rightPanel.configFollowDefault');
     if (value.startsWith(AGENT_OPTION_PREFIX)) {
       return agentsStore.get(value.slice(AGENT_OPTION_PREFIX.length))?.name ?? value;
     }
@@ -190,21 +164,6 @@
 </script>
 
 <div class="space-y-4" data-testid="bot-menu">
-  {#if widgetsLoaded && widgets.length > 0}
-    <!-- 组件直查行（design：不做成下钻分组，有组件就置顶直查） -->
-    <ConfigMenuGroup label={t('rightPanel.configSectionWidgets')}>
-      {#each widgets as entry (entry.widgetId)}
-        <MenuRow
-          icon={Blocks}
-          title={entry.title}
-          summary={`v${entry.version}`}
-          testid={`bot-config-row-widget-${entry.widgetId}`}
-          onclick={() => onOpenWidget(entry)}
-        />
-      {/each}
-    </ConfigMenuGroup>
-  {/if}
-
   {#if conversationId !== undefined}
     <ConfigMenuGroup>
       <MenuRow

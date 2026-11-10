@@ -79,6 +79,11 @@ mac:
   # 公证：签名成功后，APPLE_API_KEY(.p8 文件路径)/APPLE_API_KEY_ID/APPLE_API_ISSUER 三件套
   # 存在即公证（mac.notarize 未设 = 有凭据就公证）。凭据走 CI 机密，见 docs/dev/06-release.md。
   hardenedRuntime: true
+  # P-B2：CuaDriver.app 是上游签名产物，禁止 electron-builder 重签——重签会改写
+  # 可执行文件字节（与 resources/cua-driver.lock.json 的 sha256 不一致）并替换
+  # 上游 entitlements。afterSign 会再次校验最终产物。
+  signIgnore:
+    - /cua-driver/
   # JIT/原生模块 + 麦克风/摄像头（hardened runtime 下缺声明会被系统直接拒绝）。
   # D94：App Group 权限的 TeamID 前缀在 beforePack 钩子里展开（electron-builder
   # 不展开 entitlements 里的 $(TeamIdentifierPrefix)），所以这里指向展开后的文件
@@ -101,19 +106,24 @@ mac:
     # 平台私有二进制（rg）只打包本机架构一份（${arch} 宏按目标展开）。
     - from: resources/bin/darwin-${arch}
       to: bin/darwin-${arch}
-    # D105 computer-use helper（scripts/build-computer-use-macos.mjs 产物）：独立
-    # .app 承载辅助功能 / 屏幕录制的 TCC 授权（不污染宿主）。运行时经
-    # src/main/computer/macos-native-provider-paths.ts 从
-    # process.resourcesPath/computer-use/ 定位。源目录缺失时 electron-builder
-    # 静默跳过——release 包的 helper 存在性由 pack-hooks.cjs 硬校验兜底。
-    - from: resources/computer-use/darwin-${arch}
-      to: computer-use
+    # P-B2：CuaDriver 是计算机操控的唯一 provider（scripts/fetch-cua-driver.mjs
+    # 产物，gitignored）。发布包必需，缺失时 pack-hooks.cjs 硬校验失败。
+    - from: resources/cua-driver/darwin-${arch}
+      to: cua-driver
+    # 版本 pin 随包：打包版 readCuaDriverLock() 从 process.resourcesPath 读取；
+    # 不随包会让运行时直接判「provider 不可用」。
+    - from: resources/cua-driver.lock.json
+      to: cua-driver.lock.json
     # D94：App Group 容器 id（带 TeamID 前缀）——主进程据此定位扩展写的 inbox。
     # to 必须写完整文件名：单文件源的 to 不带文件名时，electron-builder 会把它
     # 当目标文件路径，拷出一个名为 share-extension 的文件（主进程读
     # Resources/share-extension/group.json 就落空，回落无前缀组 id、快照写错容器）。
     - from: resources/share-extension/group.json
       to: share-extension/group.json
+    # P12 增强沙箱（Lima）：向导在 guest 内初始化时把 shim 内容写进 VM。
+    # core-host 经 KEPCUP_SANDBOX_SHIM 指向该文件（打包后 Resources/sandbox/…）。
+    - from: scripts/build-wsl-rootfs/kepcup-sandbox.cjs
+      to: sandbox/kepcup-sandbox.cjs
 
 # --- Windows：NSIS，x64 与 arm64 ------------------------------------------------
 # 文件名不能有空格：latest.yml 记录的是连字符形式，gh 上传带空格的文件会被 GitHub 改成点号，
@@ -276,3 +286,4 @@ snapcraft:
 # 平台二进制布局正确（scripts/pack-hooks.cjs）。
 beforePack: scripts/pack-hooks.cjs
 afterPack: scripts/pack-hooks.cjs
+afterSign: scripts/pack-hooks.cjs

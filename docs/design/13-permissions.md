@@ -204,6 +204,8 @@ Bot 使用外部智能体引擎（Claude Agent / Codex 等，见 [28-external-ag
 
 **防过期决定**：审批输出带 `payloadHash`（payload 规范化 JSON 的 sha256，读取时算、不落库）；界面决定时回传卡片渲染时的值，与当前不符 → `APPROVAL_STALE`，界面提示并重新拉取该对话的审批。不传则不校验。
 
+**多客户端归属**：`approvals.decide` 可带可选 `client {id, name}`；`approval.resolved` 事件与首胜冲突的错误 details 带 `decidedBy`，竞争失败方显示「已被 X 处理」。首胜语义不变（见 [57](57-multi-client-collaboration.md) §6.3）。
+
 **执行回执**：审批输出带 `effect {status, receipt?, settledAt?}`（来自台账，[24 §10.4](24-durable-execution.md#104-审批关联与回执)），见于 `approvals.list`、`approvals.decide` 的返回值、`approval.created` / `approval.resolved` 事件与无人值守汇总；台账落定时重推 `approval.resolved`。折叠记录末尾显示 已完成 / 失败 / 结果未知 / 已拒绝 / 执行中 与回执文本（纯文本，不做链接）；无人值守汇总条目显示执行结果。折叠记录只出现在留在对话里的卡上（ef2a565 起）：中途权限卡（访问、命令、MCP、git 远程、沙箱外执行、`agent_tool`、外发）用户在输入区上方处理后不在对话里留记录，回执随之只在审计 / 台账里；**自动决定的卡**（无人值守）与**外发 / 带污点标记的卡**决定后留一行折叠记录（含回执）——仅限**当前会话**：这类定时卡通知是随 `message.created` 事件送达界面的内存态消息，不写 `messages` 表、不进 Bot 上下文，切换对话或重启应用后不再出现（2026-10 改）。
 
 **收件方完整列出**：写入 / 破坏性 MCP 工具的审批卡把参数里的收件方类字段（键名归一后为 to / cc / bcc / recipient(s) / channel(s) / channel_id / email(s) / phone / phone_number / user(s) / user_id / chat_id；嵌套对象最多 3 层，键路径如 `message.to`；值只取字符串 / 数字及其数组）逐项完整列出（经 `secrets.redact`，最多 20 项），不参与参数摘要的 400 字截断；系统通知与无人值守汇总里截到 200 字。

@@ -14,9 +14,10 @@
 
   /**
    * 设置页「后台任务」（D72 P6，docs/design/28-external-agents-acp.md §8）：
-   * 没有内置模型时后台 loop 用哪个外部智能体（自动 = 只用 Bot 自己的 / 指定 /
-   * 关闭）与降配项（技能生成默认关、项目组仅 @ 响应默认开）。哪些用途仍走内置
-   * 模型按两个默认模型逐用途提示；不能用于后台的智能体列出原因（审查 S1）。
+   * 摘要 / 反思 / 记忆整理等后台 loop 由内置智能体还是某个外部智能体执行。
+   * 默认「内置智能体」；明确选外部智能体后「选定即生效」——即使配置了内置
+   * 模型也走它。降配项（技能生成默认关、项目组仅 @ 响应默认开）只在外部智能
+   * 体真正接管时出现；不能用于后台的智能体列出原因（审查 S1）。
    */
 
   let {
@@ -30,21 +31,22 @@
     onSaved?: () => void;
   } = $props();
 
+  const BUILTIN = 'builtin';
   const OFF = 'off';
-  const AUTO = '';
 
   let busy = $state(false);
 
   const settings = $derived(settingsStore.settings);
   const tasks = $derived(
     settings?.backgroundTasks ?? {
+      builtinEnabled: true,
       agentEnabled: true,
       agentSkillAuthoring: false,
       projectMentionOnly: true,
     },
   );
   /**
-   * 仍走内置模型的用途（与 core llm-router 的内置取法一致，按全局默认模型
+   * 内置模型覆盖哪些用途（与 core llm-router 的内置取法一致，按全局默认模型
    * 估算；Bot 自己配置的模型另算）：有主模型 → 全部；只有轻量模型 → 摘要、
    * 反思、记忆整理、路由判断。
    */
@@ -53,17 +55,29 @@
     if ((settings?.defaultLightModel ?? '').length > 0) return 'light';
     return 'none';
   });
-  /** 选择框当前值：off / ''（自动）/ Agent id。 */
-  const selected = $derived(tasks.agentEnabled ? (settings?.backgroundAgentId ?? AUTO) : OFF);
+  /** 选择框当前值：builtin / off / 指定的 Agent id。 */
+  const selected = $derived.by(() => {
+    const agent = settings?.backgroundAgentId ?? '';
+    if (tasks.agentEnabled && agent.length > 0) return agent;
+    // 内置智能体（默认）：内置模型优先；没有内置模型时回落到各 Bot 自己的智能体。
+    return tasks.agentEnabled || tasks.builtinEnabled !== false ? BUILTIN : OFF;
+  });
+  /** 当前选择是否会让外部智能体真正接管（部分）后台任务（决定降配项显隐）。 */
+  const selectedAgent = $derived(selected === BUILTIN || selected === OFF ? null : selected);
+  const usesExternal = $derived(
+    selected === OFF
+      ? false
+      : selectedAgent !== null || (tasks.agentEnabled && builtinScope !== 'all'),
+  );
   /** 已启用的 Agent；当前选中的若已停用仍列出以便看见。 */
   const options = $derived.by(() => {
     const enabled = agentsStore.agents.filter((agent) => agent.enabled);
-    const current = selected !== OFF && selected !== AUTO ? agentsStore.get(selected) : null;
+    const current = selectedAgent !== null ? agentsStore.get(selectedAgent) : null;
     return current !== null && !enabled.includes(current) ? [...enabled, current] : enabled;
   });
   /** 指定的 Agent 已不在目录中（stale id）：仍渲染一项，不让选择框落空。 */
   const staleSelected = $derived(
-    selected !== OFF && selected !== AUTO && agentsStore.get(selected) === null ? selected : null,
+    selectedAgent !== null && agentsStore.get(selectedAgent) === null ? selectedAgent : null,
   );
   /** 已启用但不能用于后台任务的 Agent 及原因。 */
   const blocked = $derived(
@@ -72,11 +86,7 @@
 
   function usable(agentId: string): boolean {
     const view = agentsStore.get(agentId);
-    return (
-      view !== null &&
-      agentSetupReasonOf(view, agentsStore.experimental) === null &&
-      view.backgroundBlocker === null
-    );
+    return view !== null && agentSetupReasonOf(view) === null && view.backgroundBlocker === null;
   }
 
   async function save(patch: Partial<Settings>): Promise<boolean> {
@@ -99,11 +109,19 @@
     const value = select.value;
     const ok =
       value === OFF
-        ? await save({ backgroundTasks: { ...tasks, agentEnabled: false } })
-        : await save({
-            backgroundAgentId: value,
-            backgroundTasks: { ...tasks, agentEnabled: true },
-          });
+        ? await save({
+            backgroundAgentId: '',
+            backgroundTasks: { ...tasks, builtinEnabled: false, agentEnabled: false },
+          })
+        : value === BUILTIN
+          ? await save({
+              backgroundAgentId: '',
+              backgroundTasks: { ...tasks, builtinEnabled: true, agentEnabled: true },
+            })
+          : await save({
+              backgroundAgentId: value,
+              backgroundTasks: { ...tasks, builtinEnabled: true, agentEnabled: true },
+            });
     // A failed save leaves the stored choice: show it again (审查 C7).
     if (!ok) select.value = selected;
   }
@@ -114,13 +132,21 @@
     <h3 class="text-sm font-medium">{t('agents.background.title')}</h3>
     <p class="text-xs text-muted-foreground">{t('agents.background.hint')}</p>
   {/if}
-  {#if builtinScope === 'all'}
+  {#if selected === BUILTIN && builtinScope === 'light'}
     <p class="text-xs text-muted-foreground" data-testid="background-tasks-builtin">
-      {t('agents.background.builtinActive')}
+      {t(
+        tasks.agentEnabled
+          ? 'agents.background.builtinLightOnly'
+          : 'agents.background.builtinLightOnlyNoAgent',
+      )}
     </p>
-  {:else if builtinScope === 'light'}
+  {:else if selected === BUILTIN && builtinScope === 'none'}
     <p class="text-xs text-muted-foreground" data-testid="background-tasks-builtin">
-      {t('agents.background.builtinLightOnly')}
+      {t(
+        tasks.agentEnabled
+          ? 'agents.background.builtinUnavailable'
+          : 'agents.background.builtinUnavailableNoAgent',
+      )}
     </p>
   {/if}
 
@@ -134,7 +160,7 @@
       onchange={(event) => void choose(event.currentTarget)}
       data-testid="background-tasks-agent-select"
     >
-      <option value={AUTO}>{t('agents.background.auto')}</option>
+      <option value={BUILTIN}>{t('agents.background.builtin')}</option>
       {#each options as agent (agent.id)}
         <option value={agent.id}>
           {agent.name}{usable(agent.id) ? '' : t('agents.background.unavailable')}
@@ -147,10 +173,12 @@
       {/if}
       <option value={OFF}>{t('agents.background.off')}</option>
     </select>
-    <p class="text-xs text-muted-foreground">
-      {t('agents.background.degraded', { n: String(AGENT_BACKGROUND_EVERY_N_RUNS) })}
-    </p>
-    {#if blocked.length > 0}
+    {#if usesExternal}
+      <p class="text-xs text-muted-foreground">
+        {t('agents.background.degraded', { n: String(AGENT_BACKGROUND_EVERY_N_RUNS) })}
+      </p>
+    {/if}
+    {#if tasks.agentEnabled && blocked.length > 0}
       <ul class="space-y-0.5 text-xs text-muted-foreground" data-testid="background-tasks-blocked">
         {#each blocked as agent (agent.id)}
           <li>
@@ -164,7 +192,7 @@
     {/if}
   </div>
 
-  {#if tasks.agentEnabled}
+  {#if usesExternal}
     <label class="flex items-start gap-2 text-sm" data-testid="background-tasks-skill-authoring">
       <Checkbox
         checked={tasks.agentSkillAuthoring}

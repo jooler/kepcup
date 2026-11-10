@@ -188,10 +188,7 @@
       (server) => server.enabled !== false && server.source?.kind !== 'plugin',
     ),
   );
-  const agentOptions = $derived.by(() => {
-    const list = agentsStore.experimental ? agentsStore.selectable : [];
-    return list;
-  });
+  const agentOptions = $derived(agentsStore.selectable);
   const agentChoices = $derived(
     itemId === 'bot.agent' && agentId.length > 0 ? agentsStore.options[agentId] : undefined,
   );

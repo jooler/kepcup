@@ -181,8 +181,12 @@
   <!-- children（App UI）未渲染，主题监听由门自己带一份。 -->
   <ModeWatcher />
   <div class="flex h-dvh flex-col bg-background text-foreground" data-testid="web-gate">
-    <header class="flex items-center gap-2 px-4 pt-4 pb-2">
-      <img src="/icon.svg" alt="" class="size-7 rounded-lg" />
+    <!-- 自定义标题栏：远程模式的壳没有原生标题栏（macOS hiddenInset / win-linux hidden），
+         窗口拖拽由这条 drag 区域承担。logo + 标题居中，天然避开左上角的 mac 红绿灯与
+         右上角的 Windows 原生 caption 三键，三平台无需分别留白；浏览器里
+         -webkit-app-region 不生效，退化成普通页头。 -->
+    <header class="app-drag flex h-12 shrink-0 select-none items-center justify-center gap-2">
+      <img src="/icon.svg" alt="" class="size-6 rounded-md" />
       <span class="text-sm font-medium">{t('web.gate.title')}</span>
     </header>
 

@@ -29,6 +29,7 @@
   import { workbench } from '$lib/features/workbench/workbench.svelte';
   import { stickies } from './stickies.svelte';
   import { voiceRecordingOf } from './voice-message';
+  import { clientIdentity } from '$lib/features/collab/client-identity';
 
   /**
    * 普通对话消息行（用户 / Bot 文本消息）：负责布局与交互——用户消息反向
@@ -89,6 +90,17 @@
       'shareIntakeId' in message.content &&
       typeof message.content.shareIntakeId === 'string' &&
       message.content.shareIntakeId.length > 0,
+  );
+  /** D121：这条用户消息来自另一台客户端（设备）时标注「来自 X」。 */
+  const clientSource = $derived.by(() => {
+    if (!isUser || message.kind !== 'text') return null;
+    const content = message.content as { client?: { id: string; name: string } };
+    return content.client ?? null;
+  });
+  const clientSourceLabel = $derived(
+    clientSource !== null && clientSource.id !== clientIdentity.id
+      ? t('collab.messageFrom', { name: clientSource.name })
+      : null,
   );
   /** D90：工作台事项派发引出的回复——气泡下方「📋 标题」，点开工作台该事项。 */
   const todoSource = $derived(
@@ -332,6 +344,12 @@
     {/if}
 
     <MessageBody {message} {merge} userStyle={exchangeShape?.side === 'issuer'} />
+
+    {#if clientSourceLabel !== null}
+      <span class="mt-0.5 text-[11px] text-muted-foreground" data-testid="message-client-source"
+        >{clientSourceLabel}</span
+      >
+    {/if}
 
     {#if artifacts.length > 0}
       <FileArtifacts {artifacts} conversationId={message.conversationId} />

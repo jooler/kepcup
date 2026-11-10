@@ -22,6 +22,7 @@ import {
   type TaskEventPhase,
   type AskUserField,
   type AskUserMode,
+  type CollabClientRef,
   type PresentCard,
   type WidgetCard,
 } from '@kepcup/shared';
@@ -86,6 +87,8 @@ export interface AppendMessageInput {
   taskOrigin?: { taskId: string; interim?: boolean } | undefined;
   /** text messages only (D87 P4 L3): a user message sent from a widget card (confirmed). */
   widgetOrigin?: { widgetId: string; version: number } | undefined;
+  /** 多客户端协作（D121）：发这条用户消息的客户端；纯展示元数据。 */
+  client?: CollabClientRef | undefined;
   /**
    * task_event messages only (D75 §2.4.1): the entry payload; required for
    * kind 'task_event'. Prefer `appendTaskEvent` (idempotent terminal phases).
@@ -496,6 +499,7 @@ export class MessagesService {
                   }
                 : {}),
               ...(input.shareIntakeId !== undefined ? { shareIntakeId: input.shareIntakeId } : {}),
+              ...(input.client !== undefined ? { client: input.client } : {}),
               ...(input.artifacts !== undefined && input.artifacts.length > 0
                 ? { artifacts: input.artifacts }
                 : {}),
@@ -557,9 +561,7 @@ export class MessagesService {
                       ...(input.cardIm.imChannel !== undefined
                         ? { imChannel: input.cardIm.imChannel }
                         : {}),
-                      ...(input.cardIm.imFrom !== undefined
-                        ? { imFrom: input.cardIm.imFrom }
-                        : {}),
+                      ...(input.cardIm.imFrom !== undefined ? { imFrom: input.cardIm.imFrom } : {}),
                       ...(input.cardIm.imSummary !== undefined
                         ? { imSummary: input.cardIm.imSummary }
                         : {}),

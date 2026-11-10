@@ -66,7 +66,6 @@ async function startWithFakeAgent(script: FakeAgentScript) {
   });
   stacks.push(stack);
   await stack.core.rpc.call('settings.update', {
-    experimental: { externalAgents: true },
     agents: { fake: { enabled: true } },
   });
   return { ...stack, dir, record: () => readFakeAgentRecord(recordFile) };

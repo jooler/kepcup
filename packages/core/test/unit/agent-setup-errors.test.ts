@@ -75,13 +75,10 @@ describe('agentRunGate', () => {
   const entry = findAgentEntry(AGENT_CATALOG, 'fake')!;
   const settings = (patch: Record<string, unknown>) => settingsSchema.parse(patch);
 
-  it('experimental off / not in catalog / not enabled / state-derived reasons', () => {
-    expect(agentRunGate(settings({}), [entry], 'fake')?.reason).toBe('experimental_off');
-    const on = settings({ experimental: { externalAgents: true } });
-    expect(agentRunGate(on, [entry], 'missing')).toMatchObject({ reason: null });
-    expect(agentRunGate(on, [entry], 'fake')?.reason).toBe('not_enabled');
+  it('not in catalog / not enabled / state-derived reasons', () => {
+    expect(agentRunGate(settings({}), [entry], 'missing')).toMatchObject({ reason: null });
+    expect(agentRunGate(settings({}), [entry], 'fake')?.reason).toBe('not_enabled');
     const enabled = settings({
-      experimental: { externalAgents: true },
       agents: { fake: { enabled: true } },
     });
     expect(agentRunGate(enabled, [entry], 'fake')).toBeNull();

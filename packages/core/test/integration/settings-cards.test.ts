@@ -443,7 +443,7 @@ describe('conversational app settings', () => {
         expected: null,
         target: { botId: bot.id },
       }),
-    ).rejects.toThrow(/实验功能/);
+    ).rejects.toThrow(/不在目录中/);
     const after = core.services.domain!.bots.getOrThrow(bot.id).profile.runtime;
     expect(after.browser_profile).toBe('');
     expect(after.agent.id).toBe('');

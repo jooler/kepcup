@@ -221,11 +221,40 @@ export class AttachmentsService {
     const now = this.#clock.now();
     const result: AttachmentSweepResult = { expiredRows: 0, orphanFiles: 0, freedBytes: 0 };
 
-    const expired = this.#db
+    // 共享草稿里仍被引用的附件不算孤儿（D120）：草稿可能长期未发送，7 天 TTL
+    // 不能把用户正在写的内容附件清掉。旧库没有该表时跳过。一次读完草稿引用，
+    // 按会话建集合——避免每个过期行都重新解析全部草稿 JSON（审查 P3）。
+    const hasDraftTable =
+      this.#db
+        .prepare("select 1 from sqlite_master where type = 'table' and name = 'composer_drafts'")
+        .get() !== undefined;
+    const draftRefs = new Map<string, Set<string>>();
+    if (hasDraftTable) {
+      const rows = this.#db
+        .prepare('select conversation_id, attachments_json from composer_drafts')
+        .all() as Array<{ conversation_id: string; attachments_json: string }>;
+      for (const row of rows) {
+        let list: unknown;
+        try {
+          list = JSON.parse(row.attachments_json);
+        } catch {
+          continue;
+        }
+        if (!Array.isArray(list)) continue;
+        const ids = draftRefs.get(row.conversation_id) ?? new Set<string>();
+        for (const item of list) {
+          const id = (item as { attachmentId?: unknown } | null)?.attachmentId;
+          if (typeof id === 'string' && id.length > 0) ids.add(id);
+        }
+        draftRefs.set(row.conversation_id, ids);
+      }
+    }
+    const expiredRaw = this.#db
       .prepare(
         'select * from attachments where message_id is null and created_at < ? order by created_at',
       )
       .all(now - UNBOUND_ATTACHMENT_TTL_MS) as AttachmentRow[];
+    const expired = expiredRaw.filter((row) => !draftRefs.get(row.conversation_id)?.has(row.id));
     if (expired.length > 0) {
       const run = this.#db.transaction(() => {
         for (const row of expired) {

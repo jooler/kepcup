@@ -7,6 +7,7 @@ import {
   createTestCore,
   createTestStack,
   makeBot,
+  makeProject,
   startMockLlm,
   openDirect,
   step,
@@ -178,6 +179,46 @@ describe('D75 task layer (TaskHost)', () => {
     await waitFor(() => (runOf(stack, taskId!).resultConsumedAt !== null ? true : null), {
       label: 'result consumed',
     });
+  }, 30_000);
+
+  it('执行任务的模型用量按 run_id = task.id 记账，任务详情页的用量聚合能读到', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const bot = await makeBot(core, '小艾');
+    const conv = await openDirect(core, bot.id);
+    const source = userMessage(stack, conv.id, '跑一下 USAGE-ONE');
+
+    llm.script('mock-main', [
+      step()
+        .expect(isTaskRequest('USAGE-ONE'))
+        .replyText('USAGE-ONE-DONE', { prompt_tokens: 4_000, completion_tokens: 120 }),
+      step().expect(isWakeRequest).replyText('好'),
+    ]);
+
+    const tools = buildTaskTools({
+      identity: turnIdentity(bot.id, conv.id),
+      tasks: tasksOf(stack),
+    });
+    const started = await call(tool(tools, 'start_task'), {
+      title: '用量核对',
+      instruction: 'USAGE-ONE 只回复一句话',
+      source_message_ids: [source.id],
+      writes: false,
+    });
+    expect(started.ok).toBe(true);
+    const taskId = /"task_id":"(run_[^"]+)"/.exec(started.content)?.[1];
+    await waitRun(stack, taskId!, ['completed'], 'task completed');
+
+    // tasks.usage 按 run_id 查账本：能读到这次调用的聚合，说明任务的账本行
+    // 就记在 task.id 下（TaskHost 建 run 与 agent 记账同一条 run）。
+    const usage = domain(stack).usage.usageForRun(taskId!);
+    expect(usage).not.toBeNull();
+    expect(usage?.calls).toBeGreaterThanOrEqual(1);
+    expect(usage?.contextTokens).toBe(4_000);
+    expect(usage?.inputTokens).toBe(4_000);
+    // mock 不报缓存字段 → cache_read 为 0：加权命中率是 0%（prompt token 全部
+    // 没命中缓存），不是 null（分母 input 有值）。
+    expect(usage?.cacheHitRate).toBe(0);
   }, 30_000);
 
   it('quota overflow returns submitted with a reason and starts automatically when a slot frees; per-turn cap rejects', async () => {
@@ -809,5 +850,124 @@ describe('D75 task recovery (§3.2 修复, §7.4)', () => {
     } finally {
       await rm(home, { recursive: true, force: true });
     }
+  }, 30_000);
+});
+
+describe('D115/D116 用户直注与每 Bot 任务列表（docs/design/56）', () => {
+  it('injectById：运行中任务直注 delivered，条目照写 Bot 私有时间线，不产生对话消息', async () => {
+    const stack = await start();
+    const { llm } = stack;
+    const bot = await makeBot(stack.core, '小艾');
+    const conv = await openDirect(stack.core, bot.id);
+    const held = step().expect(isTaskRequest('TASK-USER-INJECT')).hold().replyText('不会到达');
+    llm.script('mock-main', [held]);
+    const started = tasksOf(stack).start(turnIdentity(bot.id, conv.id), {
+      title: '用户直注',
+      instruction: 'TASK-USER-INJECT',
+      sourceMessageIds: [],
+      writes: false,
+    });
+    await waitRun(stack, started.taskId, ['running'], 'task running');
+    await waitFor(() => (llm.requestsFor('mock-main').length >= 1 ? true : null), {
+      label: 'task request held',
+    });
+
+    // 身份从 run 行取（不经过对话轮）：与 inject_task 同一注入路径。
+    const injected = tasksOf(stack).injectById(started.taskId, '顺便看看 README');
+    expect(injected.delivery).toBe('delivered');
+    const phases = entries(stack, started.taskId);
+    expect(phases.map((e) => e.phase)).toEqual(['brief', 'inject']);
+    expect(phases[1]).toMatchObject({ delivery: 'delivered', text: '顺便看看 README' });
+    // 直注不产生对话消息：条目是 Bot 私有的 task_event，可见消息里没有它。
+    const visible = domain(stack).messages.listVisible(conv.id, { limit: 100 });
+    expect(
+      visible.some((m) => 'text' in m.content && m.content.text.includes('顺便看看 README')),
+    ).toBe(false);
+    held.release();
+    llm.releaseAll();
+  }, 30_000);
+
+  it('injectById：终态任务拒绝（RUN_ALREADY_FINISHED）；任务不存在 / 非 task loop → NOT_FOUND', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const bot = await makeBot(core, '小艾');
+    const conv = await openDirect(core, bot.id);
+    llm.script('mock-main', [
+      step().expect(isTaskRequest('TASK-INJECT-DONE')).replyText('DONE'),
+      step().expect(isWakeRequest).replyText('好'),
+    ]);
+    const started = tasksOf(stack).start(turnIdentity(bot.id, conv.id), {
+      title: '已完成',
+      instruction: 'TASK-INJECT-DONE',
+      sourceMessageIds: [],
+      writes: false,
+    });
+    await waitRun(stack, started.taskId, ['completed'], 'task completed');
+    try {
+      tasksOf(stack).injectById(started.taskId, '晚了一步');
+      expect.unreachable('终态任务必须拒绝');
+    } catch (error) {
+      expect((error as { code?: string }).code).toBe('RUN_ALREADY_FINISHED');
+    }
+    // 任务 id 不存在 → NOT_FOUND（对话轮身份 run_turn_1 只是伪 identity，无 runs 行）。
+    expect(() => tasksOf(stack).injectById('run_missing', 'x')).toThrow(/找不到任务/);
+    expect(() => tasksOf(stack).injectById('run_turn_1', 'x')).toThrow(/找不到任务/);
+  }, 30_000);
+
+  it('listByBotViews：跨对话全集、按 created_at 倒序、不混入其它 Bot 的任务；limit 截断', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const bot = await makeBot(core, '小艾');
+    const other = await makeBot(core, '小丁');
+    const conv = await openDirect(core, bot.id);
+    const otherConv = await openDirect(core, other.id);
+    const project = await makeProject(core, '直注项目', [bot.id, other.id], { leadBotId: bot.id });
+    llm.script('mock-main', [
+      step().expect(isTaskRequest('TASK-BYBOT-A1')).replyText('A1 完成'),
+      step().expect(isTaskRequest('TASK-BYBOT-O1')).replyText('O1 完成'),
+      step().expect(isTaskRequest('TASK-BYBOT-A2')).replyText('A2 完成'),
+      step().expect(isTaskRequest('TASK-BYBOT-P1')).replyText('P1 完成'),
+      step().expect(isWakeRequest).replyText('好'),
+      step().expect(isWakeRequest).replyText('好'),
+      step().expect(isWakeRequest).replyText('好'),
+      step().expect(isWakeRequest).replyText('好'),
+    ]);
+    const startAs = (identity: RunIdentity, instruction: string, title: string) =>
+      tasksOf(stack).start(identity, {
+        title,
+        instruction,
+        sourceMessageIds: [],
+        writes: false,
+      });
+    const a1 = startAs(turnIdentity(bot.id, conv.id, 'run_turn_a1'), 'TASK-BYBOT-A1', '直聊一');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const o1 = startAs(
+      { runId: 'run_turn_o1', botId: other.id, conversationId: otherConv.id, loopType: 'turn' },
+      'TASK-BYBOT-O1',
+      '别人的',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const a2 = startAs(turnIdentity(bot.id, conv.id, 'run_turn_a2'), 'TASK-BYBOT-A2', '直聊二');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const p1 = startAs(
+      { runId: 'run_turn_p1', botId: bot.id, conversationId: project.id, loopType: 'turn' },
+      'TASK-BYBOT-P1',
+      '项目里的',
+    );
+    for (const id of [a1.taskId, o1.taskId, a2.taskId, p1.taskId]) {
+      await waitRun(stack, id, ['completed'], `task ${id} completed`);
+    }
+
+    const views = tasksOf(stack).listByBotViews(bot.id, 100);
+    // 直聊两条 + 项目一条，跨对话全集；created_at 间隔 5ms → 严格倒序。
+    expect(views.map((view) => view.taskId)).toEqual([p1.taskId, a2.taskId, a1.taskId]);
+    expect(views.some((view) => view.taskId === o1.taskId)).toBe(false);
+    // limit 截断取最新。
+    const limited = tasksOf(stack).listByBotViews(bot.id, 2);
+    expect(limited.map((view) => view.taskId)).toEqual([p1.taskId, a2.taskId]);
+    // 其它 Bot 只看到自己的。
+    expect(tasksOf(stack).listByBotViews(other.id, 100).map((view) => view.taskId)).toEqual([
+      o1.taskId,
+    ]);
   }, 30_000);
 });

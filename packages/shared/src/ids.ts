@@ -26,6 +26,8 @@ export const ID_PREFIXES = {
   env: 'env_',
   job: 'job_',
   use: 'use_',
+  /** 按工具的任务上下文消耗（main.db tool_usage_ledger）。 */
+  tus: 'tus_',
   aud: 'aud_',
   alw: 'alw_',
   prp: 'prp_',

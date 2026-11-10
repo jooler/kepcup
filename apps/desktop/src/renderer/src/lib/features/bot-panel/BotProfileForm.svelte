@@ -204,9 +204,9 @@
   const selectedAgent = $derived(
     selectedAgentId.length > 0 ? agentsStore.get(selectedAgentId) : null,
   );
-  /** 智能体组：实验开关打开时列已启用的 Agent；当前值不在其中时仍保留一项以便显示。 */
+  /** 智能体组：列已启用的 Agent；当前值不在其中时仍保留一项以便显示。 */
   const agentOptions = $derived.by(() => {
-    const list = agentsStore.experimental ? agentsStore.selectable : [];
+    const list = agentsStore.selectable;
     const options = list.map((agent) => ({
       id: agent.id,
       label:
@@ -635,7 +635,7 @@
           onchange={(event) => onEngineChange(event.currentTarget.value)}
           data-testid="bot-model-select"
         >
-          <option value="">—</option>
+          <option value="">{t('contacts.modelDefault')}</option>
           {#if agentOptions.length > 0}
             <optgroup label={t('contacts.engineGroupModels')}>
               {#each modelOptions as option (option.ref)}
@@ -668,7 +668,7 @@
             class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
             bind:value={profile.runtime.light_model}
           >
-            <option value="">—</option>
+            <option value="">{t('contacts.modelDefault')}</option>
             {#each modelOptions as option (option.ref)}
               <option value={option.ref}>{option.label}</option>
             {/each}

@@ -21,7 +21,7 @@ import type { ToolRisk } from '../mcp/risk.js';
  * `bots.update` RPC（右栏表单、设置卡之外的各处保存）和设置目录的 Bot 条目适配器（设置卡「应用」、
  * Bot 直改与撤销）都经 {@link applyBotProfileUpdate}，所以两边做的事完全一样：
  *
- * - 写之前：换成另一个外部智能体时 `assertAgentSelectable`（实验开关 + 目录）；浏览器资料只能指向
+ * - 写之前：换成另一个外部智能体时 `assertAgentSelectable`（目录）；浏览器资料只能指向
  *   已有的共享资料（`browserProfiles.assertSelectable`）。不通过就抛 `AppError`，什么都不写。
  * - 写：`bots.update`（连接是否存在由领域层校验），发 `bot.updated`。
  * - 写之后（`settle`，调用方在设置写锁之外 await）：有效浏览器资料变了 → 中断用过浏览器的任务并
@@ -143,10 +143,10 @@ export function applyBotProfileUpdate(
     base === undefined
       ? profile
       : (mergeThreeWay(base, profile, previous.profile) as Bot['profile']);
-  // D72 实验开关：只拦「改成另一个外部 Agent」，已在用的 Bot 仍可编辑其余字段。
+  // D72：只拦「改成另一个外部 Agent」，已在用的 Bot 仍可编辑其余字段。
   const nextAgentId = next.runtime.agent.id;
   if (nextAgentId !== previousRuntime.agent.id) {
-    assertAgentSelectable(deps.settings.get(), deps.agentCatalog(), nextAgentId);
+    assertAgentSelectable(deps.agentCatalog(), nextAgentId);
   }
   // W8: the browser profile may only point at an existing shared profile.
   deps.browserProfiles.assertSelectable(

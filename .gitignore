@@ -40,13 +40,9 @@ apps/desktop/resources/wsl/rootfs.*
 apps/desktop/resources/share-extension/
 apps/desktop/resources/entitlements.mac.expanded.plist
 
-# D105: computer-use helper 的 SwiftPM 构建中间产物与组包产物
-# （build-computer-use-macos.mjs 生成，vendored 源码本身入库）。
-apps/desktop/native/computer-use-macos/.build/
-apps/desktop/resources/computer-use/
-# 冒烟客户端必须以 out/main/computer-sidecar.js 的路径运行（helper 的 socket peer
-# 校验按命令行路径识别 sidecar），与上方全局 out/ 产物忽略冲突——豁免这一个目录。
-!apps/desktop/scripts/computer-use-smoke-client/out/
+# P-B2: CuaDriver provider 的 fetch 产物（scripts/fetch-cua-driver.mjs 下载
+# 解包的 CuaDriver.app；版本 pin 入库在 resources/cua-driver.lock.json）。
+apps/desktop/resources/cua-driver/
 
 # ZCode session-local state (plans etc.) and its sync file
 .zcode/

@@ -4,13 +4,16 @@ import type { Message, RunStep } from '@kepcup/shared';
 import {
   approvalConversationIdOf,
   buildTaskRunTimeline,
+  formatCompactTokens,
   formatElapsed,
   formatToolArgs,
   groupTaskRunEntries,
   latestPlan,
   pendingTaskQuestionOf,
   resultPreview,
+  steerDisplayText,
   taskElapsedMs,
+  taskRunUsageParts,
   toolCallSummary,
   toolCommandText,
   toolRowDisplay,
@@ -168,12 +171,66 @@ describe('buildTaskRunTimeline', () => {
     expect(entries[0]).toMatchObject({ kind: 'tool', name: 'bash', result: { ok: true } });
   });
 
+  it('steer entries show the instruction inside <task_inject>, not the LLM framing', () => {
+    const entries = buildTaskRunTimeline([
+      step(0, 'steer', {
+        text: [
+          '<task_inject>',
+          '我在操作当前设备，你可以忽略我的操作',
+          '</task_inject>',
+          '对话中的你追加了新的指令：据此调整当前的工作。',
+        ].join('\n'),
+      }),
+      step(1, 'steer', { text: '先看 README' }),
+    ]);
+    expect(entries[0]).toMatchObject({
+      kind: 'steer',
+      text: '我在操作当前设备，你可以忽略我的操作',
+    });
+    // 没有包裹的旧数据 / 纯文本 steer 原样显示。
+    expect(entries[1]).toMatchObject({ kind: 'steer', text: '先看 README' });
+  });
+
   it('详情页按分组渲染工具卡并展示思考（源码契约锁接线）', () => {
     const source = readFileSync(new URL('./TaskRunView.svelte', import.meta.url), 'utf8');
     expect(source).toContain("import TaskRunToolGroup from './TaskRunToolGroup.svelte';");
     expect(source).toContain('const renderEntries = $derived(groupTaskRunEntries(entries));');
     expect(source).toContain('data-testid="task-run-thinking"');
     expect(source).toContain('<TaskRunToolGroup tools={entry.tools} {active} />');
+  });
+});
+
+describe('steerDisplayText', () => {
+  it('unwraps <task_inject> and hides the tags and trailing note', () => {
+    const text = [
+      '<task_inject>',
+      '我在操作当前设备，你可以忽略我的操作',
+      '</task_inject>',
+      '对话中的你追加了新的指令：据此调整当前的工作。',
+    ].join('\n');
+    expect(steerDisplayText(text)).toBe('我在操作当前设备，你可以忽略我的操作');
+  });
+
+  it('keeps the multi-line inner content (instruction plus source message lines)', () => {
+    const text = [
+      '<task_inject>',
+      '据此调整当前的工作',
+      '<source_messages>',
+      '[12:03] 用户：脚本跑完了吗',
+      '</source_messages>',
+      '</task_inject>',
+      '对话中的你追加了新的指令：据此调整当前的工作。',
+    ].join('\n');
+    expect(steerDisplayText(text)).toBe(
+      ['据此调整当前的工作', '<source_messages>', '[12:03] 用户：脚本跑完了吗', '</source_messages>'].join(
+        '\n',
+      ),
+    );
+  });
+
+  it('shows plain steer texts as-is', () => {
+    expect(steerDisplayText('先看 README')).toBe('先看 README');
+    expect(steerDisplayText('  换成 pnpm test  ')).toBe('换成 pnpm test');
   });
 });
 
@@ -451,6 +508,38 @@ describe('pendingTaskQuestionOf（详情页提问条）', () => {
     expect(pendingTaskQuestionOf([], 'task_1')).toBeNull();
   });
 
+  it('上下文用量：紧凑 token 数按 K/M 压缩', () => {
+    expect(formatCompactTokens(0)).toBe('0');
+    expect(formatCompactTokens(Number.NaN)).toBe('0');
+    expect(formatCompactTokens(999)).toBe('999');
+    expect(formatCompactTokens(1_000)).toBe('1K');
+    expect(formatCompactTokens(1_250)).toBe('1.3K');
+    expect(formatCompactTokens(12_345)).toBe('12.3K');
+    expect(formatCompactTokens(123_456)).toBe('123K');
+    expect(formatCompactTokens(999_999)).toBe('1M');
+    expect(formatCompactTokens(1_234_567)).toBe('1.2M');
+  });
+
+  it('上下文用量：token / 窗口 / 百分比与缓存命中率', () => {
+    expect(
+      taskRunUsageParts({ contextTokens: 12_300, contextWindow: 200_000, cacheHitRate: 0.82 }),
+    ).toEqual({ tokens: '12.3K', window: '200K', percent: 6, cacheHitPercent: 82 });
+  });
+
+  it('上下文用量：没有 window 只显示 token 数，没有命中率不显示命中率', () => {
+    expect(
+      taskRunUsageParts({ contextTokens: 8_500, contextWindow: null, cacheHitRate: null }),
+    ).toEqual({ tokens: '8.5K', window: null, percent: null, cacheHitPercent: null });
+  });
+
+  it('上下文用量：没有上下文 token 或没有用量时整块隐藏', () => {
+    expect(taskRunUsageParts(null)).toBeNull();
+    expect(taskRunUsageParts(undefined)).toBeNull();
+    expect(
+      taskRunUsageParts({ contextTokens: null, contextWindow: 200_000, cacheHitRate: 0.5 }),
+    ).toBeNull();
+  });
+
   it('详情页从会话消息取未答提问卡并固定在时间线下方（源码契约锁接线）', () => {
     const source = readFileSync(new URL('./TaskRunView.svelte', import.meta.url), 'utf8');
     expect(source).toContain(
@@ -463,5 +552,23 @@ describe('pendingTaskQuestionOf（详情页提问条）', () => {
     expect(source).toContain('{#if active && pendingQuestion !== null}');
     expect(source).toContain('data-testid="task-run-question"');
     expect(source).toContain('<TaskQuestionCard message={pendingQuestion} />');
+  });
+});
+
+describe('TaskInjectDock（D115 注入坞，docs/design/56 §1）', () => {
+  it('非终态任务在页面最后一位渲染注入坞，经 tasks.inject 直注（源码契约锁接线）', () => {
+    const source = readFileSync(new URL('./TaskRunView.svelte', import.meta.url), 'utf8');
+    expect(source).toContain("import TaskInjectDock from './TaskInjectDock.svelte';");
+    expect(source).toContain('{#if task !== null && active}');
+    expect(source).toContain('<TaskInjectDock {taskId} awaitingInput={task.awaitingInput} />');
+    const dock = readFileSync(new URL('./TaskInjectDock.svelte', import.meta.url), 'utf8');
+    expect(dock).toContain('tasks.inject(taskId, instruction)');
+    expect(dock).toContain('TASK_INSTRUCTION_MAX_CHARS');
+    expect(dock).toContain("event.key === 'Enter' && !event.shiftKey && !event.isComposing");
+    expect(dock).toContain('data-testid="task-run-inject-input"');
+    expect(dock).toContain('data-testid="task-run-inject-send"');
+    // queued（外部 Agent 不支持中途插入）如实警示，与任务卡「未送达」同口径。
+    expect(dock).toContain('task.run.injectQueued');
+    expect(dock).toContain('task.run.injectHintAwaiting');
   });
 });

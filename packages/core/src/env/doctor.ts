@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { hostPathWithCommonDirs } from '../infra/paths.js';
 import { runCommand, verifyInstall } from './installer.js';
 import type { CatalogEntry } from './catalog.js';
 
@@ -51,7 +52,7 @@ export async function detectSystemItem(
   const probe = await runCommand(which, [binary], {
     shell: process.platform !== 'win32',
     timeoutMs: 10_000,
-    env: options.PATH !== undefined ? { ...process.env, PATH: options.PATH } : undefined,
+    env: { ...process.env, PATH: options.PATH ?? hostPathWithCommonDirs() },
   });
   if (probe.code !== 0) {
     return { available: false, detail: `未在系统 PATH 中找到 ${binary}` };
@@ -72,6 +73,7 @@ export async function locateSystemItem(item: string, detectBin?: string): Promis
   const probe = await runCommand(which, [binary], {
     shell: process.platform !== 'win32',
     timeoutMs: 10_000,
+    env: { ...process.env, PATH: hostPathWithCommonDirs() },
   });
   if (probe.code !== 0) return null;
   const first = probe.stdout.trim().split('\n')[0] ?? '';

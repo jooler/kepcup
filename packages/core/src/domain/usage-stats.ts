@@ -149,6 +149,7 @@ export function buildUsageStats(params: UsageStatsParams): UsageStatsOutput {
       byModel: usage.modelTotals(since),
       byLoop: usage.loopTotals(since),
       byBot: usage.botTotals(since),
+      byTool: usage.toolTotals(since),
     },
     longestChat: usage.longestChatSession(),
   };

@@ -23,16 +23,12 @@
   );
 
   /**
-   * D72 P4：onboarding「我有订阅」选用了外部 Agent（实验开关打开且已启用）时
-   * Bot 可以回复，不再提示「无模型」。
+   * D72 P4：onboarding「我有订阅」选用了外部 Agent（已启用）时 Bot 可以回复，
+   * 不再提示「无模型」。
    */
   function agentEngineReady(settings: Settings): boolean {
     const agentId = settings.defaultAgentId;
-    return (
-      agentId.length > 0 &&
-      settings.experimental.externalAgents &&
-      settings.agents[agentId]?.enabled === true
-    );
+    return agentId.length > 0 && settings.agents[agentId]?.enabled === true;
   }
 </script>
 

@@ -22,12 +22,15 @@ import type { ProviderRegistry } from './external/types.js';
 import type { AgentEngine, RunSpec } from './types.js';
 
 /**
- * 后台 LLM 调用的路由（D72 P6，design 28 §8「后台 loop」）：有内置模型 → 内置
- * 引擎（行为与 P6 之前完全一致）；没有 → 外部 Agent：`settings.backgroundAgentId`
- * 明确指定的那个，或（缺省「自动」）**只用该 Bot 自己的 Agent**——永不换用
- * 别家（审查 S2：数据只流向用户为该 Bot 选用或明确指定的厂商）；无所属 Bot 的
- * 任务（画像整理是跨 Bot 的全局画像、项目组摘要）只在明确指定时运行。都没有、
- * 被关闭或不合格 → null（调用方照旧优雅跳过 = P4 兜底）。
+ * 后台 LLM 调用的路由（D72 P6，design 28 §8「后台 loop」）：在设置里**明确指定**
+ * 了外部 Agent（`backgroundTasks.agentEnabled` + `settings.backgroundAgentId`）→
+ * 走该 Agent，「选定即生效」（即使配置了内置模型也不再用内置引擎；不可用时跳过，
+ * 不擅自换用别家）；否则有内置模型 → 内置引擎（行为与 P6 之前完全一致）；没有 →
+ * 回落到各 Bot 自己的 Agent——永不换用别家（审查 S2：数据只流向用户为该
+ * Bot 选用或明确指定的厂商）；无所属 Bot 的任务（画像整理是跨 Bot 的全局画像、
+ * 项目组摘要）只在明确指定时运行。都没有、被关闭或不合格 → null（调用方照旧
+ * 优雅跳过 = P4 兜底）。`backgroundTasks.builtinEnabled === false` 只关内置路由
+ * （与 `agentEnabled=false` 同时关闭 = 整块跳过后台任务）。
  *
  * 合格（`agentBackgroundBlocker`，审查 S1 / C1）：Provider 能为后台会话完全关闭
  * 原生工具；未开启「加载我的个人配置」（OpenCode / Cursor 等按进程加载个人
@@ -57,6 +60,21 @@ export type LlmPurpose =
   | 'subagent_compaction'
   /** D93 内置 pi 任务的自动上下文压缩（轻量模型摘要旧消息）。 */
   | 'task_compaction';
+
+/**
+ * 受「后台任务」设置约束的用途（摘要 / 反思 / 记忆整理 / 画像整理 / 路由判断 /
+ * Wiki 维护 / 技能生成）。对话、微应用、组件制作与上下文压缩不在此列：它们的
+ * 模型选择不受后台任务开关或「指定的后台 Agent」影响，始终内置优先。
+ */
+const BACKGROUND_PURPOSES: ReadonlySet<LlmPurpose> = new Set([
+  'triage',
+  'summary',
+  'reflection',
+  'consolidation',
+  'profile_curation',
+  'wiki_maintenance',
+  'skill_authoring',
+]);
 
 /**
  * 模型选取的唯一入口（所有推理调用的 purpose）：后台用途 + `conversation`
@@ -235,12 +253,27 @@ export class LlmRouter {
 
   #resolve(purpose: LlmPurpose, bot: Bot | null): LlmRoute | null {
     const settings = this.#deps.settings.get();
+    // 后台任务设置只约束后台用途：对话 / 微应用 / 组件制作 / 上下文压缩等
+    // 仍按「有内置模型就用内置」的旧路径，不受「关闭」或指定 Agent 影响。
+    if (BACKGROUND_PURPOSES.has(purpose)) {
+      const tasks = settings.backgroundTasks;
+      // 明确指定的外部 Agent 优先于内置模型（「选定即生效」）：不可用时跳过，
+      // 不擅自换用别家（审查 S2）。
+      if (tasks.agentEnabled && (settings.backgroundAgentId ?? '').length > 0) {
+        return this.#agentRoute(purpose, settings, bot);
+      }
+      if (tasks.builtinEnabled !== false) {
+        const builtin = builtinRoute(this.#deps.builtin, builtinModelRef(purpose, settings, bot));
+        if (builtin !== null) return builtin;
+      }
+      return this.#agentRoute(purpose, settings, bot);
+    }
     const builtin = builtinRoute(this.#deps.builtin, builtinModelRef(purpose, settings, bot));
     if (builtin !== null) return builtin;
     return this.#agentRoute(purpose, settings, bot);
   }
 
-  /** 无内置模型时的外部 Agent 兜底；null = 跳过。 */
+  /** 后台用途的外部 Agent 路由；null = 跳过。 */
   #agentRoute(purpose: LlmPurpose, settings: Settings, bot: Bot | null): LlmRoute | null {
     const external = this.#deps.external;
     const catalog = this.#deps.catalog?.() ?? [];

@@ -144,6 +144,8 @@ function makeHub(appMethods: Record<string, RpcMethodSpec> = {}): HubRig {
     clock,
     logger: fakeLogger,
     appMethods: () => appMethods,
+    presence: { leave: () => {} },
+    releaseDrafts: () => {},
     pushInitialEventsTo: (server) => {
       server.pushEvent('core.status', { status: 'ready' });
     },

@@ -103,16 +103,11 @@ async function useAgent(stack: TestStack, bot: Bot, agentId: string): Promise<Bo
 }
 
 describe('agents service (P4, fake agents)', () => {
-  it('experimental gate, enable → ready, options, test, disable / uninstall with affected bots', async () => {
+  it('enable → ready, options, test, disable / uninstall with affected bots', async () => {
     const { stack } = await startStack({
       fake: { configOptions: MODEL_OPTIONS, turns: [agentTurn().text('pong')] },
     });
-    expect(await call(stack, 'agents.list')).toEqual({ experimental: false, agents: [] });
-    await expect(call(stack, 'agents.enable', { id: 'fake' })).rejects.toMatchObject({
-      code: 'INVALID_INPUT',
-    });
-
-    await call(stack, 'settings.update', { experimental: { externalAgents: true } });
+    // 目录恒可见（不再有实验开关）：未启用时状态为 available，可直接启用。
     const before = await agentView(stack, 'fake');
     expect(before).toMatchObject({
       status: 'available',
@@ -225,7 +220,6 @@ describe('agents service (P4, fake agents)', () => {
       },
       { extra: [fakeAgentEntry('fake-auth', { auth: { kinds: ['subscription'], note: '订阅' } })] },
     );
-    await call(stack, 'settings.update', { experimental: { externalAgents: true } });
     await call(stack, 'agents.enable', { id: 'fake-auth' });
     const loggedOut = await waitForAgent(
       stack,
@@ -280,7 +274,6 @@ describe('agents service (P4, fake agents)', () => {
             : null,
       },
     );
-    await call(stack, 'settings.update', { experimental: { externalAgents: true } });
     await call(stack, 'agents.enable', { id: 'fake-term' });
     await waitForAgent(stack, 'fake-term', (agent) => agent.authMethods.length === 1, 'methods');
     await call(stack, 'agents.login', { id: 'fake-term', methodId: 'term' });
@@ -299,7 +292,6 @@ describe('agents service (P4, fake agents)', () => {
       auth: { kinds: ['api-key'], note: 'API key', apiKeyEnv: 'FAKE_AGENT_API_KEY' },
     });
     const { stack } = await startStack({ 'fake-key': { turns: [] } }, { extra: [entry] });
-    await call(stack, 'settings.update', { experimental: { externalAgents: true } });
     await call(stack, 'agents.enable', { id: 'fake-key' });
     expect((await agentView(stack, 'fake-key')).status).toBe('needs_auth');
 

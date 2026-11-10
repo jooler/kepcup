@@ -247,6 +247,13 @@ export interface AgentProvider {
    * 表现与出现阶段不同；缺省按 ACP 标准只把 -32000 判为 auth_required。
    */
   classifyError?(error: AgentErrorInfo, phase: AgentErrorPhase): AgentErrorKind;
+  /**
+   * 该 Agent「会话不存在」的私有错误形态（D118；协议标准是 `RequestError`
+   * -32002，`isSessionNotFound` 已覆盖）——各家变体不同（如 -32602 带
+   * data.sessionId、-32016 带 errorKind），由 Provider 判定；引擎在 prompt
+   * 阶段命中时按「无输出崩溃」同一路径做一次透明重试。
+   */
+  sessionNotFound?(error: unknown): boolean;
   /** 过滤 / 排序登录方式（如 Antigravity 去掉 oauth-personal）。 */
   authMethods?(advertised: AcpAuthMethod[]): AcpAuthMethod[];
   /** 厂商扩展请求（如 cursor/ask_question）；未登记的一律立即返回「不支持」。 */

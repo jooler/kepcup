@@ -179,6 +179,7 @@ export class CoreHost implements CoreHostEvents {
         ...this.bundledBinEnv(),
         ...this.builtinPluginsEnv(),
         ...this.wslRootfsEnv(),
+        ...this.sandboxShimEnv(),
       },
     });
     this.proc = proc;
@@ -259,6 +260,15 @@ export class CoreHost implements CoreHostEvents {
   private wslRootfsEnv(): NodeJS.ProcessEnv {
     const tar = join(process.resourcesPath ?? '', 'wsl', 'rootfs.tar');
     return existsSync(tar) ? { KEPCUP_WSL_ROOTFS: tar } : {};
+  }
+
+  /**
+   * 增强沙箱 shim（macOS Lima 向导在 guest 内初始化时写入）。extraResources
+   * 落在 Resources/sandbox/kepcup-sandbox.cjs；开发布局由 core 自行向上查找。
+   */
+  private sandboxShimEnv(): NodeJS.ProcessEnv {
+    const shim = join(process.resourcesPath ?? '', 'sandbox', 'kepcup-sandbox.cjs');
+    return existsSync(shim) ? { KEPCUP_SANDBOX_SHIM: shim } : {};
   }
 
   private handleExit(): void {

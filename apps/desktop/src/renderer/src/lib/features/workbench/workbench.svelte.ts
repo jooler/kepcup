@@ -10,7 +10,9 @@ import {
   canReassignTodo,
   isOpenTodo,
   laneIdOfTodo,
+  sortMemos,
   UNASSIGNED_LANE_ID,
+  type MemoTabId,
 } from './workbench-model';
 
 /**
@@ -74,6 +76,12 @@ export class WorkbenchState {
   memoDraft = $state('');
   memoQuery = $state('');
   todoDraft = $state('');
+  /**
+   * 备忘 tab 栏当前激活的 tab（命名分组 id / 'ungrouped' 伪分组）。放 store 而不是组件：
+   * 切到对话会卸载整棵工作台，回来后停留在原 tab。失效（组被删等）由 `effectiveMemoTab`
+   * 派生回落，这里只存用户的选择。
+   */
+  activeMemoTabId = $state<MemoTabId | null>(null);
 
   #attachCount = 0;
   #detach: Array<() => void> = [];
@@ -278,15 +286,15 @@ export class WorkbenchState {
 
   // --- 备忘分组与拖拽（D90 §5.4） ----------------------------------------------
 
-  /** 新建分组；返回是否成功（失败已 toast，调用方据此关弹框）。 */
-  async createGroup(title: string): Promise<boolean> {
+  /** 新建分组；返回新分组（失败返回 null，已 toast），调用方据此关弹框并切到新 tab。 */
+  async createGroup(title: string): Promise<MemoGroup | null> {
     try {
       const result = (await core.call('memos.groups.create', { title })) as { group: MemoGroup };
       this.memoGroups = [...this.memoGroups, result.group];
-      return true;
+      return result.group;
     } catch (error) {
       this.#memoGroupError(error);
-      return false;
+      return null;
     }
   }
 
@@ -389,6 +397,21 @@ export class WorkbenchState {
       );
       void this.refreshMemos();
     }
+  }
+
+  /**
+   * 「移动到」某分组（卡片 … 菜单、拖到 tab 上直接松手）：落到目标组顶部，同新建备忘。
+   * `groupId` null = 未分组；已经在该组则不动。
+   */
+  async moveMemoToGroup(memoId: string, groupId: string | null): Promise<void> {
+    const memo = this.memos.find((item) => item.id === memoId);
+    if (memo === undefined || memo.groupId === groupId) return;
+    const [first] = sortMemos(
+      this.memos.filter(
+        (item) => item.deletedAt === null && item.groupId === groupId && item.id !== memoId,
+      ),
+    );
+    await this.moveMemo(memoId, groupId, first?.id ?? null);
   }
 
   /**

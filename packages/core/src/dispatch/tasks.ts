@@ -906,6 +906,29 @@ export class TaskHost implements TaskToolFacade {
     );
   }
 
+  /**
+   * D115 任务直注（docs/design/56 §1）：用户在任务详情页注入坞对非终态任务
+   * 追加指令（`tasks.inject` RPC）。与 `cancelById` 同款——身份从 run 行取，
+   * 不经过对话轮；语义零改动地复用 `inject()`（等问即回答 / steer / 入简报 /
+   * queued），注入条目照旧写 Bot 私有时间线。不产生对话消息。
+   */
+  injectById(taskId: string, text: string): InjectTaskResult {
+    const task = this.#deps.runs.get(taskId);
+    if (task === null || task.loopType !== 'task') {
+      throw new AppError('NOT_FOUND', `找不到任务 ${taskId}`);
+    }
+    if (task.botId === null || task.conversationId === null) {
+      throw new AppError('NOT_FOUND', `任务 ${taskId} 没有 Bot 与对话上下文，无法注入`);
+    }
+    if (isTerminalStatus(task.status)) {
+      throw new AppError('RUN_ALREADY_FINISHED', `任务 ${taskId} 已结束（${task.status}）`);
+    }
+    return this.inject(
+      { runId: task.id, botId: task.botId, conversationId: task.conversationId, loopType: 'task' },
+      { taskId, text },
+    );
+  }
+
   list(identity: RunIdentity): TaskSummary[] {
     const { botId, conversationId } = this.#scope(identity);
     const now = this.#deps.clock.now();
@@ -1260,6 +1283,17 @@ export class TaskHost implements TaskToolFacade {
   activeViews(conversationId: string): TaskView[] {
     return this.#deps.runs
       .listTasks({ conversationId, statuses: ACTIVE_STATUSES })
+      .map((task) => this.view(task.id))
+      .filter((view): view is TaskView => view !== null);
+  }
+
+  /**
+   * D116（docs/design/56 §2）：该 Bot 拉起的任务全集视图（跨对话），最新在前、
+   * 截断到 `limit`。Bot 详情「任务」tab 的数据源。
+   */
+  listByBotViews(botId: string, limit: number): TaskView[] {
+    return this.#deps.runs
+      .listTasksByBotRecent(botId, limit)
       .map((task) => this.view(task.id))
       .filter((view): view is TaskView => view !== null);
   }

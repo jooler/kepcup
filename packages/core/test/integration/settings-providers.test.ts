@@ -2,8 +2,16 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { maskApiKey } from '@kepcup/shared';
 import { createMemoryKeystore } from '@kepcup/core';
-import { createTestStack, makeBot, openDirect, type TestStack } from '@kepcup/testkit';
+import {
+  createTestStack,
+  makeBot,
+  openDirect,
+  sendBatch,
+  waitForRun,
+  type TestStack,
+} from '@kepcup/testkit';
 import { startMockLlm, step } from '@kepcup/testkit';
 import { createTestCore } from '@kepcup/testkit';
 
@@ -55,6 +63,143 @@ describe('settings and provider key persistence', () => {
     }
   });
 
+  it('一个供应商可保存多个 Key：列表只回掩码预览，可按下标删除', async () => {
+    const stack = await createTestStack();
+    stacks.push(stack);
+    const { core } = stack;
+
+    const first = 'sk-first-1234';
+    const second = 'sk-proj-second-9876';
+    await core.rpc.call('providers.setKey', { provider: 'custom:mock', key: first });
+    await core.rpc.call('providers.addKey', { provider: 'custom:mock', key: second });
+
+    const list = (await core.rpc.call('providers.list')) as {
+      providers: Array<{ id: string; hasKey: boolean; keyPreviews: Array<{ mask: string }> }>;
+    };
+    const info = list.providers.find((p) => p.id === 'custom:mock');
+    expect(info).toMatchObject({
+      hasKey: true,
+      keyPreviews: [{ mask: maskApiKey(first) }, { mask: maskApiKey(second) }],
+    });
+    const serialized = JSON.stringify(list);
+    expect(serialized.includes(first)).toBe(false);
+    expect(serialized.includes(second)).toBe(false);
+
+    await core.rpc.call('providers.removeKeyAt', { provider: 'custom:mock', index: 0 });
+    const after = (await core.rpc.call('providers.list')) as {
+      providers: Array<{ id: string; keyPreviews: Array<{ mask: string }> }>;
+    };
+    expect(after.providers.find((p) => p.id === 'custom:mock')?.keyPreviews).toEqual([
+      { mask: maskApiKey(second), enabled: true },
+    ]);
+  });
+
+  it('Key 标注：别名与启停经 providers.setKeyMeta 生效，删除其余 Key 时标注保留', async () => {
+    const stack = await createTestStack();
+    stacks.push(stack);
+    const { core } = stack;
+
+    await core.rpc.call('providers.setKey', { provider: 'custom:mock', key: 'sk-alpha-1111' });
+    await core.rpc.call('providers.addKey', { provider: 'custom:mock', key: 'sk-beta-2222' });
+    await core.rpc.call('providers.setKeyMeta', {
+      provider: 'custom:mock',
+      index: 1,
+      alias: '备用渠道',
+      enabled: false,
+    });
+
+    const list = (await core.rpc.call('providers.list')) as {
+      providers: Array<{
+        id: string;
+        hasKey: boolean;
+        keyPreviews: Array<{ mask: string; alias?: string; enabled: boolean }>;
+      }>;
+    };
+    const previews = list.providers.find((p) => p.id === 'custom:mock')?.keyPreviews ?? [];
+    // 首条启用无别名；第二条带别名且停用——全部启用 Key 为零时 hasKey 视为 false。
+    expect(previews).toEqual([
+      { mask: maskApiKey('sk-alpha-1111'), enabled: true },
+      { mask: maskApiKey('sk-beta-2222'), alias: '备用渠道', enabled: false },
+    ]);
+    expect(list.providers.find((p) => p.id === 'custom:mock')?.hasKey).toBe(true);
+    await core.rpc.call('providers.setKeyMeta', { provider: 'custom:mock', index: 0, enabled: false });
+    const allDisabled = (await core.rpc.call('providers.list')) as {
+      providers: Array<{ id: string; hasKey: boolean }>;
+    };
+    expect(allDisabled.providers.find((p) => p.id === 'custom:mock')?.hasKey).toBe(false);
+
+    // 删除首条后重编号：剩余条目的别名与停用状态原样保留；别名可清除（空串）。
+    await core.rpc.call('providers.removeKeyAt', { provider: 'custom:mock', index: 0 });
+    await core.rpc.call('providers.setKeyMeta', { provider: 'custom:mock', index: 0, alias: '' });
+    const after = (await core.rpc.call('providers.list')) as {
+      providers: Array<{ keyPreviews: Array<{ alias?: string; enabled: boolean }> }>;
+    };
+    expect(after.providers.find((p) => p.id === 'custom:mock')?.keyPreviews).toEqual([
+      { mask: maskApiKey('sk-beta-2222'), enabled: false },
+    ]);
+
+    // 非法下标报 INVALID_INPUT。
+    await expect(
+      core.rpc.call('providers.setKeyMeta', { provider: 'custom:mock', index: 9, enabled: true }),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+  });
+
+  it('停用的 Key 不参与 Bot 实际调用：请求头只出现启用中的 Key', async () => {
+    const stack = await createTestStack();
+    stacks.push(stack);
+    const { core, llm } = stack;
+
+    await core.rpc.call('providers.setKey', { provider: 'custom:mock', key: 'sk-disabled-1111' });
+    await core.rpc.call('providers.addKey', { provider: 'custom:mock', key: 'sk-enabled-2222' });
+    await core.rpc.call('providers.setKeyMeta', {
+      provider: 'custom:mock',
+      index: 0,
+      enabled: false,
+    });
+
+    llm.script('mock-main', [
+      step().replyTextAndToolCall('查询一下', 'search_messages', { query: 'x' }),
+      step().replyText('完成'),
+    ]);
+    const bot = await makeBot(core, '小研');
+    const conv = await openDirect(core, bot.id);
+    await sendBatch(core, conv.id, ['你好']);
+    await waitForRun(core, conv.id, 'completed');
+
+    const requests = llm.requestsFor('mock-main');
+    expect(requests.length).toBeGreaterThan(0);
+    expect(requests.map((r) => r.authorization)).toEqual(
+      requests.map(() => 'Bearer sk-enabled-2222'),
+    );
+  });
+
+  it('全部 Key 停用时调用失败，且请求不会带着占位 / 环境变量凭据发出', async () => {
+    const stack = await createTestStack();
+    stacks.push(stack);
+    const { core, llm } = stack;
+
+    await core.rpc.call('providers.setKey', { provider: 'custom:mock', key: 'sk-only-1111' });
+    await core.rpc.call('providers.setKeyMeta', {
+      provider: 'custom:mock',
+      index: 0,
+      enabled: false,
+    });
+
+    // 「测试连接」同样失败，且是鉴权错误（不是网络 / 未知错误）。
+    await expect(core.rpc.call('providers.test', { provider: 'custom:mock' })).rejects.toMatchObject(
+      { code: 'PROVIDER_AUTH_FAILED' },
+    );
+
+    llm.script('mock-main', [step().replyText('不应到达')]);
+    const bot = await makeBot(core, '小研');
+    const conv = await openDirect(core, bot.id);
+    await sendBatch(core, conv.id, ['你好']);
+    const run = await waitForRun(core, conv.id, 'failed');
+
+    expect(llm.requests()).toHaveLength(0);
+    expect(run.error ?? '').toMatch(/全部停用/);
+  }, 30_000);
+
   it('providers.test succeeds against the mock and reports PROVIDER_AUTH_FAILED on 401', async () => {
     const stack = await createTestStack();
     stacks.push(stack);
@@ -69,6 +214,44 @@ describe('settings and provider key persistence', () => {
     await expect(
       core.rpc.call('providers.test', { provider: 'custom:mock', model: 'mock-light' }),
     ).rejects.toMatchObject({ code: 'PROVIDER_AUTH_FAILED' });
+  });
+
+  it('OpenAI 兼容实例不发 store 字段（Gemini 等严格校验端点会因未知字段 400）', async () => {
+    const stack = await createTestStack();
+    stacks.push(stack);
+    const { core, llm } = stack;
+
+    // Gemini（AI Studio OpenAI 兼容层）对请求体做严格字段校验：pi-ai 缺省
+    // 会带 OpenAI 专有的 store=false，兼容实例的 compat 必须把它关掉。
+    llm.script('mock-main', [step().replyText('pong')]);
+    const before = (await core.rpc.call('settings.get')) as {
+      modelProviders: Array<Record<string, unknown>>;
+    };
+    await core.rpc.call('settings.update', {
+      modelProviders: [
+        ...before.modelProviders,
+        {
+          id: 'custom:gemini',
+          vendor: null,
+          name: 'Gemini（OpenAI 兼容）',
+          baseUrl: llm.url,
+          enabled: true,
+          api: 'openai-completions',
+          models: [{ id: 'mock-main' }],
+        },
+      ],
+    });
+    await core.rpc.call('providers.setKey', { provider: 'custom:gemini', key: 'sk-gemini' });
+
+    await expect(
+      core.rpc.call('providers.test', { provider: 'custom:gemini', model: 'mock-main' }),
+    ).resolves.toEqual({ ok: true });
+
+    const requests = llm.requestsFor('mock-main');
+    expect(requests.length).toBeGreaterThan(0);
+    for (const req of requests) {
+      expect('store' in req.body).toBe(false);
+    }
   });
 
   it('国内厂商：条目经 settings.update 持久化，providers.test 缺省按对话/能力配置路由（不误报 Unknown provider）', async () => {

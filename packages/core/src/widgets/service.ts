@@ -32,6 +32,7 @@ import {
   type WidgetScope,
   type WidgetTheme,
   type WidgetsUiOpenOutput,
+  type WidgetsUiRunCardOutput,
   type WidgetsUiQueryInput,
   type WidgetsUiQueryOutput,
   type WidgetsUiPosterOutput,
@@ -287,6 +288,17 @@ export class WidgetService {
   readonly #gate = new WidgetQueryGate();
   /** Bots whose widgets were cleared for deletion (handover copies into / from them refuse). */
   readonly #deletedBots = new Set<string>();
+  /**
+   * D117 虚拟卡片登记表（docs/design/56 §3）：Bot 详情「组件」tab 直接运行组件
+   * 本体时的无消息卡载体——`runCard` 以 publish 同款列投影构建描述符（不落消
+   * 息行）登记于此，`cardOf()` 先查它，`open / source / poster / storage /
+   * query / reply` 与新窗口打开沿合成 id 全链路可用。core 重启即失效：渲染端
+   * 每次运行前现调 `runCard`，天然自愈。
+   */
+  readonly #virtualCards = new Map<
+    string,
+    { card: WidgetCard; conversationId: string; botId: string; widgetId: string }
+  >();
 
   constructor(deps: WidgetServiceDeps, store?: WidgetResourceStore) {
     this.#deps = deps;
@@ -601,21 +613,30 @@ export class WidgetService {
 
   // --- 卡片与审查 ----------------------------------------------------------------
 
-  /** 卡片消息里的描述符（校验过；不是 `bot_widget` 卡则抛 NOT_FOUND）。 */
-  cardOf(messageId: string): { message: Message; card: WidgetCard } {
+  /**
+   * 卡片描述符（校验过；不是虚拟卡或 `bot_widget` 卡则抛 NOT_FOUND）。D117 起
+   * 先查虚拟卡片登记表（无消息行的直运行载体；conversationId 是登记的 anchor
+   * 会话），未命中再走消息卡路径。调用方只用 id 与会话（open 登记资源）或描
+   * 述符本身。
+   */
+  cardOf(messageId: string): { messageId: string; conversationId: string; card: WidgetCard } {
+    const virtual = this.#virtualCards.get(messageId);
+    if (virtual !== undefined) {
+      return { messageId, conversationId: virtual.conversationId, card: virtual.card };
+    }
     const message = this.#deps.messages.getById(messageId);
     const content = message?.content as { cardType?: unknown; widget?: unknown } | undefined;
     if (
       message === null ||
       message.kind !== 'card' ||
       content?.cardType !== BOT_WIDGET_CARD_TYPE ||
-      content.widget === undefined
+      content?.widget === undefined
     ) {
       throw new AppError('NOT_FOUND', '找不到这张组件卡片');
     }
     const parsed = widgetCardSchema.safeParse(content.widget);
     if (!parsed.success) throw new AppError('WIDGET_INVALID', '组件卡片的内容已损坏');
-    return { message, card: parsed.data };
+    return { messageId: message.id, conversationId: message.conversationId, card: parsed.data };
   }
 
   /**
@@ -745,7 +766,7 @@ export class WidgetService {
     theme?: WidgetTheme | undefined;
     pinVersion?: number | undefined;
   }): WidgetsUiOpenOutput {
-    const { message, card } = this.cardOf(input.messageId);
+    const { messageId, conversationId, card } = this.cardOf(input.messageId);
     // 生效版本（存量 = 卡片钉住版本 + 完整性校验；微应用 = 续期钉住 / next_version 双指针）。
     const { version, microApp } = this.#resolveEffectiveVersion(card, input.pinVersion);
     // 预审强制化：带查询模板的版本，用户没在审查态展开过 SQL 全文就不许加载——
@@ -761,8 +782,8 @@ export class WidgetService {
     const entry = this.store.put({
       widgetId: card.widgetId,
       version: version.version,
-      messageId: message.id,
-      conversationId: message.conversationId,
+      messageId,
+      conversationId,
       botId: card.botId,
       // 登记的是「垫片版」HTML（仅内存资源；widget_versions 里的原文不动，
       // 审查态 source 看到的仍是 Bot 写的原文）。微应用换桥 v2 垫片（能力协商 /
@@ -812,8 +833,18 @@ export class WidgetService {
     const row = this.#deps.db
       .prepare('delete from widgets where bot_id = ?')
       .run(botId) as { changes: number | bigint };
-    for (const { id } of rows) this.store.removeForWidget(id);
+    for (const { id } of rows) {
+      this.store.removeForWidget(id);
+      this.#purgeVirtualCards(id);
+    }
     return Number(row.changes);
+  }
+
+  /** 删除级联（D117）：摘掉该组件的虚拟卡片登记，cardOf 不再命中已删组件。 */
+  #purgeVirtualCards(widgetId: string): void {
+    for (const [key, entry] of this.#virtualCards) {
+      if (entry.widgetId === widgetId) this.#virtualCards.delete(key);
+    }
   }
 
   // --- 管理入口（P2，设计 32 §3）-------------------------------------------------
@@ -865,13 +896,15 @@ export class WidgetService {
   /**
    * 管理入口删除：仅限本 Bot 名下（botId 校验），versions / docs / queries 随行级联；
    * 在途内存资源一并摘除（已挂的 iframe 下一次桥调用即得 WIDGET_RESOURCE_EXPIRED），
-   * 历史卡片按「版本已不存在」优雅报错。返回是否存在并已删除。
+   * 虚拟卡片登记同步清空（cardOf 不再命中已删组件，D117）；历史卡片按「版本已
+   * 不存在」优雅报错。返回是否存在并已删除。
    */
   delete(botId: string, widgetId: string): boolean {
     const widget = this.#widgetOf(widgetId);
     if (widget === null || widget.bot_id !== botId) return false;
     this.#deps.db.prepare('delete from widgets where id = ?').run(widgetId);
     this.store.removeForWidget(widgetId);
+    this.#purgeVirtualCards(widgetId);
     return true;
   }
 
@@ -957,6 +990,90 @@ export class WidgetService {
       message: `组件「${widget.title}」（v${version.version}）已发卡到当前对话，等用户确认加载。`,
       cardMessageId: card?.id ?? null,
     };
+  }
+
+  /**
+   * D117 组件直接运行（docs/design/56 §3）：Bot 详情「组件」tab 点卡片即运行
+   * 组件本体——构建 publish 同款卡片描述符但**不落消息行**，登记进虚拟卡片
+   * 登记表后返回合成消息 id，渲染端沿既有 widgetViewer 打开。scope='bot' 的
+   * 组件 anchor 到指定会话（回复 / 回传落进去），scope='conversation' 的组件
+   * anchor 到它自己的会话。审查门不在这里：`open()` 对未审查查询模板照抛
+   * WIDGET_REVIEW_REQUIRED，渲染端沿同一 id 走「查看源码」审查后重试。
+   */
+  runCard(input: {
+    botId: string;
+    widgetId: string;
+    conversationId?: string | undefined;
+  }): WidgetsUiRunCardOutput {
+    const widget = this.#widgetOf(input.widgetId.trim());
+    if (widget === null) throw new AppError('NOT_FOUND', '找不到这个组件（widgetId 不存在）');
+    if (widget.bot_id !== input.botId) {
+      throw new AppError('FORBIDDEN', '这个组件不是这个 Bot 的');
+    }
+    const anchor =
+      widget.scope === 'bot' ? (input.conversationId ?? null) : (widget.conversation_id ?? null);
+    if (anchor === null) {
+      throw new AppError(
+        'INVALID_INPUT',
+        widget.scope === 'bot'
+          ? '直接运行 Bot 级组件需要提供会话（回复与回传的落点）'
+          : '这个会话级组件的归属会话已不存在，无法直接运行',
+      );
+    }
+    // anchor 必须是真实会话：悬空会话要到回传一步（sendMessage）才暴露，离肇因太远。
+    if (
+      this.#deps.db.prepare('select 1 from conversations where id = ?').get(anchor) === undefined
+    ) {
+      throw new AppError('INVALID_INPUT', `会话 ${anchor} 不存在，无法作为组件运行的落点`);
+    }
+    // 与 publish() 同款列投影：只取描述符要的列，不读最多 2MB 的 html。
+    const version = (this.#deps.db
+      .prepare(
+        'select version, sha256, queries_sha256, size_bytes, created_at, check_status, check_summary_json, manifest_json, bundle_sha256, permissions_json from widget_versions where widget_id = ? and version = ?',
+      )
+      .get(widget.id, widget.latest_version) ?? null) as Pick<
+      WidgetVersionRow,
+      | 'version'
+      | 'sha256'
+      | 'queries_sha256'
+      | 'size_bytes'
+      | 'created_at'
+      | 'check_status'
+      | 'check_summary_json'
+      | 'manifest_json'
+      | 'bundle_sha256'
+      | 'permissions_json'
+    > | null;
+    if (version === null) throw new AppError('NOT_FOUND', '组件的最新版本已不存在');
+    const queriesCount = (
+      this.#deps.db
+        .prepare('select count(*) as n from widget_queries where widget_id = ? and version = ?')
+        .get(widget.id, version.version) as { n: number | bigint }
+    ).n;
+    const card: WidgetCard = {
+      widgetId: widget.id,
+      version: version.version,
+      title: widget.title,
+      description: widget.description,
+      scope: widget.scope,
+      sha256: version.sha256,
+      queriesSha256: version.queries_sha256,
+      queriesCount: Number(queriesCount),
+      sizeBytes: version.size_bytes,
+      botId: widget.bot_id,
+      createdAt: version.created_at,
+      checkStatus: version.check_status,
+      knownIssues: knownIssuesOf(version.check_summary_json),
+      ...microAppCardFields(manifestOfRow(version.manifest_json), version.bundle_sha256),
+    };
+    const messageId = `bot-widget:${widget.id}:${anchor}`;
+    this.#virtualCards.set(messageId, {
+      card,
+      conversationId: anchor,
+      botId: widget.bot_id,
+      widgetId: widget.id,
+    });
+    return { messageId, card };
   }
 
   // --- Bot 资产移交（D88 P2，设计 37 §3）--------------------------------------------

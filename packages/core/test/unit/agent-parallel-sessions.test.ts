@@ -48,10 +48,14 @@ const EXPECTED: Readonly<Record<string, boolean>> = {
   dsh: true,
   cursor: false,
   antigravity: false,
+  // D118 新目标：未经真机核实（kimi / devin 专属 Provider 继承通用实现的
+  // false），接入 spike 确认会话表语义后再改。
+  kimi: false,
+  devin: false,
 };
 
 function settings(patch: Partial<Settings> = {}): Settings {
-  return settingsSchema.parse({ experimental: { externalAgents: true }, ...patch });
+  return settingsSchema.parse(patch);
 }
 
 function catalogEntry(id: string): AgentCatalogEntry {

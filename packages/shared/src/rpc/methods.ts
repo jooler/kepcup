@@ -33,6 +33,21 @@ import {
   appsSkillsOffersInputSchema,
   appsSkillsOffersOutputSchema,
 } from '../domain/app-skills.js';
+import {
+  collabClientRefSchema,
+  collabDraftClaimInputSchema,
+  collabDraftClaimOutputSchema,
+  collabDraftGetInputSchema,
+  collabDraftGetOutputSchema,
+  collabDraftReleaseInputSchema,
+  collabDraftSendInputSchema,
+  collabDraftUpdateInputSchema,
+  collabDraftUpdateOutputSchema,
+  collabPresenceLeaveInputSchema,
+  collabPresenceListInputSchema,
+  collabPresenceListOutputSchema,
+  collabPresenceUpdateInputSchema,
+} from '../domain/collab.js';
 import { handoverViewSchema } from '../domain/handover.js';
 import { SIDEBAR_SECTION_NAME_MAX_CHARS, sidebarLayoutSchema } from '../domain/sidebar.js';
 import {
@@ -71,6 +86,8 @@ import {
   widgetsListOutputSchema,
   widgetsPublishInputSchema,
   widgetsPublishOutputSchema,
+  widgetsRunCardInputSchema,
+  widgetsRunCardOutputSchema,
   widgetsUiCloseInputSchema,
   widgetsUiOpenInputSchema,
   widgetsUiOpenLinkInputSchema,
@@ -183,6 +200,7 @@ import {
   botAccentColorSchema,
   delegationSchema,
   taskViewSchema,
+  taskRunUsageSchema,
   toolEffectSchema,
   effectStatusSchema,
   conversationSchema,
@@ -237,6 +255,7 @@ import {
   wikiPageSchema,
   wikiSearchHitSchema,
   type ProviderInfo,
+  fetchedProviderModelSchema,
 } from '../domain/types.js';
 import { wikiOwnerSchema } from '../domain/wiki.js';
 import { boardCardSchema, boardColumnSchema, boardSummarySchema } from '../domain/board.js';
@@ -275,7 +294,7 @@ import {
   remoteDeviceIdSchema,
   type PairingOffer,
 } from '../domain/remote.js';
-import { modelCapabilitySchema } from '../domain/vendors.js';
+import { modelCapabilitySchema, providerApiSchema } from '../domain/vendors.js';
 import { agentIdSchema } from '../domain/agent-catalog.js';
 import type { BrowserNetworkContext } from '../browser/net-rules.js';
 import {
@@ -283,6 +302,7 @@ import {
   MEMO_BODY_MAX_CHARS,
   MEMO_GROUP_TITLE_MAX_CHARS,
   PROJECT_GOAL_MAX_CHARS,
+  TASK_INSTRUCTION_MAX_CHARS,
   TODO_NOTES_MAX_CHARS,
   TODO_TITLE_MAX_CHARS,
   WATCH_SELECTOR_MAX_CHARS,
@@ -388,6 +408,10 @@ export const diagnosticsOutputSchema = z.object({
     reason: z.string().optional(),
     enhancedBackend: z.string().nullable(),
     enhancedAvailable: z.boolean().nullable(),
+    /** Same structured state as sandbox.status (lets diagnostics stop saying 未安装 for a missing VM). */
+    enhancedState: z
+      .enum(['cli_missing', 'instance_missing', 'instance_stopped', 'instance_unprovisioned'])
+      .optional(),
   }),
   toolchain: z.array(diagnosticsToolRowSchema),
 });
@@ -474,8 +498,6 @@ export const settingsUpdateInputSchema = z.object({
   agents: z.record(agentIdSchema, agentSettingInputSchema).optional(),
   /** 计算机操控（D105）：安全开关（平铺布尔，受 user-only 档位约束）。 */
   computerUseEnabled: z.boolean().optional(),
-  /** 实验开关（D72）：部分 patch，与已存值合并。 */
-  experimental: z.object({ externalAgents: z.boolean().optional() }).optional(),
   /** 连接应用设置（D73 P2）：部分 patch；只开放 `developerMode`（其余字段 core 自有）。 */
   apps: z
     .object({
@@ -488,6 +510,7 @@ export const settingsUpdateInputSchema = z.object({
   /** 后台任务开关（P6）：部分 patch，与已存值合并。 */
   backgroundTasks: z
     .object({
+      builtinEnabled: z.boolean().optional(),
       agentEnabled: z.boolean().optional(),
       agentSkillAuthoring: z.boolean().optional(),
       projectMentionOnly: z.boolean().optional(),
@@ -816,6 +839,17 @@ export const providerNameInputSchema = z.object({ provider: z.string().min(1) })
 export const providersSetKeyInputSchema = providerNameInputSchema.extend({
   key: z.string().min(1).max(4096),
 });
+/** 追加一个 Key（同一供应商的多个 Key 轮流使用）；setKey 仍是整体替换。 */
+export const providersAddKeyInputSchema = providersSetKeyInputSchema;
+export const providersRemoveKeyAtInputSchema = providerNameInputSchema.extend({
+  index: z.number().int().min(0),
+});
+/** 更新单个 Key 的标注：别名（空串清除）与启停；下标非法时报 INVALID_INPUT。 */
+export const providersSetKeyMetaInputSchema = providerNameInputSchema.extend({
+  index: z.number().int().min(0),
+  alias: z.string().max(100).optional(),
+  enabled: z.boolean().optional(),
+});
 export const providersTestInputSchema = providerNameInputSchema.extend({
   /** Optional model id override; defaults to the provider's first model. */
   model: z.string().min(1).optional(),
@@ -830,6 +864,22 @@ export const providersTestInputSchema = providerNameInputSchema.extend({
    * 不落库；缺省用已存 key。只对能力探测生效（对话探测仍用已存配置）。
    */
   keyOverride: z.string().min(1).max(4096).optional(),
+});
+/**
+ * 拉取供应商可用模型列表（设置页「获取模型」）：按线协议适配列表端点与认证头
+ * （OpenAI 风格 GET {base}/models + Bearer；Anthropic 风格 GET {base}/v1/models
+ * + x-api-key）。`provider` 用于详情页从 secrets 解析已存 Key；新增表单传
+ * `keyOverride` 用未保存的 Key（与 providers.test 同一取向），两者都缺省时
+ * 无认证探测（本地服务）。
+ */
+export const providersFetchModelsInputSchema = z.object({
+  provider: z.string().min(1).optional(),
+  baseUrl: z.string().url(),
+  api: providerApiSchema,
+  keyOverride: z.string().min(1).max(4096).optional(),
+});
+export const providersFetchModelsOutputSchema = z.object({
+  models: z.array(fetchedProviderModelSchema),
 });
 
 // --- media（统一媒体调用：按厂商自动路由） ------------------------------------
@@ -1246,6 +1296,8 @@ export const messagesSendInputSchema = z.object({
    * 上下文据此标注（不派 transcribe_audio，回复将由客户端自动转语音播报）。
    */
   voiceMode: z.boolean().optional(),
+  /** D121：发这条消息的客户端（设备），UI 显示「来自 X」。 */
+  client: collabClientRefSchema.optional(),
 });
 export const messagesSendOutputSchema = z.object({
   message: messageSchema,
@@ -1386,6 +1438,15 @@ export const sandboxStatusOutputSchema = z.object({
       available: z.boolean(),
       reason: z.string().optional(),
       fixHint: z.string().optional(),
+      /**
+       * Structured unavailable state: 'cli_missing' = the CLI is not
+       * installed; the others mean the backend is installed but its VM /
+       * image is not ready. Lets the settings page stop labeling a missing
+       * VM as "未安装".
+       */
+      state: z
+        .enum(['cli_missing', 'instance_missing', 'instance_stopped', 'instance_unprovisioned'])
+        .optional(),
     })
     .nullable()
     .optional(),
@@ -1422,6 +1483,23 @@ export const sandboxWslStatusOutputSchema = z.object({
 export type SandboxWslStatusOutput = z.infer<typeof sandboxWslStatusOutputSchema>;
 export const sandboxWslSkipOutputSchema = z.object({ skipped: z.boolean() });
 export type SandboxWslSkipOutput = z.infer<typeof sandboxWslSkipOutputSchema>;
+
+/**
+ * macOS 增强沙箱（Lima）准备向导：创建 / 启动 / 初始化虚拟机。非 macOS 返回
+ * `applicable:false`，向导继续渲染只读的增强级状态。
+ */
+export const sandboxLimaStatusOutputSchema = z.object({
+  applicable: z.boolean(),
+  phase: z.enum(['idle', 'creating', 'starting', 'provisioning', 'ready', 'failed']),
+  instance: z.enum(['missing', 'stopped', 'running']),
+  /** 向导应展示的主操作（core 侧统一推导，UI 不嗅探 reason 文本）。 */
+  action: z.enum(['create', 'start', 'provision', 'retry', 'wait', 'none']),
+  reason: z.string().optional(),
+  fixHint: z.string().optional(),
+  /** 当前步骤的进度文本（创建/启动/初始化期间）。 */
+  progress: z.string().optional(),
+});
+export type SandboxLimaStatusOutput = z.infer<typeof sandboxLimaStatusOutputSchema>;
 
 // --- approvals (P03) --------------------------------------------------------
 
@@ -1460,6 +1538,8 @@ export const approvalsDecideInputSchema = z.object({
    * picked on the card; must be one of the payload's `memberBotIds`.
    */
   leadBotId: z.string().min(1).optional(),
+  /** D121：做决定的客户端（设备）；多端竞争失败方显示「已被 X 处理」。 */
+  client: collabClientRefSchema.optional(),
 });
 export const approvalsDecideOutputSchema = z.object({ approval: approvalSchema });
 
@@ -1484,6 +1564,8 @@ export const taskGetOutputSchema = z.object({ task: taskViewSchema.nullable() })
 export const effectsListOutputSchema = z.object({ effects: z.array(toolEffectSchema) });
 /** Non-terminal tasks of a conversation (status line seed on conversation open). */
 export const tasksActiveInputSchema = z.object({ conversationId: z.string().min(1) });
+/** 任务详情页的上下文用量（usage_ledger 按 run_id 聚合，见 taskRunUsageSchema）。 */
+export const tasksUsageOutputSchema = z.object({ usage: taskRunUsageSchema.nullable() });
 export const tasksActiveOutputSchema = z.object({ tasks: z.array(taskViewSchema) });
 /** The user picked an option on a task question card: injected straight into the task. */
 export const tasksAnswerInputSchema = z.object({
@@ -1493,6 +1575,27 @@ export const tasksAnswerInputSchema = z.object({
   /** D87 P4 L2：多选 = 选中的候选列表；表单 = 字段名 → 文本。单选不带。 */
   values: askUserValuesSchema.optional(),
 });
+/**
+ * D115 任务直注：用户在任务详情页注入坞对非终态任务自由文本追加指令。语义与
+ * 对话轮的 `inject_task` 完全一致（等问即回答 / 运行中 steer / 未启动入简报 /
+ * 外部 Agent `queued`），见 docs/design/56 §1。
+ */
+export const tasksInjectInputSchema = z.object({
+  taskId: z.string().min(1),
+  text: z.string().min(1).max(TASK_INSTRUCTION_MAX_CHARS),
+});
+export const tasksInjectOutputSchema = z.object({
+  delivery: z.enum(['delivered', 'queued']),
+});
+/**
+ * D116 每 Bot 任务列表（Bot 详情「任务」tab）：该 Bot 拉起的全部任务（跨对话
+ * 全集），created_at 倒序。见 docs/design/56 §2。
+ */
+export const tasksListByBotInputSchema = z.object({
+  botId: z.string().min(1),
+  limit: z.number().int().min(1).max(200).default(100),
+});
+export const tasksListByBotOutputSchema = z.object({ tasks: z.array(taskViewSchema) });
 
 // --- grants (P03) -----------------------------------------------------------
 
@@ -1987,6 +2090,11 @@ export const memosListOutputSchema = z.object({
 export const memosIdInputSchema = z.object({ id: z.string().min(1) });
 export const memosCreateInputSchema = z.object({
   body: z.string().min(1).max(MEMO_BODY_MAX_CHARS),
+  /**
+   * Target group (工作台备忘当前 tab 的分组); absent = 未分组伪分组（group_id 为 null）。
+   * The group must exist, otherwise the create is rejected (NOT_FOUND).
+   */
+  groupId: z.string().min(1).optional(),
 });
 export const memosUpdateInputSchema = z.object({
   id: z.string().min(1),
@@ -2300,6 +2408,12 @@ export type ComputerPermissionState = z.infer<typeof computerPermissionStateSche
 export const computerPermissionsStatusOutputSchema = z.object({
   accessibility: computerPermissionStateSchema,
   screenRecording: computerPermissionStateSchema,
+  /**
+   * macOS 26+ 的 ScreenCaptureKit「直接采集」二段同意：与「屏幕录制」是两把不同的
+   * 钥匙，key 在 CuaDriver.app 这个 bundle 上，宿主 TCC 已授权也不代表截屏可用。
+   * 'unknown' = 尚未探测（探测需要真跑一次采集，会弹系统同意框）。
+   */
+  directCapture: computerPermissionStateSchema.default('unknown'),
 });
 export type ComputerPermissionsStatus = z.infer<typeof computerPermissionsStatusOutputSchema>;
 
@@ -2439,8 +2553,16 @@ export const rpcMethodSchemas = {
 
   'providers.list': { input: voidInput, output: providersListOutputSchema },
   'providers.setKey': { input: providersSetKeyInputSchema, output: okOutput },
+  'providers.addKey': { input: providersAddKeyInputSchema, output: okOutput },
+  'providers.removeKeyAt': { input: providersRemoveKeyAtInputSchema, output: okOutput },
+  'providers.setKeyMeta': { input: providersSetKeyMetaInputSchema, output: okOutput },
   'providers.removeKey': { input: providerNameInputSchema, output: okOutput },
   'providers.test': { input: providersTestInputSchema, output: okOutput },
+  /** 拉取供应商可用模型列表（设置页「获取模型」，按线协议适配端点与认证头）。 */
+  'providers.fetchModels': {
+    input: providersFetchModelsInputSchema,
+    output: providersFetchModelsOutputSchema,
+  },
   /** MCP（D65）：设置页连接测试——连接 server 并列出工具名（不落缓存）。 */
   'mcp.test': { input: mcpTestInputSchema, output: mcpTestOutputSchema },
   'mcp.setSecret': { input: mcpSetSecretInputSchema, output: okOutput },
@@ -2557,8 +2679,13 @@ export const rpcMethodSchemas = {
   'widgets.list': { input: widgetsListInputSchema, output: widgetsListOutputSchema },
   'widgets.delete': { input: widgetsDeleteInputSchema, output: widgetsDeleteOutputSchema },
   'widgets.publish': { input: widgetsPublishInputSchema, output: widgetsPublishOutputSchema },
+  // D117 组件直接运行（Bot 详情「组件」tab 卡片点击，docs/design/56 §3）。
+  'widgets.runCard': { input: widgetsRunCardInputSchema, output: widgetsRunCardOutputSchema },
   // D112 微应用（docs/design/55-bot-micro-app-runtime.md）：能力面专属入口（预检 / 诊断 / 管理）。
-  'microApps.preflight': { input: microAppsPreflightInputSchema, output: microAppsPreflightOutputSchema },
+  'microApps.preflight': {
+    input: microAppsPreflightInputSchema,
+    output: microAppsPreflightOutputSchema,
+  },
   'microApps.ai.chat': { input: microAppsAiChatInputSchema, output: microAppsAiChatOutputSchema },
   'microApps.ai.sessionCreate': {
     input: microAppsAiSessionCreateInputSchema,
@@ -2584,16 +2711,37 @@ export const rpcMethodSchemas = {
     output: microAppsMediaSynthesizeOutputSchema,
   },
   'microApps.collections.put': { input: microAppsCollectionsPutInputSchema, output: okOutput },
-  'microApps.collections.get': { input: microAppsCollectionsGetInputSchema, output: microAppsDocOutputSchema },
-  'microApps.collections.delete': { input: microAppsCollectionsDeleteInputSchema, output: okOutput },
-  'microApps.collections.list': { input: microAppsCollectionsListInputSchema, output: microAppsDocsOutputSchema },
-  'microApps.collections.query': { input: microAppsCollectionsQueryInputSchema, output: microAppsDocsOutputSchema },
+  'microApps.collections.get': {
+    input: microAppsCollectionsGetInputSchema,
+    output: microAppsDocOutputSchema,
+  },
+  'microApps.collections.delete': {
+    input: microAppsCollectionsDeleteInputSchema,
+    output: okOutput,
+  },
+  'microApps.collections.list': {
+    input: microAppsCollectionsListInputSchema,
+    output: microAppsDocsOutputSchema,
+  },
+  'microApps.collections.query': {
+    input: microAppsCollectionsQueryInputSchema,
+    output: microAppsDocsOutputSchema,
+  },
   'microApps.context.update': { input: microAppsContextUpdateInputSchema, output: okOutput },
   'microApps.context.clear': { input: microAppsContextClearInputSchema, output: okOutput },
-  'microApps.diagnostics.record': { input: microAppsDiagnosticsRecordInputSchema, output: okOutput },
+  'microApps.diagnostics.record': {
+    input: microAppsDiagnosticsRecordInputSchema,
+    output: okOutput,
+  },
   'microApps.list': { input: microAppsListInputSchema, output: microAppsListOutputSchema },
-  'microApps.rollback': { input: microAppsRollbackInputSchema, output: microAppsRollbackOutputSchema },
-  'microApps.clearContext': { input: microAppsClearContextInputSchema, output: microAppsClearContextOutputSchema },
+  'microApps.rollback': {
+    input: microAppsRollbackInputSchema,
+    output: microAppsRollbackOutputSchema,
+  },
+  'microApps.clearContext': {
+    input: microAppsClearContextInputSchema,
+    output: microAppsClearContextOutputSchema,
+  },
   'mcp.rawTools': { input: mcpRawToolsInputSchema, output: mcpRawToolsOutputSchema },
   'mcp.refreshTools': { input: mcpRefreshToolsInputSchema, output: mcpRefreshToolsOutputSchema },
   'websearch.test': { input: webSearchTestInputSchema, output: webSearchTestOutputSchema },
@@ -2774,6 +2922,8 @@ export const rpcMethodSchemas = {
   'sandbox.wslStatus': { input: voidInput, output: sandboxWslStatusOutputSchema },
   'sandbox.wslPrepare': { input: voidInput, output: sandboxWslStatusOutputSchema },
   'sandbox.wslSkip': { input: voidInput, output: sandboxWslSkipOutputSchema },
+  'sandbox.limaStatus': { input: voidInput, output: sandboxLimaStatusOutputSchema },
+  'sandbox.limaPrepare': { input: voidInput, output: sandboxLimaStatusOutputSchema },
 
   'approvals.list': { input: approvalsListInputSchema, output: approvalsListOutputSchema },
   'approvals.decide': { input: approvalsDecideInputSchema, output: approvalsDecideOutputSchema },
@@ -2782,8 +2932,12 @@ export const rpcMethodSchemas = {
   'handovers.get': { input: handoversGetInputSchema, output: handoversGetOutputSchema },
   'delegations.cancel': { input: delegationIdInputSchema, output: delegationGetOutputSchema },
   'tasks.get': { input: taskIdInputSchema, output: taskGetOutputSchema },
+  'tasks.usage': { input: taskIdInputSchema, output: tasksUsageOutputSchema },
   'tasks.active': { input: tasksActiveInputSchema, output: tasksActiveOutputSchema },
   'tasks.answer': { input: tasksAnswerInputSchema, output: okOutput },
+  // D115 任务直注（Bot 详情「任务」tab 与任务详情页注入坞，docs/design/56 §1）。
+  'tasks.inject': { input: tasksInjectInputSchema, output: tasksInjectOutputSchema },
+  'tasks.listByBot': { input: tasksListByBotInputSchema, output: tasksListByBotOutputSchema },
   'effects.list': { input: taskIdInputSchema, output: effectsListOutputSchema },
   'grants.list': { input: grantsListInputSchema, output: grantsListOutputSchema },
   'grants.revoke': { input: grantIdInputSchema, output: okOutput },
@@ -3026,6 +3180,41 @@ export const rpcMethodSchemas = {
   'remote.config.get': { input: voidInput, output: remoteConfigGetOutputSchema },
   'remote.config.set': { input: remoteConfigSetInputSchema, output: remoteConfigSetOutputSchema },
 
+  // 多客户端协作（D119）：在线状态只存在 core 内存，不落库。
+  'collab.presence.update': {
+    input: collabPresenceUpdateInputSchema,
+    output: okOutput,
+  },
+  'collab.presence.leave': {
+    input: collabPresenceLeaveInputSchema,
+    output: okOutput,
+  },
+  'collab.presence.list': {
+    input: collabPresenceListInputSchema,
+    output: collabPresenceListOutputSchema,
+  },
+  // 多客户端共享草稿（D120）：单写者租约 + 版本化整份快照。
+  'collab.draft.get': {
+    input: collabDraftGetInputSchema,
+    output: collabDraftGetOutputSchema,
+  },
+  'collab.draft.claim': {
+    input: collabDraftClaimInputSchema,
+    output: collabDraftClaimOutputSchema,
+  },
+  'collab.draft.update': {
+    input: collabDraftUpdateInputSchema,
+    output: collabDraftUpdateOutputSchema,
+  },
+  'collab.draft.release': {
+    input: collabDraftReleaseInputSchema,
+    output: okOutput,
+  },
+  'collab.draft.send': {
+    input: collabDraftSendInputSchema,
+    output: messagesSendOutputSchema,
+  },
+
   'mail.accounts.list': { input: voidInput, output: mailAccountsListOutputSchema },
   'mail.accounts.get': { input: mailAccountIdInputSchema, output: mailAccountGetOutputSchema },
   'mail.accounts.update': {
@@ -3060,7 +3249,10 @@ export const rpcMethodSchemas = {
   'im.accounts.delete': { input: imAccountIdInputSchema, output: okOutput },
   'im.accounts.setBots': { input: imAccountSetBotsInputSchema, output: okOutput },
   'im.bindings.setForward': { input: imBindingSetForwardInputSchema, output: okOutput },
-  'im.login.qrcode.create': { input: imQrcodeCreateInputSchema, output: imQrcodeCreateOutputSchema },
+  'im.login.qrcode.create': {
+    input: imQrcodeCreateInputSchema,
+    output: imQrcodeCreateOutputSchema,
+  },
   'im.login.qrcode.poll': { input: imQrcodePollInputSchema, output: imQrcodePollOutputSchema },
 
   // P11: served by the main process (browser-host) on port B — see the
@@ -3287,6 +3479,9 @@ const APP_METHODS = [
   'settings.cards.undo',
   'providers.list',
   'providers.setKey',
+  'providers.addKey',
+  'providers.removeKeyAt',
+  'providers.setKeyMeta',
   'providers.removeKey',
   'providers.test',
   'media.generateImage',
@@ -3346,6 +3541,7 @@ const APP_METHODS = [
   'widgets.list',
   'widgets.delete',
   'widgets.publish',
+  'widgets.runCard',
   'microApps.preflight',
   'microApps.ai.chat',
   'microApps.ai.sessionCreate',
@@ -3428,6 +3624,8 @@ const APP_METHODS = [
   'sandbox.wslStatus',
   'sandbox.wslPrepare',
   'sandbox.wslSkip',
+  'sandbox.limaStatus',
+  'sandbox.limaPrepare',
   'approvals.list',
   'approvals.decide',
   'delegations.get',
@@ -3436,6 +3634,8 @@ const APP_METHODS = [
   'tasks.get',
   'tasks.active',
   'tasks.answer',
+  'tasks.inject',
+  'tasks.listByBot',
   'effects.list',
   'grants.list',
   'grants.revoke',
@@ -3583,6 +3783,14 @@ const APP_METHODS = [
   'remote.devices',
   'remote.config.get',
   'remote.config.set',
+  'collab.presence.update',
+  'collab.presence.leave',
+  'collab.presence.list',
+  'collab.draft.get',
+  'collab.draft.claim',
+  'collab.draft.update',
+  'collab.draft.release',
+  'collab.draft.send',
   'plugins.list',
   'plugins.inspect',
   'plugins.install',

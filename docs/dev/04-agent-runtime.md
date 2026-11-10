@@ -9,7 +9,7 @@
 | AgentEngine 能力 | pi 机制 |
 |---|---|
 | 创建执行 | 每次执行创建一个 `Agent`（`@earendil-works/pi-agent-core`） |
-| 每次请求前刷新系统提示词 | `prepareRequest` / `transformContext` 中调用 `buildSystemPrompt()` |
+| 系统提示词（run 内冻结） | `prepareRequest` 在首个请求调用一次 `buildSystemPrompt()`，之后逐字节复用同一字符串；`transformContext` 只做压缩 |
 | `steer(text)` | `agent.steer({ role: 'user', content, timestamp })`，`steeringMode = 'all'`（同一步内的多次注入合并送达） |
 | `abort(reason)` | `agent.abort()`；`AbortSignal` 传入每个工具 |
 | 工具网关 | 工具的 `execute` 内部调用网关；`beforeToolCall` 只做最后一道校验（工具是否属于本 loop 的工具集） |
@@ -44,7 +44,7 @@
 | 组件审查（REVIEW 阶段 run，P3c） | `widget_review`（设置 `widgetReviewModel` → Bot 主 → 全局主；解析不到退回制作的路由） | `routeFor`（`widgets/craft/service.ts`） |
 | 组件制作（SPEC / BUILD / FIX 阶段 run） | `widget_authoring`（Bot 主 → 全局主；无内置模型时按「后台任务」设置走外部 Agent，都没有 → `widget_craft` 以 `WIDGET_CRAFT_UNAVAILABLE` 失败） | `routeFor`（`widgets/craft/service.ts`） |
 
-**设置 / Bot 换模型后的行为**：下一次调用按新模型；正在对旧模型退避重试的请求经 `isRouteCurrent`（对话轮、任务、Wiki 维护、技能生成、SubAgent 子 run 与压缩；结构化调用经 `resolveRoute`）在 ≤ 1 s 内停止重试。额度类 429（智谱 1310 / 1113、OpenAI `insufficient_quota`，`isQuotaExhaustedBody`）不重试，直接按 `PROVIDER_RATE_LIMITED` 失败——重试到用量窗口重置没有意义。Bot 在 profile 里**固定了**模型（`runtime.model` / `light_model` 非空）时不跟随全局默认，这是设计；排查「改了默认却仍走旧模型」先看该 Bot 是否固定了模型（run 的 `model` 列记录实际使用的模型）。
+**设置 / Bot 换模型后的行为**：下一次调用按新模型；正在对旧模型退避重试的请求经 `isRouteCurrent`（Wiki 维护、技能生成、SubAgent 子 run 与压缩；结构化调用经 `resolveRoute`）在 ≤ 1 s 内停止重试。对话轮与任务改用 `currentModelRef`（`PiEngine`；给了它时 `isRouteCurrent` 被忽略），生效时机分两种：**改模型不打断正常推进的 Loop**——下一次请求仍用本 run 已在用的模型（换供应商会重建提示缓存），等本次 Loop 结束、下一个 run 才用新模型；**Loop 内出错进入退避后，重试一定用当前设置的模型**——退避被打断不是失败，引擎丢掉那次尝试的错误轮，立刻用新模型继续同一段对话（重试发生在 fetch 层、还没拿到响应，不会重复已流出的文本，也不会重放已执行的工具）。重启会重建跟模型 / transcript 绑定的 run 内状态：`<current_plan>` 重新注入、压缩器按新模型窗口重建（缓存清空）、触发消息里的图片按新模型的图像能力重算；用量按实际产生 token 的供应商 / 模型记账（`EngineUsage.provider/model`），run 行的 provider/model 随 `route_switched` 更新（调度并发键仍按启动时的供应商）。同一 run 最多切换 3 次；新模型解析不到或超限时以明确错误失败（`模型设置已变更，但…`），不会继续重试旧供应商。SubAgent 的新子 run 用父 run 当前的模型（不是父 run 启动时的）。其他固定路由的调用只停止重试并以「模型设置已变更，本次执行已停止」失败（而不是旧模型的传输错误）。额度类 429（智谱 1310 / 1113、OpenAI `insufficient_quota`，`isQuotaExhaustedBody`）不重试，直接按 `PROVIDER_RATE_LIMITED` 失败——重试到用量窗口重置没有意义。Bot 在 profile 里**固定了**模型（`runtime.model` / `light_model` 非空）时不跟随全局默认，这是设计；排查「改了默认却仍走旧模型」先看该 Bot 是否固定了模型（run 的 `model` 列记录本次 run 实际使用的模型，切换后为切换后的模型）。
 
 **模型请求的 session id**（`agent/model-session-id.ts`）：`PiEngine.startRun` / `complete` 与「测试连接」都给 pi-ai 传 `sessionId`。pi-ai 不只把它发给 OpenCode（`x-opencode-session`，路由 + 提示缓存，必需），还按线协议与地址发成 OpenAI Responses 的 `session_id` / `x-client-request-id` 与 `prompt_cache_key`、Azure 的 `prompt_cache_key`、OpenRouter 识别出的端点的 `x-session-id`、地址含 `api.openai.com` 的 Chat Completions（含代理）的 `prompt_cache_key`、Mistral 的 `x-affinity` 与 `prompt_cache_key`、开了 session affinity 的 Anthropic 兼容端点的 `x-session-affinity`。所以它是发给第三方的标识：取值为 `kep-` + HMAC-SHA256 前 128 位（hex），密钥 `SecretsService.modelSessionKey()` 由每次安装随机的主密钥按 HKDF（`KEY_INFO.modelSession`）派生，不另存、不出进程；输入为（供应商 id，锚点，用途）。锚点：有对话 = 对话 + Bot（项目组里各 Bot 的提示词不同），无对话 = Bot（同一 Bot 的后台 loop 前缀相同），都没有 = run（每次新 id）。用途 = `loop|oneshot` + loopType，使对话轮、任务、摘要、路由判断、记忆、Wiki、SubAgent 等不同提示词前缀不共用缓存键。测试连接为（`provider-test`，供应商 id）。于是同一对话在同一供应商稳定（路由与提示缓存照常生效），跨供应商、跨安装互不相关，原始 id 不出现在请求头或会话字段里（`opencode-session-header.test.ts`）。不按供应商关闭：值不透明后，供应商从中能得到的只是「这些请求属于同一会话」，这从共享的提示词前缀本来就看得出；关掉只会丢提示缓存。
 
@@ -68,10 +68,10 @@ P6 落地要点（文件，详见 todo §9.3）：
 
 - `engine.ts` `ExternalAgentEngine.complete(req)`：以 `external.background = true` 的 run handle 跑一次性精简会话——强制只读档、`mkdtemp` 新建空私有目录作 cwd（结束删除，忽略 `RunSpec.cwd`）、不挂桥（`tools: []`）、不复用（忽略 `session`，结束 `session/close`）；会话的 `requestPermission` 不接权限桥（P1 规则：只放行本 run 的桥工具，其余拒绝，永不弹卡）；Provider `sessionNew` 收到 `oneShot`（Claude：`_meta.systemPrompt` 为替换式字符串、`claudeCode.options.tools: []`、`settingSources: []`）。时限 `AGENT_COMPLETE_TIMEOUT_MS`（3 分钟，调用方自己的时限在上层另算），轮数 `AGENT_COMPLETE_MAX_TURNS`；`req.signal` → `session/cancel`；失败按引擎码抛 `AppError`；用量为各轮之和，Agent 未报 token 时返回零 token 用量（记一行）。`toolCalls` 恒为空。
 - `structured.ts`：`agent:` 模型不下发 `submit` 工具，`jsonOnlyInstruction(Schema)` 追加到系统提示词，结果走文本 JSON 回退 + zod；重试提示「只输出 JSON」。
-- `agent/llm-router.ts` `LlmRouter`（start.ts 装配，`services.llmRouter`）：`resolveForBot(bot, purpose)` / `resolveDefault(purpose)` → `{engine, modelRef, provider, agentId}`。内置取法与 P6 前各调用点一致（路由判断 / SubAgent 压缩：Bot 轻量 → 全局轻量 → Bot 主 → 全局主；Wiki / 技能：Bot 主 → 全局主；摘要 / 反思 / 整理：全局轻量 → 全局主；画像：全局主）。无内置模型 → 外部 Agent（实验开关 + `agentRunGate` 就绪 + `agentBackgroundBlocker` 合格才算可用——Provider 声明 `backgroundNoNativeTools`〔本期 Claude；testkit 假 Agent〕、未开启「加载我的个人配置」、`features.parallelSessions`、并发 ≥ 2；原因经 `AgentView.backgroundBlocker` 显示在设置页；`backgroundAgentId` 指定者不可用即跳过；自动 = 只用该 Bot 自己的 Agent，不换用别家；画像整理只在明确指定时；模型取 Bot 自己的 Agent 模型或 Agent 默认）；`backgroundTasks.agentEnabled=false` / 续接 / 未允许的技能生成 / 仅 @ 的项目组路由判断（`projectMentionOnly` 默认开）/ 该 Bot 每日后台预算用完时的路由判断 → null（照旧跳过）。`admit(route, purpose, key)`：Agent 路由上的反思（按 Bot）/ 摘要（按对话）每 `AGENT_BACKGROUND_EVERY_N_RUNS` 次放行一次；路由判断按 `botId:conversationId` 每 `AGENT_TRIAGE_MIN_INTERVAL_MS` 至多一次（时限 `AGENT_TRIAGE_TIMEOUT_MS`）。后台 run 时限 `AGENT_BACKGROUND_RUN_TIMEOUT_MS`；调度器给 `agent:*` 上的后台任务至多 并发-1 个名额；后台会话在 `AgentHost.dispose()` 时以 `AGENT_UNAVAILABLE` 结算。`routeFor(deps, …)`：后台 loop 未装配路由器时等价于只用内置模型。`backgroundRunSpec(route, spec)`：Agent 路由的带工具 loop 补后台精简会话参数。
+- `agent/llm-router.ts` `LlmRouter`（start.ts 装配，`services.llmRouter`）：`resolveForBot(bot, purpose)` / `resolveDefault(purpose)` → `{engine, modelRef, provider, agentId}`。明确指定了 `backgroundAgentId` 时先走该 Agent（「选定即生效」，有内置模型也不再用内置；不可用即跳过）；否则内置取法与 P6 前各调用点一致（路由判断 / SubAgent 压缩：Bot 轻量 → 全局轻量 → Bot 主 → 全局主；Wiki / 技能：Bot 主 → 全局主；摘要 / 反思 / 整理：全局轻量 → 全局主；画像：全局主）。无内置模型 → 回落到各 Bot 自己的 Agent（实验开关 + `agentRunGate` 就绪 + `agentBackgroundBlocker` 合格才算可用——Provider 声明 `backgroundNoNativeTools`〔本期 Claude；testkit 假 Agent〕、未开启「加载我的个人配置」、`features.parallelSessions`、并发 ≥ 2；原因经 `AgentView.backgroundBlocker` 显示在设置页；不可用即跳过，不换用别家；画像整理只在明确指定时；模型取 Bot 自己的 Agent 模型或 Agent 默认）；`builtinEnabled=false`（且未指定 Agent）/ 续接 / 未允许的技能生成 / 仅 @ 的项目组路由判断（`projectMentionOnly` 默认开）/ 该 Bot 每日后台预算用完时的路由判断 → null（照旧跳过）。`admit(route, purpose, key)`：Agent 路由上的反思（按 Bot）/ 摘要（按对话）每 `AGENT_BACKGROUND_EVERY_N_RUNS` 次放行一次；路由判断按 `botId:conversationId` 每 `AGENT_TRIAGE_MIN_INTERVAL_MS` 至多一次（时限 `AGENT_TRIAGE_TIMEOUT_MS`）。后台 run 时限 `AGENT_BACKGROUND_RUN_TIMEOUT_MS`；调度器给 `agent:*` 上的后台任务至多 并发-1 个名额；后台会话在 `AgentHost.dispose()` 时以 `AGENT_UNAVAILABLE` 结算。`routeFor(deps, …)`：后台 loop 未装配路由器时等价于只用内置模型。`backgroundRunSpec(route, spec)`：Agent 路由的带工具 loop 补后台精简会话参数。
 - 调用点：`dispatcher.judgeContinuation` 与 `lead-gate` 的网关（共用 `light-judgement.ts` 的 `runLightJudgement` 骨架，超时走各自 fallback）、SubAgent 压缩（`lightEngine`）、`conversation-summary` / `reflection` / `consolidation` / `profile-curation`（经 `JobsRunner.router` 传入）、`wiki/maintenance`（lint / ingest）与 `skills/authoring`（`startRun(backgroundRunSpec(...))`，`runs.engine` 记 `agent:{id}`）、start.ts 的 `requestAuthoring` 预检；`JobsRunner.#providerFor` 按路由取调度器并发键（`agent:{id}`）。P4 的 `builtinModelRefOrNull` 兜底移除。
 - 用量：后台调用照常 `provider='agent:{id}'`；`BudgetService.usedToday` 与 `UsageService.sumForRuns` 同样把 `agent:` 零 token 行按 `AGENT_TURN_BUDGET_TOKENS` 计（每行一轮：`complete()` 每次调用一行）；`usedToday` 另计经 Agent 的项目组路由判断；Agent 路由的直聊摘要 / 记忆整理行记在所属 Bot 名下，`JobsRunner` 也按所属 Bot 推迟（审查 C5）。
-- 设置（JSON 设置行，无迁移）：`backgroundAgentId`（'' / 缺省 = 自动）、`backgroundTasks {agentEnabled=true, agentSkillAuthoring=false, groupMentionOnly=true}`；`settings.update` 部分 patch 合并、`backgroundAgentId` 须在目录中。desktop `settings/BackgroundTasksSection.svelte`（智能体分区，实验开关打开时）。
+- 设置（JSON 设置行，无迁移）：`backgroundAgentId`（'' / 缺省 = 内置智能体）、`backgroundTasks {builtinEnabled 缺省 true, agentEnabled=true（默认内置智能体；没有内置模型时回落各 Bot 自己的智能体）, agentSkillAuthoring=false, projectMentionOnly=true}`；明确指定 `backgroundAgentId` 时后台任务「选定即生效」（即使配置了内置模型也走该 Agent，不可用则跳过），`builtinEnabled=false` + `agentEnabled=false` = 整块跳过后台任务；`settings.update` 部分 patch 合并、`backgroundAgentId` 须在目录中。desktop `settings/BackgroundTasksSection.svelte`（「模型与智能体」分区的智能体页签）。
 - 测试缝（仅测试构建）：`KEPCUP_FAKE_ACP_AGENT_BIN` + `_SCRIPT`（+ `_RECORD`）让目录 `fake` 与额外的 `fake-sub`（订阅登录）条目以 testkit 假 Agent 子进程运行（e2e）。
 
 P5 落地要点（文件，详见 todo §8.4）：
@@ -152,7 +152,7 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 
 实现位于 `core/src/agent/context/` 与 `dispatch/tasks.ts`。对话轮与任务共用执行骨架（orchestrator `#executeRun`），输入由三部分组成：
 
-1. **系统提示词**：每次向模型发请求前重新生成（「我的状态」、授权等可能在执行中变化）；对话轮与任务各有一版 `<platform_rules>`（见下）。
+1. **系统提示词**：每个 run 只构建一次（首个请求），run 内逐字节不变——prompt cache 按前缀匹配，`tools` / `system` / 最后一条消息都是断点，system 一变后面全部失效。动态状态（计划、steer、工具结果）只能以消息形式追加在尾部；对话轮与任务各有一版 `<platform_rules>`（见下）。
 2. **一条用户消息**，按顺序包含：对话上下文段、续接段（只有任务、只在 `continues_task_id` 时）、`<tasks>` 段（只有对话轮、有进行中任务时）、触发段（对话轮）或任务简报段（任务）。
 3. 执行中的注入（steer）作为后续的用户消息——**只有任务会被注入**（`inject_task`），对话轮运行中到达的消息缓冲到下一轮。
 
@@ -171,9 +171,9 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 内置 pi 任务（以及子代理）在 `PiEngine` 里启用自动上下文压缩，对话轮不启用（上下文有界）。设计见 [design/43](../design/43-task-loop-harness.md)，实施见 [todo/task-loop-harness.md](../../todo/task-loop-harness.md)。
 
 - **压缩点**：pi-agent-core 的 `transformContext`（每次模型请求前）。先做旧工具输出确定性裁剪，仍超阈值再用轻量模型摘要；摘要失败 / 超时 / 无模型时退化为确定性裁剪，不阻断任务。
-- **保留**：system prompt、首条任务简报、`<current_plan>`、最近约 30% 窗口；裁剪点必须落在完整 turn 边界，不得留下孤立 `tool_result`。摘要以 `<compacted_history>` user 消息放回，标注为数据不是指令。
+- **保留**：system prompt、首条任务简报、最近约 30% 窗口（含最近一次 `<current_plan>` 快照）；裁剪点必须落在完整 turn 边界，不得留下孤立 `tool_result`。摘要以 `<compacted_history>` user 消息放回，标注为数据不是指令。
 - **模型**：`LlmPurpose='task_compaction'`（Bot 轻量 → 全局轻量 → Bot 主）；用量记当前任务 run。
-- **计划**：内置任务注册 `update_plan`；run 内存状态在每次请求时以 `<current_plan>` 追加到系统提示词；每次更新发 `progress`（`计划 x/y：…`）落 `run_steps`，任务卡最近进度与 `continues_task_id` 的 digest 都能看到。外部智能体任务不注入该工具，使用原生 todo。
+- **计划**：内置任务注册 `update_plan`；run 内存状态在计划变化后以尾部 `<current_plan>` user 消息随下一次请求下发（**不写 system**，否则断点前的前缀每轮都变）；同一份计划不重复追加，压缩摘要另带当前计划全文。每次更新发 `progress`（`计划 x/y：…`）落 `run_steps`，任务卡最近进度与 `continues_task_id` 的 digest 都能看到。外部智能体任务不注入该工具，使用原生 todo。
 - **护栏**：`TASK_TOKEN_SOFT_BUDGET`（0 = 关闭）按 `tokensSoFar()` 在 80% / 100% 注入收敛提示；空转检测按「同工具 + 同参数 + 同结果」在最近 `idleWindowCalls` 次调用里计数，达到阈值先提示、再阻止、仍重复则任务 failed（`LOOP_DETECTED`）。
 - **无活动看门狗 / 墙钟**：`TaskHost` 用引擎事件（assistant / tool_call / tool_result / progress / steer）维护 `lastActivityAt`；内置任务在 `running` 且无 `questionSince` 时，超过 `taskLoop.stallTimeoutMinutes`（默认 20，0 = 关闭）没有活动 → failed（`stalled`）。总墙钟改读 `taskLoop.maxWallMinutes`（默认 240，0 = 不限制），不再固定 4 小时。审批 / 租约 / 用户回答等待不计入无活动看门狗；外部智能体保留自身 `AGENT_RUN_TIMEOUT_MS`（1 小时）。
 - **结果反馈**：模型 `length` → failed `OUTPUT_TRUNCATED`；`aborted` / `deferred` 等非正常停止 → failed；用户从任务卡取消（`runs.cancel`）→ failure 条目 + `user_cancelled` + 唤醒 Bot；Bot 自己的 `cancel_task` 不唤醒。
@@ -504,7 +504,7 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 
 ## 附件处理阶梯（P19）
 
-系统提示 `<file_handling>` 段注入四级升级路径：已安装技能 → `<recommended_skills>` 匹配预置技能（`install_skill(preset_id)`，轻授权）→ `web_search` 检索技能仓库（`install_skill(source_url)`，扫描审批）→ 如实告知不支持。`<recommended_skills>` 段由 `SkillPresetsService.promptSection()` 生成（仅未安装条目），随 `prepareRequest` 每次请求刷新——安装成功当次 run 即可用。
+系统提示 `<file_handling>` 段注入四级升级路径：已安装技能 → `<recommended_skills>` 匹配预置技能（`install_skill(preset_id)`，轻授权）→ `web_search` 检索技能仓库（`install_skill(source_url)`，扫描审批）→ 如实告知不支持。`<recommended_skills>` 段由 `SkillPresetsService.promptSection()` 生成（仅未安装条目），随系统提示词在 run 的首个请求快照（run 内冻结，保 prompt cache）；安装成功后从下一次 run 起生效。
 
 ## 分享附件的 workspace 副本路径（D94）
 

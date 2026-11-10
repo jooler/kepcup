@@ -145,14 +145,15 @@ test('full first-run flow: welcome → skip model → permissions → sandbox �
     // 跳过后「无法与 Bot 对话」，配置 key 后应可用）。
     await banner.locator('[data-testid="no-model-go-settings"]').click();
     await expect(page.locator('[data-testid="settings-page-content"]')).toBeVisible();
-    // 卡片式厂商区：custom:mock 无 key 也作为自定义卡片显示，经卡片
-    // 「设置 Key」弹框落盘（保存后卡片即时出现已配置标记）。
     // 两栏模型设置：左栏选中 custom:mock 实例，详情连接区补 Key（回车提交）。
+    // 保存后输入框清空（placeholder 仍是「粘贴新的 API Key」），已存 Key 以掩码列表回显。
     await page.locator('[data-testid="models-nav-provider-custom:mock"]').click();
     const mockKeyInput = page.locator('[data-testid="provider-key-custom:mock"]');
     await mockKeyInput.fill('sk-onboarding-e2e');
     await mockKeyInput.press('Enter');
-    await expect(mockKeyInput).toHaveAttribute('placeholder', /已配置/, { timeout: 15_000 });
+    await expect(
+      page.locator('[data-testid="provider-key-item-custom:mock-0"]'),
+    ).toContainText('sk-.......-e2e', { timeout: 15_000 });
 
     // key 配好后横幅消失；关闭设置弹框回到对话发送消息。
     await expect(banner).toBeHidden({ timeout: 15_000 });
@@ -268,11 +269,14 @@ test('completion persists in settings: a relaunch of the same data home does not
     await banner.locator('[data-testid="no-model-go-settings"]').click();
     await expect(page.locator('[data-testid="settings-page-content"]')).toBeVisible();
     // 两栏模型设置：左栏选中 custom:mock 实例，详情连接区补 Key（回车提交）。
+    // 保存后输入框清空，已存 Key 以掩码列表回显。
     await page.locator('[data-testid="models-nav-provider-custom:mock"]').click();
     const mockKeyInput = page.locator('[data-testid="provider-key-custom:mock"]');
     await mockKeyInput.fill('sk-onboarding-e2e');
     await mockKeyInput.press('Enter');
-    await expect(mockKeyInput).toHaveAttribute('placeholder', /已配置/, { timeout: 15_000 });
+    await expect(
+      page.locator('[data-testid="provider-key-item-custom:mock-0"]'),
+    ).toContainText('sk-.......-e2e', { timeout: 15_000 });
     await expect(banner).toBeHidden({ timeout: 15_000 });
   } finally {
     // 只关应用：mock LLM 留给重启后的第二个会话（最后统一清理）。

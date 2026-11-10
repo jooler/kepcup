@@ -55,6 +55,11 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'capabilities': {
       return withTreeDiffCapability(await provider.capabilities())
     }
+    case 'probeDirectCapture': {
+      // 真实采集自检：embedded 模式下 check_permissions 的 prompt 被忽略，
+      // 只有真抓一帧才能判断截屏是否可用（并可能触发系统直采同意框）。
+      return await provider.probeDirectCapture()
+    }
     case 'listApps': {
       return await provider.listApps()
     }

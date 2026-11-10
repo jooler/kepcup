@@ -57,12 +57,12 @@ beforeEach(() => {
     path: path.join(root, `db-${Math.random().toString(36).slice(2, 8)}.db`),
     key: deriveKey(Buffer.alloc(32, 7), KEY_INFO.mainDb),
   });
-  runMigrations(db, migrationsUpTo(31));
-  for (const id of ['conv_a', 'conv_b']) {
-    db.prepare("insert into conversations (id, type, created_at) values (?, 'group', 1)").run(id);
-  }
+  runMigrations(db, migrationsUpTo(72));
   // 已绑定消息的附件行需要 messages 行；这里只关心回收逻辑，关闭外键。
   db.pragma('foreign_keys = OFF');
+  for (const id of ['conv_a', 'conv_b']) {
+    db.prepare("insert into conversations (id, type, created_at) values (?, 'direct', 1)").run(id);
+  }
   service = new AttachmentsService({ db, paths: { home } as AppPaths, clock });
 });
 
@@ -111,6 +111,60 @@ function rowExists(id: string): boolean {
 }
 
 describe('AttachmentsService.sweepOrphans', () => {
+  it('保留被共享草稿引用的过期未绑定附件（D120）', () => {
+    const stale = insertRow({
+      id: 'att_draft',
+      createdAt: NOW - UNBOUND_ATTACHMENT_TTL_MS - 1000,
+    });
+    db.prepare(
+      `insert into composer_drafts
+         (conversation_id, doc_json, mentions_json, reply_to, attachments_json, version, updated_at)
+       values (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'conv_a',
+      '{"type":"doc","content":[]}',
+      '[]',
+      null,
+      JSON.stringify([
+        { attachmentId: 'att_draft', fileName: 'f.txt', mime: 'text/plain', size: 3 },
+      ]),
+      1,
+      NOW,
+    );
+
+    const result = service.sweepOrphans();
+    expect(result.expiredRows).toBe(0);
+    expect(rowExists('att_draft')).toBe(true);
+    expect(existsSync(stale)).toBe(true);
+  });
+
+  it('草稿引用只保护同会话附件（D120 审查修复）', () => {
+    const stale = insertRow({
+      id: 'att_cross',
+      conversationId: 'conv_a',
+      createdAt: NOW - UNBOUND_ATTACHMENT_TTL_MS - 1000,
+    });
+    db.prepare(
+      `insert into composer_drafts
+         (conversation_id, doc_json, mentions_json, reply_to, attachments_json, version, updated_at)
+       values (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'conv_b',
+      '{"type":"doc","content":[]}',
+      '[]',
+      null,
+      JSON.stringify([
+        { attachmentId: 'att_cross', fileName: 'f.txt', mime: 'text/plain', size: 3 },
+      ]),
+      1,
+      NOW,
+    );
+
+    service.sweepOrphans();
+    expect(rowExists('att_cross')).toBe(false);
+    expect(existsSync(stale)).toBe(false);
+  });
+
   it('回收过期的未绑定附件（行 + 文件），保留未过期的上传与已绑定消息的附件', () => {
     const stale = insertRow({ id: 'att_stale', createdAt: NOW - UNBOUND_ATTACHMENT_TTL_MS - 1000 });
     const fresh = insertRow({ id: 'att_fresh', createdAt: NOW - UNBOUND_ATTACHMENT_TTL_MS + DAY });

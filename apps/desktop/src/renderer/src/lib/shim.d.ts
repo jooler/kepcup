@@ -86,11 +86,22 @@ declare global {
       sensorOpenSettings(kind: SensorKind): Promise<void>;
       /** P13 任务 3: verdict of applying the launch-at-login setting to the OS. */
       onAutostartResult(callback: (result: AutostartResult) => void): () => void;
-      /** D105 计算机操控：kill switch 直达 main + helper TCC 权限三态与设置深链。 */
+      /** D105 / P-B2 计算机操控：kill switch 直达 main + 宿主 TCC 权限三态与设置深链。 */
       computerStop(reason?: string): Promise<{ stopped: boolean }>;
       computerPermissionStatus(): Promise<{
         accessibility: 'granted' | 'not-granted' | 'unknown';
         screenRecording: 'granted' | 'not-granted' | 'unknown';
+        directCapture: 'granted' | 'not-granted' | 'unknown';
+      }>;
+      /** 截屏自检：让 CuaDriver 真抓一帧判断直采是否可用（会短暂抢焦点）。 */
+      computerPermissionProbeCapture(): Promise<{
+        status: {
+          accessibility: 'granted' | 'not-granted' | 'unknown';
+          screenRecording: 'granted' | 'not-granted' | 'unknown';
+          directCapture: 'granted' | 'not-granted' | 'unknown';
+        };
+        /** not-granted / unknown 时 driver 给的原始原因（设置页就地显示）。 */
+        reason: string | null;
       }>;
       computerPermissionOpen(permission: 'accessibility' | 'screen-recording'): Promise<void>;
       /** D105 设置页可用性行：重新握手（结果落盘 userData），「本次能不能用」与 TCC 分开。 */

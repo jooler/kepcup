@@ -13,6 +13,7 @@ import {
 } from './composer-send';
 import {
   buildPersistedSnapshot,
+  isComposerDocEmpty,
   loadPersistedDrafts,
   writePersistedDrafts,
   type ComposerReplyRef,
@@ -50,6 +51,9 @@ interface ComposerRuntimeDraft {
   mentions: string[];
   reply: ComposerReplyRef | null;
   uploads: PendingUpload[];
+  /** 与服务端共享草稿的同步状态（D120）。 */
+  version: number;
+  dirty: boolean;
 }
 
 const PERSIST_DEBOUNCE_MS = 300;
@@ -109,6 +113,11 @@ class ComposerDraftsState {
   #runtime = $state<Record<string, ComposerRuntimeDraft>>({});
   /** 启动时从 localStorage 载入的快照：未打开过的会话原样保留，打开时晋升为 runtime。 */
   #snapshot: Record<string, PersistedComposerDraft> = loadPersistedDrafts(draftsStorage());
+  /**
+   * 服务端草稿被应用到本地的次数。Composer 监听它来把编辑器内容切到共享草稿
+   * （初次进入 / 读端镜像 / 发送后清空），避免和本地键入互相触发。
+   */
+  revision = $state(0);
   // 上传任务管道：key → 完成后的 attachmentId（失败为 null）；没有界面从它派生。
   #uploadTasks = new Map<string, Promise<string | null>>();
   #persistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -169,8 +178,121 @@ class ComposerDraftsState {
       mentions: [...(saved?.mentions ?? [])],
       reply: saved?.reply ?? null,
       uploads,
+      version: saved?.version ?? 0,
+      dirty: saved?.dirty ?? false,
     };
     if (uploads.length > 0) void this.#verifyRestored(conversationId, uploads);
+  }
+
+  /**
+   * 应用服务端共享草稿（D120）：整份替换文档 / 提及 / 引用 / 附件元数据，
+   * 并把版本记为已同步。Composer 由 `revision` 感知并把编辑器内容切过去。
+   */
+  applyServerDraft(
+    conversationId: string,
+    input: {
+      doc: JSONContent;
+      mentions: string[];
+      replyTo: string | null;
+      attachments: Array<{ attachmentId: string; fileName: string; mime: string; size: number }>;
+      version: number;
+    },
+  ): void {
+    this.hydrate(conversationId);
+    const entry = this.#ensureEntry(conversationId);
+    entry.doc = input.doc;
+    entry.mentions = [...input.mentions];
+    // 服务端只存 reply 的 id：本地已有同 id 的预览就保留，否则（另一台设备）无预览。
+    entry.reply = input.replyTo !== null && entry.reply?.id === input.replyTo ? entry.reply : null;
+    entry.uploads = input.attachments.map((attachment) => ({
+      key: `att_${attachment.attachmentId}`,
+      fileName: attachment.fileName,
+      mime: attachment.mime,
+      size: attachment.size,
+      state: 'ready' as const,
+      attachmentId: attachment.attachmentId,
+      previewUrl: null,
+      ownsPreviewUrl: false,
+    }));
+    entry.version = input.version;
+    entry.dirty = false;
+    this.revision += 1;
+    this.#schedulePersist();
+    if (entry.uploads.length > 0) void this.#verifyRestored(conversationId, entry.uploads);
+  }
+
+  /** 共享草稿的同步状态（ack / stale 恢复后由 sharedDraft 写回）。 */
+  setSyncState(conversationId: string, state: { version: number; dirty: boolean }): void {
+    const entry = this.#ensureEntry(conversationId);
+    entry.version = state.version;
+    entry.dirty = state.dirty;
+    this.#schedulePersist();
+  }
+
+  /** 本地是否有未确认的共享草稿修改（断线重连时决定推本地还是拉服务端）。 */
+  isDirty(conversationId: string): boolean {
+    return this.#runtime[conversationId]?.dirty ?? false;
+  }
+
+  /** 本地快照上次同步到的服务端版本（0 = 从未同步 / 旧 v2 草稿）。 */
+  syncVersion(conversationId: string): number {
+    return this.#runtime[conversationId]?.version ?? 0;
+  }
+
+  /** 远端发送后清空镜像里的附件 chip（读端不拥有这些上传）。 */
+  clearUploads(conversationId: string): void {
+    const entry = this.#runtime[conversationId];
+    if (entry === undefined || entry.uploads.length === 0) return;
+    for (const upload of entry.uploads) this.#revokePreview(upload);
+    entry.uploads = [];
+    this.#schedulePersist();
+  }
+
+  /** 本地有未确认修改（由 Composer 在共享草稿 notOwner 时也可标记恢复）。 */
+  markDirty(conversationId: string): void {
+    const entry = this.#ensureEntry(conversationId);
+    entry.dirty = true;
+    this.#schedulePersist();
+  }
+
+  /** 发送成功 / 远端清空后清掉正文与引用（附件 chip 由 commitSent 单独处理）。 */
+  clearDocState(conversationId: string): void {
+    const entry = this.#ensureEntry(conversationId);
+    entry.doc = EMPTY_COMPOSER_DOC;
+    entry.mentions = [];
+    entry.reply = null;
+    entry.version = 0;
+    entry.dirty = false;
+    this.revision += 1;
+    this.#schedulePersist();
+  }
+
+  /** 共享草稿 update 的附件元数据（只含 ready 的 chip）。 */
+  attachmentsMetadata(
+    conversationId: string,
+  ): Array<{ attachmentId: string; fileName: string; mime: string; size: number }> {
+    const entry = this.#runtime[conversationId];
+    if (entry === undefined) return [];
+    return entry.uploads
+      .filter((upload) => upload.state === 'ready' && upload.attachmentId !== null)
+      .map((upload) => ({
+        attachmentId: upload.attachmentId as string,
+        fileName: upload.fileName,
+        mime: upload.mime,
+        size: upload.size,
+      }));
+  }
+
+  /** 本地是否有可迁移到服务端的内容（文档 / 提及 / 引用 / 附件）。 */
+  hasContent(conversationId: string): boolean {
+    const entry = this.#runtime[conversationId];
+    if (entry === undefined) return false;
+    return (
+      !isComposerDocEmpty(entry.doc) ||
+      entry.mentions.length > 0 ||
+      entry.reply !== null ||
+      entry.uploads.length > 0
+    );
   }
 
   async #verifyRestored(conversationId: string, restored: PendingUpload[]): Promise<void> {
@@ -404,6 +526,8 @@ class ComposerDraftsState {
       mentions: [],
       reply: null,
       uploads: [],
+      version: 0,
+      dirty: false,
     };
     this.#runtime[conversationId] = created;
     return created;

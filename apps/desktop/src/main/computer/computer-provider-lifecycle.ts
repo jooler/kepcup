@@ -1,58 +1,47 @@
-import { MacOSNativeProviderClient } from './macos-native-provider-client'
-import { shouldUseMacOSNativeProvider } from './macos-native-provider-availability'
-import {
-  DesktopScriptProviderClient,
-  shouldUseDesktopScriptProvider
-} from './desktop-script-provider-client'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { CuaDriverProviderClient } from './cua-driver-provider-client'
 
-type ComputerProvider = MacOSNativeProviderClient | DesktopScriptProviderClient
+// provider 选择（P-B2）：计算机操控只使用 CuaDriver（macOS）。
+// 其它平台暂不启用（上游虽支持三端，但本期只接 macOS）；cua 的启动前置检查
+// （bundle + lock + socket）在 provider.ensureStarted 里做，失败原因由首次调用
+// 以 COMPUTER_UNAVAILABLE 抛出，不做静默回落。
+
+type ComputerProvider = CuaDriverProviderClient
 
 type ComputerProviderLifecycleDeps = {
-  shouldUseMacOSNativeProvider: () => boolean
-  createMacOSNativeProvider: () => MacOSNativeProviderClient
-  shouldUseDesktopScriptProvider: () => boolean
-  createDesktopScriptProvider: () => DesktopScriptProviderClient
+  createCuaDriverProvider: () => CuaDriverProviderClient
+}
+
+/** sidecar 进程里没有 userData 路径：main fork 时经环境变量传入（sidecar-client）。 */
+function defaultCuaDriverUserDataDirectory(): string {
+  return process.env.KEPCUP_COMPUTER_USER_DATA_DIR ?? join(tmpdir(), 'kepcup-cua')
 }
 
 const defaultDeps: ComputerProviderLifecycleDeps = {
-  shouldUseMacOSNativeProvider,
-  createMacOSNativeProvider: () => new MacOSNativeProviderClient(),
-  shouldUseDesktopScriptProvider,
-  createDesktopScriptProvider: () => new DesktopScriptProviderClient()
+  createCuaDriverProvider: () =>
+    new CuaDriverProviderClient({ userDataDirectory: defaultCuaDriverUserDataDirectory() })
 }
 
 export class ComputerProviderLifecycle {
-  private nativeMacOSProvider: MacOSNativeProviderClient | null = null
-  private desktopScriptProvider: DesktopScriptProviderClient | null = null
+  private cuaDriverProvider: CuaDriverProviderClient | null = null
 
   constructor(private readonly deps: ComputerProviderLifecycleDeps = defaultDeps) {}
 
   current(platform: NodeJS.Platform = process.platform): ComputerProvider | null {
-    if (platform === 'darwin') {
-      if (this.nativeMacOSProvider) {
-        return this.nativeMacOSProvider
-      }
-      if (this.deps.shouldUseMacOSNativeProvider()) {
-        this.nativeMacOSProvider = this.deps.createMacOSNativeProvider()
-        return this.nativeMacOSProvider
-      }
+    if (platform !== 'darwin') {
+      return null
     }
-
-    if (this.desktopScriptProvider) {
-      return this.desktopScriptProvider
+    if (this.cuaDriverProvider) {
+      return this.cuaDriverProvider
     }
-    if (this.deps.shouldUseDesktopScriptProvider()) {
-      this.desktopScriptProvider = this.deps.createDesktopScriptProvider()
-      return this.desktopScriptProvider
-    }
-    return null
+    this.cuaDriverProvider = this.deps.createCuaDriverProvider()
+    return this.cuaDriverProvider
   }
 
   shutdown(): void {
-    this.nativeMacOSProvider?.shutdown()
-    this.nativeMacOSProvider = null
-    this.desktopScriptProvider?.shutdown()
-    this.desktopScriptProvider = null
+    this.cuaDriverProvider?.shutdown()
+    this.cuaDriverProvider = null
   }
 }
 

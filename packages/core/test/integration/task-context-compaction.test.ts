@@ -101,5 +101,14 @@ describe('task context compaction (D93 P0)', () => {
         String(entry.payload['content']).includes('BIG-OUTPUT-END'),
     );
     expect(bigResult).toBeDefined();
+
+    // 按工具的上下文消耗（内容估算，仅 task loop）：三次 read 的返回内容
+    // 进入账本（24k A ≈ 6k token），调用参数也计入输出侧。
+    const readUsage = core.services
+      .domain!.usage.toolTotals(0)
+      .find((row) => row.toolName === 'read');
+    expect(readUsage?.calls).toBe(3);
+    expect(readUsage?.resultTokens).toBeGreaterThanOrEqual(6_000);
+    expect(readUsage?.callTokens).toBeGreaterThan(0);
   }, 180_000);
 });

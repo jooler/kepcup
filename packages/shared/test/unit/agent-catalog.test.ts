@@ -140,7 +140,7 @@ describe('capability resolution (P2)', () => {
 });
 
 describe('agent catalog', () => {
-  it('ships only schema-valid entries: the testkit fake, Claude Agent, Codex (P2), the P5 agents, and InkCop', () => {
+  it('ships only schema-valid entries: the testkit fake, Claude Agent, Codex (P2), the P5 agents, InkCop and the D118 targets', () => {
     for (const entry of AGENT_CATALOG) {
       expect(agentCatalogEntrySchema.safeParse(entry).success).toBe(true);
     }
@@ -153,6 +153,15 @@ describe('agent catalog', () => {
       'cursor',
       'antigravity-acp',
       'inkcop',
+      // D118 新目标（todo/acp-hardening-and-new-targets.md §3）：preview 档、
+      // releaseGate 未放行，真机 spike 前不出现在发行构建。
+      'cline',
+      'github-copilot-cli',
+      'goose',
+      'qwen-code',
+      'kimi',
+      'grok-build',
+      'devin',
     ]);
     expect(AGENT_CATALOG[0]).toMatchObject({ provider: 'generic-acp', releaseGate: 'testkit' });
     expect(AGENT_CATALOG[1]).toMatchObject({
@@ -291,11 +300,10 @@ describe('profile and settings defaults', () => {
     });
   });
 
-  it('settings default to no agents and the experimental switch off', () => {
+  it('settings default to no agents', () => {
     const settings = settingsSchema.parse({});
     expect(settings.agents).toEqual({});
     expect(settings.customAgents).toEqual([]);
-    expect(settings.experimental).toEqual({ externalAgents: false });
     expect(settings.backgroundAgentId).toBeUndefined();
     expect(settingsSchema.parse({ agents: { fake: { enabled: true } } }).agents.fake).toEqual({
       enabled: true,
@@ -309,7 +317,6 @@ describe('profile and settings defaults', () => {
     const settings = settingsSchema.parse({
       agents: { a: { enabled: true, source: 'brew' }, b: 'garbage' },
       customAgents: [{ id: 42 }],
-      experimental: { externalAgents: 'yes' },
       backgroundAgentId: 7,
     });
     expect(settings.agents.a).toEqual({
@@ -325,7 +332,6 @@ describe('profile and settings defaults', () => {
       model: '',
     });
     expect(settings.customAgents).toEqual([{ id: 42 }]);
-    expect(settings.experimental.externalAgents).toBe(false);
     expect(settings.backgroundAgentId).toBeUndefined();
     expect(
       botRuntimeSchema.parse({ agent: { id: 'fake', permission: 'yolo', capabilities: 'all' } })
@@ -336,17 +342,14 @@ describe('profile and settings defaults', () => {
 
 describe('agent setup requirement (P4-B, D58)', () => {
   it('maps the local status view to a setup reason (null = may run)', () => {
-    expect(agentSetupReasonOf({ enabled: true, status: 'ready' }, false)).toBe('experimental_off');
-    expect(agentSetupReasonOf(null, true)).toBeNull();
-    expect(agentSetupReasonOf({ enabled: false, status: 'available' }, true)).toBe('not_enabled');
-    expect(agentSetupReasonOf({ enabled: true, status: 'installing' }, true)).toBe('not_installed');
-    expect(agentSetupReasonOf({ enabled: true, status: 'error' }, true)).toBe('not_installed');
-    expect(agentSetupReasonOf({ enabled: true, status: 'needs_auth' }, true)).toBe('auth_required');
-    expect(agentSetupReasonOf({ enabled: true, status: 'incompatible' }, true)).toBe(
-      'incompatible',
-    );
-    expect(agentSetupReasonOf({ enabled: true, status: 'ready' }, true)).toBeNull();
-    expect(agentSetupReasonOf({ enabled: true, status: 'update_available' }, true)).toBeNull();
+    expect(agentSetupReasonOf(null)).toBeNull();
+    expect(agentSetupReasonOf({ enabled: false, status: 'available' })).toBe('not_enabled');
+    expect(agentSetupReasonOf({ enabled: true, status: 'installing' })).toBe('not_installed');
+    expect(agentSetupReasonOf({ enabled: true, status: 'error' })).toBe('not_installed');
+    expect(agentSetupReasonOf({ enabled: true, status: 'needs_auth' })).toBe('auth_required');
+    expect(agentSetupReasonOf({ enabled: true, status: 'incompatible' })).toBe('incompatible');
+    expect(agentSetupReasonOf({ enabled: true, status: 'ready' })).toBeNull();
+    expect(agentSetupReasonOf({ enabled: true, status: 'update_available' })).toBeNull();
   });
 
   it('maps run failure codes to a setup reason; other failures stay plain', () => {
