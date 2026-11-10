@@ -26,7 +26,7 @@
   data-readonly={current?.conversation.readOnly}
 >
   <ProjectHeader />
-  <div class="relative min-h-0 flex-1" data-testid="project-view" data-view={view}>
+  <div class="relative min-h-0 min-w-0 flex-1" data-testid="project-view" data-view={view}>
     <div class="absolute inset-0 {view === 'chat' ? '' : 'hidden'}">
       {@render chatBody(12, 'top-3')}
     </div>

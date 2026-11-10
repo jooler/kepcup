@@ -325,10 +325,13 @@ describe('CuaDriverProviderClient（伪 daemon）', () => {
     expect(parsed.screenshot?.data).toBe(tinyPngBase64)
     expect(parsed.screenshot?.scale).toBe(2)
     // 截图落盘保留并暴露路径（无视觉能力的客户端做像素读回）；文件 0600。
+    // Windows NTFS 不保留 Unix 权限位，CI 上常见 0666。
     const shotPath = parsed.screenshot?.path
     expect(shotPath?.startsWith(join(tempDir, 'computer-screenshots'))).toBe(true)
     expect(existsSync(shotPath!)).toBe(true)
-    expect(statSync(shotPath!).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') {
+      expect(statSync(shotPath!).mode & 0o777).toBe(0o600)
+    }
     expect(existsSync(join(tempDir, 'cua-driver'))).toBe(false)
   })
 

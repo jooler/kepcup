@@ -113,14 +113,14 @@
      右栏（Bot 详情）保持可见；窄屏仍是单栏全屏层。 -->
 {#snippet mainViews()}
   <div
-    class="relative flex min-h-0 flex-1"
+    class="relative flex min-h-0 min-w-0 flex-1"
     style:display={tasks.openTaskId !== null || delegations.openDetailId !== null ? 'none' : 'flex'}
   >
     <ChatView />
   </div>
   {#if delegations.openDetailId !== null}
     <div
-      class="relative flex min-h-0 flex-1"
+      class="relative flex min-h-0 min-w-0 flex-1"
       style:display={tasks.openTaskId !== null ? 'none' : 'flex'}
     >
       {#key delegations.openDetailId}
@@ -137,7 +137,7 @@
 
 {#if narrow}
   <!-- 窄屏（33-narrow-layout）：单栏，视图互斥占满；Bot 详情走全屏覆盖层。 -->
-  <div class="relative flex min-h-0 flex-1">
+  <div class="relative flex min-h-0 min-w-0 flex-1">
     {@render mainViews()}
   </div>
 {:else}
