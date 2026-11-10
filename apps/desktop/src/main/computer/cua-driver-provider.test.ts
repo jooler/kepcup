@@ -26,6 +26,19 @@ import { MAX_KEPT_SCREENSHOTS, SCREENSHOT_DIRECTORY_NAME, pickMainWindow } from 
 
 type FakeHandler = (args: Record<string, unknown>) => unknown | Promise<unknown>
 
+/** Windows CI cannot listen on a filesystem `*.sock` path (EACCES); use a named pipe. */
+function fakeDaemonSocketPath(): string {
+  if (process.platform === 'win32') {
+    return `\\\\.\\pipe\\kepcup-cua-fake-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  }
+  return join(mkdtempSync(join(tmpdir(), 'cua-fake-')), 'driver.sock')
+}
+
+function removeFakeDaemonSocket(socketPath: string): void {
+  if (process.platform === 'win32') return
+  rmSync(socketPath, { force: true })
+}
+
 const tinyPngBase64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
 
@@ -34,7 +47,7 @@ async function startFakeDaemon(handlers: Record<string, FakeHandler> = {}): Prom
   calls: Array<{ name: string; args: Record<string, unknown> }>
   close: () => void
 }> {
-  const socketPath = join(mkdtempSync(join(tmpdir(), 'cua-fake-')), 'driver.sock')
+  const socketPath = fakeDaemonSocketPath()
   const calls: Array<{ name: string; args: Record<string, unknown> }> = []
   const sockets = new Set<net.Socket>()
   const server = net.createServer((socket) => {
@@ -111,7 +124,7 @@ async function startFakeDaemon(handlers: Record<string, FakeHandler> = {}): Prom
       }
       sockets.clear()
       server.close()
-      rmSync(socketPath, { force: true })
+      removeFakeDaemonSocket(socketPath)
     }
   }
 }
@@ -976,8 +989,8 @@ describe('CuaDriverProviderClient（伪 daemon）', () => {
   })
 
   it('非 JSON 行 → 传输错误', async () => {
-    const socketPath = join(mkdtempSync(join(tmpdir(), 'cua-fake-')), 'driver.sock')
-    running.push(() => rmSync(socketPath, { force: true }))
+    const socketPath = fakeDaemonSocketPath()
+    running.push(() => removeFakeDaemonSocket(socketPath))
     const server = net.createServer((socket) => {
       socket.on('data', () => {
         socket.write('not-json\n')
@@ -992,8 +1005,8 @@ describe('CuaDriverProviderClient（伪 daemon）', () => {
   })
 
   it('读超时 → action_timeout + 连接重置（下次调用可重连）', async () => {
-    const socketPath = join(mkdtempSync(join(tmpdir(), 'cua-fake-')), 'driver.sock')
-    running.push(() => rmSync(socketPath, { force: true }))
+    const socketPath = fakeDaemonSocketPath()
+    running.push(() => removeFakeDaemonSocket(socketPath))
     const server = net.createServer((socket) => {
       // 吞掉请求不应答。
       socket.on('data', () => {})
