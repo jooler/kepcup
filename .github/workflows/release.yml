@@ -238,6 +238,42 @@ jobs:
               "-c.appx.publisherDisplayName=$MSSTORE_PUBLISHER_DISPLAY_NAME" \
               "-c.appx.applicationId=KepCup"
           fi
+      # P-B2 成品守卫：CuaDriver 是计算机操控的唯一 provider。pack-hooks 在打包与
+      # 签名阶段已各校验一次，这里再对**最终产物**确认一次——即使有人误加
+      # KEPCUP_SKIP_COMPUTER_USE=1（pack-hooks 只警告不失败），发版也会挂在这里，
+      # 而不是悄悄发出一个没有计算机操控能力的包。
+      - name: Verify CuaDriver in the packaged app
+        if: matrix.platform == 'mac'
+        working-directory: apps/desktop
+        run: |
+          ARCH=arm64
+          case "${{ matrix.args }}" in *--x64*) ARCH=x64 ;; esac
+          APP=$(ls -d release/mac*/KepCup.app | head -1)
+          DRIVER="$APP/Contents/Resources/cua-driver/CuaDriver.app"
+          LOCK="$APP/Contents/Resources/cua-driver.lock.json"
+          test -d "$DRIVER" || { echo "::error::CuaDriver 未随包（$DRIVER）"; exit 1; }
+          test -f "$LOCK" || { echo "::error::cua-driver.lock.json 未随包（$LOCK）"; exit 1; }
+          codesign --verify --strict "$DRIVER"
+          PINNED=$(node -e '
+            const fs = require("fs");
+            const lock = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const asset = lock.assets[`darwin-${process.argv[2]}`];
+            if (!asset) { console.error(`lock has no darwin-${process.argv[2]}`); process.exit(1); }
+            process.stdout.write(asset.files["CuaDriver.app/Contents/MacOS/cua-driver"]);
+          ' "$LOCK" "$ARCH")
+          ACTUAL=$(shasum -a 256 "$DRIVER/Contents/MacOS/cua-driver" | awk '{print $1}')
+          if [ "$PINNED" != "$ACTUAL" ]; then
+            echo "::error::CuaDriver 可执行文件哈希与 lock 不一致（$ACTUAL ≠ $PINNED）"
+            exit 1
+          fi
+          # 上游签名必须保留：重签会改哈希（上一行已挡），这里再确认签发者不是我方 Team。
+          APP_TEAM=$(codesign -dv --verbose=4 "$APP" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+          DRV_TEAM=$(codesign -dv --verbose=4 "$DRIVER" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+          if [ -z "$DRV_TEAM" ] || [ "$DRV_TEAM" = "$APP_TEAM" ]; then
+            echo "::error::CuaDriver 的上游签名被替换（driver Team=$DRV_TEAM，app Team=$APP_TEAM）"
+            exit 1
+          fi
+          echo "CuaDriver OK：$ARCH，Team $DRV_TEAM，hash $ACTUAL"
       - uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.platform }}-${{ strategy.job-index }}
