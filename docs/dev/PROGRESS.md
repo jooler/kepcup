@@ -2251,3 +2251,12 @@ botId + name 落到首字母占位。
 - **契约复核**（0.40.1 ↔ 0.46.1 逐工具 `describe` diff）：输入 schema 只有 `type_text.delay_ms` 默认 30 → 0（KepCup 不传该参数，影响仅限 CGEvent 回退路径的键入节奏）；其余工具 schema 不变；描述新增 `run_steps` 批处理建议与遥测提示（我们已用 `CUA_DRIVER_RS_TELEMETRY_ENABLED=0` 关闭遥测）。输出面用 0.46.1 daemon 实跑核对：`check_permissions` / `list_apps` / `list_windows` / `get_window_state` 字段与 0.40.1 一致，新增 `capture_id`、`direct_capture_error` 为加法；`drag` 仍不返回 verification。
 - **验证**：`apps/desktop/src/main/computer/` + `computer-host.test.ts` + `pack-hooks.test.ts` 定向 157 passed / 1 skipped。
 - **未做**：真机 live（测试进程无 AX 授权，与上轮同因）；dev 壳需重启才会换上新二进制。
+
+## 计算机操控：窗口目标与拖拽默认值的复检修正（2026-11-10）
+
+外部 Bot 在 c134e06f 上复检后的三条缺陷，逐条修复：
+
+- **sheet / 无标题窗口不再是默认目标**：`pickMainWindow` 改为「有标题窗口优先 + z_index」。sheet 同样以 layer-0 进 `list_windows` 且常带最高 z，按 z 选会让默认目标落成 sheet、动作随即报 `off_space_or_ax_unresolved`；该码现映射为 `WINDOW_NOT_FOUND`，模型拿到的是「重新选窗」而不是 accessibility_error。
+- **关窗后按键不再绑死旧 id**：按键类动作（pressKey / hotkey / pasteText / 无元素索引的 typeText）在 driver 报窗口失效、且调用方没指定窗口时，丢弃陈旧快照、重新枚举换窗口重试一次。坐标与元素寻址**不**自动换目标（像素栅格与 element_token 都绑定旧窗口，换目标会打到别的位置）；显式 `windowId` 同样不重绑。
+- **drag 默认前台**：后台合成拖拽拿不到 macOS 拖放会话，默认即静默无效（复检实证：前台移动文件成功、后台无任何变化）。`delivery:'background'` 保留给「不能抢焦点」的场景；不做失败后自动重试（拖拽无读回，重放有重复执行风险）。
+- **验证**：provider + host 定向 73 passed；新增用例：关窗后按键自动换窗口并落到新 id、显式 windowId 不换目标、默认目标跳过 sheet、drag 默认前台 / 显式后台。

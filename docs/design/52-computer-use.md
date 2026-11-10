@@ -20,7 +20,7 @@ Bot 通过**无障碍树优先、截屏与键鼠兜底**读取并操作本机原
 > | 4 | `focusedElementId` 有值 | driver 无此字段 | 固定 `null` |
 > | 5 | `annotatedScreenshot` / `ocr` | 不支持 | 能力上报 `false` |
 > | 6 | scroll/drag 读回验证 | 只有 `effect`/`evidence`，无布局指纹 | 保持 `unverified`，不得报 verified |
-> | 7 | 后台输入 | 带修饰键点击需前台；web 内容元素直写被拒；后台合成拖拽在 Finder 内容区完全无效 | 修饰键点击显式拒绝；web 内容走键盘/坐标 + 焦点输入；`computer_drag` 暴露 `delivery: 'foreground'`（后台无效时重试），其余动作仍只有后台 |
+> | 7 | 后台输入 | 带修饰键点击需前台；web 内容元素直写被拒；后台合成拖拽在 Finder 内容区完全无效 | 修饰键点击显式拒绝；web 内容走键盘/坐标 + 焦点输入；`computer_drag` 默认 `foreground`（后台合成拖拽拿不到系统拖放会话），可显式传 `background`；其余动作仍只有后台 |
 > | 8 | 大树完整可用 | `max_elements` 顺序截断 | 如实上报 `truncated`；分页/角色过滤留待后续 |
 > | 9 | 截图稳定可用 | driver 默认不尝试采集（避免弹框抢焦点），embedded 下 `check_permissions` 的 prompt 也被忽略 | daemon 带 `CUA_DRIVER_ALLOW_CAPTURE_CONSENT_ALERT=1` 真去采集（宿主已有屏幕录制时通常直接成功；macOS 要求时由系统弹一次同意框）；设置页「检测截屏」做真实抓帧自检；失败时如实报 `screenshot_failed` + 指引 |
 > | 10 | 权限引导自动弹窗 | embedded daemon 默认不弹窗；TCC 按进程缓存 | 主进程用 `systemPreferences` 读状态/触发 AX 提示；屏幕录制只开面板；直采同意只能由真实采集触发（设置页「检测截屏」或首次截图时由系统弹）；下一次动作前重启 daemon |
@@ -45,9 +45,9 @@ Bot 通过**无障碍树优先、截屏与键鼠兜底**读取并操作本机原
 > **2026-11-10 真机复检补充（拖拽）**：Finder 列表视图实测——后台（`delivery_mode:
 > "background"`）合成拖拽在内容区**完全无效**（连框选都不响应），前台能恢复框选、
 > 窗口缩放这类普通拖拽；但**文件拖放（Finder 行 → 文件夹行）后台与前台都不落盘**，
-> macOS 的拖放会话要真实指针。所以 `computer_drag` 暴露 `delivery`（默认
-> background，无效时前台重试），工具描述明确「系统级文件拖放不可用，改用应用自带
-> 的『移动到』或文件系统操作」。另：`get_window_state` 在 `include_screenshot:false`
+> macOS 的拖放会话要真实指针。所以 `computer_drag` 的 `delivery` **默认 foreground**
+>（后台合成拖拽默认就会静默无效），需要不抢焦点时显式传 `background`；工具描述明确
+>「系统级文件拖放可能仍失败，改用应用自带的『移动到』或文件系统操作」。另：`get_window_state` 在 `include_screenshot:false`
 > 时不回任何像素元数据（实测），动作后的补观察必须沿用上一帧栅格，否则下一次坐标
 > 寻址会被误判成「还没拿过截屏」。
 >

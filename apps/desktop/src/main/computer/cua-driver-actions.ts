@@ -42,6 +42,37 @@ type CuaDriverActionStructured = {
   summary?: unknown
 }
 
+type DispatchOutcome = {
+  structured: CuaDriverActionStructured
+  verificationOverride: ComputerActionVerification | null
+  pathOverride: ComputerActionMetadata['path'] | null
+  actionName: string | null
+  delivery: 'background' | 'foreground'
+}
+
+/** driver 判定目标窗口已不可寻址（已关闭 / 换 Space / sheet 的 AX 面解析不出）。 */
+function isWindowGoneError(error: unknown): boolean {
+  return (
+    error instanceof AppError &&
+    (error.code === 'WINDOW_NOT_FOUND' || error.code === 'WINDOW_STALE')
+  )
+}
+
+/**
+ * 窗口失效后能否安全换目标重试：只限不依赖旧窗口像素栅格 / 元素 token 的动作
+ * （键盘、组合键、剪贴板粘贴、无元素索引的文本输入）。坐标与元素寻址都绑定在
+ * 旧窗口上，换目标会打到别的位置，宁可报错让模型重新观察。
+ */
+function canRetargetWindow(
+  method: ComputerActionMethod,
+  params: Record<string, unknown>
+): boolean {
+  if (method === 'pressKey' || method === 'hotkey' || method === 'pasteText') {
+    return true
+  }
+  return method === 'typeText' && params.elementIndex === undefined
+}
+
 export class CuaDriverActions {
   constructor(
     private readonly client: CuaDriverDaemonClient,
@@ -55,14 +86,89 @@ export class CuaDriverActions {
       params
     )
     const resolvedApp = await this.observer.resolveApp(app)
-    const windowId = await this.resolveActionWindowId(resolvedApp, params)
+    // 调用方显式指定窗口时不自动换目标（静默改目标会打到用户没指的窗口）。
+    const explicitWindow = params.windowId !== undefined || params.windowIndex !== undefined
+    let windowId = await this.resolveActionWindowId(resolvedApp, params)
 
+    let dispatched: DispatchOutcome
+    try {
+      dispatched = await this.dispatchAction(method, resolvedApp, windowId, params)
+    } catch (error) {
+      if (
+        explicitWindow ||
+        !canRetargetWindow(method, params) ||
+        !isWindowGoneError(error)
+      ) {
+        throw error
+      }
+      // 目标窗口被用户关掉（快照表还绑着旧 id）或默认目标落到了 sheet 上：丢掉
+      // 陈旧快照、重新枚举换成另一个窗口重试一次（动作被 driver 拒绝，未执行）。
+      this.snapshotStore.forget(resolvedApp.pid, windowId)
+      const recoveryWindowId = await this.observer.resolveRecoveryWindowId(resolvedApp, windowId)
+      if (recoveryWindowId === null) {
+        throw error
+      }
+      windowId = recoveryWindowId
+      dispatched = await this.dispatchAction(method, resolvedApp, windowId, params)
+    }
+
+    const { structured, verificationOverride, pathOverride, actionName, delivery } = dispatched
+
+    const verification =
+      verificationOverride ?? verificationFromDriverAction(structured)
+    const action: ComputerActionMetadata = {
+      path: pathOverride ?? cuaActionPath(structured.route),
+      actionName,
+      targetWindowId: windowId,
+      targetWindowIndex: null,
+      delivery,
+      ...(verification ? { verification } : {}),
+      ...(structured.escalation !== undefined && structured.escalation !== null
+        ? { fallbackReason: JSON.stringify(structured.escalation) }
+        : {})
+    }
+
+    // 动作可能改了窗口几何（zoom / 缩放）：补观察没有 window_bounds 时靠
+    // list_windows 的 bounds 判断「尺寸是否变化」，2s 缓存会把动作前的旧尺寸喂给
+    // 判断，导致沿用已作废的像素栅格。
+    this.observer.invalidateWindowCache(resolvedApp.pid)
+
+    // 动作后观测：全树（与原生 provider 一致——动作结果带新索引，模型可直接用；
+    // 截图按需由下一次 get_app_state 拿）。动作可能已打开新窗口 / 替换窗口
+    //（zoom 换 CGWindowID）：观测失败不得掩盖「动作可能已发出」语义（防重放
+    // 硬要求）——降级为空观察快照，让模型重新 list_windows。
+    let observation: ComputerSnapshotResult
+    try {
+      observation = await this.observer.observeWindowState(resolvedApp, windowId, {
+        includeScreenshot: false,
+        includeTree: true
+      })
+    } catch (error) {
+      if (
+        error instanceof AppError &&
+        (error.code === 'WINDOW_NOT_FOUND' || error.code === 'WINDOW_STALE')
+      ) {
+        observation = unobservedPostActionSnapshot(resolvedApp, windowId, error.message)
+      } else {
+        throw error
+      }
+    }
+    return { ...observation, action }
+  }
+
+  /** 单个窗口上的动作分派；窗口恢复重试会用它跑第二次。 */
+  private async dispatchAction(
+    method: ComputerActionMethod,
+    resolvedApp: ResolvedCuaApp,
+    windowId: number,
+    params: Record<string, unknown>
+  ): Promise<DispatchOutcome> {
     let structured: CuaDriverActionStructured
     let verificationOverride: ComputerActionVerification | null = null
     let pathOverride: ComputerActionMetadata['path'] | null = null
     let actionName: string | null = null
-    // 投递方式本期只对 drag 开放（后台合成拖拽在 Finder 内容区实测完全无效，
-    // 前台能成功；其它方法的升级入口等有实测需求再加）。
+    // 投递方式只对 drag 开放：后台合成拖拽拿不到系统拖放会话（Finder 静默无效），
+    // 所以 drag 默认前台，需要「不抢焦点」时由调用方显式传 background。
     let delivery: 'background' | 'foreground' = 'background'
 
     switch (method) {
@@ -107,7 +213,7 @@ export class CuaDriverActions {
         const geometry = this.requireGeometry(resolvedApp.pid, windowId)
         const from = await this.resolveDragPoint(resolvedApp, windowId, params, 'from', geometry)
         const to = await this.resolveDragPoint(resolvedApp, windowId, params, 'to', geometry)
-        delivery = params.delivery === 'foreground' ? 'foreground' : 'background'
+        delivery = params.delivery === 'background' ? 'background' : 'foreground'
         structured = await this.callActionTool('drag', {
           from_x: from.x,
           from_y: from.y,
@@ -192,46 +298,7 @@ export class CuaDriverActions {
       }
     }
 
-    const verification =
-      verificationOverride ?? verificationFromDriverAction(structured)
-    const action: ComputerActionMetadata = {
-      path: pathOverride ?? cuaActionPath(structured.route),
-      actionName,
-      targetWindowId: windowId,
-      targetWindowIndex: null,
-      delivery,
-      ...(verification ? { verification } : {}),
-      ...(structured.escalation !== undefined && structured.escalation !== null
-        ? { fallbackReason: JSON.stringify(structured.escalation) }
-        : {})
-    }
-
-    // 动作可能改了窗口几何（zoom / 缩放）：补观察没有 window_bounds 时靠
-    // list_windows 的 bounds 判断「尺寸是否变化」，2s 缓存会把动作前的旧尺寸喂给
-    // 判断，导致沿用已作废的像素栅格。
-    this.observer.invalidateWindowCache(resolvedApp.pid)
-
-    // 动作后观测：全树（与原生 provider 一致——动作结果带新索引，模型可直接用；
-    // 截图按需由下一次 get_app_state 拿）。动作可能已打开新窗口 / 替换窗口
-    //（zoom 换 CGWindowID）：观测失败不得掩盖「动作可能已发出」语义（防重放
-    // 硬要求）——降级为空观察快照，让模型重新 list_windows。
-    let observation: ComputerSnapshotResult
-    try {
-      observation = await this.observer.observeWindowState(resolvedApp, windowId, {
-        includeScreenshot: false,
-        includeTree: true
-      })
-    } catch (error) {
-      if (
-        error instanceof AppError &&
-        (error.code === 'WINDOW_NOT_FOUND' || error.code === 'WINDOW_STALE')
-      ) {
-        observation = unobservedPostActionSnapshot(resolvedApp, windowId, error.message)
-      } else {
-        throw error
-      }
-    }
-    return { ...observation, action }
+    return { structured, verificationOverride, pathOverride, actionName, delivery }
   }
 
   private async dispatchClick(

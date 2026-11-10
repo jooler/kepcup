@@ -76,6 +76,13 @@ export class CuaDriverSnapshotStore {
     this.prune()
   }
 
+  /** 目标窗口已被关闭 / 不可寻址时丢弃它的快照（索引与截图失败记忆一起清）。 */
+  forget(pid: number, windowId: number): void {
+    const key = storeKey(pid, windowId)
+    this.entries.delete(key)
+    this.screenshotFailures.delete(key)
+  }
+
   /** 最近一次带树快照：显式 windowId 优先，其次该应用唯一在快照表里的窗口。 */
   current(pid: number, windowId: number | undefined): CuaDriverSnapshotEntry | null {
     this.prune()
