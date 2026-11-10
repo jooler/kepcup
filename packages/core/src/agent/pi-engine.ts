@@ -330,6 +330,10 @@ export class PiEngine implements AgentEngine {
             ...(result.sensitiveParams !== undefined && result.sensitiveParams.length > 0
               ? { sensitiveParams: result.sensitiveParams }
               : {}),
+            // 按工具用量估算：只有模型真的收到图片时才计入图片成本。
+            ...(acceptsImages && result.images !== undefined && result.images.length > 0
+              ? { imageCount: result.images.length }
+              : {}),
           },
         });
         return {

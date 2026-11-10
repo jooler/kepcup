@@ -88,6 +88,7 @@ import {
 } from '../agent/external/permission-bridge.js';
 import type { SqliteDatabase } from '../infra/db.js';
 import { persistEngineSteps } from '../agent/step-persistence.js';
+import { ToolUsageTracker } from '../agent/tool-usage.js';
 import { clearToolOutputSpill, ToolOutputSpill } from '../agent/tool-output-spill.js';
 import {
   humanizeLateBy,
@@ -5070,6 +5071,32 @@ export class Orchestrator {
         handle,
         isTask ? runId : null,
       );
+      // 按工具的内置任务上下文消耗（内容估算）：定位哪个工具把上下文顶到
+      // 压缩阈值。外部 Agent 的工具内容只是宿主侧渲染，数值会偏低，不记录；
+      // 记账失败不影响任务（tracker 内部吞掉异常）。
+      const toolUsage =
+        isTask && agentRun === null
+          ? new ToolUsageTracker({
+              record: (entry) => {
+                this.#deps.usage.recordTool({
+                  runId,
+                  botId: batch.botId,
+                  conversationId: batch.conversationId,
+                  loopType: 'task',
+                  toolName: entry.toolName,
+                  callTokens: entry.callTokens,
+                  resultTokens: entry.resultTokens,
+                });
+              },
+            })
+          : null;
+      const unsubscribeToolUsage =
+        toolUsage === null
+          ? () => {}
+          : handle.onEvent((event) => {
+              if (event.type === 'tool_call') toolUsage.call(event.payload);
+              else if (event.type === 'tool_result') toolUsage.result(event.payload);
+            });
       let outcome;
       try {
         outcome = await handle.done;
@@ -5080,6 +5107,8 @@ export class Orchestrator {
         unsubscribeInterim();
         unsubscribeRouteSwitch();
         unsubscribeSteerConfirm();
+        unsubscribeToolUsage();
+        toolUsage?.clear();
         if (exec.kind === 'task') exec.control.detach();
         else this.#activeRuns.delete(runId);
         // D75 §1.2: sub runs die with their parent — before the lease closes

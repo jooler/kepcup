@@ -84,6 +84,8 @@ describe('0013 public_skills 迁移', () => {
     db.exec('drop table sidebar_sections;');
     // 0072（共享草稿）的新表同样摘除（回放时重建）。
     db.exec('drop table composer_drafts;');
+    // 0073（按工具用量）的新表同样摘除（纯新增，回放时重建）。
+    db.exec('drop table tool_usage_ledger;');
     // 0017（外部智能体）的新表同样摘除（approvals 重建可原样重放）。
     db.exec('drop table agent_sessions;');
     // 0024（连接应用）的新表同样摘除（纯新增，回放时重建）。

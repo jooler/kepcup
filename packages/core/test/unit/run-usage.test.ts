@@ -115,7 +115,13 @@ describe('UsageService.usageForRun', () => {
     try {
       // 首轮只写缓存（cache_write 很大、cache_read 为 0）：命中率必须是 0%，
       // 不能因为漏掉 cache_write 而被算成 100%。
-      insertRow(db, { runId: 'task_1', input: 1_000, cacheRead: 0, cacheWrite: 9_000, createdAt: 10 });
+      insertRow(db, {
+        runId: 'task_1',
+        input: 1_000,
+        cacheRead: 0,
+        cacheWrite: 9_000,
+        createdAt: 10,
+      });
       const usage = service(db).usageForRun('task_1');
       expect(usage?.cacheHitRate).toBe(0);
       // 第二轮命中 9_000：9000 / (2000 + 9000 + 9000)。
@@ -207,6 +213,72 @@ describe('UsageService.usageForRun', () => {
     const db = openMainDb();
     try {
       expect(service(db).usageForRun('task_missing')).toBeNull();
+    } finally {
+      closeDatabase(db);
+    }
+  });
+});
+
+describe('UsageService tool usage', () => {
+  function toolService(db: SqliteDatabase, now: () => number): UsageService {
+    return new UsageService(db, { now });
+  }
+
+  it('aggregates per-tool content estimates, filtering by time and task loop', () => {
+    const db = openMainDb();
+    try {
+      let now = 1_000;
+      const usage = toolService(db, () => now);
+      const base = {
+        runId: 'task_1',
+        botId: 'bot_a',
+        conversationId: 'conv_a',
+        loopType: 'task' as const,
+      };
+      usage.recordTool({ ...base, toolName: 'read', callTokens: 10, resultTokens: 100 });
+      now = 2_000;
+      usage.recordTool({ ...base, toolName: 'read', callTokens: 20, resultTokens: 200 });
+      usage.recordTool({ ...base, toolName: 'bash', callTokens: 5, resultTokens: 50 });
+      // 其他 loop 即使被写进来，也不能出现在「按工具」页签里。
+      usage.recordTool({
+        ...base,
+        loopType: 'turn',
+        toolName: 'read',
+        callTokens: 999,
+        resultTokens: 999,
+      });
+
+      expect(usage.toolTotals(0)).toEqual([
+        { toolName: 'read', resultTokens: 300, callTokens: 30, tokens: 330, calls: 2 },
+        { toolName: 'bash', resultTokens: 50, callTokens: 5, tokens: 55, calls: 1 },
+      ]);
+      // 只算 2_000 之后的调用。
+      expect(usage.toolTotals(1_500)).toEqual([
+        { toolName: 'read', resultTokens: 200, callTokens: 20, tokens: 220, calls: 1 },
+        { toolName: 'bash', resultTokens: 50, callTokens: 5, tokens: 55, calls: 1 },
+      ]);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  it('clamps negative tokens and never records zero calls', () => {
+    const db = openMainDb();
+    try {
+      const usage = toolService(db, () => 1_000);
+      usage.recordTool({
+        runId: 'task_1',
+        botId: null,
+        conversationId: null,
+        loopType: 'task',
+        toolName: 'glob',
+        callTokens: -5,
+        resultTokens: -10,
+        calls: 0,
+      });
+      expect(usage.toolTotals(0)).toEqual([
+        { toolName: 'glob', resultTokens: 0, callTokens: 0, tokens: 0, calls: 1 },
+      ]);
     } finally {
       closeDatabase(db);
     }

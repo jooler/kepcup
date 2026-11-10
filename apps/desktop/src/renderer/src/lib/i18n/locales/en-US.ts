@@ -1380,6 +1380,11 @@ export const enUS = {
   'settings.usageByBot': 'By Bot',
   'settings.usageByLoopHint': 'Which loops consume tokens (input / output split)',
   'settings.usageByBotHint': 'Which Bots consume tokens (input / output split)',
+  'settings.usageByTool': 'By tool',
+  'settings.usageByToolHint':
+    'Which tools fill the context (result / call args, estimated; built-in tasks only)',
+  'settings.usageToolResult': 'Result',
+  'settings.usageToolCall': 'Call args',
   'settings.usageInput': 'Input',
   'settings.usageOutput': 'Output',
   'settings.usageOther': 'Other',

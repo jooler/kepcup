@@ -91,6 +91,8 @@ export type EngineEvent =
         outcome?: ToolOutcome;
         /** W1: params found sensitive at execution time (see ToolResult.sensitiveParams). */
         sensitiveParams?: string[];
+        /** 模型实际收到的图片数量（内置 pi；外部 Agent / 无图为 0）。 */
+        imageCount?: number;
         /**
          * 文件改动的行数（外部智能体的 ACP diff 内容）：任务详情页工具行
          * 展示「Edited x.ts +9 −1」；内置 pi 的同口径统计在渲染层从工具参数算。
