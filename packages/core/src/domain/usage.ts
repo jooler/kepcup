@@ -64,6 +64,28 @@ export interface UsageBotTotalRow {
   calls: number;
 }
 
+/** 按工具的任务上下文消耗（内容估算，仅内置任务；不是计费 token）。 */
+export interface ToolUsageRecordInput {
+  runId: string;
+  botId: string | null;
+  conversationId: string | null;
+  loopType: LoopType;
+  toolName: string;
+  /** 工具调用参数（模型输出侧）。 */
+  callTokens: number;
+  /** 工具返回内容进入上下文的估算 token（输入侧）。 */
+  resultTokens: number;
+  calls?: number;
+}
+
+export interface UsageToolTotalRow {
+  toolName: string;
+  resultTokens: number;
+  callTokens: number;
+  tokens: number;
+  calls: number;
+}
+
 export interface UsageChatSessionRow {
   conversationId: string;
   botId: string | null;
@@ -118,6 +140,26 @@ export class UsageService {
         Math.max(0, Math.round(input.cacheReadTokens ?? 0)),
         Math.max(0, Math.round(input.cacheWriteTokens ?? 0)),
         input.costUsd ?? null,
+        this.clock.now(),
+      );
+  }
+
+  /** 按工具的内置任务上下文消耗：一次工具调用一行（仅 task loop）。 */
+  recordTool(input: ToolUsageRecordInput): void {
+    this.db
+      .prepare(
+        'insert into tool_usage_ledger (id, run_id, bot_id, conversation_id, loop_type, tool_name, call_tokens, result_tokens, calls, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(
+        newId('tus'),
+        input.runId,
+        input.botId,
+        input.conversationId,
+        input.loopType,
+        input.toolName,
+        Math.max(0, Math.round(input.callTokens)),
+        Math.max(0, Math.round(input.resultTokens)),
+        Math.max(1, Math.round(input.calls ?? 1)),
         this.clock.now(),
       );
   }
@@ -378,6 +420,34 @@ export class UsageService {
       outputTokens: row.o,
       tokens: row.i + row.o,
       calls: row.calls,
+    }));
+  }
+
+  /**
+   * 按工具的上下文消耗（内容估算，仅内置任务）。`tokens` 是调用参数与返回
+   * 内容的估算之和，不是 usage_ledger 的计费 token，也不按重发次数放大。
+   * 外部 Agent 的工具内容只是宿主侧渲染，不记账；查询仍显式限定
+   * `loop_type='task'`，防止其他调用方写进来的行混进页签。
+   */
+  toolTotals(since: number): UsageToolTotalRow[] {
+    const rows = this.db
+      .prepare(
+        `select tool_name,
+                coalesce(sum(result_tokens), 0) as r,
+                coalesce(sum(call_tokens), 0) as c,
+                coalesce(sum(calls), 0) as n
+           from tool_usage_ledger
+          where created_at >= ? and loop_type = 'task'
+          group by tool_name
+          order by (sum(result_tokens) + sum(call_tokens)) desc, tool_name`,
+      )
+      .all(since) as Array<{ tool_name: string; r: number; c: number; n: number }>;
+    return rows.map((row) => ({
+      toolName: row.tool_name,
+      resultTokens: row.r,
+      callTokens: row.c,
+      tokens: row.r + row.c,
+      calls: row.n,
     }));
   }
 

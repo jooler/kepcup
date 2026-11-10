@@ -474,6 +474,16 @@ test('usage page: per bot/loop/day tokens', async () => {
     await expect(section.locator('[data-testid="usage-heatmap"]')).toBeVisible();
     await expect(section.locator('[data-testid="usage-trend-chart"]')).toBeVisible();
     await expect(section.locator('[data-testid="usage-models"]')).toBeVisible();
+    // 使用构成新增「按工具」页签：本用例没有任务工具调用，切过去是空态。
+    const composition = section.locator('[data-testid="usage-composition"]');
+    await expect(composition).toBeVisible();
+    await composition.locator('[data-testid="usage-composition-tool"]').click();
+    await expect(composition.locator('[data-testid="usage-composition-tool"]')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    await expect(composition.locator('[data-testid="usage-composition-empty"]')).toBeVisible();
+    await composition.locator('[data-testid="usage-composition-loop"]').click();
     const dailyDots = await section.locator('[data-testid="usage-trend-chart"] circle').count();
     await section.locator('[data-testid="usage-range-30"]').click();
     await expect

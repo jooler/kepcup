@@ -3687,6 +3687,21 @@ export const usageBotTotalSchema = z.object({
 });
 export type UsageBotTotal = z.infer<typeof usageBotTotalSchema>;
 
+/**
+ * Per tool totals inside the selected range (built-in task loops only).
+ * Estimated context contribution, not billing: `resultTokens` is tool output
+ * entering the prompt, `callTokens` is the tool-call arguments the model
+ * produced.
+ */
+export const usageToolTotalSchema = z.object({
+  toolName: z.string(),
+  resultTokens: z.number(),
+  callTokens: z.number(),
+  tokens: z.number(),
+  calls: z.number().int(),
+});
+export type UsageToolTotal = z.infer<typeof usageToolTotalSchema>;
+
 /** Longest continuous chat session (messages ≤ 30 min apart). */
 export const usageChatSessionSchema = z.object({
   conversationId: z.string(),
@@ -3740,6 +3755,7 @@ export const usageStatsOutputSchema = z.object({
     byModel: z.array(usageModelTotalSchema),
     byLoop: z.array(usageLoopTotalSchema),
     byBot: z.array(usageBotTotalSchema),
+    byTool: z.array(usageToolTotalSchema),
   }),
   longestChat: usageChatSessionSchema.nullable(),
 });
