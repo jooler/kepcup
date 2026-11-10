@@ -4,7 +4,14 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { maskApiKey } from '@kepcup/shared';
 import { createMemoryKeystore } from '@kepcup/core';
-import { createTestStack, makeBot, openDirect, type TestStack } from '@kepcup/testkit';
+import {
+  createTestStack,
+  makeBot,
+  openDirect,
+  sendBatch,
+  waitForRun,
+  type TestStack,
+} from '@kepcup/testkit';
 import { startMockLlm, step } from '@kepcup/testkit';
 import { createTestCore } from '@kepcup/testkit';
 
@@ -136,6 +143,62 @@ describe('settings and provider key persistence', () => {
       core.rpc.call('providers.setKeyMeta', { provider: 'custom:mock', index: 9, enabled: true }),
     ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
   });
+
+  it('停用的 Key 不参与 Bot 实际调用：请求头只出现启用中的 Key', async () => {
+    const stack = await createTestStack();
+    stacks.push(stack);
+    const { core, llm } = stack;
+
+    await core.rpc.call('providers.setKey', { provider: 'custom:mock', key: 'sk-disabled-1111' });
+    await core.rpc.call('providers.addKey', { provider: 'custom:mock', key: 'sk-enabled-2222' });
+    await core.rpc.call('providers.setKeyMeta', {
+      provider: 'custom:mock',
+      index: 0,
+      enabled: false,
+    });
+
+    llm.script('mock-main', [
+      step().replyTextAndToolCall('查询一下', 'search_messages', { query: 'x' }),
+      step().replyText('完成'),
+    ]);
+    const bot = await makeBot(core, '小研');
+    const conv = await openDirect(core, bot.id);
+    await sendBatch(core, conv.id, ['你好']);
+    await waitForRun(core, conv.id, 'completed');
+
+    const requests = llm.requestsFor('mock-main');
+    expect(requests.length).toBeGreaterThan(0);
+    expect(requests.map((r) => r.authorization)).toEqual(
+      requests.map(() => 'Bearer sk-enabled-2222'),
+    );
+  });
+
+  it('全部 Key 停用时调用失败，且请求不会带着占位 / 环境变量凭据发出', async () => {
+    const stack = await createTestStack();
+    stacks.push(stack);
+    const { core, llm } = stack;
+
+    await core.rpc.call('providers.setKey', { provider: 'custom:mock', key: 'sk-only-1111' });
+    await core.rpc.call('providers.setKeyMeta', {
+      provider: 'custom:mock',
+      index: 0,
+      enabled: false,
+    });
+
+    // 「测试连接」同样失败，且是鉴权错误（不是网络 / 未知错误）。
+    await expect(core.rpc.call('providers.test', { provider: 'custom:mock' })).rejects.toMatchObject(
+      { code: 'PROVIDER_AUTH_FAILED' },
+    );
+
+    llm.script('mock-main', [step().replyText('不应到达')]);
+    const bot = await makeBot(core, '小研');
+    const conv = await openDirect(core, bot.id);
+    await sendBatch(core, conv.id, ['你好']);
+    const run = await waitForRun(core, conv.id, 'failed');
+
+    expect(llm.requests()).toHaveLength(0);
+    expect(run.error ?? '').toMatch(/全部停用/);
+  }, 30_000);
 
   it('providers.test succeeds against the mock and reports PROVIDER_AUTH_FAILED on 401', async () => {
     const stack = await createTestStack();

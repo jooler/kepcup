@@ -18,6 +18,8 @@ export interface MockChatRequest {
     stream?: boolean;
     [key: string]: unknown;
   };
+  /** `Authorization` header as received (e.g. `Bearer sk-...`). */
+  authorization?: string;
   /** Concatenated text of the trailing user message. */
   lastUserText(): string;
 }
@@ -326,6 +328,9 @@ export async function startMockLlm(): Promise<MockLlmServer> {
       const mockReq: MockChatRequest = {
         model,
         body,
+        ...(req.headers.authorization !== undefined
+          ? { authorization: req.headers.authorization }
+          : {}),
         lastUserText() {
           const messages = body.messages ?? [];
           for (let i = messages.length - 1; i >= 0; i--) {

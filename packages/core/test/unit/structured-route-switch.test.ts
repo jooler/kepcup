@@ -75,6 +75,16 @@ describe('completeStructured route switching', () => {
     expect(newEngine).not.toHaveBeenCalled();
   });
 
+  it('调用本身失败（配额 / 限流）不重试：不把同一个错误再打一次', async () => {
+    const complete = vi.fn(async () => {
+      throw Object.assign(new Error('429: {"type":"GoUsageLimitError"}'), {
+        code: 'PROVIDER_RATE_LIMITED',
+      });
+    });
+    await expect(completeStructured(base(complete))).rejects.toThrow(/429/);
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
+
   it('fails with a mapped error when no route resolves any more', async () => {
     await expect(
       completeStructured({

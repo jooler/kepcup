@@ -218,18 +218,56 @@ export function updateProviderKeyMeta(
 /** 进程内轮询游标：每个供应商独立，逐个请求在启用中的 Key 间轮换。 */
 const providerKeyCursor = new Map<string, number>();
 
+/** 有已存 Key 但全部停用。这是用户明确的意图（不是「还没配 Key」），调用必须
+ * 失败而不是回退：内置厂商会落到环境变量凭据，兼容实例会带着占位 key 发出去，
+ * 表现出来的就是「停用的 Key 仍在被使用」。 */
+function providerKeysAllDisabled(entries: readonly ProviderKeyEntry[]): boolean {
+  return entries.length > 0 && entries.every((entry) => !entry.enabled);
+}
+
+/** 在已读出的条目里按游标取下一个启用的 Key；没有启用的条目时返回 null。 */
+function selectNextKey(
+  entries: readonly ProviderKeyEntry[],
+  providerId: string,
+): string | null {
+  const keys = entries.filter((entry) => entry.enabled).map((entry) => entry.key);
+  if (keys.length === 0) return null;
+  const cursor = providerKeyCursor.get(providerId) ?? 0;
+  providerKeyCursor.set(providerId, (cursor + 1) % keys.length);
+  return keys[cursor % keys.length] ?? null;
+}
+
 /** 取下一次调用应使用的 Key（跳过停用条目）；没有可用 Key 时返回 null。 */
 export function nextProviderApiKey(
   secrets: SecretsService,
   providerId: string,
 ): string | null {
-  const keys = readProviderEntries(secrets, providerId)
-    .filter((entry) => entry.enabled)
-    .map((entry) => entry.key);
-  if (keys.length === 0) return null;
-  const cursor = providerKeyCursor.get(providerId) ?? 0;
-  providerKeyCursor.set(providerId, (cursor + 1) % keys.length);
-  return keys[cursor % keys.length] ?? null;
+  return selectNextKey(readProviderEntries(secrets, providerId), providerId);
+}
+
+/**
+ * 每个供应商在本进程内记一次「有哪几条 Key」（只记掩码）。多 Key 轮换时，
+ * 429 到底是哪条 Key 的额度、请求是否在两条 Key 之间来回切，看这一行就知道。
+ */
+const loggedProviderKeys = new Set<string>();
+
+function logProviderKeys(
+  logger: CoreLogger,
+  providerId: string,
+  entries: readonly ProviderKeyEntry[],
+): void {
+  if (loggedProviderKeys.has(providerId)) return;
+  loggedProviderKeys.add(providerId);
+  const enabled = entries.filter((entry) => entry.enabled);
+  logger.info(
+    {
+      providerId,
+      enabledKeys: enabled.length,
+      disabledKeys: entries.length - enabled.length,
+      keyMasks: enabled.map((entry) => maskApiKey(entry.key)),
+    },
+    'provider keys loaded',
+  );
 }
 
 /**
@@ -273,8 +311,16 @@ export function buildModelRegistry(deps: {
 }): Models {
   const credentialStore: CredentialStore = {
     async read(providerId: string): Promise<Credential | undefined> {
-      const value = nextProviderApiKey(deps.secrets, providerId);
+      const entries = readProviderEntries(deps.secrets, providerId);
+      if (providerKeysAllDisabled(entries)) {
+        throw new AppError(
+          'PROVIDER_AUTH_FAILED',
+          `供应商 ${providerId} 的 API Key 已全部停用（启用至少一个后再试）`,
+        );
+      }
+      const value = entries.length === 0 ? null : selectNextKey(entries, providerId);
       if (value === null) return undefined;
+      logProviderKeys(deps.logger, providerId, entries);
       return { type: 'api_key', key: value };
     },
     async list() {

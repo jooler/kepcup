@@ -150,11 +150,11 @@ export async function completeStructured<T>(input: CompleteStructuredInput<T>): 
   try {
     return await attempt(input.messages);
   } catch (error) {
-    // External agents (审查 C3): every attempt is a whole one-shot session on
-    // the user's subscription — retry only when the answer failed to parse,
-    // never after a failed / timed-out / cancelled call.
-    if (jsonOnly && !(error instanceof StructuredParseError)) throw error;
-    const reason = error instanceof StructuredParseError ? error.message : '调用失败';
+    // 只有「模型答了但格式不对」才值得把原因回喂再问一次。调用本身失败（鉴权 /
+    // 限流 / 配额 / 网络 / 超时）重试只会把同一个错误再打一次；外部 Agent 每次
+    // 尝试还花掉一整段订阅会话（审查 C3）。
+    if (!(error instanceof StructuredParseError)) throw error;
+    const reason = error.message;
     // The retry follows the route as it is now (the failure may be a switch).
     refreshTarget();
     const feedback = parseAgentModelRef(target.model) !== null

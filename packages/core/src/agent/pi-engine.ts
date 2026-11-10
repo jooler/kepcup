@@ -604,6 +604,12 @@ export class PiEngine implements AgentEngine {
           }),
         },
       );
+      // 供应商错误在非流式补全里以 stopReason='error' 返回，不抛异常。不在这里
+      // 转成 AppError，调用方（结构化输出、后台 loop）会把空回复当成「模型没按
+      // 格式回答」，真实的 429 / 401 就丢失了。
+      if (result.stopReason === 'error') {
+        throw mapProviderError(new Error(result.errorMessage ?? '模型请求失败'));
+      }
       return {
         text: textOf(result.content),
         toolCalls: result.content
