@@ -441,7 +441,7 @@ export function buildComputerTools(deps: ComputerToolDeps): ToolDefinition[] {
     delivery?: 'background' | 'foreground';
   }> = {
     name: 'computer_drag',
-    description: `从一个元素 / 坐标拖到另一个元素 / 坐标。默认后台投递；后台拖拽在 Finder / 桌面等会开启系统拖放会话的场景里拿不到落点（文件不会移动），确认界面没变化后用 delivery: 'foreground' 重试；系统级文件拖放即使前台也可能失败，改用应用自带的「移动到」菜单或文件系统操作。${ADDRESS_RULE}${OBSERVE_RULE}${SCOPE_RULE}`,
+    description: `从一个元素 / 坐标拖到另一个元素 / 坐标。默认前台投递（会短暂置前目标窗口并移动真实指针）；后台合成拖拽拿不到系统拖放会话（Finder / 桌面里文件根本不会动），只有确定目标能后台拖动时才传 delivery: 'background'。系统级文件拖放仍可能失败，改用应用自带的「移动到」菜单或文件系统操作。${ADDRESS_RULE}${OBSERVE_RULE}${SCOPE_RULE}`,
     parameters: Type.Object({
       app: appParam,
       from_element_index: Type.Optional(elementIndexParam),
@@ -453,7 +453,7 @@ export function buildComputerTools(deps: ComputerToolDeps): ToolDefinition[] {
       delivery: Type.Optional(
         Type.Union([Type.Literal('background'), Type.Literal('foreground')], {
           description:
-            'background（默认，不抢焦点）| foreground（短暂置前窗口并移动真实指针，用于后台拖拽无效时重试）',
+            'foreground（默认，短暂置前窗口并移动真实指针，能建立系统拖放会话）| background（不抢焦点，但系统级拖放会静默无效）',
         }),
       ),
     }),

@@ -469,8 +469,23 @@ export class CuaDriverObserver {
     return pickMainWindow(windows)!.window_id
   }
 
-  private async listAppsRaw(): Promise<CuaDriverAppEntry[]> {
-    if (this.appCache && Date.now() - this.appCache.at < CUA_DRIVER_APP_CACHE_TTL_MS) {
+  /**
+   * 目标窗口被关闭 / 换成 sheet 后的恢复候选：重新枚举（绕开 2s 缓存），按
+   * 「有标题优先 + z_index」挑一个不是 failedWindowId 的窗口；没有则返回 null。
+   */
+  async resolveRecoveryWindowId(
+    app: ResolvedCuaApp,
+    failedWindowId: number
+  ): Promise<number | null> {
+    this.invalidateWindowCache(app.pid)
+    const windows = await this.listWindowsForPid(app.pid)
+    return (
+      pickMainWindow(windows.filter((window) => window.window_id !== failedWindowId))
+        ?.window_id ?? null
+    )
+  }
+
+  private async listAppsRaw(): Promise<CuaDriverAppEntry[]> {    if (this.appCache && Date.now() - this.appCache.at < CUA_DRIVER_APP_CACHE_TTL_MS) {
       return this.appCache.apps
     }
     const result = await this.client.call('list_apps', {})
@@ -494,14 +509,18 @@ export type CuaDriverAppEntry = {
   last_used?: string | null
 }
 
-/** 主窗口：z_index 最大的在屏窗口（上游语义：null 时不推断数组顺序，取首个）。 */
+/** 主窗口：有标题的普通窗口优先，其次 z_index 最大（上游语义：null 时不推断顺序，取首个）。 */
 export function pickMainWindow(windows: CuaWindowRecord[]): CuaWindowRecord | null {
   if (windows.length === 0) {
     return null
   }
-  const withZ = windows.filter((window) => typeof window.z_index === 'number')
+  // sheet / 无标题辅助窗口同样以 layer-0 进入 list_windows，且常带最高 z_index——
+  // 直接按 z 选会把默认目标落成 sheet，动作随后报 off_space_or_ax_unresolved。
+  const titled = windows.filter((window) => window.title.trim().length > 0)
+  const pool = titled.length > 0 ? titled : windows
+  const withZ = pool.filter((window) => typeof window.z_index === 'number')
   if (withZ.length === 0) {
-    return windows[0]!
+    return pool[0]!
   }
   return withZ.reduce((best, window) =>
     (window.z_index as number) > (best.z_index as number) ? window : best

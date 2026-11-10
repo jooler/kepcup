@@ -18,7 +18,7 @@ import {
   cuaDriverToolError
 } from './cua-driver-error-map'
 import { windowPointToScreenshotPixel } from './cua-driver-coordinates'
-import { MAX_KEPT_SCREENSHOTS, SCREENSHOT_DIRECTORY_NAME } from './cua-driver-observer'
+import { MAX_KEPT_SCREENSHOTS, SCREENSHOT_DIRECTORY_NAME, pickMainWindow } from './cua-driver-observer'
 
 // P-B1 单元层（todo/computer-use-cua-adapter.md WP7 A 层）：伪 daemon（node:net
 // 监听 tmpdir 路径）按脚本应答，覆盖 5 个 provider 方法 + 9 个 action 方法 +
@@ -666,17 +666,17 @@ describe('CuaDriverProviderClient（伪 daemon）', () => {
     expect(dragArgs.from_y).toBe(100)
     expect(dragArgs.to_x).toBe(320)
     expect(dragArgs.to_y).toBe(310)
-    // 默认后台；前台需要真机实测才有意义（Finder 内容区后台拖拽完全无效）。
-    expect(dragArgs.delivery_mode).toBe('background')
+    // 默认前台：后台合成拖拽在 Finder 内容区完全无效（DEV-088）。
+    expect(dragArgs.delivery_mode).toBe('foreground')
   })
 
-  it('drag delivery:foreground 透传前台投递，并在动作元数据里如实标注', async () => {
+  it('drag delivery:background 不抢焦点，并在动作元数据里如实标注', async () => {
     let dragArgs: Record<string, unknown> = {}
     const { provider } = await withProvider(
       standardHandlers({
         drag: (args) => {
           dragArgs = args
-          return { effect: 'unverifiable', route: 'global_input' }
+          return { effect: 'unverifiable', route: 'synthetic_events' }
         }
       })
     )
@@ -685,10 +685,10 @@ describe('CuaDriverProviderClient（伪 daemon）', () => {
       app: 'Notes',
       fromElementIndex: 1,
       toElementIndex: 2,
-      delivery: 'foreground'
+      delivery: 'background'
     })
-    expect(dragArgs.delivery_mode).toBe('foreground')
-    expect(result.action?.delivery).toBe('foreground')
+    expect(dragArgs.delivery_mode).toBe('background')
+    expect(result.action?.delivery).toBe('background')
   })
 
   it('typeText 带元素索引：element_token 直传（0.40 契约）', async () => {
@@ -863,6 +863,88 @@ describe('CuaDriverProviderClient（伪 daemon）', () => {
     const error = await provider.action('click', { app: 'Notes', elementIndex: 1 }).catch((caught: unknown) => caught)
     expect((error as AppError).code).toBe('WINDOW_NOT_FOUND')
     expect((error as AppError).message).toContain('WindowServer has no record')
+  })
+
+  it('目标窗口被关掉 → 按键自动换窗口重试一次（不再绑死旧 id）', async () => {
+    const targeted: Array<unknown> = []
+    let listCalls = 0
+    const { provider } = await withProvider({
+      ...standardHandlers(),
+      list_windows: () => {
+        listCalls += 1
+        // 首次枚举是旧窗口 7；恢复时的重新枚举换成新窗口 8（用户已关掉 7）。
+        const id = listCalls === 1 ? 7 : 8
+        return {
+          windows: [
+            {
+              window_id: id,
+              pid: 100,
+              app_name: 'Notes',
+              title: id === 7 ? 'MainWindow' : 'MainWindow 2',
+              bounds: { x: 10, y: 20, width: 400, height: 300 },
+              is_on_screen: true,
+              z_index: 5
+            }
+          ]
+        }
+      },
+      press_key: (args) => {
+        const target = args.target as { window_id?: number } | undefined
+        targeted.push(target?.window_id)
+        return target?.window_id === 7
+          ? toolError({
+              code: 'window_not_found',
+              effect: 'refused',
+              pid: 100,
+              window_id: 7,
+              reason: 'WindowServer has no record of window 7 (closed or stale); re-enumerate windows and re-target'
+            })
+          : { effect: 'unverifiable', route: 'synthetic_events' }
+      }
+    })
+    const result = await provider.action('pressKey', { app: 'Notes', key: 'down' })
+    expect(targeted).toEqual([7, 8])
+    expect(result.action?.targetWindowId).toBe(8)
+  })
+
+  it('显式指定 windowId 时不自动换目标（宁可报错也不打到别的窗口）', async () => {
+    const targeted: Array<unknown> = []
+    const { provider } = await withProvider(
+      standardHandlers({
+        press_key: (args) => {
+          const target = args.target as { window_id?: number } | undefined
+          targeted.push(target?.window_id)
+          return toolError({
+            code: 'window_not_found',
+            effect: 'refused',
+            pid: 100,
+            window_id: 7,
+            reason: 'WindowServer has no record of window 7'
+          })
+        }
+      })
+    )
+    await expect(
+      provider.action('pressKey', { app: 'Notes', windowId: 7, key: 'down' })
+    ).rejects.toMatchObject({ code: 'WINDOW_NOT_FOUND' })
+    expect(targeted).toEqual([7])
+  })
+
+  it('默认目标跳过 sheet / 无标题窗口（即使它 z_index 最高）', () => {
+    const record = (window_id: number, title: string, z_index: number) => ({
+      window_id,
+      pid: 100,
+      app_name: 'Finder',
+      title,
+      bounds: { x: 0, y: 0, width: 100, height: 100 },
+      is_on_screen: true,
+      z_index
+    })
+    expect(
+      pickMainWindow([record(1, 'Documents', 1), record(2, '', 9)])?.window_id
+    ).toBe(1)
+    // 全是无标题窗口时退回 z 最大（不臆断）。
+    expect(pickMainWindow([record(1, '', 1), record(2, '', 9)])?.window_id).toBe(2)
   })
 
   // --- 传输层（WP2 验收） ----------------------------------------------------

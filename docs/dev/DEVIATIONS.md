@@ -1290,10 +1290,11 @@
      拖放会话要真实指针，合成事件建不起来。
 - 影响范围：`packages/core/src/tools/computer-tools.ts` 的 `computer_drag`（新增
   `delivery`）；`cua-driver-actions.ts` 的 drag 分支与 `action.delivery` 元数据。
-- 决定：`computer_drag` 暴露 `delivery: 'background' | 'foreground'`（默认后台），
-  工具描述写明「后台无效时用 foreground 重试；系统级文件拖放即使前台也可能失败，改用
-  应用自带的『移动到』或文件系统操作」。不做自动重试——拖拽没有读回，自动重放有重复
-  执行风险。
+- 决定：`computer_drag` 的 `delivery` **默认 `foreground`**——后台合成拖拽拿不到系统
+  拖放会话，默认即静默无效；需要「不抢焦点」时显式传 `background`。工具描述写明系统级
+  文件拖放即使前台也可能失败，改用应用自带的「移动到」或文件系统操作。不做「失败后自动
+  重试」：拖拽没有读回，自动重放有重复执行风险；默认前台把成本（短暂置前 + 移动真实
+  指针，driver 结束会还原前台应用）变成确定行为。
 
 ### DEV-089 动作后补观察丢失像素栅格；关闭窗口后动作仍绑旧 window_id
 
@@ -1313,8 +1314,13 @@
   `cua-driver-actions.ts` 的窗口解析。
 - 决定：无截图观察时，窗口尺寸未变就沿用上一帧像素栅格（driver 自身也保留上一帧），
   尺寸变了才清空并要求重新截屏；单测覆盖「动作后补观察不断链」「尺寸变化作废旧栅格」。
-  窗口重绑不做自动重试：显式 `windowId` 时静默改目标窗口会打到用户没指的窗口；隐式
-  场景下错误码已如实映射 `WINDOW_NOT_FOUND`，模型拿得到「重新 list_windows 选窗」的引导。
+  窗口目标失效的处理（2026-11-10 复检后补齐）：①默认目标改成「有标题窗口优先」——
+  sheet / 无标题辅助窗口同样以 layer-0 进 `list_windows` 且常带最高 z_index，按 z 选会
+  把默认目标落成 sheet，动作随即报 `off_space_or_ax_unresolved`（已映射为
+  `WINDOW_NOT_FOUND`）；②按键类动作（pressKey / hotkey / pasteText / 无元素索引的
+  typeText）在 driver 报窗口失效、且调用方没指定窗口时，丢弃陈旧快照、重新枚举换窗口
+  重试一次。坐标与元素寻址**不**自动换目标：栅格与 element_token 都绑定旧窗口，换目标
+  会打到别的位置，宁可报错让模型重新观察；显式 `windowId` 同样不重绑。
 
 ### DEV-090 截屏落盘并把文件路径交给模型
 

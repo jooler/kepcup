@@ -17,6 +17,9 @@ const DRIVER_CODE_TO_KEPCUP: Readonly<Record<string, string>> = {
   window_id_not_found: 'WINDOW_NOT_FOUND',
   window_owner_pid_mismatch: 'WINDOW_NOT_FOUND',
   window_not_found: 'WINDOW_NOT_FOUND',
+  // sheet / 换 Space 的窗口能进 list_windows，但背景输入会被拒（AX 面解析不出）——
+  // 语义等同「这个窗口不是可操作目标」，让上层重新选窗。
+  off_space_or_ax_unresolved: 'WINDOW_NOT_FOUND',
   px_window_not_found: 'WINDOW_NOT_FOUND',
   bring_to_front_window_not_found: 'WINDOW_NOT_FOUND',
   bring_to_front_pid_not_found: 'WINDOW_NOT_FOUND',
