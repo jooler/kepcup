@@ -1,0 +1,34 @@
+@import 'tailwindcss';
+
+/* 原生首页基础样式(D122):跟随系统明暗;安全区交给组件层 env() padding。
+   字体栈与桌面 renderer 一致优先系统 UI,不引入 webfont(离线首屏快)。 */
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family:
+    system-ui,
+    -apple-system,
+    'PingFang SC',
+    'Microsoft YaHei',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  color: var(--color-zinc-900);
+  background: var(--color-zinc-50);
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    color: var(--color-zinc-100);
+    background: var(--color-zinc-950);
+  }
+}
+
+/* 禁过度滚动(壳里整页就是首页,无滚动链)。 */
+#app {
+  overscroll-behavior: none;
+}
