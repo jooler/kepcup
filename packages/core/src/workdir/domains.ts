@@ -180,32 +180,38 @@ export function domainsConflict(a: AbsDomain, b: AbsDomain): boolean {
 }
 
 /** Lease keys of domain-scoped write tasks carry their sorted patterns (§2.5). */
+const DOMAIN_KEY_PREFIX = 'dir:';
 const DOMAIN_KEY_SUFFIX = '|domains:';
 
 /**
- * Encodes a structured write-domain lease key: `base|domains:p1,p2`
+ * Encodes a structured write-domain lease key: `dir:base|domains:p1,p2`
  * (patterns ASCII-sorted and URI-encoded so a comma inside a pattern cannot
- * split it). `base` is the workdir root, the workspace key, or a grant path.
+ * split it). The `dir:` prefix keeps a plain key that literally contains
+ * `|domains:` from being decoded as a structured one. `base` is the workdir
+ * root, the workspace key, or a grant path.
  */
 export function encodeWriteDomainKey(base: string, patterns: string[]): string {
   const sorted = [...patterns].sort();
-  return `${base}${DOMAIN_KEY_SUFFIX}${sorted.map((pattern) => encodeURIComponent(pattern)).join(',')}`;
+  return `${DOMAIN_KEY_PREFIX}${base}${DOMAIN_KEY_SUFFIX}${sorted.map((pattern) => encodeURIComponent(pattern)).join(',')}`;
 }
 
 /** Decodes a lease key; a key without domains is a whole-root key (`['**']`). */
 export function parseWriteDomainKey(key: string): { base: string; patterns: string[] } {
+  if (!key.startsWith(DOMAIN_KEY_PREFIX)) return { base: key, patterns: ['**'] };
   const index = key.lastIndexOf(DOMAIN_KEY_SUFFIX);
-  if (index < 0) return { base: key, patterns: ['**'] };
+  if (index < DOMAIN_KEY_PREFIX.length) return { base: key, patterns: ['**'] };
   const encoded = key.slice(index + DOMAIN_KEY_SUFFIX.length);
   try {
     const patterns = encoded
       .split(',')
       .filter((pattern) => pattern.length > 0)
       .map((pattern) => decodeURIComponent(pattern));
-    return { base: key.slice(0, index), patterns: patterns.length > 0 ? patterns : ['**'] };
+    if (patterns.length === 0) return { base: key.slice(DOMAIN_KEY_PREFIX.length, index), patterns: ['**'] };
+    return { base: key.slice(DOMAIN_KEY_PREFIX.length, index), patterns };
   } catch {
-    // Not one of ours: treat the whole key as an undeclared root.
-    return { base: key, patterns: ['**'] };
+    // A structured key we cannot decode must conflict with everything rather
+    // than silently behave like an unrelated plain path (no false negatives).
+    return { base: '/', patterns: ['**'] };
   }
 }
 
@@ -232,12 +238,7 @@ export function claimWithinDomain(
   const domains = absolutePatterns(root, domainPatterns).map(comparablePattern);
   return claimPatterns.every((claim) => {
     const claimPattern = comparablePattern(absolutePatterns(root, [claim])[0] ?? '');
-    return domains.some(
-      (domain) =>
-        domain === claimPattern ||
-        (globsIntersect(domain, claimPattern) &&
-          literalPrefixPath(claimPattern).startsWith(literalPrefixPath(domain))),
-    );
+    return domains.some((domain) => patternCovers(domain, claimPattern));
   });
 }
 
@@ -247,18 +248,74 @@ export function comparablePattern(value: string): string {
   return process.platform === 'linux' ? normalized : normalized.toLowerCase();
 }
 
-/** Path segments before the first glob segment ('' for a leading wildcard). */
-function literalPrefixPath(pattern: string): string {
-  const segments = pattern.split('/');
-  const index = segments.findIndex((segment) => META_CHARS.test(segment));
-  return (index < 0 ? segments : segments.slice(0, index)).join('/');
+/**
+ * Conservative containment: every path matched by `claim` is matched by
+ * `domain`. Uncertain shapes are rejected (a claim may not exceed the task's
+ * own domain). A fully literal domain denotes its subtree, matching the way
+ * both the enforcement gate and the sandbox policy treat it.
+ */
+function patternCovers(domain: string, claim: string): boolean {
+  const domainSegments = patternSegments(domain);
+  const claimSegments = patternSegments(claim);
+  if (domainSegments === null || claimSegments === null) return false;
+  if (!domainSegments.some((segment) => segment === '**' || /[*?[\]]/.test(segment))) {
+    domainSegments.push('**');
+  }
+  const memo = new Map<string, boolean>();
+  const go = (i: number, j: number): boolean => {
+    const key = `${i},${j}`;
+    const cached = memo.get(key);
+    if (cached !== undefined) return cached;
+    let result: boolean;
+    if (i === domainSegments.length) {
+      result = j === claimSegments.length;
+    } else if (domainSegments[i] === '**') {
+      result = go(i + 1, j) || (j < claimSegments.length && go(i, j + 1));
+    } else if (j >= claimSegments.length) {
+      result = false;
+    } else {
+      result = segmentCovers(domainSegments[i]!, claimSegments[j]!) && go(i + 1, j + 1);
+    }
+    memo.set(key, result);
+    return result;
+  };
+  return go(0, 0);
+}
+
+function patternSegments(pattern: string): string[] | null {
+  const normalized = toPosix(pattern);
+  if (normalized.length === 0 || normalized.startsWith('~')) return null;
+  let segments = normalized.split('/');
+  if (segments[0] === '') segments = segments.slice(1);
+  while (segments.length > 0 && segments[segments.length - 1] === '') segments.pop();
+  if (segments.length === 0) return null;
+  if (segments.some((segment) => segment.length === 0)) return null;
+  if (segments.some((segment) => segment.includes('**') && segment !== '**')) return null;
+  return segments;
+}
+
+/** One segment of `claim` is covered by the domain segment pattern. */
+function segmentCovers(domain: string, claim: string): boolean {
+  if (domain === '**') return true;
+  if (claim === '**') return false;
+  // A wildcard claim segment is only covered by the identical pattern.
+  if (/[*?[\]]/.test(claim)) return domain === claim;
+  let source = '';
+  for (const ch of domain) {
+    if (ch === '*') source += '[^/]*';
+    else if (ch === '?') source += '[^/]';
+    else source += ch.replaceAll(/[.+^${}()|[\]\\]/g, '\\$&');
+  }
+  return new RegExp(`^${source}$`).test(claim);
 }
 
 /** True when one root equals the other or is its ancestor (path-component-wise). */
 function rootsOverlap(a: string, b: string): boolean {
   const left = pathSegments(a);
   const right = pathSegments(b);
-  if (left.length === 0 || right.length === 0) return left.length === right.length;
+  // The filesystem root has no components and overlaps every path (the old
+  // prefix rule did the same: '/proj'.startsWith('/')).
+  if (left.length === 0 || right.length === 0) return true;
   const shorter = Math.min(left.length, right.length);
   for (let index = 0; index < shorter; index++) {
     if (left[index] !== right[index]) return false;

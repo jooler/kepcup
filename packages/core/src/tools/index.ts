@@ -1168,7 +1168,7 @@ export function buildResponseTools(input: {
           gateway,
           delivery: generatedMediaDelivery,
           recordFile: recordGenerated,
-          checkWritable: (target) => gateway.assertWriteDomain(identity, target),
+          checkWritable: (target) => gateway.assertWritableArtifact(identity, target),
         })
       : [];
   const speechTools =
@@ -1181,7 +1181,7 @@ export function buildResponseTools(input: {
           gateway,
           delivery: generatedMediaDelivery,
           recordFile: recordGenerated,
-          checkWritable: (target) => gateway.assertWriteDomain(identity, target),
+          checkWritable: (target) => gateway.assertWritableArtifact(identity, target),
         })
       : [];
 

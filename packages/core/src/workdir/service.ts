@@ -227,8 +227,12 @@ export class WorkdirRuntime {
     const task = this.#writingTask(identity);
     if (task === 'missing') return '无法确认写入任务的写域，已拒绝写入';
     if (task === null || task.taskWrites !== true) return null;
+    if (task.taskWriteDomainsCorrupt === true) {
+      return '任务写域声明无法解析，已拒绝写入（需要越域请用 ask_user 说明缘由，由对话轮改派）';
+    }
     const patterns = task.taskWriteDomains;
-    if (patterns === null || patterns === undefined || patterns.length === 0) return null;
+    if (patterns === null || patterns === undefined) return null;
+    if (patterns.length === 0) return '任务写域为空，已拒绝写入';
     if (patterns.length === 1 && patterns[0] === '**') return null;
     if (task.taskCwd === null) return '任务写域缺少工作目录，已拒绝写入';
     return pathMatchesPatterns(task.taskCwd, patterns, resolvedPath)
@@ -247,8 +251,14 @@ export class WorkdirRuntime {
   writeDomain(identity: RunIdentity): AbsDomain | null {
     const task = this.#writingTask(identity);
     if (task === 'missing' || task === null || task.taskWrites !== true) return null;
+    // A declaration we cannot read must not widen the sandbox: empty patterns
+    // are expressible (nothing writable) and leave the task read-only.
+    if (task.taskWriteDomainsCorrupt === true) {
+      return { root: task.taskCwd ?? '/', patterns: [] };
+    }
     const patterns = task.taskWriteDomains;
-    if (patterns === null || patterns === undefined || patterns.length === 0) return null;
+    if (patterns === null || patterns === undefined) return null;
+    if (patterns.length === 0) return { root: task.taskCwd ?? '/', patterns: [] };
     if (patterns.length === 1 && patterns[0] === '**') return null;
     if (task.taskCwd === null) return null;
     return { root: task.taskCwd, patterns };
@@ -359,6 +369,13 @@ export class WorkdirRuntime {
     }
     if (this.#deps.leases.heldKey(identity.runId, [target.key]) === target.key) {
       return target;
+    }
+    // A task pinned to a domain key already holds a conflicting lease on the
+    // same root. Asking for the bare root (acquire_workdir_write) must not
+    // widen or fail: the gateway still enforces the domain per path.
+    const held = this.#deps.leases.heldKey(identity.runId, [target.key]);
+    if (held !== null && options.domains == null) {
+      return { key: held, workdir: target.workdir };
     }
     const current = this.#runLeases.get(identity.runId);
     if (current?.pinned === true && current.key !== target.key) {
@@ -516,7 +533,7 @@ export class WorkdirRuntime {
   async revokeLease(conversationId: string): Promise<boolean> {
     const workdir = this.boundWorkdir(conversationId);
     if (workdir === null) return false;
-    const holder = this.#deps.leases.holderOf(workdir.path);
+    const holder = this.#deps.leases.conflictingHolder(workdir.path);
     if (holder === null) return false;
     // A pinned holder (a write task) loses its write permission for good
     // (design 30 §5.1): its next write fails instead of re-taking the lease
@@ -597,7 +614,7 @@ export class WorkdirRuntime {
       conversationId: change.conversationId,
       loopType: 'host',
     };
-    const holder = this.#deps.leases.holderOf(workdir.path);
+    const holder = this.#deps.leases.conflictingHolder(workdir.path);
     if (holder !== null) {
       throw new AppError('LEASE_HELD', 'Bot 正在修改该工作目录，请先取消或等待其完成');
     }
@@ -883,17 +900,23 @@ function joinUnlessAborted<T>(promise: Promise<T>, signal: AbortSignal | undefin
   });
 }
 
-/** D123: case/separator normalization for write-domain path matching. */
+/**
+ * D123: case/separator normalization for write-domain path matching. Only
+ * Windows is folded unconditionally: on a case-sensitive macOS volume `src`
+ * and `SRC` are distinct directories, and folding would let a domain write
+ * escape into the other one (a denial on a case-insensitive volume is the
+ * conservative direction).
+ */
 function comparableDomainPath(value: string): string {
   const normalized = value.replaceAll('\\', '/');
-  // macOS and Windows default filesystems are case-insensitive.
-  return process.platform === 'linux' ? normalized : normalized.toLowerCase();
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
 /**
  * D123: true when `resolvedPath` matches one of the root-relative patterns.
- * A glob's literal directory prefix (e.g. `<cwd>/docs` for `docs/**`) also
- * matches, so the write can create that directory.
+ * A fully literal pattern denotes that directory and its subtree (the sandbox
+ * policy mounts it the same way), and a glob's literal directory prefix
+ * (e.g. `<cwd>/docs` for `docs/**`) also matches so the write can create it.
  */
 export function pathMatchesPatterns(
   root: string,
@@ -901,11 +924,16 @@ export function pathMatchesPatterns(
   resolvedPath: string,
 ): boolean {
   const target = comparableDomainPath(resolvedPath);
-  const clauses = absolutePatterns(root, patterns).map(comparableDomainPath);
-  return (
-    clauses.some((pattern) => globMatch(pattern, target)) ||
-    clauses.some((pattern) => literalDirPrefix(pattern) === target)
-  );
+  const clauses = absolutePatterns(root, patterns);
+  return clauses.some((absolute, index) => {
+    const pattern = comparableDomainPath(absolute);
+    if (globMatch(pattern, target)) return true;
+    const relative = patterns[index] ?? '';
+    if (!/[*?[\]]/.test(relative)) {
+      return target === pattern || target.startsWith(`${pattern}/`);
+    }
+    return literalDirPrefix(pattern) === target;
+  });
 }
 
 /** The directory part of a pattern before its first glob segment, if any. */

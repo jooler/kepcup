@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { TASK_WRITE_DOMAINS_MAX, TASK_WRITE_DOMAIN_PATTERN_MAX } from '@kepcup/shared';
 import {
   absolutePatterns,
+  claimWithinDomain,
   domainsConflict,
   encodeWriteDomainKey,
   globsIntersect,
@@ -106,7 +107,7 @@ describe('domainsConflict', () => {
 describe('write-domain lease keys', () => {
   it('encodes patterns ASCII-sorted and decodes plain keys as whole roots', () => {
     expect(encodeWriteDomainKey('/proj', ['src/**', 'apps/renderer/**'])).toBe(
-      '/proj|domains:apps%2Frenderer%2F**,src%2F**',
+      'dir:/proj|domains:apps%2Frenderer%2F**,src%2F**',
     );
     expect(parseWriteDomainKey(encodeWriteDomainKey('/proj', ['src/**']))).toEqual({
       base: '/proj',
@@ -137,5 +138,37 @@ describe('write-domain lease keys', () => {
     // Workspace keys are roots of their own.
     expect(writeDomainKeysConflict('ws:bot_1:conv_1', 'ws:bot_2:conv_2')).toBe(false);
     expect(writeDomainKeysConflict('ws:bot_1:conv_1', 'ws:bot_1:conv_1')).toBe(true);
+  });
+
+  it('does not decode a plain key that literally contains the suffix', () => {
+    expect(parseWriteDomainKey('/a|domains:b')).toEqual({ base: '/a|domains:b', patterns: ['**'] });
+    expect(writeDomainKeysConflict('/a|domains:b', '/a|domains:b/|domains:c')).toBe(true);
+  });
+
+  it('treats the filesystem root as overlapping every workdir', () => {
+    expect(writeDomainKeysConflict('/', '/proj')).toBe(true);
+    expect(
+      domainsConflict(
+        { root: '/', patterns: ['**'] },
+        { root: '/proj', patterns: ['**'] },
+      ),
+    ).toBe(true);
+  });
+});
+
+describe('claimWithinDomain', () => {
+  it('accepts claims inside the declared patterns', () => {
+    expect(claimWithinDomain('/proj', ['packages/shared/**'], ['packages/shared/a.ts'])).toBe(true);
+    expect(claimWithinDomain('/proj', ['docs/*'], ['docs/a.md'])).toBe(true);
+    expect(claimWithinDomain('/proj', ['docs/**/x'], ['docs/a/x'])).toBe(true);
+    // A literal domain denotes its subtree.
+    expect(claimWithinDomain('/proj', ['docs'], ['docs/a.md'])).toBe(true);
+  });
+
+  it('rejects claims that only intersect the domain', () => {
+    expect(claimWithinDomain('/proj', ['docs/*'], ['docs/a/b'])).toBe(false);
+    expect(claimWithinDomain('/proj', ['docs/**/x'], ['docs/a/y'])).toBe(false);
+    expect(claimWithinDomain('/proj', ['packages/shared/**'], ['packages/core/a.ts'])).toBe(false);
+    expect(claimWithinDomain('/proj', ['packages/**'], ['**'])).toBe(false);
   });
 });

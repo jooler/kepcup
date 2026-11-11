@@ -1081,6 +1081,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       }
       services.agentsService?.dispose();
       services.agents?.host.dispose();
+      // D123: clear task peer-wait timers before the run DB closes.
+      services.orchestrator?.dispose();
       await services.agents?.bridge.stop().catch(() => undefined);
       // D81：杀掉组件查询子进程（它另开了一条到 main.db 的只读连接）。
       services.widgets?.dispose();

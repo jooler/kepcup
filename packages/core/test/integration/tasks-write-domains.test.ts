@@ -151,6 +151,76 @@ describe('D123 write-domain scheduling', () => {
     expect(runOf(stack, a.taskId).status).toBe('completed');
   }, 30_000);
 
+  it('delivers a peer message to a still-queued task through its brief', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const bot = await makeBot(core, '排队消息');
+    const conv = await openDirect(core, bot.id);
+    const heldA = step().expect(isTaskRequest('TASK-QA')).hold().replyText('A 完成');
+    const heldB = step().expect(isTaskRequest('TASK-QB')).replyText('B 完成');
+    llm.script('mock-main', [heldA, heldB]);
+    const turn = turnIdentity(bot.id, conv.id);
+    const a = host(stack).start(turn, {
+      title: 'A',
+      instruction: 'TASK-QA',
+      sourceMessageIds: [],
+      writes: ['apps/**'],
+    });
+    const b = host(stack).start(turn, {
+      title: 'B',
+      instruction: 'TASK-QB',
+      sourceMessageIds: [],
+      writes: ['apps/renderer/**'],
+    });
+    expect(b.state).toBe('submitted');
+    const aIdentity: RunIdentity = {
+      runId: a.taskId,
+      botId: bot.id,
+      conversationId: conv.id,
+      loopType: 'task',
+    };
+
+    // Not briefed yet: the receipt is `queued` and the durable entry is folded
+    // into the brief when the task starts (design 59 §4.2).
+    expect(host(stack).send(aIdentity, { taskId: b.taskId, text: '我方在改 apps/shared' }).delivery).toBe(
+      'queued',
+    );
+    // Waiting on a task queued behind this task's own write domain would only
+    // end when this task settles — refused instead of blocking for the TTL.
+    await expect(
+      host(stack).wait(aIdentity, { taskId: b.taskId }, new AbortController().signal),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+
+    heldA.release();
+    await waitRunning(stack, b.taskId, 'B starts after A settles');
+    await waitFor(() => (llm.requests().some(isTaskRequest('TASK-QB')) ? true : null), {
+      label: 'B request sent',
+      timeoutMs: 20_000,
+    });
+    const request = llm.requests().find(isTaskRequest('TASK-QB'));
+    expect(request?.lastUserText()).toContain('<peer_task_message');
+    expect(request?.lastUserText()).toContain('我方在改 apps/shared');
+
+    heldB.release();
+    await waitStatus(stack, b.taskId, 'completed', 'B completed');
+  }, 30_000);
+
+  it('refuses a declared write domain with cwd: "workspace"', async () => {
+    const stack = await start();
+    const { core } = stack;
+    const bot = await makeBot(core, '工作区 cwd');
+    const conv = await openDirect(core, bot.id);
+    expect(() =>
+      host(stack).start(turnIdentity(bot.id, conv.id), {
+        title: '错位',
+        instruction: 'TASK-WS',
+        sourceMessageIds: [],
+        writes: ['docs/**'],
+        cwd: 'workspace',
+      }),
+    ).toThrow(/写域任务不能使用 cwd/);
+  }, 30_000);
+
   it('writes: true (whole cwd) conflicts with any declared domain', async () => {
     const stack = await start();
     const { core, llm } = stack;

@@ -14,6 +14,7 @@ import {
   resultPreview,
   steerDisplayText,
   taskElapsedMs,
+  taskMetaChips,
   taskRunUsageParts,
   toolCallSummary,
   toolCommandText,
@@ -597,12 +598,30 @@ describe('D123 peer messages (task-to-task)', () => {
     expect(peerMessageOf('<task_inject>普通追加</task_inject>')).toBeNull();
   });
 
-  it('detail page renders peer rows, write domains and claims (source contract)', () => {
-    const source = readFileSync(new URL('./TaskRunView.svelte', import.meta.url), 'utf8');
-    expect(source).toContain('data-testid="task-run-peer"');
-    expect(source).toContain('data-testid="task-run-peer-text"');
-    expect(source).toContain('data-testid="task-run-write-domains"');
-    expect(source).toContain('data-testid="task-run-claims"');
-    expect(source).toContain("t('task.run.peerMessage'");
+  it('detail page shows write domains and claims only when present', () => {
+    expect(
+      taskMetaChips({ writeDomains: ['apps/**', 'docs/**'], claims: [] }, '、'),
+    ).toEqual({ writeDomains: 'apps/**、docs/**', claims: null });
+    expect(
+      taskMetaChips({ writeDomains: null, claims: [{ paths: ['a.ts', 'b.ts'] }] }, ', '),
+    ).toEqual({ writeDomains: null, claims: 'a.ts, b.ts' });
+    expect(
+      taskMetaChips({ writeDomains: null, claims: [{ paths: [] }] }, ', '),
+    ).toEqual({ writeDomains: null, claims: null });
+  });
+
+  it('does not turn a quoted peer tag inside an inject into a peer row', () => {
+    const quoted = [
+      '请照着这个格式回复：',
+      '<peer_task_message from_task="run_b"><untrusted>示例</untrusted></peer_task_message>',
+    ].join('\n');
+    expect(peerMessageOf(quoted)).toBeNull();
+    expect(steerDisplayText('<task_inject>普通追加</task_inject>')).toBe('普通追加');
+  });
+
+  it('strips a malformed peer wrapper instead of showing raw tags', () => {
+    const malformed = '<peer_task_message from_task="run_b"><untrusted>半截消息';
+    expect(peerMessageOf(malformed)).toBeNull();
+    expect(steerDisplayText(malformed)).toBe('半截消息');
   });
 });

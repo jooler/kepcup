@@ -1153,6 +1153,14 @@ export class Orchestrator {
   // --- voice conversation mode (53 号修订 v3) --------------------------------
 
   /**
+   * D123 teardown: release the task host's long-lived peer-wait timers before
+   * `core.close()` closes the run database.
+   */
+  dispose(): void {
+    this.#taskHost.dispose();
+  }
+
+  /**
    * 同步会话的语音对话模式开关（渲染层经 `conversations.setVoiceMode` 调）。
    * 即时态：只影响后续对话轮的提示词与 Bot 回复标记；不触发任何消息 / 广播。
    * 渲染层是单例（同一时刻只有一个会话在语音模式），core 同口径：置真时清掉
@@ -4296,7 +4304,18 @@ export class Orchestrator {
       // D93 P3: only built-in tasks spill oversized tool output; external
       // agents keep their own native harness and turn contexts stay bounded.
       const toolOutputSpill =
-        isTask && agentId.length === 0 ? new ToolOutputSpill({ workspacePath, runId }) : undefined;
+        isTask && agentId.length === 0
+          ? new ToolOutputSpill({
+              workspacePath,
+              runId,
+              canWrite: (target) => {
+                const decision = this.#deps.gateway.checkPath(identity, target, 'write');
+                // Host-owned output, like `.attachments`: a read-only run may
+                // still spill, but a declared domain / peer claim still applies.
+                return decision.kind !== 'forbidden' || decision.readOnlyRun === true;
+              },
+            })
+          : undefined;
       const toolDeps: ResponseToolDeps = {
         ...(scheduleSource !== null ? { scheduleSource } : {}),
         ...(todoSource !== null ? { todoSource } : {}),

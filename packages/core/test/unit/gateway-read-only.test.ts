@@ -7,7 +7,7 @@ import Database from 'better-sqlite3-multiple-ciphers';
 
 import { canonicalPath, resolvePaths, workspacePathFor } from '../../src/infra/paths.js';
 import { ToolGateway, type GatewayDeps } from '../../src/gateway/index.js';
-import { WorkdirRuntime } from '../../src/workdir/service.js';
+import { pathMatchesPatterns, WorkdirRuntime } from '../../src/workdir/service.js';
 import { TaskClaimRegistry } from '../../src/workdir/claims.js';
 import { GrantsService } from '../../src/permissions/grants.js';
 import { buildCodingTools } from '../../src/tools/coding-tools.js';
@@ -806,6 +806,42 @@ describe('declared write domains (D123 §3.6)', () => {
     expect(() =>
       gateway.assertWriteDomain(ids.scopedTask, path.join(workspace(), '.generated', 'x.png')),
     ).toThrow(/写域/);
+  });
+
+  it('a fully literal domain covers its subtree but not a sibling prefix', () => {
+    expect(pathMatchesPatterns(workspace(), ['docs'], path.join(workspace(), 'docs', 'a.md'))).toBe(
+      true,
+    );
+    expect(
+      pathMatchesPatterns(workspace(), ['docs'], path.join(workspace(), 'docs2', 'a.md')),
+    ).toBe(false);
+  });
+
+  it('host-made copies and generated artifacts still obey domain and claims', () => {
+    const gateway = makeGateway();
+    expect(
+      gateway.checkHostCopyPath(
+        ids.scopedTask,
+        path.join(workspace(), '.attachments', 'a.pdf'),
+        '.attachments',
+      ),
+    ).toMatchObject({ kind: 'forbidden', outOfDomain: true });
+
+    const claims = new TaskClaimRegistry();
+    claims.set({
+      taskId: 'run_peer',
+      botId: BOT,
+      conversationId: CONV,
+      title: 'peer',
+      root: workspace(),
+      paths: ['docs/a.md'],
+      reason: '在改',
+      since: 1,
+    });
+    const claimed = makeGateway(new UnavailableSandboxBackend('test'), claims);
+    expect(() =>
+      claimed.assertWritableArtifact(ids.scopedTask, path.join(workspace(), 'docs', 'a.md')),
+    ).toThrow(/认领/);
   });
 });
 

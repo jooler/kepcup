@@ -36,6 +36,12 @@ export interface ToolOutputSpillOptions {
   maxChars?: number;
   headChars?: number;
   tailChars?: number;
+  /**
+   * D123: the run's write verdict for a host-chosen path. A domain-scoped
+   * task must not persist output outside its declared domain; false = skip
+   * the spill and fall back to truncation.
+   */
+  canWrite?: (target: string) => boolean;
 }
 
 export interface SpilledToolOutput {
@@ -54,6 +60,7 @@ export class ToolOutputSpill {
   readonly #maxChars: number;
   readonly #headChars: number;
   readonly #tailChars: number;
+  readonly #canWrite: ((target: string) => boolean) | undefined;
   #seq = 0;
 
   constructor(options: ToolOutputSpillOptions) {
@@ -62,6 +69,7 @@ export class ToolOutputSpill {
     this.#maxChars = options.maxChars ?? TOOL_OUTPUT_MAX_CHARS;
     this.#headChars = options.headChars ?? TOOL_OUTPUT_SPILL_HEAD_CHARS;
     this.#tailChars = options.tailChars ?? TOOL_OUTPUT_SPILL_TAIL_CHARS;
+    this.#canWrite = options.canWrite;
   }
 
   /** Directory for this run (may not exist yet). */
@@ -128,6 +136,7 @@ export class ToolOutputSpill {
     if (!safeDirectoryPath(base)) return null;
     const dir = path.join(base, this.#runId);
     if (!safeDirectoryPath(dir)) return null;
+    if (this.#canWrite !== undefined && !this.#canWrite(dir)) return null;
     try {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
       // A pre-existing symlink could still redirect the actual path.

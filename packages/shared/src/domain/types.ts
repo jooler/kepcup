@@ -2209,6 +2209,11 @@ export const runSchema = z.object({
    */
   taskWriteDomains: z.array(z.string()).nullable().default(null),
   /**
+   * D123: the stored declaration exists but cannot be parsed. Enforcement is
+   * fail-closed (deny writes); a NULL declaration stays "undeclared".
+   */
+  taskWriteDomainsCorrupt: z.boolean().optional(),
+  /**
    * D91：任务声明要挂的外部能力 id（`start_task.capabilities`，如 `app:github` / `mcp:{serverId}`）；
    * 非任务 run 与宿主自己派的任务（未声明）为 null。
    */

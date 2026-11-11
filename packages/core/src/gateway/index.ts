@@ -377,6 +377,24 @@ export class ToolGateway {
   }
 
   /**
+   * D123: front gate for a host-saved artifact (generated media, attachment
+   * copies): the write-domain and claim verdicts apply before the host creates
+   * any directory or file. A read-only run keeps the D75 exemption for
+   * host-owned artifacts.
+   */
+  assertWritableArtifact(identity: RunIdentity, inputPath: string): void {
+    const decision = this.checkPath(identity, inputPath, 'write');
+    if (decision.kind !== 'forbidden') return;
+    if (decision.outOfDomain === true) {
+      throw new AppError('WRITE_OUT_OF_DOMAIN', `${decision.reason}：${inputPath}`);
+    }
+    if (decision.claimed === true) {
+      throw new AppError('WRITE_CLAIMED', `${decision.reason}：${inputPath}`);
+    }
+    // Read-only runs keep the D75 exemption for host-saved artifacts.
+  }
+
+  /**
    * D123: the task's write-domain refusal for an already-resolved path, or
    * null. External agents have no per-path enforcement — the permission
    * bridge uses this only to annotate its 'ask' cards.
@@ -511,6 +529,20 @@ export class ToolGateway {
       }
       if (mode === 'read') return { kind: 'allowed', resolvedPath: resolved };
       if (this.#deps.workdirs.holdsLease(identity, workdir.path)) {
+        // D123: a domain-scoped write must not reach an inode outside the
+        // domain through a hard link (realpath stays inside, so step 3 alone
+        // would allow it — same reason as the workspace check in step 1).
+        if (
+          mode === 'write' &&
+          this.#deps.workdirs.writeDomain?.(identity) != null &&
+          hasExternalHardlink(resolved, workdir.path)
+        ) {
+          return {
+            kind: 'forbidden',
+            resolvedPath: resolved,
+            reason: '目标文件存在工作目录写域之外的硬链接',
+          };
+        }
         // Lease first (a grant never replaces it), then the git control files.
         if (isGitControlPath(resolvedNorm)) return this.#gitControlDecision(identity, resolved);
         return { kind: 'allowed', resolvedPath: resolved };
@@ -609,12 +641,9 @@ export class ToolGateway {
    */
   checkHostCopyPath(identity: RunIdentity, inputPath: string, hostDir: string): PathDecision {
     const decision = this.checkPath(identity, inputPath, 'write');
-    if (
-      decision.kind !== 'forbidden' ||
-      (decision.readOnlyRun !== true &&
-        decision.outOfDomain !== true &&
-        decision.claimed !== true)
-    ) {
+    // Only the D75 read-only rule is exempt: a declared write domain and a
+    // peer claim still apply to host-made copies (D123 §3.6 / §5).
+    if (decision.kind !== 'forbidden' || decision.readOnlyRun !== true) {
       return decision;
     }
     const workspace = this.workspacePath(identity);
@@ -629,10 +658,9 @@ export class ToolGateway {
       return { kind: 'allowed', resolvedPath: decision.resolvedPath };
     }
     return {
+      ...decision,
       kind: 'forbidden',
-      resolvedPath: decision.resolvedPath,
       reason: `${decision.reason}（宿主只能把文件复制到 workspace 的 ${hostDir} 目录）`,
-      readOnlyRun: true,
     };
   }
 

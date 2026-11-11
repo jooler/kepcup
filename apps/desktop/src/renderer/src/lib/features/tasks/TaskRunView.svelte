@@ -36,6 +36,7 @@
     latestPlan,
     pendingTaskQuestionOf,
     taskElapsedMs,
+    taskMetaChips,
     taskRunUsageParts,
   } from './task-run-view';
   import { isActiveTask } from './task-view';
@@ -90,6 +91,7 @@
   let processInitialized = false;
 
   const task = $derived(tasks.byId[taskId] ?? null);
+  const metaChips = $derived(task === null ? null : taskMetaChips(task, listSeparator()));
   const usageParts = $derived(taskRunUsageParts(usage));
   const reportText = $derived((task?.result?.text ?? '').trim());
   const entries = $derived(buildTaskRunTimeline(steps));
@@ -367,20 +369,16 @@
           {/if}
           <span aria-hidden="true">·</span>
           <span>{task.writes ? t('task.run.writes') : t('task.run.readOnly')}</span>
-          {#if task.writeDomains !== null}
+          {#if metaChips?.writeDomains != null}
             <span aria-hidden="true">·</span>
             <span data-testid="task-run-write-domains"
-              >{t('task.run.writeDomains', {
-                list: task.writeDomains.join(listSeparator()),
-              })}</span
+              >{t('task.run.writeDomains', { list: metaChips.writeDomains })}</span
             >
           {/if}
-          {#if task.claims.length > 0}
+          {#if metaChips?.claims != null}
             <span aria-hidden="true">·</span>
             <span data-testid="task-run-claims"
-              >{t('task.run.claims', {
-                list: task.claims.flatMap((claim) => claim.paths).join(listSeparator()),
-              })}</span
+              >{t('task.run.claims', { list: metaChips.claims })}</span
             >
           {/if}
           {#if usageParts !== null}

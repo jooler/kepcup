@@ -388,10 +388,12 @@ function saveGenerated(
 ): string | null {
   if (bytes.length === 0) return null;
   const dir = path.join(workspacePath, '.generated');
-  mkdirSync(dir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const base = sanitizeFileName(fileName?.trim() || stamp);
   const target = path.join(dir, `${base}.${ext}`);
+  // Gate before creating the directory / writing the file.
+  checkWritable?.(dir);
+  mkdirSync(dir, { recursive: true });
   checkWritable?.(target);
   writeFileSync(target, bytes);
   return target;

@@ -237,6 +237,27 @@ describe('D123 peer coordination', () => {
     stepB.release();
   }, 30_000);
 
+  it('wait_for_task rejects a non-positive timeout instead of defaulting', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const bot = await makeBot(core, '超时参数');
+    const conv = await openDirect(core, bot.id);
+    const stepA = step().expect(isTaskRequest('TASK-A')).hold().replyText('A 完成');
+    const stepB = step().expect(isTaskRequest('TASK-B')).hold().replyText('B 完成');
+    llm.script('mock-main', [stepA, stepB]);
+    const a = await startHeld(stack, bot.id, conv.id, 'TASK-A');
+    const b = await startHeld(stack, bot.id, conv.id, 'TASK-B');
+    await expect(
+      host(stack).wait(
+        a.identity,
+        { taskId: b.taskId, timeoutMinutes: 0 },
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    stepA.release();
+    stepB.release();
+  }, 30_000);
+
   it('wait_for_task refuses a waiting cycle', async () => {
     const stack = await start();
     const { core, llm } = stack;

@@ -48,6 +48,11 @@ export function buildTasksSegment(tasks: TaskSummary[], now: number): string {
   ].join('\n');
 }
 
+/** Declared patterns are model-chosen: keep them from breaking the segment. */
+function segmentSafe(text: string): string {
+  return text.replace(/[<>\r\n]+/g, ' ');
+}
+
 /** D123: `写域 …` / `写（全域）` / `只读` for peer rows. */
 function writeLabel(task: TaskSummary): string {
   if (!task.writes) return '只读';
@@ -55,7 +60,7 @@ function writeLabel(task: TaskSummary): string {
   if (domains === null || domains === undefined || (domains.length === 1 && domains[0] === '**')) {
     return '写（全域）';
   }
-  return `写域 ${domains.join(', ')}`;
+  return `写域 ${segmentSafe(domains.join(', '))}`;
 }
 
 function peerLine(task: TaskSummary): string {
@@ -75,7 +80,7 @@ export function buildPeerTasksSegment(tasks: TaskSummary[], selfTaskId: string):
   if (peers.length === 0) return '';
   return [
     '<peer_tasks>',
-    '（同一对话中与你并行/相邻的任务；这是它们的状态，不含你自己。可以 send_to_task 协商、wait_for_task 等它们结束）',
+    '（同一对话中与你并行/相邻的任务；这是它们的状态，不含你自己）',
     ...peers.map(peerLine),
     '</peer_tasks>',
   ].join('\n');

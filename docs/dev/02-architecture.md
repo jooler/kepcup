@@ -168,7 +168,7 @@ D75 补充：
 D123 补充（并行写任务与任务间协调，[design/59](../design/59-parallel-tasks-and-coordination.md)）：
 
 - **写域判定**：`WorkdirRuntime.writeOutOfDomain(identity, resolvedPath)` 沿子代理 → 父任务的链取 `runs.task_write_domains` / `task_cwd`，用 `workdir/domains.ts` 的保守 glob 相交原语判定；网关 `checkPath` 在只读判定之后、任何 workspace / workdir / grant 放行之前拒绝域外写（`forbidden` + `outOfDomain`，工具错误码 `WRITE_OUT_OF_DOMAIN`，fail-closed）。`writes: true`（无声明）与只读任务行为不变。
-- **任务层互斥**：`TaskHost.#blockedBy` 按「root 重叠 ∧ 域相交」让写任务停在 submitted（原因「等写域（任务 … 持有 …）」）；写租约键升级为 `base|domains:p1,p2`（`workdir/domains.ts` 编解码），`LeaseService` 冲突谓词可注入（`SlotYieldingLeaseService` 构造透传），缺省仍是路径前缀规则。
+- **任务层互斥**：`TaskHost.#blockedBy` 按「root 重叠 ∧ 域相交」让写任务停在 submitted（原因「等写域（任务 … 持有 …）」）；写租约键升级为 `dir:base|domains:p1,p2`（`workdir/domains.ts` 编解码），`LeaseService` 冲突谓词可注入（`SlotYieldingLeaseService` 构造透传），缺省仍是路径前缀规则。
 - **任务间协调**：`TaskHost` 的等待注册表 `#peerWaits`（target → waiters，settle 时解析终态摘要，等待方结束时拒绝并清理）与每 run 发送计数 `#peerSends`；`<peer_tasks>` 段由 `buildPeerTasksSegment` 生成。等待走 `Scheduler.yieldSlotWhile`，不计入墙钟，写租约保留。
 - **认领**：`workdir/claims.ts` `TaskClaimRegistry` 是进程内共享（`start.ts` 同时注入网关与 `TaskHost`），网关在写域判定之后查其他任务在重叠 root 上的 claim（`WRITE_CLAIMED`）；claim 不持久化，任务 settle / cancel / interrupt 时清除。
 

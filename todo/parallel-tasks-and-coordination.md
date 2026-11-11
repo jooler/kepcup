@@ -84,7 +84,7 @@ export function domainsConflict(a: AbsDomain, b: AbsDomain): boolean; // 两集�
 
 ### 2.6 行为不变验收口径
 
-`writes: true` 的写任务：域 = `['**']`，与任何写任务相交 → 排队与今日一致；与宿主伪身份 / 对话轮的整根租约相交 → 与今日一致。**唯一允许的可见差异**：排队原因文案从「等写入租约（任务 … 持有）」变为「等写域（任务 … 持有 整目录）」——既有测试断言（`integration/tasks.test.ts`、`integration/external-agent-tasks.test.ts` 的排队用例、`e2e tasks.spec.ts`）按新文案更新并在交付说明里列出。
+`writes: true` 的写任务：域 = `['**']`，与任何写任务相交 → 排队与今日一致；与宿主伪身份 / 对话轮的整根租约相交 → 与今日一致。**允许的可见差异**：①排队原因文案从「等写入租约（任务 … 持有）」变为「等写域（任务 … 持有 整目录）」；②`<tasks>` / `<peer_tasks>` 行的写任务标签从「写」变为「写（全域）」（design 59 §6 规定；只读仍为「只读」）。既有测试断言（`integration/tasks.test.ts`、`integration/external-agent-tasks.test.ts` 的排队用例、`e2e tasks.spec.ts`）按新文案更新并在交付说明里列出。
 
 ### 2.7 执行期强制（W3）
 

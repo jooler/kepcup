@@ -54,7 +54,7 @@ function createTask(
 
 describe('runs 任务字段', () => {
   it('create 写入任务字段（submitted = queued），读回映射正确并通过 runSchema', () => {
-    withRuns((runs) => {
+    withRuns((runs, db) => {
       const task = createTask(runs, { continuedFromRunIds: ['run_prev'] });
       expect(task).toMatchObject({
         loopType: 'task',
@@ -78,6 +78,16 @@ describe('runs 任务字段', () => {
       });
       expect(scoped.taskWriteDomains).toEqual(['apps/renderer/**', 'docs/**']);
       expect(runSchema.parse(scoped).taskWriteDomains).toEqual(['apps/renderer/**', 'docs/**']);
+      // A corrupt declaration is not "undeclared": enforcement must fail closed.
+      db.prepare('update runs set task_write_domains = ? where id = ?').run('not-json', scoped.id);
+      const corrupt = runs.get(scoped.id)!;
+      expect(corrupt.taskWriteDomains).toBeNull();
+      expect(corrupt.taskWriteDomainsCorrupt).toBe(true);
+      db.prepare('update runs set task_write_domains = ? where id = ?').run(
+        '["apps/**",5]',
+        scoped.id,
+      );
+      expect(runs.get(scoped.id)!.taskWriteDomainsCorrupt).toBe(true);
     });
   });
 

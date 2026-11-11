@@ -334,11 +334,11 @@ D123：写任务列显示写域——`writes: true` 为「写（全域）」，g
 
 ### `<peer_tasks>` 段（任务，D123）
 
-`agent/context/tasks-segment.ts` `buildPeerTasksSegment(tasks, selfTaskId)`：同一（Bot, 对话）的其他任务（**不含自己**），字段为 `[task_id]`、`<untrusted>标题</untrusted>`、状态、写域（或「只读」）、排队原因、是否等待用户输入；**不含结果与进度文本**。确定性生成、零模型调用。任务据此用 `send_to_task` 协商、`wait_for_task` 等终态：
+`agent/context/tasks-segment.ts` `buildPeerTasksSegment(tasks, selfTaskId)`：同一（Bot, 对话）的其他任务（**不含自己**），字段为 `[task_id]`、`<untrusted>标题</untrusted>`、状态、写域（或「只读」）、排队原因、是否等待用户输入；**不含结果与进度文本**。确定性生成、零模型调用。内置引擎的任务可用 `send_to_task` 协商、`wait_for_task` 等终态（这两个工具只注册在内置任务工具面；外部智能体任务不注入，段里也不承诺）：
 
 ```text
 <peer_tasks>
-（同一对话中与你并行/相邻的任务；这是它们的状态，不含你自己。可以 send_to_task 协商、wait_for_task 等它们结束）
+（同一对话中与你并行/相邻的任务；这是它们的状态，不含你自己）
 [run_01M...] <untrusted>后端改造</untrusted>  running  写域 packages/core/**
 [run_01N...] <untrusted>补测试</untrusted>  running  写域 test/**, e2e/**  等待用户输入
 [run_01P...] <untrusted>写文档</untrusted>  submitted  写域 docs/**  排队中（等写域（任务 run_01M... 持有 packages/core/**））
@@ -492,10 +492,10 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 | `inject_task` | conversation | T | D75 | 把新指令（+ 原消息）转给未结束的任务：`delivered` / `queued`；任务正在 `ask_user` 时即为回答 |
 | `cancel_task` | conversation | T | D75 | 取消 submitted / running 的任务：写 `cancel` 条目、结算 `cancelled`、Bot 自己的取消不唤醒（D93：用户从任务卡取消会写 failure 条目并唤醒）；写任务的改动不自动撤销 |
 | `list_tasks` | conversation | T | D75 | 进行中 + `TASK_LIST_SETTLED_WINDOW_MS` 内已结算的任务（id、标题、状态、读写、排队原因、等待输入、错误、可否注入；进度不返回给模型） |
-| `send_to_task` | conversation | K | D123 | 给同一（Bot, 对话）的兄弟任务发消息：`task_id`、`text`（≤ `TASK_PEER_MESSAGE_MAX_CHARS`=4000）、`source_message_ids?`；每 run ≤ `TASK_PEER_SEND_MAX_PER_RUN`=10 条；目标终态 → `TASK_PEER_FINISHED`、找不到 → `TASK_PEER_NOT_FOUND`。复用注入管道（running → steer；attach 前 → 待注入缓冲；收尾中 → `queued`），**不回答 `ask_user` 问题**；接收方落 `peer_message` 私有条目（含 `fromTaskId` / `fromTitle`），发送方拿到 `delivered` / `queued` 回执 |
-| `wait_for_task` | conversation | K | D123 | 等兄弟任务终态：`task_id`、`timeout_minutes?`（缺省 `TASK_PEER_WAIT_TTL_MS`=30 min，上限 `TASK_PEER_WAIT_TTL_MAX_MS`=120 min）；返回 `{status, resultDigest?}`（结果截断 `TASK_PEER_WAIT_RESULT_MAX_CHARS`=4000）或超时 `still_running` + 对方排队原因。等待让出调度名额、不计任务墙钟、写租约保留；等待图成环 → `TASK_WAIT_CYCLE`（列出环）；本任务结束自动清理注册 |
-| `claim` | fs-write | K | D123 | 认领本任务写域内的路径子集：`paths`（相对 cwd 的 glob，去重后 ≤ `TASK_CLAIM_PATHS_MAX`=16，必须落在本任务写域内，否则 `INVALID_INPUT`）、`reason`（≤200 字）。其他任务写到这里 → `WRITE_CLAIMED`（含持有方 id / 标题 / 理由）；同任务重复认领幂等；纯内存，settle / cancel / interrupt 自动释放 |
-| `release` | none | K | D123 | 释放认领：`paths?`（缺省释放全部）；无认领时返回空 |
+| `send_to_task` | conversation | K | D123 | 给同一（Bot, 对话）的兄弟任务发消息：`task_id`、`text`（≤ `TASK_PEER_MESSAGE_MAX_CHARS`=4000）、`source_message_ids?`；每 run ≤ `TASK_PEER_SEND_MAX_PER_RUN`=10 条；目标终态 → `TASK_PEER_FINISHED`、找不到 → `TASK_PEER_NOT_FOUND`。复用注入管道（running → steer；attach 前 → 待注入缓冲；收尾中 → `queued`），**不回答 `ask_user` 问题**；接收方落 `peer_message` 私有条目（含 `fromTaskId` / `fromTitle`），发送方拿到 `delivered` / `queued` 回执；外部智能体任务不注入 |
+| `wait_for_task` | conversation | K | D123 | 等兄弟任务终态：`task_id`、`timeout_minutes?`（缺省 `TASK_PEER_WAIT_TTL_MS`=30 min，上限 `TASK_PEER_WAIT_TTL_MAX_MS`=120 min）；返回 `{status, resultDigest?}`（结果截断 `TASK_PEER_WAIT_RESULT_MAX_CHARS`=4000）或超时 `still_running` + 对方排队原因。等待让出调度名额、不计任务墙钟、写租约保留；等待图成环 → `TASK_WAIT_CYCLE`（列出环）；本任务结束自动清理注册；外部智能体任务不注入 |
+| `claim` | fs-write | K | D123 | 认领本任务写域内的路径子集：`paths`（相对 cwd 的 glob，去重后 ≤ `TASK_CLAIM_PATHS_MAX`=16，必须落在本任务写域内，否则 `INVALID_INPUT`）、`reason`（≤200 字）。其他任务写到这里 → `WRITE_CLAIMED`（含持有方 id / 标题 / 理由）；同任务重复认领幂等；纯内存，settle / cancel / interrupt 自动释放；外部智能体任务不注入 |
+| `release` | none | K | D123 | 释放认领：`paths?`（缺省释放全部）；无认领时返回空；外部智能体任务不注入 |
 | `ask_user` | conversation | K | D75 | 任务向用户提问：`question`、`options`（1～`ASK_USER_OPTIONS_MAX`=6 个，每个 ≤ `ASK_USER_OPTION_MAX_CHARS`）；私有 `question` 条目 + 问题卡 + `awaiting_input`，阻塞到用户点选（`tasks.answer`）或对话轮 `inject_task` 转交（带原消息）；等待期间让出调度名额、到拿回名额为止不计入任务墙钟（等待中被取消则不拿回名额直接收尾），`TASK_QUESTION_TTL_MS` 后按「用户未回答」返回；外部智能体任务没有（DEV-016）。D87 P4：`mode`（`single` 缺省 / `multi` / `form`）+ `fields`（表单字段 ≤8，text / number / date / select）；多选 / 表单的回答经 shared `checkAskUserAnswer` 校验后以 `<untrusted>` 包裹的 JSON 交回任务 |
 | `present` | conversation | T、K | D87 P4 | 声明式展示卡（[design/32 §12.1](../design/32-bot-widgets.md)）：`present{kind, title?, data}`，`kind ∈ table / bar / line / pie / kpi / steps / timeline / compare`，每种一个最小 zod schema（shared `present.ts`），`data` ≤ `PRESENT_DATA_MAX_BYTES`（64KB）；校验失败回「哪一字段、期望什么」且不发卡；成功发一条系统卡片消息（`cardType: 'present'`，记发卡的 Bot），每 run ≤`PRESENT_CARDS_PER_RUN_MAX`（8）张；上下文回放紧凑文字（≤`PRESENT_CONTEXT_MAX_CHARS`，标明发卡的 Bot、包 `<untrusted>`）。副作用 `local`。系统提示：展示类结果优先 `present`，要交互才 `widget_craft` |
 | `update_plan` | none | K（仅内置 pi） | D93 | 结构化计划：`{ explanation?, plan: [{ step, status: 'pending' \| 'in_progress' \| 'completed' }] }`，1–20 项、至多一个 `in_progress`；全量替换 run 内存计划，下一轮以 `<current_plan>` 追加到系统提示词；每次更新发 `progress` 落 `run_steps`（任务卡与续接 digest 可见）。外部智能体任务不注册（用原生 todo） |

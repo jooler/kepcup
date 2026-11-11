@@ -191,7 +191,11 @@ export function isToolProgressText(text: string): boolean {
 export function peerMessageOf(
   text: string,
 ): { fromTaskId: string; fromTitle: string | null; text: string } | null {
-  const message = /<peer_task_message\b([^>]*)>([\s\S]*?)<\/peer_task_message>/.exec(text);
+  // Only a steer that *is* a peer message: a user instruction that merely
+  // quotes the tag (an example pasted into the inject dock) stays an inject.
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith('<peer_task_message')) return null;
+  const message = /<peer_task_message\b([^>]*)>([\s\S]*?)<\/peer_task_message>/.exec(trimmed);
   if (message === null) return null;
   const attributes = message[1] ?? '';
   const fromTaskId = /from_task="([^"]*)"/.exec(attributes)?.[1] ?? '';
@@ -202,6 +206,26 @@ export function peerMessageOf(
 }
 
 /**
+ * D123: the task-detail meta chips' display values. `null` means the chip is
+ * absent (an undeclared domain / no claims); the caller applies the i18n
+ * label. Kept pure so the visibility contract is testable without a DOM.
+ */
+export function taskMetaChips(
+  task: {
+    writeDomains: string[] | null;
+    claims: ReadonlyArray<{ paths: string[] }>;
+  },
+  separator: string,
+): { writeDomains: string | null; claims: string | null } {
+  const domains = task.writeDomains;
+  const claimed = task.claims.flatMap((claim) => claim.paths);
+  return {
+    writeDomains: domains === null ? null : domains.join(separator),
+    claims: claimed.length > 0 ? claimed.join(separator) : null,
+  };
+}
+
+/**
  * 追加指令（steer）在时间线上的显示文本。发给引擎的 steer 原文由
  * `buildTaskInjection` 包成 `<task_inject>指令（含 source_messages）</task_inject>`
  * 加尾部说明（「对话中的你追加了新的指令：…」）——那是给 LLM 的完整语义，
@@ -209,6 +233,15 @@ export function peerMessageOf(
  * 旧数据 / 纯文本 steer 原样显示。
  */
 export function steerDisplayText(text: string): string {
+  const trimmed = text.trimStart();
+  // A malformed / partially parsed peer wrapper must not show raw tags.
+  if (trimmed.startsWith('<peer_task_message')) {
+    return trimmed
+      .replace(/^<peer_task_message\b[^>]*>/, '')
+      .replace(/<\/peer_task_message>[\s\S]*$/, '')
+      .replace(/<\/?untrusted>/g, '')
+      .trim();
+  }
   const match = /<task_inject>\n?([\s\S]*?)\n?<\/task_inject>/.exec(text);
   if (match === null) return text.trim();
   return match[1]?.trim() ?? '';
