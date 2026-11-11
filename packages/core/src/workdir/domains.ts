@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { TASK_WRITE_DOMAINS_MAX, TASK_WRITE_DOMAIN_PATTERN_MAX } from '@kepcup/shared';
 
 /**
@@ -121,6 +123,41 @@ export function absolutePatterns(cwd: string, patterns: string[]): string[] {
     const normalized = normalizePattern(pattern) ?? '**';
     return normalized === '**' ? `${root}/**` : `${root}/${normalized}`;
   });
+}
+
+/** Human-readable write domain for queue reasons / prompts. */
+export function formatWriteDomain(patterns: readonly string[]): string {
+  if (patterns.length === 1 && patterns[0] === '**') return '整目录';
+  return patterns.join('、');
+}
+
+/**
+ * Declared domains as plain directory paths, for sandbox policies that only
+ * accept directories (§3.6). Returns null when any pattern cannot be
+ * expressed ("判不了"): the caller then keeps today's whole-root mount.
+ *
+ * A pattern is expressible when its leading segments are literal up to a
+ * `**` (or are entirely literal); `*`, `?` and character classes inside a
+ * segment are not.
+ */
+export function expressibleDomainDirs(domain: AbsDomain): string[] | null {
+  const dirs: string[] = [];
+  for (const pattern of domain.patterns) {
+    const segments = toPosix(pattern).split('/').filter((segment) => segment !== '' && segment !== '.');
+    const literal: string[] = [];
+    let expressible = true;
+    for (const segment of segments) {
+      if (!META_CHARS.test(segment)) {
+        literal.push(segment);
+        continue;
+      }
+      if (segment !== '**') expressible = false;
+      break;
+    }
+    if (!expressible) return null;
+    dirs.push(literal.length > 0 ? path.join(domain.root, ...literal) : domain.root);
+  }
+  return [...new Set(dirs)];
 }
 
 /**

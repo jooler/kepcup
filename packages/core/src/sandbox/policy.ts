@@ -5,6 +5,7 @@ import path from 'node:path';
 import { canonicalPath, type AppPaths } from '../infra/paths.js';
 import { sensitivePaths, readOnlyRoots } from './sensitive-paths.js';
 import type { SandboxNetworkPolicy, SandboxPolicy } from './types.js';
+import { expressibleDomainDirs } from '../workdir/domains.js';
 import type { Grant } from '@kepcup/shared';
 
 export interface PolicyWorkdir {
@@ -45,6 +46,13 @@ export interface PolicyInput {
    * stay writable (package-manager / bytecode caches, not user files).
    */
   readOnlyRun?: boolean;
+  /**
+   * D123 §3.6: the executing write task's declared domain. When every pattern
+   * is expressible as a directory, the writable roots shrink to those
+   * subdirectories; otherwise the policy keeps today's whole-root mount (the
+   * shadow-repo conflict check is the backstop).
+   */
+  writeDomain?: { root: string; patterns: string[] };
 }
 
 /**
@@ -80,6 +88,19 @@ export function buildSandboxPolicy(input: PolicyInput): SandboxPolicy {
   const readWrite = readOnlyRun ? [...cacheDirs] : [workspacePath, ...cacheDirs];
   const readOnly = readOnlyRoots(platform);
   if (readOnlyRun) readOnly.push(workspacePath);
+  // D123: a declared write domain narrows what commands may write. Only the
+  // expressible forms are applied; the rest keeps the whole root (DEV noted).
+  const writeDomain = readOnlyRun ? undefined : input.writeDomain;
+  const domainDirs = writeDomain !== undefined ? expressibleDomainDirs(writeDomain) : null;
+  const pushUnique = (list: string[], value: string): void => {
+    if (!list.includes(value)) list.push(value);
+  };
+  if (domainDirs !== null && writeDomain !== undefined && rootContains(workspacePath, writeDomain.root)) {
+    const index = readWrite.indexOf(workspacePath);
+    if (index >= 0) readWrite.splice(index, 1);
+    pushUnique(readOnly, workspacePath);
+    for (const dir of domainDirs) pushUnique(readWrite, dir);
+  }
   const userHome = canonicalPath(homedir());
   let denyRead: string[] = [userHome, paths.home, ...sensitivePaths(platform)];
   if (platform === 'darwin') {
@@ -108,8 +129,18 @@ export function buildSandboxPolicy(input: PolicyInput): SandboxPolicy {
 
   const workdir = input.workdir;
   if (workdir !== undefined) {
-    if (workdir.hasLease && !readOnlyRun) readWrite.push(workdir.path);
-    else readOnly.push(workdir.path);
+    if (workdir.hasLease && !readOnlyRun) {
+      if (
+        domainDirs !== null &&
+        writeDomain !== undefined &&
+        rootContains(workdir.path, writeDomain.root)
+      ) {
+        pushUnique(readOnly, workdir.path);
+        for (const dir of domainDirs) pushUnique(readWrite, dir);
+      } else {
+        readWrite.push(workdir.path);
+      }
+    } else readOnly.push(workdir.path);
     // The workdir re-exposes its slice of the denied home; protect-rule globs
     // re-deny inside it (srt read model: deny-then-allow, last match wins).
     denyRead = denyRead.filter(
@@ -163,6 +194,15 @@ export function buildSandboxPolicy(input: PolicyInput): SandboxPolicy {
 /** True when `root` equals or contains `candidate` (both canonical). */
 function isAncestor(root: string, candidate: string): boolean {
   return candidate === root || candidate.startsWith(root.endsWith('/') ? root : `${root}/`);
+}
+
+/** Path-component ancestor check that ignores case off Linux. */
+function rootContains(root: string, candidate: string): boolean {
+  const normalize = (value: string): string => {
+    const posix = value.replaceAll('\\', '/').replace(/\/+$/, '');
+    return process.platform === 'linux' ? posix : posix.toLowerCase();
+  };
+  return isAncestor(normalize(root), normalize(candidate));
 }
 
 /**

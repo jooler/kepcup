@@ -83,7 +83,12 @@ function startTask(
   stack: TestStack,
   bot: Bot,
   conversationId: string,
-  input: { title: string; instruction: string; writes?: boolean; continuesTaskId?: string },
+  input: {
+    title: string;
+    instruction: string;
+    writes?: boolean | string[];
+    continuesTaskId?: string;
+  },
   turnRunId = `run_turn_${Math.random().toString(36).slice(2, 8)}`,
 ) {
   const source = userMessage(stack, conversationId, `请处理：${input.title}`);
@@ -136,6 +141,23 @@ function waitIdle(stack: TestStack, taskId: string) {
 }
 
 describe('external agents as the task engine (D75 §8)', () => {
+  it('a declared write domain is stated in the external agent task prompt', async () => {
+    const { stack, started } = await start({ fake: { turns: [agentTurn().sleep(100)] } });
+    const bot = await agentBot(stack, 'fake');
+    const conv = await openDirect(stack.core, bot.id);
+    const task = startTask(stack, bot, conv.id, {
+      title: '分域写',
+      instruction: 'TASK-DOMAIN 写 apps',
+      writes: ['apps/**'],
+    });
+    await waitStatus(stack, task.taskId, ['completed'], 'task completed');
+    const prompt = started[0]!.observed.prompts.find((p) => p.text.includes('TASK-DOMAIN'))!;
+    // D123 §2.7: the external engine has no per-path enforcement; the task
+    // prompt states the domain and the honest sandbox caveat.
+    expect(prompt.text).toContain('本任务只应写入：apps/**');
+    expect(prompt.text).toContain('命令写入不受写域强制，冲突由检查点兜底');
+  });
+
   it('two tasks run in parallel, each in its own session with its own bridge token and row', async () => {
     const { stack, started } = await start({
       fake: {

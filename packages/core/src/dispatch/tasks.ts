@@ -33,6 +33,7 @@ import {
 import { capabilityIdOfSetup } from '../capabilities/catalog.js';
 import {
   domainsConflict,
+  formatWriteDomain,
   inspectDeclaredDomains,
   type AbsDomain,
 } from '../workdir/domains.js';
@@ -98,6 +99,8 @@ export interface TaskBrief {
   title: string;
   instruction: string;
   writes: boolean;
+  /** D123: declared write-domain globs (null = whole cwd / read-only). */
+  writeDomains: string[] | null;
   /** The user's original messages (attachments included), in seq order. */
   sourceMessages: Message[];
   /** inject entries recorded before the task started (folded into the brief). */
@@ -445,12 +448,6 @@ export function taskState(status: RunStatus): TaskState {
   }
 }
 
-/** D123: human-readable write domain for queue reasons / task segments. */
-export function formatWriteDomain(patterns: readonly string[]): string {
-  if (patterns.length === 1 && patterns[0] === '**') return '整目录';
-  return patterns.join('、');
-}
-
 function taskEventOf(message: Message): TaskEventContent | null {
   if (message.kind !== 'task_event') return null;
   return message.content as TaskEventContent;
@@ -502,6 +499,18 @@ export function buildTaskBriefSegment(
     lines.push('</later_instructions>');
   }
   lines.push('</task_brief>');
+  const domains = brief.writeDomains;
+  const scoped =
+    domains !== null && !(domains.length === 1 && domains[0] === '**') ? domains : null;
+  if (scoped !== null) {
+    lines.push(
+      `本任务只应写入：${formatWriteDomain(scoped)}（相对 cwd）。域外写入会被拒绝；需要越域请用 ask_user 说明缘由，由对话轮改派或换域后重派。`,
+      // Command writes are narrowed only where the sandbox can express the
+      // pattern; bypass mode / unavailable backends enforce nothing. Be honest
+      // in every case: the shadow-repo conflict check is the backstop.
+      '命令写入不受写域强制，冲突由检查点兜底。',
+    );
+  }
   lines.push(
     [
       '你正在执行自己在这个对话中派出的一项任务（上面是交代）。source_messages 是用户的原话：交代与原话不一致时以原话为准，并在结果里说明。',
@@ -2346,6 +2355,7 @@ export class TaskHost implements TaskToolFacade {
           title: content.title ?? task.taskTitle ?? '',
           instruction: content.text,
           writes: content.writes ?? task.taskWrites === true,
+          writeDomains: task.taskWriteDomains,
           sourceMessages: resolve(content.sourceMessageIds),
           injects: [],
           continuesTaskId: content.continuesTaskId ?? null,

@@ -46,6 +46,9 @@ const ids = {
   subOfSubOfReadTask: { runId: 'run_sub_sub', botId: BOT, conversationId: CONV, loopType: 'subagent' },
   subOrphan: { runId: 'run_sub_orphan', botId: BOT, conversationId: CONV, loopType: 'subagent' },
   subCycle: { runId: 'run_sub_cycle_a', botId: BOT, conversationId: CONV, loopType: 'subagent' },
+  /** D123: a write task that declared a write domain (`docs/**`). */
+  scopedTask: { runId: 'run_scoped_task', botId: BOT, conversationId: CONV, loopType: 'task' },
+  subOfScopedTask: { runId: 'run_sub_scoped', botId: BOT, conversationId: CONV, loopType: 'subagent' },
 } satisfies Record<string, RunIdentity>;
 
 interface RunRow {
@@ -54,6 +57,9 @@ interface RunRow {
   taskWrites: boolean | null;
   parentRunId: string | null;
   status: string;
+  /** D123 write-domain fields (absent = undeclared). */
+  taskCwd?: string | null;
+  taskWriteDomains?: string[] | null;
 }
 
 const runRows = new Map<string, RunRow>(
@@ -103,11 +109,31 @@ function makeGrants(): GrantsService {
 }
 
 function makeGateway(sandbox: SandboxBackend = new UnavailableSandboxBackend('test')): ToolGateway {
+  // D123: the domain-scoped task writes inside the workspace, `docs/**` only.
+  runRows.set('run_scoped_task', {
+    id: 'run_scoped_task',
+    loopType: 'task',
+    taskWrites: true,
+    parentRunId: null,
+    status: 'running',
+    taskCwd: workspace(),
+    taskWriteDomains: ['docs/**'],
+  });
+  runRows.set('run_sub_scoped', {
+    id: 'run_sub_scoped',
+    loopType: 'subagent',
+    taskWrites: null,
+    parentRunId: 'run_scoped_task',
+    status: 'running',
+  });
   const workdirs = new WorkdirRuntime({
     runs: { get: (id: string) => runRows.get(id) ?? null },
     conversations: { get: () => null },
-    // Only the live write task holds its (pinned) lease.
-    leases: { keyOf: (runId: string) => (runId === 'run_write_task' ? `ws:${BOT}:${CONV}` : null) },
+    // Only the live write tasks hold their (pinned) lease.
+    leases: {
+      keyOf: (runId: string) =>
+        runId === 'run_write_task' || runId === 'run_scoped_task' ? `ws:${BOT}:${CONV}` : null,
+    },
   } as never);
   const deps: GatewayDeps = {
     paths: resolvePaths(home),
@@ -684,5 +710,92 @@ describe('tools that write behind the gateway refuse for read-only runs (D75 rev
     // (A turn has no browser tools at all, D75 W2.)
     expect(await downloadsDirOf(ids.readTask)).toBe(gateway.readOnlyDownloadsDir(ids.readTask));
     expect(await downloadsDirOf(ids.writeTask)).toBe(path.join(workspace(), 'downloads'));
+  });
+});
+
+describe('declared write domains (D123 §3.6)', () => {
+  it('checkPath allows in-domain writes, refuses out-of-domain ones, and follows sub runs', () => {
+    const gateway = makeGateway();
+    expect(gateway.checkPath(ids.scopedTask, 'docs/a.md', 'write')).toMatchObject({
+      kind: 'allowed',
+    });
+    expect(gateway.checkPath(ids.scopedTask, 'src/a.ts', 'write')).toMatchObject({
+      kind: 'forbidden',
+      outOfDomain: true,
+    });
+    // Reads are unaffected.
+    expect(gateway.checkPath(ids.scopedTask, 'src/a.ts', 'read')).toMatchObject({ kind: 'allowed' });
+    // `writes: true` keeps the whole cwd.
+    expect(gateway.checkPath(ids.writeTask, 'src/a.ts', 'write')).toMatchObject({ kind: 'allowed' });
+    // A sub run writes under the owning task's domain.
+    expect(gateway.checkPath(ids.subOfScopedTask, 'docs/a.md', 'write')).toMatchObject({
+      kind: 'allowed',
+    });
+    expect(gateway.checkPath(ids.subOfScopedTask, 'src/a.ts', 'write')).toMatchObject({
+      kind: 'forbidden',
+      outOfDomain: true,
+    });
+  });
+
+  it('ensurePathAccess throws WRITE_OUT_OF_DOMAIN; the message names the domain and the path', async () => {
+    const gateway = makeGateway();
+    await expect(
+      gateway.ensurePathAccess(ids.scopedTask, 'src/a.ts', 'write', '测试'),
+    ).rejects.toMatchObject({ code: 'WRITE_OUT_OF_DOMAIN' });
+    await expect(
+      gateway.ensurePathAccess(ids.scopedTask, 'src/a.ts', 'write', '测试'),
+    ).rejects.toThrow(/docs\/\*\*/);
+  });
+
+  it('write / edit tools return WRITE_OUT_OF_DOMAIN; in-domain writes pass', async () => {
+    const gateway = makeGateway();
+    mkdirSync(path.join(workspace(), 'docs'), { recursive: true });
+    const tools = codingTools(gateway, ids.scopedTask);
+    const inside = await executeToolSafely(
+      tools.get('write')!,
+      { path: 'docs/ok.md', content: '# ok' },
+      ctxFor(ids.scopedTask),
+    );
+    expect(inside.ok, inside.content).toBe(true);
+    expect(existsSync(path.join(workspace(), 'docs', 'ok.md'))).toBe(true);
+
+    const outside = await executeToolSafely(
+      tools.get('write')!,
+      { path: 'src/no.ts', content: 'x' },
+      ctxFor(ids.scopedTask),
+    );
+    expect(outside).toMatchObject({ ok: false, errorCode: 'WRITE_OUT_OF_DOMAIN' });
+    expect(existsSync(path.join(workspace(), 'src', 'no.ts'))).toBe(false);
+
+    const edit = await executeToolSafely(
+      tools.get('edit')!,
+      { path: 'notes.txt', edits: [{ oldText: 'hello', newText: 'bye' }] },
+      ctxFor(ids.scopedTask),
+    );
+    expect(edit).toMatchObject({ ok: false, errorCode: 'WRITE_OUT_OF_DOMAIN' });
+  });
+
+  it('sandbox policy for a scoped task mounts only the declared directories writable', async () => {
+    const sandbox = recordingSandbox();
+    const gateway = makeGateway(sandbox);
+    mkdirSync(path.join(workspace(), 'docs'), { recursive: true });
+    await gateway.exec(ids.scopedTask, {
+      command: 'touch docs/a.md',
+      network: { mode: 'none', allowDomains: [] },
+    });
+    const policy = sandbox.requests[0]!.policy;
+    expect(policy.readWrite).toContain(path.join(workspace(), 'docs'));
+    expect(policy.readWrite).not.toContain(workspace());
+    expect(policy.readOnly).toContain(workspace());
+  });
+
+  it('generated-artifact gate refuses out-of-domain targets', () => {
+    const gateway = makeGateway();
+    expect(() =>
+      gateway.assertWriteDomain(ids.scopedTask, path.join(workspace(), 'docs', 'x.png')),
+    ).not.toThrow();
+    expect(() =>
+      gateway.assertWriteDomain(ids.scopedTask, path.join(workspace(), '.generated', 'x.png')),
+    ).toThrow(/写域/);
   });
 });

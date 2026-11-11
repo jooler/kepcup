@@ -312,7 +312,7 @@ export function classifyPermissionRequest(toolCall: AcpPermissionToolCall): Clas
 
 export interface AgentPermissionBridgeDeps {
   paths: AppPaths;
-  gateway: Pick<ToolGateway, 'checkPath' | 'audit' | 'workspacePath'>;
+  gateway: Pick<ToolGateway, 'checkPath' | 'audit' | 'workspacePath' | 'writeDomainDenial'>;
   approvals: Pick<ApprovalsService, 'request' | 'publishEvent'>;
   grants: Pick<GrantsService, 'create' | 'listActive' | 'hasEffectiveGrant'>;
   allowlist: Pick<AllowlistService, 'match'>;
@@ -589,15 +589,24 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
     const asked = verdicts.filter((entry) => entry.verdict.kind === 'ask');
     if (asked.length === 0) return allow('auto', 'within scope', { locations: resolved });
     const first = asked[0]!.verdict as Extract<PathVerdict, { kind: 'ask' }>;
+    // D123 §2.7: external agents enforce write domains at scheduling / lease
+    // level only. An out-of-domain target in an 'ask' card gets a hint; the
+    // user still decides (no automatic rejection).
+    const domainHints = asked
+      .map((entry) => this.#deps.gateway.writeDomainDenial(ctx.identity, entry.target))
+      .filter((hint): hint is string => hint !== null);
+    const domainNote = domainHints.length > 0 ? `；注意：${domainHints[0]}` : '';
     return this.#ask(request, ctx, classified, roots, {
       kind: mode,
       access: mode,
       locations: asked.map((entry) => entry.target),
       // An uncertain target cannot be granted for the conversation (review #9).
       durations: escapes ? ['once'] : ['once', 'conversation'],
-      reason: escapes
-        ? `${first.reason}；真实写入目标可能与显示的路径不同（该智能体只为越出其沙箱的写入发请求）`
-        : first.reason,
+      reason: `${
+        escapes
+          ? `${first.reason}；真实写入目标可能与显示的路径不同（该智能体只为越出其沙箱的写入发请求）`
+          : first.reason
+      }${domainNote}`,
       sensitive: asked.some((entry) => entry.verdict.kind === 'ask' && entry.verdict.sensitive),
       // Review round 2: unattended mode refuses these (the target is unknown).
       targetUncertain: escapes,
@@ -653,6 +662,11 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
       case 'allowed':
         return { kind: 'allow' };
       case 'forbidden':
+        // D123: external agents have no per-path enforcement; an out-of-domain
+        // write becomes an 'ask' card with a hint instead of a hard rejection.
+        if (decision.outOfDomain === true) {
+          return { kind: 'ask', reason: decision.reason, sensitive: false };
+        }
         return { kind: 'reject', reason: decision.reason };
       case 'needs_grant':
         return { kind: 'ask', reason: decision.reason, sensitive: decision.sensitive };
