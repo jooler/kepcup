@@ -3729,7 +3729,14 @@ export class Orchestrator {
           await this.#deps.workdirs.ensureWriteLease(
             { runId: task.id, botId, conversationId, loopType: 'task' },
             root,
-            { pin: true, signal: control.signal, reason: `任务「${brief.title}」` },
+            {
+              pin: true,
+              signal: control.signal,
+              reason: `任务「${brief.title}」`,
+              // D123: a declared domain makes this key structured; undeclared
+              // (`writes: true`) keeps the plain whole-root key.
+              domains: task.taskWriteDomains,
+            },
           );
         } catch (error) {
           // Cancelled while waiting: the host already settled the task.

@@ -105,6 +105,7 @@ import { UnattendedService } from './permissions/unattended.js';
 import { PermissionModeService } from './permissions/mode.js';
 import { CheckpointService } from './workdir/checkpoints.js';
 import { WorkdirRuntime } from './workdir/service.js';
+import { writeDomainKeysConflict } from './workdir/domains.js';
 import { WorkdirsService } from './domain/workdirs.js';
 import {
   createSandboxBackend,
@@ -1573,7 +1574,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       effects,
     });
     // D75 审查 H2: lease waits give their scheduler slot back (attached below).
-    const leases = new SlotYieldingLeaseService();
+    // D123: keys of domain-scoped write tasks decode to {root, patterns}.
+    const leases = new SlotYieldingLeaseService(writeDomainKeysConflict);
     const workdirRuntime = new WorkdirRuntime({
       db: mainDb,
       paths,

@@ -303,9 +303,11 @@ describe('D75 task layer (TaskHost)', () => {
     // W1 still takes its write lease when start returns: its true state is
     // submitted (审查 LOW-7); w2 waits behind w1.
     expect(w1.state).toBe('submitted');
+    // W1's queue reason is the lease-layer waiting string; w2 waits behind w1
+    // at the task layer with the D123 write-domain reason.
     expect(w1.queueReason).toContain('写入租约');
     expect(w2.state).toBe('submitted');
-    expect(w2.queueReason).toContain(`等写入租约（任务 ${w1.taskId} 持有）`);
+    expect(w2.queueReason).toContain(`等写域（任务 ${w1.taskId} 持有 整目录）`);
     expect(runOf(stack, w1.taskId).taskCwd).toBe(runOf(stack, w2.taskId).taskCwd);
     await waitRun(stack, w1.taskId, ['running'], 'w1 running');
     await waitFor(() => (llm.requestsFor('mock-main').length >= 1 ? true : null), {
