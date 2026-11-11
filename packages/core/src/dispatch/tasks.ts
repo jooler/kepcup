@@ -608,13 +608,10 @@ function sourceLines(messages: Message[], options: RenderMessageOptions): string
 }
 
 /**
- * The task's trigger segment (§2.4.5): the instruction plus the verbatim
- * source messages (attachment lines included; images go to the vision channel
- * separately), injects recorded before the start, and the task framing.
- */
-/**
  * D123 ①: declared write-domain globs, or null for whole-cwd / read-only tasks
- * (`['**']` is the stored spelling of "whole cwd").
+ * (`['**']` is the stored spelling of "whole cwd"). An empty list cannot come
+ * from storage (`runs.ts` stores `null` instead) but enforcement denies every
+ * write for it, so it is rendered as not writable rather than `writes=""`.
  */
 function scopedWriteDomains(brief: TaskBrief): string[] | null {
   const domains = brief.writeDomains;
@@ -622,9 +619,15 @@ function scopedWriteDomains(brief: TaskBrief): string[] | null {
   return domains.length === 1 && domains[0] === '**' ? null : domains;
 }
 
-/** Model-chosen text must not break out of a tag attribute (§4.2). */
+/**
+ * Model-chosen text must not break out of a tag attribute (§4.2). Collapsing
+ * each run to one space keeps titles readable (`a "b"` → `a b`, not `a  b`).
+ */
 function attributeSafe(text: string): string {
-  return text.replace(/["<>\r\n\t]+/g, ' ').trim();
+  return text
+    .replace(/["<>\r\n\t]+/g, ' ')
+    .replace(/ {2,}/g, ' ')
+    .trim();
 }
 
 /**
@@ -634,18 +637,24 @@ function attributeSafe(text: string): string {
  * misread its own write domain (and hence its queue reason).
  */
 function writesAttribute(writes: boolean, scoped: string[] | null): string {
-  if (!writes) return 'false';
+  if (!writes || scoped?.length === 0) return 'false';
   return scoped === null ? 'true' : attributeSafe(scoped.join(', '));
 }
 
+/**
+ * The task's trigger segment (§2.4.5): the instruction plus the verbatim
+ * source messages (attachment lines included; images go to the vision channel
+ * separately), injects recorded before the start, and the task framing.
+ */
 export function buildTaskBriefSegment(
   brief: TaskBrief,
   options: RenderMessageOptions,
   cwd: string | null,
 ): string {
   const scoped = scopedWriteDomains(brief);
+  const title = attributeSafe(brief.title);
   const lines: string[] = [
-    `<task_brief task_id="${brief.task.id}" title="${brief.title.replaceAll('"', "'")}" writes="${writesAttribute(brief.writes, scoped)}"${cwd !== null ? ` cwd="${cwd}"` : ''}>`,
+    `<task_brief task_id="${brief.task.id}" title="${title}" writes="${writesAttribute(brief.writes, scoped)}"${cwd !== null ? ` cwd="${attributeSafe(cwd)}"` : ''}>`,
     '<instruction>',
     brief.instruction,
     '</instruction>',
@@ -660,7 +669,7 @@ export function buildTaskBriefSegment(
     lines.push('</later_instructions>');
   }
   lines.push('</task_brief>');
-  if (scoped !== null) {
+  if (scoped !== null && scoped.length > 0) {
     lines.push(
       `本任务只应写入：${formatWriteDomain(scoped)}（相对 cwd）。域外写入会被拒绝；需要越域请用 ask_user 说明缘由，由对话轮改派或换域后重派。`,
       // Command writes are narrowed only where the sandbox can express the
