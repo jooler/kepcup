@@ -401,10 +401,21 @@ interface LaunchedTask {
   waitReason: string | null;
   /** D123 ③: when the first queue wait was reported (null = never waited). */
   queueStartedAt: number | null;
-  /** D123 ③: the wait reason the model run started from (last one before it ran). */
+  /** D123 ③: why the model run waited the longest before it ran (null = unknown). */
   startupQueueReason: string | null;
   /** D123 ③: ms spent queued before the model run started (null = not started). */
   startupQueueMs: number | null;
+  /**
+   * D123 ③: startup wait spans already closed, per reason (ms). The executor
+   * reports coarse reasons in sequence (`等写入租约` → `等模型并发额度`), so the
+   * reason reported at the start is the one this map says dominated, not the
+   * last one seen.
+   */
+  queueSpans: Map<string, number>;
+  /** D123 ③: start of the currently open wait span (null = between spans). */
+  queueSegmentSince: number | null;
+  /** D123 ③: reason of the currently open span (null = none yet). */
+  queueSegmentReason: string | null;
   briefBuilt: boolean;
   /** Injects that arrived after the brief was built but before attach (+ their entries). */
   buffered: PendingInject[];
@@ -1975,6 +1986,9 @@ export class TaskHost implements TaskToolFacade {
       created = written?.created ?? true;
     }
     this.#unsettled.delete(taskId);
+    // D123 ③: a task settled while still queued never reaches `finish()`; drop
+    // its queue trace here so a cancelled task cannot linger in the map.
+    this.#queueTrace.delete(taskId);
     // A question still open dies with the task (its tool call was aborted).
     this.#questions.delete(taskId);
     // An earlier writer may have won the unique index: the stored entry is
@@ -2703,7 +2717,7 @@ export class TaskHost implements TaskToolFacade {
 
   /** Republishes submitted tasks whose queue reason changed (a slot / the lease moved). */
   #publishQueueReasons(): void {
-    if (this.#deps.publishTask === undefined) return;
+    const publish = this.#deps.publishTask !== undefined;
     let queued: Run[];
     try {
       queued = this.#deps.runs.listTasks({ statuses: ['queued'] });
@@ -2714,10 +2728,14 @@ export class TaskHost implements TaskToolFacade {
     for (const task of queued) {
       seen.add(task.id);
       const reason = this.#queueReason(task);
+      // D123 ③: the queue trace is what the task itself reads later, so it must
+      // not depend on a UI publisher being wired (headless / test hosts).
       this.#noteQueueReason(task, reason);
+      if (!publish) continue;
       if (this.#publishedReasons.get(task.id) === reason) continue;
       this.publishUpdate(task.id);
     }
+    if (!publish) return;
     for (const taskId of [...this.#publishedReasons.keys()]) {
       if (!seen.has(taskId)) this.#publishedReasons.delete(taskId);
     }
@@ -2774,6 +2792,9 @@ export class TaskHost implements TaskToolFacade {
       patterns: task.taskWriteDomains ?? ['**'],
     };
     for (const launched of this.#launched.values()) {
+      // A launched task conflicts with itself, and `#waitReasonText` asks while
+      // the task itself is already in `#launched`: never name it its own blocker.
+      if (launched.taskId === task.id) continue;
       if (launched.domain !== null && domainsConflict(launched.domain, domain)) return launched;
     }
     return null;
@@ -2806,6 +2827,29 @@ export class TaskHost implements TaskToolFacade {
       : `等写域（任务 ${blocker.taskId} 持有 ${formatWriteDomain(blocker.domain?.patterns ?? ['**'])}）`;
   }
 
+  /** D123 ③: attribute the open wait span to its reason. */
+  #closeQueueSpan(launched: LaunchedTask, now: number): void {
+    const since = launched.queueSegmentSince;
+    const reason = launched.queueSegmentReason;
+    launched.queueSegmentSince = null;
+    launched.queueSegmentReason = null;
+    if (since === null || reason === null) return;
+    const ms = Math.max(0, now - since);
+    launched.queueSpans.set(reason, (launched.queueSpans.get(reason) ?? 0) + ms);
+  }
+
+  /** D123 ③: the reason the task spent most of its startup wait on (ties: the later one). */
+  #dominantQueueReason(launched: LaunchedTask): string | null {
+    let best: string | null = null;
+    let bestMs = -1;
+    for (const [reason, ms] of launched.queueSpans) {
+      if (ms < bestMs) continue;
+      best = reason;
+      bestMs = ms;
+    }
+    return best;
+  }
+
   #queueReason(task: Run): string | null {
     if (isTerminalStatus(task.status)) return null;
     const launched = this.#launched.get(task.id);
@@ -2824,6 +2868,7 @@ export class TaskHost implements TaskToolFacade {
     // transferred to the launch snapshot, so the task can see what it waited on.
     const queued = this.#queueTrace.get(task.id);
     this.#queueTrace.delete(task.id);
+    const launchedAt = this.#deps.clock.now();
     const launched: LaunchedTask = {
       taskId: task.id,
       botId: task.botId,
@@ -2835,7 +2880,7 @@ export class TaskHost implements TaskToolFacade {
           ? { root: task.taskCwd, patterns: task.taskWriteDomains ?? ['**'] }
           : null,
       slotKey: this.#launchSlot(task)?.key ?? null,
-      launchedAt: this.#deps.clock.now(),
+      launchedAt,
       attachedAt: null,
       settledAt: null,
       controller: new AbortController(),
@@ -2843,8 +2888,14 @@ export class TaskHost implements TaskToolFacade {
       closing: false,
       waitReason: null,
       queueStartedAt: queued?.since ?? null,
-      startupQueueReason: queued?.reason ?? null,
+      startupQueueReason: null,
       startupQueueMs: null,
+      queueSpans: new Map(),
+      // The submit-time span carries the trace reason and starts at the moment
+      // the task was first seen queued, so it is attributed to that reason;
+      // without a trace the clock starts at the first executor wait.
+      queueSegmentSince: queued?.since ?? null,
+      queueSegmentReason: queued?.reason ?? null,
       briefBuilt: false,
       buffered: [],
       steered: [],
@@ -2870,19 +2921,28 @@ export class TaskHost implements TaskToolFacade {
         launched.closing = true;
       },
       waiting: (reason) => {
+        const now = this.#deps.clock.now();
         if (reason !== null) {
-          launched.queueStartedAt ??= this.#deps.clock.now();
-          launched.startupQueueReason = this.#waitReasonText(task, reason);
+          launched.queueStartedAt ??= now;
+          // Close the previous span before opening this one, so every phase is
+          // attributed to the reason it actually waited on.
+          this.#closeQueueSpan(launched, now);
+          launched.queueSegmentSince = now;
+          launched.queueSegmentReason = this.#waitReasonText(task, reason);
         } else if (launched.queueStartedAt !== null && launched.startupQueueMs === null) {
           // The model run is about to start: freeze how long it queued and why
           // (D123 ③ — the task itself then reads it in `<peer_tasks>`). A pause
           // under a second is a handoff, not a queue, so it stays unreported.
-          const elapsed = Math.max(0, this.#deps.clock.now() - launched.queueStartedAt);
+          this.#closeQueueSpan(launched, now);
+          const elapsed = Math.max(0, now - launched.queueStartedAt);
           if (elapsed >= STARTUP_QUEUE_MIN_MS) {
             launched.startupQueueMs = elapsed;
+            launched.startupQueueReason = this.#dominantQueueReason(launched);
           } else {
             launched.startupQueueReason = null;
           }
+          // The spans are only needed for the snapshot above.
+          launched.queueSpans.clear();
         }
         launched.waitReason = reason;
         this.publishUpdate(task.id);
