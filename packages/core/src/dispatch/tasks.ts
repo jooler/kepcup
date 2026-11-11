@@ -399,6 +399,12 @@ interface LaunchedTask {
   closing: boolean;
   /** Why the execution has not started yet (`control.waiting`). */
   waitReason: string | null;
+  /** D123 ③: when the first queue wait was reported (null = never waited). */
+  queueStartedAt: number | null;
+  /** D123 ③: the wait reason the model run started from (last one before it ran). */
+  startupQueueReason: string | null;
+  /** D123 ③: ms spent queued before the model run started (null = not started). */
+  startupQueueMs: number | null;
   briefBuilt: boolean;
   /** Injects that arrived after the brief was built but before attach (+ their entries). */
   buffered: PendingInject[];
@@ -724,10 +730,18 @@ export function buildTaskReplaySegment(input: {
   ].join('\n');
 }
 
+/**
+ * D123 ③: a pre-start pause shorter than this is the normal handoff into the
+ * scheduler, not a queue worth reporting to the task itself.
+ */
+const STARTUP_QUEUE_MIN_MS = 1_000;
+
 export class TaskHost implements TaskToolFacade {
   readonly #deps: TaskHostDeps;
   readonly #limits: TaskHostLimits;
   readonly #launched = new Map<string, LaunchedTask>();
+  /** D123 ③: task id → when/how long it has been seen queued (before launch). */
+  readonly #queueTrace = new Map<string, { since: number; reason: string }>();
   /** D123: target task id → tasks waiting on it. */
   readonly #peerWaits = new Map<string, PeerWait[]>();
   /** D123: per-run `send_to_task` counts (anti-flood). */
@@ -2700,12 +2714,28 @@ export class TaskHost implements TaskToolFacade {
     for (const task of queued) {
       seen.add(task.id);
       const reason = this.#queueReason(task);
+      this.#noteQueueReason(task, reason);
       if (this.#publishedReasons.get(task.id) === reason) continue;
       this.publishUpdate(task.id);
     }
     for (const taskId of [...this.#publishedReasons.keys()]) {
       if (!seen.has(taskId)) this.#publishedReasons.delete(taskId);
     }
+  }
+
+  /**
+   * D123 ③: remember that a submitted task was seen queued, and why. The queue
+   * reason is recomputed on demand (a holder settles, the next one is named),
+   * so the last value seen before launch wins.
+   */
+  #noteQueueReason(task: Run, reason: string | null): void {
+    if (reason === null) return;
+    const trace = this.#queueTrace.get(task.id);
+    if (trace === undefined) {
+      this.#queueTrace.set(task.id, { since: this.#deps.clock.now(), reason });
+      return;
+    }
+    trace.reason = reason;
   }
 
   /** Why a submitted task cannot launch right now (null = it can). */
@@ -2763,6 +2793,19 @@ export class TaskHost implements TaskToolFacade {
     }
   }
 
+  /**
+   * D123 ③: the startup snapshot's wait text. `等写入租约` is the executor's
+   * coarse reason; when another task's write domain is the blocker, name it
+   * (same wording as `#blockedBy`), so the task can tell what it waited for.
+   */
+  #waitReasonText(task: Run, reason: string): string {
+    if (reason !== '等写入租约' || task.taskWrites !== true || task.taskCwd === null) return reason;
+    const blocker = this.#domainBlocker(task);
+    return blocker === null
+      ? reason
+      : `等写域（任务 ${blocker.taskId} 持有 ${formatWriteDomain(blocker.domain?.patterns ?? ['**'])}）`;
+  }
+
   #queueReason(task: Run): string | null {
     if (isTerminalStatus(task.status)) return null;
     const launched = this.#launched.get(task.id);
@@ -2777,6 +2820,10 @@ export class TaskHost implements TaskToolFacade {
       this.settle(task.id, { status: 'failed', error: '任务缺少 Bot 或对话' });
       return;
     }
+    // D123 ③: the submit-time queue (the only phase without a model call) is
+    // transferred to the launch snapshot, so the task can see what it waited on.
+    const queued = this.#queueTrace.get(task.id);
+    this.#queueTrace.delete(task.id);
     const launched: LaunchedTask = {
       taskId: task.id,
       botId: task.botId,
@@ -2795,6 +2842,9 @@ export class TaskHost implements TaskToolFacade {
       handle: null,
       closing: false,
       waitReason: null,
+      queueStartedAt: queued?.since ?? null,
+      startupQueueReason: queued?.reason ?? null,
+      startupQueueMs: null,
       briefBuilt: false,
       buffered: [],
       steered: [],
@@ -2820,6 +2870,20 @@ export class TaskHost implements TaskToolFacade {
         launched.closing = true;
       },
       waiting: (reason) => {
+        if (reason !== null) {
+          launched.queueStartedAt ??= this.#deps.clock.now();
+          launched.startupQueueReason = this.#waitReasonText(task, reason);
+        } else if (launched.queueStartedAt !== null && launched.startupQueueMs === null) {
+          // The model run is about to start: freeze how long it queued and why
+          // (D123 ③ — the task itself then reads it in `<peer_tasks>`). A pause
+          // under a second is a handoff, not a queue, so it stays unreported.
+          const elapsed = Math.max(0, this.#deps.clock.now() - launched.queueStartedAt);
+          if (elapsed >= STARTUP_QUEUE_MIN_MS) {
+            launched.startupQueueMs = elapsed;
+          } else {
+            launched.startupQueueReason = null;
+          }
+        }
         launched.waitReason = reason;
         this.publishUpdate(task.id);
       },
@@ -2845,7 +2909,8 @@ export class TaskHost implements TaskToolFacade {
         this.#injectsNotDelivered(task.id, launched.buffered.splice(0));
         this.#evicted.delete(task.id);
         if (this.#launched.get(task.id) !== launched) return;
-        this.#launched.delete(task.id);
+        this.#queueTrace.delete(launched.taskId);
+        this.#launched.delete(launched.taskId);
         this.#pump();
       },
     };
@@ -3319,6 +3384,10 @@ export class TaskHost implements TaskToolFacade {
 
   #summary(task: Run): TaskSummary {
     const terminal = isTerminalStatus(task.status);
+    const launched = this.#launched.get(task.id);
+    const queueReason = terminal ? null : this.#queueReason(task);
+    // Reading a task's summary is also how it gets observed as queued (③).
+    if (queueReason !== null) this.#noteQueueReason(task, queueReason);
     // Successful delivery clears the status overlay; incomplete keeps the last line.
     let lastProgress: string | null =
       task.status === 'completed' ? null : (task.lastProgress ?? null);
@@ -3343,7 +3412,13 @@ export class TaskHost implements TaskToolFacade {
       cwd: task.taskCwd,
       createdAt: task.createdAt,
       endedAt: task.endedAt,
-      queueReason: terminal ? null : this.#queueReason(task),
+      queueReason,
+      ...(launched !== undefined && launched.startupQueueMs !== null
+        ? {
+            startupQueueMs: launched.startupQueueMs,
+            startupQueueReason: launched.startupQueueReason,
+          }
+        : {}),
       awaitingInput: task.awaitingInput,
       injectable: !terminal,
       lastProgress,
