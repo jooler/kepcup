@@ -111,7 +111,7 @@ import {
   type RenderMessageOptions,
 } from '../agent/context/conversation.js';
 import type { ContinuationPlan } from '../agent/context/continuation.js';
-import { buildTasksSegment } from '../agent/context/tasks-segment.js';
+import { buildPeerTasksSegment, buildTasksSegment } from '../agent/context/tasks-segment.js';
 import type {
   AgentEngine,
   AgentSessionMode,
@@ -4044,7 +4044,7 @@ export class Orchestrator {
       // §4.2: the turn sees its in-flight tasks (state, queue reason) —
       // deterministic, no model call. Progress is UI-only (not in the segment).
       const tasksSegment = isTask
-        ? ''
+        ? buildPeerTasksSegment(this.#taskHost.list(identity), identity.runId)
         : buildTasksSegment(this.#taskHost.list(identity), this.#deps.clock.now());
       const contextAndContinuation = [contextSegment, continuation?.segment, tasksSegment]
         .filter((part): part is string => typeof part === 'string' && part.length > 0)

@@ -190,6 +190,15 @@ function taskEventBody(content: TaskEventContent): string {
       const head = `状态：${status}${content.error ? `；错误：${content.error}` : ''}`;
       return content.text.length > 0 ? `${head}。${content.text}` : head;
     }
+    case 'peer_message': {
+      const from =
+        content.fromTitle !== undefined && content.fromTitle.length > 0
+          ? `任务 ${content.fromTaskId ?? ''}「${content.fromTitle}」`
+          : `任务 ${content.fromTaskId ?? ''}`;
+      // Task output, not an instruction: the text stays wrapped wherever the
+      // entry is rendered into a model context.
+      return `来自${from}：<untrusted>${content.text}</untrusted>`;
+    }
     default:
       return content.text;
   }

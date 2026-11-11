@@ -50,7 +50,7 @@ import { buildButlerTools, buildListBotsTool, type ButlerToolFacade } from './bu
 import { buildWorkbenchTools, type WorkbenchToolFacade } from './workbench-tools.js';
 import { buildHandoverTools, type HandoverToolFacade } from './handover-tools.js';
 import { buildDelegationTools, type DelegationToolFacade } from './delegation-tools.js';
-import { buildAskUserTool, buildTaskTools, type TaskToolFacade } from './task-tools.js';
+import { buildAskUserTool, buildPeerTaskTools, buildTaskTools, type TaskToolFacade } from './task-tools.js';
 import type { SubagentToolFacade } from '../agent/subagent.js';
 import type { McpToolFacade } from '../mcp/tools.js';
 import { buildAppTools, type AppToolFacade } from './app-tools.js';
@@ -1346,6 +1346,10 @@ export function buildResponseTools(input: {
     // §2.4.6: a task asks the user on a question card bound to it.
     ...(identity.loopType === 'task' && deps.tasks?.ask !== undefined
       ? [buildAskUserTool({ identity, ask: deps.tasks.ask.bind(deps.tasks) })]
+      : []),
+    // D123 §4: task-to-task coordination (never on the turn surface).
+    ...(identity.loopType === 'task' && deps.tasks !== undefined
+      ? buildPeerTaskTools({ identity, tasks: deps.tasks })
       : []),
     // Tasks keep list_bots (read-only cards); routing to other bots, the
     // butler's proposals and handovers (D88) are the turn's (design 30 §1.2).
