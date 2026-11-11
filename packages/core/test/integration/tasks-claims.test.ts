@@ -83,22 +83,29 @@ describe('D123 runtime claims', () => {
     expect(first.paths).toEqual(['apps/shared', 'apps/shared/**']);
     expect(first.reason).toBe('要改公共组件');
 
-    // Same paths again: no error, same claim (idempotent).
+    // A second claim merges into the existing set (design §5: re-claiming the
+    // same path is idempotent, it must not silently drop the earlier paths).
     const again = host(stack).claim(identity, {
       paths: ['apps/shared'],
       reason: '再确认一下',
     });
-    expect(again.paths).toEqual(['apps/shared']);
+    expect(again.paths).toEqual(['apps/shared', 'apps/shared/**']);
 
     const view = host(stack).view(identity.runId)!;
     expect(view.writeDomains).toEqual(['apps/**']);
     expect(view.claims).toEqual([
-      { paths: ['apps/shared'], reason: '再确认一下', since: expect.any(Number) },
+      {
+        paths: ['apps/shared', 'apps/shared/**'],
+        reason: '再确认一下',
+        since: expect.any(Number),
+      },
     ]);
 
     // Release one path, then everything.
     expect(host(stack).release(identity, { paths: ['apps/shared'] })).toEqual(['apps/shared']);
-    expect(host(stack).view(identity.runId)!.claims).toEqual([]);
+    expect(host(stack).view(identity.runId)!.claims).toEqual([
+      { paths: ['apps/shared/**'], reason: '再确认一下', since: expect.any(Number) },
+    ]);
     host(stack).claim(identity, { paths: ['apps/shared/**'], reason: 'x' });
     expect(host(stack).release(identity, {})).toEqual(['apps/shared/**']);
     expect(host(stack).view(identity.runId)!.claims).toEqual([]);

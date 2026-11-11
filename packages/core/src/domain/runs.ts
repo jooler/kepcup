@@ -125,13 +125,32 @@ function parseCapabilities(raw: string | null): string[] | null {
   }
 }
 
-/** `runs.task_write_domains` (JSON string[], D123); NULL / corrupt = undeclared. */
-function parseWriteDomains(raw: string | null): string[] | null {
-  return parseCapabilities(raw);
+/** `runs.task_write_domains` (JSON string[], D123). NULL = undeclared; a
+ * non-NULL value that cannot be parsed is reported so enforcement fails
+ * closed instead of silently widening to the whole cwd. */
+function parseWriteDomains(raw: string | null): {
+  domains: string[] | null;
+  corrupt: boolean;
+} {
+  if (raw === null) return { domains: null, corrupt: false };
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length === 0 ||
+      parsed.some((pattern) => typeof pattern !== 'string')
+    ) {
+      return { domains: null, corrupt: true };
+    }
+    return { domains: parsed as string[], corrupt: false };
+  } catch {
+    return { domains: null, corrupt: true };
+  }
 }
 
 function rowToRun(row: RunRow): Run {
   const error = row.error_json ? (JSON.parse(row.error_json) as RunErrorJson) : null;
+  const writeDomains = parseWriteDomains(row.task_write_domains);
   return {
     id: row.id,
     botId: row.bot_id,
@@ -161,7 +180,8 @@ function rowToRun(row: RunRow): Run {
     taskTitle: row.task_title,
     taskWrites: row.task_writes === null ? null : row.task_writes === 1,
     taskCwd: row.task_cwd,
-    taskWriteDomains: parseWriteDomains(row.task_write_domains),
+    taskWriteDomains: writeDomains.domains,
+    ...(writeDomains.corrupt ? { taskWriteDomainsCorrupt: true } : {}),
     taskCapabilities: parseCapabilities(row.task_capabilities),
     originRunId: row.origin_run_id,
     resultConsumedAt: row.result_consumed_at,

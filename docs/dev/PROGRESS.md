@@ -2266,8 +2266,9 @@ botId + name 落到首字母占位。
 写互斥从「整个 cwd 一个写任务」细化到声明写域，并补上任务间协调的最小面。分支 `feat/d123-parallel-write-domains`，提交 `2738ed7e`（设计）→ `3546859f`（W1）→ `19a17b03`（W2）→ `4a1f0e19`（W3）→ `94717f50`（W4）→ `7ca4e2a9`（W5）→ `6683c266`（W6）→ W7 收口提交。
 
 - **写域**：`start_task.writes` 升级为 `boolean | string[]`；`workdir/domains.ts` 提供声明校验、绝对化、保守 glob 相交（判不了即冲突）与域冲突；迁移 0015 落 `runs.task_write_domains`，接续缺省继承、retry 沿用。
-- **调度与租约**：TaskHost `#blockedBy` 按「root 重叠 ∧ 域相交」排队，原因「等写域（任务 … 持有 …）」；任务钉住的租约键编码 `base|domains:p1,p2`，`LeaseService` 冲突谓词可注入（`SlotYieldingLeaseService` 构造透传），非任务调用方保持整根键；`writes: true` 与只读任务行为不变（唯一可见差异是排队文案）。
+- **调度与租约**：TaskHost `#blockedBy` 按「root 重叠 ∧ 域相交」排队，原因「等写域（任务 … 持有 …）」；任务钉住的租约键编码 `dir:base|domains:p1,p2`，`LeaseService` 冲突谓词可注入（`SlotYieldingLeaseService` 构造透传），非任务调用方保持整根键；`writes: true` 与只读任务的执行行为不变（可见差异两处：排队文案「等写域」与 `<tasks>` 行的「写（全域）」标签，后者由 design 59 §6 规定）。
 - **执行期强制**：网关在只读判定之后按域硬拒（`WRITE_OUT_OF_DOMAIN`，write / edit / 生成产物三条路径），子代理沿父任务域；沙箱命令在模式可表达时把可写挂载收紧到声明目录，覆盖不到的部分与 bypass / 无沙箱如实告知（DEV-091）；外部智能体仅调度与租约层强保证，权限卡对域外路径附提示。
 - **任务间协调**：任务上下文 `<peer_tasks>`；`send_to_task` 复用注入管道并落 `peer_message` 私有条目（不回答 ask_user、每 run 限流）；`wait_for_task` 等待注册表 + 环检测 + `yieldSlotWhile` 让名额 + 墙钟豁免，目标 settle 返回终态摘要；`claim` / `release` 进程内认领，网关拦 `WRITE_CLAIMED`，settle 自动清除。
 - **界面**：`<tasks>` 行显示写域；任务详情页显示写域 / 认领，把 peer steer 渲染成「来自任务 …」行；新错误码与文案 zh-CN / en-US 同步。
-- **验证**：逐波定向测试与证据见 `todo/parallel-tasks-and-coordination.md` §6；`pnpm test` 8162 passed / 44 skipped（768 文件通过、3 跳过，0 failed）；core / shared / desktop typecheck 0 error；eslint 干净。偏差：DEV-091。未做：e2e 分域并行用例（执行方案标注可选）。
+- **审查修正**：独立子代理四条线复核后修正——peer 消息文本与来源标题走 `neutralizeUntrusted` 且截断不切断边界；`send_to_task` 对未简报任务不再谎报 `delivered`（并入简报）；并发等待共享墙钟窗口、不再被误判 stalled；等自己的写域排队任务直接拒绝；`claim` 合并而非覆盖、包含校验改为保守包含；强制收回 / revert / `acquire_workdir_write` 对域键生效；沙箱在域根不在 workspace / workdir 时把另一侧置只读；workdir 写入补硬链接检查；生成产物先过网关再建目录；宿主复制 / 工具输出落盘同样受域与认领约束；损坏的域声明按拒绝处理；写域 glob 不再原样注入提示段（DEV-092 记录 claim 的第二道防线定位）。
+- **验证**：逐波定向测试与证据见 `todo/parallel-tasks-and-coordination.md` §6；`pnpm test` 8179 passed / 44 skipped（768 文件通过、3 跳过，0 failed）；core / shared / desktop typecheck 0 error；eslint 干净。偏差：DEV-091、DEV-092。未做：e2e 分域并行用例（执行方案标注可选）。

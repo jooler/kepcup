@@ -95,11 +95,15 @@ export function buildSandboxPolicy(input: PolicyInput): SandboxPolicy {
   const pushUnique = (list: string[], value: string): void => {
     if (!list.includes(value)) list.push(value);
   };
-  if (domainDirs !== null && writeDomain !== undefined && rootContains(workspacePath, writeDomain.root)) {
+  if (domainDirs !== null && writeDomain !== undefined) {
     const index = readWrite.indexOf(workspacePath);
     if (index >= 0) readWrite.splice(index, 1);
     pushUnique(readOnly, workspacePath);
-    for (const dir of domainDirs) pushUnique(readWrite, dir);
+    // Only a domain rooted inside the workspace re-opens its subdirs; a
+    // workdir-rooted (or granted) domain leaves the workspace read-only.
+    if (rootContains(workspacePath, writeDomain.root)) {
+      for (const dir of domainDirs) pushUnique(readWrite, dir);
+    }
   }
   const userHome = canonicalPath(homedir());
   let denyRead: string[] = [userHome, paths.home, ...sensitivePaths(platform)];
@@ -130,13 +134,15 @@ export function buildSandboxPolicy(input: PolicyInput): SandboxPolicy {
   const workdir = input.workdir;
   if (workdir !== undefined) {
     if (workdir.hasLease && !readOnlyRun) {
-      if (
-        domainDirs !== null &&
-        writeDomain !== undefined &&
-        rootContains(workdir.path, writeDomain.root)
-      ) {
-        pushUnique(readOnly, workdir.path);
-        for (const dir of domainDirs) pushUnique(readWrite, dir);
+      if (domainDirs !== null && writeDomain !== undefined) {
+        if (rootContains(workdir.path, writeDomain.root)) {
+          pushUnique(readOnly, workdir.path);
+          for (const dir of domainDirs) pushUnique(readWrite, dir);
+        } else {
+          // Rooted in the workspace (or a grant): this workdir is outside the
+          // declared domain, so commands may not write it.
+          pushUnique(readOnly, workdir.path);
+        }
       } else {
         readWrite.push(workdir.path);
       }

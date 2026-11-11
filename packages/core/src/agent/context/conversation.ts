@@ -191,13 +191,15 @@ function taskEventBody(content: TaskEventContent): string {
       return content.text.length > 0 ? `${head}。${content.text}` : head;
     }
     case 'peer_message': {
+      // Task output, not an instruction (design 59 §4.2): both the text and the
+      // model-chosen source title stay inside the data boundary, and an
+      // embedded closing tag must not be able to escape it.
+      const title = content.fromTitle ?? '';
       const from =
-        content.fromTitle !== undefined && content.fromTitle.length > 0
-          ? `任务 ${content.fromTaskId ?? ''}「${content.fromTitle}」`
+        title.length > 0
+          ? `任务 ${content.fromTaskId ?? ''}（<untrusted>${neutralizeUntrusted(title)}</untrusted>）`
           : `任务 ${content.fromTaskId ?? ''}`;
-      // Task output, not an instruction: the text stays wrapped wherever the
-      // entry is rendered into a model context.
-      return `来自${from}：<untrusted>${content.text}</untrusted>`;
+      return `来自${from}：<untrusted>${neutralizeUntrusted(content.text)}</untrusted>`;
     }
     default:
       return content.text;
@@ -217,7 +219,14 @@ function clipTaskBody(
     mode === 'trigger' && phase === 'result'
       ? `（结果过长，以上是前 ${max} 字，共 ${body.length} 字；执行报告全文在任务卡里，用户点开即可查看）`
       : `（已截断，共 ${body.length} 字；全文用 get_messages_around 查看 ${message.id}）`;
-  return `${body.slice(0, max)}…${hint}`;
+  return `${closeOpenUntrusted(body.slice(0, max))}…${hint}`;
+}
+
+/** Clipping must not leave a data boundary open (design 59 §4.2). */
+function closeOpenUntrusted(body: string): string {
+  const opens = body.split('<untrusted>').length - 1;
+  const closes = body.split('</untrusted>').length - 1;
+  return opens > closes ? `${body}${'</untrusted>'.repeat(opens - closes)}` : body;
 }
 
 /** The visible question card of a task waiting for the user (design 30 §2.4.6). */

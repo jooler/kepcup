@@ -164,6 +164,18 @@ export class LeaseService {
     return this.#holders.get(key) ?? null;
   }
 
+  /**
+   * The holder whose key conflicts with `key` under the injected predicate
+   * (a domain-scoped task holds `dir:…|domains:…`, not the bare root). Used by
+   * force revoke / revert, which ask for the workdir path.
+   */
+  conflictingHolder(key: string): LeaseHolder | null {
+    for (const [held, holder] of this.#holders) {
+      if (this.#conflict(held, key)) return holder;
+    }
+    return null;
+  }
+
   /** The key currently held by the run, when it is one of `keys`. */
   heldKey(runId: string, keys: string[]): string | null {
     const held = this.#byRun.get(runId);

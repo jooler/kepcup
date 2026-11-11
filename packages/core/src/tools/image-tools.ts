@@ -157,6 +157,10 @@ export function buildImageTools(input: {
         };
       }
       const dir = path.join(workspacePath, '.generated');
+      // Gate before creating the directory: a domain-scoped task must not
+      // create `<workspace>/.generated` outside its domain (a pre-existing
+      // symlink there would otherwise be followed).
+      input.checkWritable?.(dir);
       mkdirSync(dir, { recursive: true });
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
       const base = sanitizeFileName(params.file_name?.trim() || `image-${stamp}`);
