@@ -7,83 +7,29 @@
    * steer 气泡出现在时间线里。任务在等提问时注入即回答（core 内部转
    * #resolveQuestion），给出提示行与上方提问卡并存：结构化选项走卡，自由文本
    * 走这里。
+   *
+   * 实现上直接复用对话的 `Composer`（用户要求「直接复用对话组件中的输入组件」），
+   * 由 `injectTaskId` 切成注入模式：+ 附件键与语音输入键保留，语音对话模式、
+   * @ 提及、协作 presence / 共享草稿、引用回复一律不出现；草稿走 `task:<id>`
+   * 独立键，发送走 `tasks.inject`。判定与发送语义见 composer-inject.ts。
    */
-  import { Send } from '@lucide/svelte';
-  import { TASK_INSTRUCTION_MAX_CHARS } from '@kepcup/shared';
+  import Composer from '$lib/features/chats/Composer.svelte';
   import { t } from '$lib/i18n';
-  import { toast } from 'svelte-sonner';
-  import { errorText } from '$lib/i18n';
-  import { Button } from '$lib/components/ui/button';
-  import { Textarea } from '$lib/components/ui/textarea';
-  import { tasks } from '$lib/stores/tasks.svelte';
 
   let { taskId, awaitingInput = false }: { taskId: string; awaitingInput?: boolean } = $props();
-
-  let text = $state('');
-  let sending = $state(false);
-
-  const canSend = $derived(text.trim().length > 0 && !sending);
-
-  async function send(): Promise<void> {
-    const instruction = text.trim();
-    if (instruction.length === 0 || sending) return;
-    sending = true;
-    try {
-      const delivery = await tasks.inject(taskId, instruction);
-      text = '';
-      if (delivery === 'queued') {
-        // queued 有两种成因（外部智能体拒绝 steer / 任务已在收尾），条目只存
-        // 二值 delivery，渲染端区分不了——用中性文案，两种成因下都准确。
-        toast.warning(t('task.run.injectQueued'));
-      } else {
-        toast.success(t('task.run.injectSent'));
-      }
-    } catch (error) {
-      toast.error(
-        errorText((error as { code?: string } | undefined)?.code, t('task.run.injectFailed')),
-      );
-    } finally {
-      sending = false;
-    }
-  }
-
-  function onKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
-      event.preventDefault();
-      void send();
-    }
-  }
 </script>
 
-<div class="shrink-0 border-t px-4 py-2" data-testid="task-run-inject">
-  <div class="mx-auto w-full max-w-3xl">
-    {#if awaitingInput}
-      <p class="mb-1 text-xs text-amber-700 dark:text-amber-400" data-testid="task-run-inject-hint">
+<div class="shrink-0 border-t" data-testid="task-run-inject">
+  {#if awaitingInput}
+    <div class="mx-auto w-full max-w-3xl px-4 pt-2">
+      <p class="text-xs text-amber-700 dark:text-amber-400" data-testid="task-run-inject-hint">
         {t('task.run.injectHintAwaiting')}
       </p>
-    {/if}
-    <div class="flex items-end gap-2">
-      <Textarea
-        bind:value={text}
-        class="max-h-40 min-h-9 flex-1 resize-none py-2"
-        rows={1}
-        maxlength={TASK_INSTRUCTION_MAX_CHARS}
-        placeholder={t('task.run.injectPlaceholder')}
-        onkeydown={onKeydown}
-        disabled={sending}
-        data-testid="task-run-inject-input"
-      ></Textarea>
-      <Button
-        size="icon"
-        class="size-9 shrink-0"
-        onclick={() => void send()}
-        disabled={!canSend}
-        title={t('task.run.injectSend')}
-        aria-label={t('task.run.injectSend')}
-        data-testid="task-run-inject-send"
-      >
-        <Send class="size-4" aria-hidden="true" />
-      </Button>
     </div>
-  </div>
+  {/if}
+  <!-- 按任务重挂载：编辑器扩展集（@ 提及 / 指令上限）在挂载时确定，任务切换
+       必须重建，同时把上一个任务的草稿缓存留在 `task:<旧 id>` 里。 -->
+  {#key taskId}
+    <Composer injectTaskId={taskId} placeholderText={t('task.run.injectPlaceholder')} />
+  {/key}
 </div>

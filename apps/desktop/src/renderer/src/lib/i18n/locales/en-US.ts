@@ -1725,11 +1725,15 @@ export const enUS = {
   'task.run.claims': 'Claimed {list}',
   // D115 inject dock (docs/design/56 §1): user steering entry at the bottom of the task page.
   'task.run.injectPlaceholder': 'Add an instruction, Enter to send…',
-  'task.run.injectSend': 'Send',
   'task.run.injectHintAwaiting': 'The task is waiting for your answer: what you send is the answer',
   'task.run.injectSent': 'Added to the task',
   'task.run.injectQueued': 'Not delivered: it takes effect once the task ends',
   'task.run.injectFailed': 'Failed to add',
+  // Added when the dock reuses the conversation Composer: attachments have nowhere to go
+  // (tasks.inject only takes text), and ASR is not configured.
+  'task.run.injectAttachUnsupported': 'Attachments are not supported for task instructions',
+  'task.run.injectVoiceUnavailable':
+    'Speech recognition is not configured. Set it up in Settings first',
   'task.run.system': 'System',
   'task.run.live': 'Live',
   'task.run.noOutput': 'No output',

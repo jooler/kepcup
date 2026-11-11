@@ -1671,11 +1671,13 @@ export const zhCN = {
   'task.run.claims': '认领 {list}',
   // D115 注入坞（docs/design/56 §1）：任务详情页最底部的用户直注入口。
   'task.run.injectPlaceholder': '追加指令，Enter 发送…',
-  'task.run.injectSend': '发送',
   'task.run.injectHintAwaiting': '任务在等你回答：发送的内容将作为回答',
   'task.run.injectSent': '已追加到任务',
   'task.run.injectQueued': '未送达：这条指令将在任务结束后生效',
   'task.run.injectFailed': '追加失败',
+  // 复用对话 Composer 后新增：附件无处可放（tasks.inject 只收文本）、ASR 未就绪。
+  'task.run.injectAttachUnsupported': '追加指令暂不支持附件',
+  'task.run.injectVoiceUnavailable': '语音识别模型未配置，先到设置里完成配置',
   'task.run.system': '系统',
   'task.run.live': '实时更新',
   'task.run.noOutput': '没有输出',
