@@ -1,7 +1,7 @@
 # D123 并行写任务与任务间协调：执行方案
 
 > 设计：[docs/design/59-parallel-tasks-and-coordination.md](../docs/design/59-parallel-tasks-and-coordination.md)（D123，以设计为准），关联修订：[30 §5 / §9.3 / §2.2 / §2.4.5](../docs/design/30-supervisor-and-tasks.md)、[08 租约节](../docs/design/08-workdir.md)、[02 执行模型](../docs/design/02-execution.md)。本文只规定**怎么做、怎么验收**。
-> 状态：**未开工**。分期 T1–T7（设计 §9），每期独立可交付、可单独合入；T2 之前现有行为零变化。
+> 状态：**W1–W6 已实现（2026-11-11）**，W7 收口中。分期 T1–T7（设计 §9），每期独立可交付、可单独合入；T2 之前现有行为零变化。
 
 ## 0. 给执行代理的规则（必读）
 
@@ -168,4 +168,32 @@ export function domainsConflict(a: AbsDomain, b: AbsDomain): boolean; // 两集�
 
 ## 6. 实施记录
 
-（各波次完成后由推进会话追加：提交、验证证据、偏差。格式参照 [todo/supervisor-and-tasks.md](supervisor-and-tasks.md) §5。）
+分支 `feat/d123-parallel-write-domains`（基于 `v0.5.10`）。提交：
+
+| 波次 | 提交 | 内容 |
+|---|---|---|
+| 设计 | `2738ed7e` | `docs(design): 新增 D123 并行写任务与任务间协调设计` |
+| W1 | `3546859f` | `workdir/domains.ts`（校验 / 绝对化 / 保守相交 / 域冲突）、迁移 0015、shared 类型与常量、`start_task.writes` 联合类型与宿主校验落库、接续继承 / retry 沿用 |
+| W2 | `19a17b03` | `#blockedBy` 域判定与「等写域」文案、可注入租约冲突谓词（三处调用 + SlotYielding 透传）、结构化租约键（仅任务钉住一处传域） |
+| W3 | `4a1f0e19` | 网关 / write / edit / 生成产物域强制（`WRITE_OUT_OF_DOMAIN`）、子代理沿父任务域、沙箱可写挂载收紧（DEV-091）、简报域声明与外部引擎提示 |
+| W4 | `94717f50` | `<peer_tasks>` 段、`send_to_task` / `wait_for_task`、`peer_message` 私有条目、等待注册表 / 环检测 / 让名额 / 墙钟豁免 |
+| W5 | `7ca4e2a9` | `TaskClaimRegistry` + 网关 `WRITE_CLAIMED`、`claim` / `release` 工具、TaskView 投影、settle 清理 |
+| W6 | `6683c266` | 两版提示词、`<tasks>` 写域列、任务详情页写域 / 认领 / peer 行、新错误码 i18n 两语言 |
+
+验证（逐波定向，W7 全量一次）：
+
+- W1：`workdir-domains` / `runs-tasks` / `task-tools-capabilities` / `task-tools-write-domains` 36 passed；shared + core typecheck 0 error；迁移 0015 在新库与 0014 旧库上升级通过（`runs-tasks.test.ts`）。
+- W2：`tasks` / `tasks-write-domains` / `workdir-lease` / `workspace-lease` / `workdir-lease-windows` / `workdirs` / `external-agent-p3` 70 passed；既有排队文案断言按 §2.6 更新（`tasks.test.ts`、`workdirs.test.ts`、`external-agent-p3.test.ts`）；租约层「等写入租约」文案未动。
+- W3：`gateway-read-only` / `tasks-write-domains` / `external-agent-tasks` / `task-subagent-read-only` / `external-agent-p3` 54 passed；新增 `task-brief-write-domains`；域外 write / edit / 生成产物各一例，域内放行，只读与 `writes:true` 不变。
+- W4：`supervisor-turn` / `tasks-peer-coordination` / `task-timeline-visibility` / `tasks-peer-segment` 36 passed；发送、终态拒绝、ask_user 不当作回答、限流、等待三终态 / 超时 / 环 / 取消清理、泄露契约均覆盖。另加「任务内调用 `wait_for_task`」用例：工具调用在引擎里真实阻塞、目标结束后恢复（覆盖 `yieldSlotWhile` 的在途路径）。
+- W5：`tasks-claims` / `gateway-read-only` / `tasks-write-domains` / `tasks` / `task-cards` 覆盖；域外 / 绝对路径 / 只读任务认领拒绝、幂等、release 全部、TaskView 投影、settle 清除。
+- W6：`supervisor-turn`（含写域列）、`task-run-view` / `task-view` / `bot-tasks` / `tasks` / `chat-session` 渲染端用例、`i18n/locales` 两语言 key 校验通过；desktop typecheck（tsc + svelte-check）0 error。
+- 偏差：DEV-091（沙箱命令按写域收紧的覆盖度；声明域简报始终注明「命令写入不受写域强制」）。
+- W7 收口修正：新工具补进副作用分类表（`send_to_task` local；`wait_for_task` / `claim` / `release` none）与信任分类（`send_to_task` / `claim` / `release` trusted；`wait_for_task` untrusted，结果摘要按任务输出看待）；网关与权限桥对测试替身做可选调用（`writeDomain` / `writeOutOfDomain` / `owningTask` / `writeDomainDenial`），生产装配不变；任务版平台规则新增三条后，`context-assembly` 的编号断言同步。
+
+未做 / 遗留：
+
+- e2e `tasks.spec.ts` 的「分域并行两写任务」用例未加（§4 W7 标注可选，视 e2e 基线稳定性）。
+- 认领的端到端并发命中在现有调度下很难自然出现（相交写域本就排队），W5 拦截以网关单测 + TaskHost 集成覆盖，不作为独立 e2e。
+
+格式参照 [todo/supervisor-and-tasks.md](supervisor-and-tasks.md) §5。
