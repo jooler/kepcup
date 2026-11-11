@@ -77,6 +77,14 @@ export function inspectDeclaredDomains(
       issues.push({ pattern: String(raw), message: '写域必须是字符串数组' });
       continue;
     }
+    // D123 ②: an absolute declaration (`/tmp/x/**`, `C:\x\**`, `~/x`) used to be
+    // swallowed by `normalizePattern` (the leading `/` reads as an empty
+    // segment), so the rejection blamed empty segments instead of the real
+    // cause. Judge absoluteness on the raw value, before normalizing.
+    if (isAbsolutePattern(toPosix(raw.trim()))) {
+      issues.push({ pattern: raw, message: '写域必须是相对 cwd 的 glob，不能是绝对路径' });
+      continue;
+    }
     const normalized = normalizePattern(raw);
     if (normalized === null) {
       issues.push({ pattern: raw, message: '写域不能为空，且不能含空段（//）或仅剩 .' });
@@ -90,6 +98,8 @@ export function inspectDeclaredDomains(
       continue;
     }
     if (isAbsolutePattern(normalized)) {
+      // Unreachable for plain declarations (the raw check above catches them);
+      // kept as a safety net for shapes only visible after normalization.
       issues.push({ pattern: normalized, message: '写域必须是相对 cwd 的 glob，不能是绝对路径' });
       continue;
     }

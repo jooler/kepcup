@@ -6,6 +6,7 @@ import {
   domainsConflict,
   encodeWriteDomainKey,
   globsIntersect,
+  inspectDeclaredDomains,
   normalizeDeclaredDomains,
   parseWriteDomainKey,
   writeDomainKeysConflict,
@@ -37,6 +38,28 @@ describe('normalizeDeclaredDomains', () => {
         Array.from({ length: TASK_WRITE_DOMAINS_MAX + 1 }, (_, index) => `dir-${index}/**`),
       ),
     ).toBeNull();
+  });
+});
+
+describe('inspectDeclaredDomains 拒绝文案（D123 ②）', () => {
+  const messageOf = (pattern: string): string => {
+    const result = inspectDeclaredDomains([pattern]);
+    return 'issues' in result ? (result.issues[0]?.message ?? '') : '';
+  };
+
+  it('绝对路径单列，不被「空段」文案顶掉', () => {
+    for (const pattern of ['/tmp/kepcup-escape-abs/**', '~/.ssh/**', 'C:\\src\\**', 'C:/src/**']) {
+      expect(messageOf(pattern)).toBe('写域必须是相对 cwd 的 glob，不能是绝对路径');
+    }
+  });
+
+  it('.. 与空段的文案保持不变', () => {
+    expect(messageOf('../kepcup-escape-rel/**')).toBe('写域不能用 .. 越出 cwd');
+    expect(messageOf('a//b')).toBe('写域不能为空，且不能含空段（//）或仅剩 .');
+  });
+
+  it('Windows 反斜杠相对路径不误判成绝对路径', () => {
+    expect(inspectDeclaredDomains(['src\\**'])).toEqual({ domains: ['src/**'] });
   });
 });
 
