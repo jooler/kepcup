@@ -130,7 +130,14 @@ export type PathDecision =
   | { kind: 'needs_grant'; resolvedPath: string; reason: string; sensitive: boolean }
   | { kind: 'needs_lease'; resolvedPath: string; reason: string }
   /** `readOnlyRun`: refused because the run may not write at all (D75, RUN_READ_ONLY). */
-  | { kind: 'forbidden'; resolvedPath: string; reason: string; readOnlyRun?: true };
+  | {
+      kind: 'forbidden';
+      resolvedPath: string;
+      reason: string;
+      readOnlyRun?: true;
+      /** D123: refused because the path is outside the task's declared write domain. */
+      outOfDomain?: true;
+    };
 
 
 /**
@@ -352,8 +359,29 @@ export class ToolGateway {
   }
 
   /**
-   * Download directory of a read-only run's browser page (D75): a host-owned
-   * directory in the app cache — outside every workspace and never readable
+   * D123: throws WRITE_OUT_OF_DOMAIN when the writing task's declared domain
+   * excludes `inputPath`. Front-gate for tools that write without going
+   * through `ensurePathAccess` (media artifacts); read-only denials are left
+   * to the caller's existing check.
+   */
+  assertWriteDomain(identity: RunIdentity, inputPath: string): void {
+    const decision = this.checkPath(identity, inputPath, 'write');
+    if (decision.kind === 'forbidden' && decision.outOfDomain === true) {
+      throw new AppError('WRITE_OUT_OF_DOMAIN', `${decision.reason}：${inputPath}`);
+    }
+  }
+
+  /**
+   * D123: the task's write-domain refusal for an already-resolved path, or
+   * null. External agents have no per-path enforcement — the permission
+   * bridge uses this only to annotate its 'ask' cards.
+   */
+  writeDomainDenial(identity: RunIdentity, resolvedPath: string): string | null {
+    return this.#deps.workdirs.writeOutOfDomain(identity, resolvedPath);
+  }
+
+  /**
+   * Download directory of a read-only run's browser page (D75): a host-owned   * directory in the app cache — outside every workspace and never readable
    * by the model (the data home is off limits) — instead of the workspace's
    * `downloads/`, which a page click would otherwise write to behind the
    * gateway's back. The page is shared per bot + conversation; every browser
@@ -391,11 +419,17 @@ export class ToolGateway {
     const resolvedNorm = norm(resolved);
     const workspaceNorm = norm(workspace);
 
-    // 0. Read-only runs never write, wherever the path is (D75).
+    // 0. Read-only runs never write, wherever the path is (D75). D123: a write
+    //    task may only write inside its declared domain — checked before any
+    //    workspace / workdir / grant allowance, fail-closed.
     if (mode === 'write') {
       const denial = this.writeDenial(identity);
       if (denial !== null) {
         return { kind: 'forbidden', resolvedPath: resolved, reason: denial, readOnlyRun: true };
+      }
+      const outOfDomain = this.#deps.workdirs.writeOutOfDomain(identity, resolved);
+      if (outOfDomain !== null) {
+        return { kind: 'forbidden', resolvedPath: resolved, reason: outOfDomain, outOfDomain: true };
       }
     }
 
@@ -553,7 +587,12 @@ export class ToolGateway {
    */
   checkHostCopyPath(identity: RunIdentity, inputPath: string, hostDir: string): PathDecision {
     const decision = this.checkPath(identity, inputPath, 'write');
-    if (decision.kind !== 'forbidden' || decision.readOnlyRun !== true) return decision;
+    if (
+      decision.kind !== 'forbidden' ||
+      (decision.readOnlyRun !== true && decision.outOfDomain !== true)
+    ) {
+      return decision;
+    }
     const workspace = this.workspacePath(identity);
     if (workspace === null) return decision;
     const norm = (p: string) => normalizeForCompare(p, this.#platform);
@@ -595,7 +634,11 @@ export class ToolGateway {
     if (decision.kind === 'allowed') return decision.resolvedPath;
     if (decision.kind === 'forbidden') {
       throw new AppError(
-        decision.readOnlyRun === true ? 'RUN_READ_ONLY' : 'PATH_OUT_OF_SCOPE',
+        decision.outOfDomain === true
+          ? 'WRITE_OUT_OF_DOMAIN'
+          : decision.readOnlyRun === true
+            ? 'RUN_READ_ONLY'
+            : 'PATH_OUT_OF_SCOPE',
         `${decision.reason}：${inputPath}`,
       );
     }
@@ -777,6 +820,8 @@ export class ToolGateway {
     }
     const availability = await backend.probe();
     const workdir = this.#deps.workdirs.policyInfo(identity);
+    // D123: declared write domain (null when undeclared / whole cwd).
+    const writeDomain = this.#deps.workdirs.writeDomain(identity);
     // Bound conversation: commands default to the workdir directory and the
     // sandbox permits listening on / reaching localhost (dev servers).
     const cwd = workdir !== null ? workdir.path : workspace;
@@ -872,6 +917,7 @@ export class ToolGateway {
             ? this.#skillDirs(identity.botId, identity.conversationId)
             : [],
         ...(readOnlyReason !== null ? { readOnlyRun: true } : {}),
+        ...(writeDomain !== null ? { writeDomain } : {}),
       });
       const result = await backend.exec({
         command: req.command,

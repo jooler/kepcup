@@ -42,6 +42,8 @@ export function buildSpeechTools(input: {
   delivery?: GeneratedMediaDelivery | undefined;
   /** 记录落盘产物（对话里的文件卡片）；测试装配可缺省。 */
   recordFile?: ((target: string) => void) | undefined;
+  /** D123: front gate before saving a generated artifact (throws WRITE_OUT_OF_DOMAIN). */
+  checkWritable?: ((target: string) => void) | undefined;
   /** 轮询间隔（测试注入缩短）；默认 5s。 */
   videoPollIntervalMs?: number;
 }): ToolDefinition[] {
@@ -115,6 +117,7 @@ export function buildSpeechTools(input: {
         params.file_name ?? null,
         ext,
         Buffer.from(result.audioBase64, 'base64'),
+        input.checkWritable,
       );
       if (saved === null) {
         return { ok: false, content: '语音保存失败：内容为空', errorCode: 'PROVIDER_UNAVAILABLE' };
@@ -252,7 +255,7 @@ export function buildSpeechTools(input: {
               errorCode: 'PROVIDER_UNAVAILABLE',
             };
           }
-          const saved = saveGenerated(workspacePath, params.file_name ?? null, 'mp4', bytes);
+          const saved = saveGenerated(workspacePath, params.file_name ?? null, 'mp4', bytes, input.checkWritable);
           if (saved === null) {
             return { ok: false, content: '视频保存失败：内容为空', errorCode: 'INTERNAL' };
           }
@@ -381,6 +384,7 @@ function saveGenerated(
   fileName: string | null,
   ext: string,
   bytes: Buffer,
+  checkWritable?: ((target: string) => void) | undefined,
 ): string | null {
   if (bytes.length === 0) return null;
   const dir = path.join(workspacePath, '.generated');
@@ -388,6 +392,7 @@ function saveGenerated(
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const base = sanitizeFileName(fileName?.trim() || stamp);
   const target = path.join(dir, `${base}.${ext}`);
+  checkWritable?.(target);
   writeFileSync(target, bytes);
   return target;
 }

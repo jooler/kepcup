@@ -86,8 +86,24 @@ async function existsChecked(
  * D75 read-only runs: refuse write / edit up front so the result carries
  * RUN_READ_ONLY (pi's edit tool re-wraps errors from its file operations as
  * plain Errors). The gateway still refuses the write itself either way.
+ * D123: a target outside the task's declared write domain is refused with
+ * WRITE_OUT_OF_DOMAIN at the same front gate.
  */
-function assertMayWrite(identity: ToolContext['identity'], gateway: ToolGateway): void {
+function assertMayWrite(
+  identity: ToolContext['identity'],
+  gateway: ToolGateway,
+  target?: string,
+): void {
+  if (target !== undefined) {
+    const decision = gateway.checkPath(identity, target, 'write');
+    if (decision.kind === 'forbidden' && decision.outOfDomain === true) {
+      throw new AppError('WRITE_OUT_OF_DOMAIN', decision.reason);
+    }
+    if (decision.kind === 'forbidden' && decision.readOnlyRun === true) {
+      throw new AppError('RUN_READ_ONLY', decision.reason);
+    }
+    return;
+  }
   const denial = gateway.writeDenial(identity);
   if (denial !== null) throw new AppError('RUN_READ_ONLY', denial);
 }
@@ -525,16 +541,16 @@ export function buildCodingTools(
     wrapPiTool(read, baseDir, secrets, spillOption(deps.toolOutputSpill)),
     wrapPiTool(write, baseDir, secrets, {
       before: (params, ctx) => {
-        assertMayWrite(identity, gateway);
         const target = (params as { path?: string }).path;
+        assertMayWrite(identity, gateway, target);
         if (target !== undefined) ctx.progress(`正在写入 ${shortCommand(target)}`);
       },
       ...(deps.toolOutputSpill !== undefined ? { spill: deps.toolOutputSpill } : {}),
     }),
     wrapPiTool(edit, baseDir, secrets, {
       before: (params, ctx) => {
-        assertMayWrite(identity, gateway);
         const target = (params as { path?: string }).path;
+        assertMayWrite(identity, gateway, target);
         if (target !== undefined) ctx.progress(`正在编辑 ${shortCommand(target)}`);
       },
       ...(deps.toolOutputSpill !== undefined ? { spill: deps.toolOutputSpill } : {}),

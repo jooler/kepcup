@@ -620,7 +620,12 @@ export function buildResponseTools(input: {
         return {
           ok: false,
           content: `无法复制附件：${decision.reason}`,
-          errorCode: decision.readOnlyRun === true ? 'RUN_READ_ONLY' : 'PATH_OUT_OF_SCOPE',
+          errorCode:
+            decision.outOfDomain === true
+              ? 'WRITE_OUT_OF_DOMAIN'
+              : decision.readOnlyRun === true
+                ? 'RUN_READ_ONLY'
+                : 'PATH_OUT_OF_SCOPE',
         };
       }
       const copy = ensureShareAttachmentCopy({
@@ -1155,6 +1160,7 @@ export function buildResponseTools(input: {
           gateway,
           delivery: generatedMediaDelivery,
           recordFile: recordGenerated,
+          checkWritable: (target) => gateway.assertWriteDomain(identity, target),
         })
       : [];
   const speechTools =
@@ -1167,6 +1173,7 @@ export function buildResponseTools(input: {
           gateway,
           delivery: generatedMediaDelivery,
           recordFile: recordGenerated,
+          checkWritable: (target) => gateway.assertWriteDomain(identity, target),
         })
       : [];
 

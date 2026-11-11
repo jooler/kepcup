@@ -91,6 +91,8 @@ export function buildImageTools(input: {
   delivery?: GeneratedMediaDelivery | undefined;
   /** 记录落盘产物（对话里的文件卡片）；测试装配可缺省。 */
   recordFile?: ((target: string) => void) | undefined;
+  /** D123: front gate before saving a generated artifact (throws WRITE_OUT_OF_DOMAIN). */
+  checkWritable?: ((target: string) => void) | undefined;
 }): ToolDefinition[] {
   const { identity, media, workspacePath } = input;
 
@@ -164,6 +166,7 @@ export function buildImageTools(input: {
         if (bytes === null) continue;
         const fileName = images.length > 1 ? `${base}-${index + 1}.png` : `${base}.png`;
         const target = path.join(dir, fileName);
+        input.checkWritable?.(target);
         writeFileSync(target, bytes);
         input.recordFile?.(target);
         saved.push(target);

@@ -8,12 +8,13 @@ import {
   newId,
   type LoopType as SharedLoopType,
   type Workdir,
+  type Run,
   type RunChangeFile,
 } from '@kepcup/shared';
 import { isInsidePath } from '../sandbox/sensitive-paths.js';
 import type { RunIdentity } from '../agent/types.js';
 import type { LeaseHolder, LeaseService } from './lease.js';
-import { encodeWriteDomainKey } from './domains.js';
+import { encodeWriteDomainKey, absolutePatterns, formatWriteDomain, type AbsDomain } from './domains.js';
 import type { CheckpointService } from './checkpoints.js';
 import { buildWorkdirSection, WORKDIR_SECTION_BUDGET } from './context.js';
 import { gitCliAvailable, runGitRemote, type GitRemoteOperation } from './git-remote.js';
@@ -213,6 +214,66 @@ export class WorkdirRuntime {
   /** True when the run currently holds the given workdir's write lease. */
   holdsLease(identity: RunIdentity, workdirPath: string): boolean {
     return this.#deps.leases.heldKey(identity.runId, [workdirPath]) !== null;
+  }
+
+  /**
+   * D123 §3.6: null when the writing task's resolved path stays inside its
+   * declared write domain, else the refusal reason. Read-only identities and
+   * undeclared domains (`writes: true`) always pass. Fail-closed: a missing
+   * run row, an unresolved subagent parent, a missing cwd or an unparseable
+   * declaration denies the write.
+   */
+  writeOutOfDomain(identity: RunIdentity, resolvedPath: string): string | null {
+    const task = this.#writingTask(identity);
+    if (task === 'missing') return '无法确认写入任务的写域，已拒绝写入';
+    if (task === null || task.taskWrites !== true) return null;
+    const patterns = task.taskWriteDomains;
+    if (patterns === null || patterns === undefined || patterns.length === 0) return null;
+    if (patterns.length === 1 && patterns[0] === '**') return null;
+    if (task.taskCwd === null) return '任务写域缺少工作目录，已拒绝写入';
+    const target = comparableDomainPath(resolvedPath);
+    const clauses = absolutePatterns(task.taskCwd, patterns).map(comparableDomainPath);
+    const inside =
+      clauses.some((pattern) => globMatch(pattern, target)) ||
+      // A literal directory prefix of a glob (e.g. `<cwd>/docs` for
+      // `docs/**`) may itself be created by the write.
+      clauses.some((pattern) => literalDirPrefix(pattern) === target);
+    return inside
+      ? null
+      : `写域之外的路径：${resolvedPath}。本任务的写域：${formatWriteDomain(patterns)}` +
+          '。需要越域请用 ask_user 说明缘由，由对话轮改派或换域后重派';
+  }
+
+  /** D123 §3.6 sandbox input: the declared write domain, null when undeclared. */
+  writeDomain(identity: RunIdentity): AbsDomain | null {
+    const task = this.#writingTask(identity);
+    if (task === 'missing' || task === null || task.taskWrites !== true) return null;
+    const patterns = task.taskWriteDomains;
+    if (patterns === null || patterns === undefined || patterns.length === 0) return null;
+    if (patterns.length === 1 && patterns[0] === '**') return null;
+    if (task.taskCwd === null) return null;
+    return { root: task.taskCwd, patterns };
+  }
+
+  /**
+   * The task row that writes for `identity` (subagent → owning task), or
+   * `'missing'` when the subagent chain cannot be resolved.
+   */
+  #writingTask(identity: RunIdentity): Run | null | 'missing' {
+    let loopType: RunIdentity['loopType'] | SharedLoopType = identity.loopType;
+    let runId = identity.runId;
+    for (let depth = 0; loopType === 'subagent'; depth += 1) {
+      const parentId =
+        depth < SUBAGENT_PARENT_MAX_DEPTH
+          ? (this.#deps.runs.get(runId)?.parentRunId ?? null)
+          : null;
+      const parent = parentId !== null ? this.#deps.runs.get(parentId) : null;
+      if (parent === null) return 'missing';
+      loopType = parent.loopType;
+      runId = parent.id;
+    }
+    if (loopType !== 'task') return null;
+    return this.#deps.runs.get(runId) ?? 'missing';
   }
 
   /** Sandbox policy input for the executing identity (null = no workdir). */
@@ -821,4 +882,20 @@ function joinUnlessAborted<T>(promise: Promise<T>, signal: AbortSignal | undefin
     signal.addEventListener('abort', onAbort, { once: true });
     promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
   });
+}
+
+/** D123: case/separator normalization for write-domain path matching. */
+function comparableDomainPath(value: string): string {
+  const normalized = value.replaceAll('\\', '/');
+  // macOS and Windows default filesystems are case-insensitive.
+  return process.platform === 'linux' ? normalized : normalized.toLowerCase();
+}
+
+/** The directory part of a pattern before its first glob segment, if any. */
+function literalDirPrefix(pattern: string): string | null {
+  const segments = pattern.split('/');
+  const index = segments.findIndex((segment) => /[*?[]/.test(segment));
+  if (index < 0) return null;
+  const prefix = segments.slice(0, index).join('/');
+  return prefix.length > 0 ? prefix : null;
 }
