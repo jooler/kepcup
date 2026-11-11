@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import {
   createEditToolDefinition,
   createLsToolDefinition,

@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import {
   AppError,
   GET_RUN_STEPS_DEFAULT_LIMIT,

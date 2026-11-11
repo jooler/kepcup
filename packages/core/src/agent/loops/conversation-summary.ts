@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { z } from 'zod';
 import { AppError, type Message } from '@kepcup/shared';
 import { routeFor, type LlmRouter } from '../llm-router.js';

@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import {
   PRESENT_CARDS_PER_RUN_MAX,
   PRESENT_DATA_MAX_BYTES,

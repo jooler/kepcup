@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { z } from 'zod';
 import { ModelRouteChangedError } from '../../src/agent/model-retry.js';
 import { completeStructured } from '../../src/agent/structured.js';

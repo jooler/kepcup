@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import {
   HANDOVER_ITEMS_MAX,
   HANDOVER_MEMORY_MAX_ITEMS,

@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import {
   BUTLER_ROUTINES_PER_BOT_MAX,
   PROPOSE_BOTS_MAX,

@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import {
   MEMO_BODY_MAX_CHARS,
   TODO_NOTES_MAX_CHARS,

@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { z } from 'zod';
 import { ROUTING_ROUTE_TARGETS_MAX, type Bot, type Message } from '@kepcup/shared';
 import { isTaskInterimProgress, renderMessageLine } from '../agent/context/conversation.js';

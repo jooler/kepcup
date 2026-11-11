@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { toLlmContent, type CallToolResult, type Tool as McpTool } from '@earendil-works/pi-mcp';
 import {
   TOOL_OUTPUT_MAX_CHARS,

@@ -1,9 +1,11 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AppError } from '@kepcup/shared';
-import { wrapPiTool } from '../../src/tools/coding-tools.js';
+import { buildCodingTools, wrapPiTool } from '../../src/tools/coding-tools.js';
+import type { ToolGateway } from '../../src/gateway/index.js';
 import { ToolOutputSpill } from '../../src/agent/tool-output-spill.js';
 import type { ToolContext } from '../../src/agent/types.js';
 
@@ -173,5 +175,79 @@ describe('wrapPiTool', () => {
     expect(result.ok).toBe(true);
     expect(result.content).toContain('[已截断]');
     expect(result.content.length).toBeLessThan(full.length);
+  });
+});
+
+/**
+ * pi 1.5 起 grep 的上下文行由 ripgrep 直读（GrepOperations.readFile 废弃不再
+ * 回调），宿主的读检查只剩搜索根一条（isDirectory 回调）。这里用假网关把
+ * 「搜索根必须过网关、且只有这一条读检查、拒绝即不搜」钉住，防止后续再把
+ * 逐文件回调当门控或漏掉根检查（Pi 1.5.2 升级独立审查 C-2/D）。
+ */
+const rgAvailable = spawnSync('rg', ['--version'], { stdio: 'ignore' }).status === 0;
+
+function grepGatewayTestDeps(root: string, gateway: ToolGateway) {
+  return {
+    gateway,
+    workspacePath: root,
+    workdirPath: root,
+    network: {} as never,
+    secrets,
+    fsState: {} as never,
+  };
+}
+
+describe.skipIf(!rgAvailable)('grep 搜索根网关检查（pi 1.5 ripgrep 直读上下文行）', () => {
+  function writeTree(root: string): void {
+    mkdirSync(path.join(root, 'src'), { recursive: true });
+    writeFileSync(path.join(root, 'src', 'a.ts'), 'const needle = 1;\n');
+  }
+
+  it('允许的根：搜索根过网关且只有这一条读检查，匹配正常返回', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'kepcup-grep-root-'));
+    roots.push(root);
+    writeTree(root);
+    const calls: Array<{ p: string; mode: string }> = [];
+    const gateway = {
+      ensurePathAccess: async (_identity: unknown, p: string, mode: 'read' | 'write') => {
+        calls.push({ p, mode });
+        return p;
+      },
+    } as unknown as ToolGateway;
+    const grep = buildCodingTools(ctx.identity, grepGatewayTestDeps(root, gateway)).find(
+      (t) => t.name === 'grep',
+    );
+    expect(grep).toBeDefined();
+
+    const result = await grep!.execute({ pattern: 'needle', path: 'src' }, ctx);
+    expect(result.ok).toBe(true);
+    expect(result.content).toContain('needle');
+    // 搜索根恰好一条读检查；匹配文件不再逐文件过网关（上下文行由 ripgrep 直读）。
+    expect(calls).toHaveLength(1);
+    expect(calls[0].mode).toBe('read');
+    expect(calls[0].p.endsWith(path.join('src'))).toBe(true);
+  });
+
+  it('拒绝的根：网关拒绝后搜索不执行（fail-closed）', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'kepcup-grep-deny-'));
+    roots.push(root);
+    writeTree(root);
+    const calls: Array<{ p: string; mode: string }> = [];
+    const gateway = {
+      ensurePathAccess: async (_identity: unknown, p: string, mode: 'read' | 'write') => {
+        calls.push({ p, mode });
+        throw new AppError('APPROVAL_DENIED', '拒绝访问');
+      },
+    } as unknown as ToolGateway;
+    const grep = buildCodingTools(ctx.identity, grepGatewayTestDeps(root, gateway)).find(
+      (t) => t.name === 'grep',
+    );
+    expect(grep).toBeDefined();
+
+    const result = await grep!.execute({ pattern: 'needle', path: 'src' }, ctx);
+    // 网关拒绝被上游转成「Path not found」，搜索从未运行：内容不外泄。
+    expect(calls).toHaveLength(1);
+    expect(result.ok).toBe(false);
+    expect(result.content).not.toContain('needle');
   });
 });
