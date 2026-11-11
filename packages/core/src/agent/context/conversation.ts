@@ -158,6 +158,7 @@ const TASK_PHASE_LABELS: Record<TaskEventPhase, string> = {
   question: '提问',
   result: '结果',
   failure: '失败',
+  peer_message: '来自任务',
 };
 
 const TASK_OUTGOING_PHASES: ReadonlySet<TaskEventPhase> = new Set(['brief', 'inject', 'cancel']);

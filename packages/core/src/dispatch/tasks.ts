@@ -31,6 +31,7 @@ import {
   type ToolEffect,
 } from '@kepcup/shared';
 import { capabilityIdOfSetup } from '../capabilities/catalog.js';
+import { inspectDeclaredDomains } from '../workdir/domains.js';
 import { buildRunDigest, type DigestEffect } from '../agent/context/continuation.js';
 import type { ToolEffectsStore } from '../agent/effects/store.js';
 import { neutralizeUntrusted } from '../infra/data-boundary.js';
@@ -715,6 +716,10 @@ export class TaskHost implements TaskToolFacade {
     const notReady = declared.filter((id) =>
       catalog.some((entry) => entry.id === id && !entry.ready),
     );
+    // D123: `writes` is `true` (whole cwd), a glob array (write domains), or
+    // `false` / omitted (read-only). A continuation without `writes` inherits
+    // the source declaration verbatim; an explicit value overrides it.
+    const declaration = this.#writeDeclaration(input.writes, continues);
     const cwd = this.#deps.resolveCwd(botId, conversationId, input.cwd);
     // Persist first (§3.1): a crash after this line leaves a submitted row that
     // is re-queued on restart; a crash before it means no task at all.
@@ -725,8 +730,9 @@ export class TaskHost implements TaskToolFacade {
       triggerReason: null,
       triggerMessageIds: sources.map((message) => message.id),
       taskTitle: title,
-      taskWrites: input.writes,
+      taskWrites: declaration.writes,
       taskCwd: cwd,
+      ...(declaration.domains !== null ? { taskWriteDomains: declaration.domains } : {}),
       ...(capabilities.length > 0 ? { taskCapabilities: capabilities } : {}),
       originRunId: identity.runId,
       ...this.#engineFields(botId),
@@ -741,7 +747,7 @@ export class TaskHost implements TaskToolFacade {
       text: instruction,
       sourceMessageIds: sources.map((message) => message.id),
       title,
-      writes: input.writes,
+      writes: declaration.writes === true,
       ...(continues !== null ? { continuesTaskId: continues.id } : {}),
       ...(capabilities.length > 0 ? { capabilities } : {}),
     });
@@ -766,6 +772,39 @@ export class TaskHost implements TaskToolFacade {
       queueReason: null,
       ...(notReady.length > 0 ? { notReadyCapabilities: notReady } : {}),
     };
+  }
+
+  /**
+   * D123: normalizes `start_task.writes` into the persisted declaration.
+   * `true` = whole cwd (no stored domains), a glob array = validated write
+   * domains, `false` / omitted = read-only; an omitted value on a continuation
+   * inherits the source task's declaration (§2).
+   */
+  #writeDeclaration(
+    writes: boolean | string[] | undefined,
+    continues: Run | null,
+  ): { writes: boolean | null; domains: string[] | null } {
+    if (writes === undefined) {
+      if (continues !== null) {
+        return { writes: continues.taskWrites, domains: continues.taskWriteDomains };
+      }
+      return { writes: false, domains: null };
+    }
+    if (writes === true) return { writes: true, domains: null };
+    if (writes === false) return { writes: false, domains: null };
+    if (!Array.isArray(writes)) {
+      throw new AppError('INVALID_INPUT', 'writes 必须是布尔值或相对 cwd 的 glob 字符串数组');
+    }
+    const inspected = inspectDeclaredDomains(writes);
+    if ('issues' in inspected) {
+      throw new AppError(
+        'INVALID_INPUT',
+        `写域声明不合法：${inspected.issues
+          .map((issue) => `${issue.pattern}（${issue.message}）`)
+          .join('；')}`,
+      );
+    }
+    return { writes: true, domains: inspected.domains };
   }
 
   /**
@@ -1519,6 +1558,7 @@ export class TaskHost implements TaskToolFacade {
       taskTitle: title,
       taskWrites: writes,
       taskCwd: task.taskCwd,
+      ...(task.taskWriteDomains !== null ? { taskWriteDomains: task.taskWriteDomains } : {}),
       // D91: a retry keeps the capabilities the failed task declared (plus the app it just got
       // connected, see #retryCapabilities).
       ...(capabilities.length > 0 ? { taskCapabilities: capabilities } : {}),

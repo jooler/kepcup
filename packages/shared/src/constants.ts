@@ -891,3 +891,21 @@ export const COLLAB_DRAFT_LEASE_SWEEP_MS = 5_000;
 export const COLLAB_PRESENCE_MAX_HZ = 10;
 export const COLLAB_DRAFT_UPDATE_MAX_HZ = 5;
 export const COLLAB_DRAFT_CLAIM_MAX_HZ = 2;
+
+// --- 并行写任务与任务间协调（D123，docs/design/59-parallel-tasks-and-coordination.md §2） ---
+/** `start_task.writes` 数组去重后的写域模式数上限（设计 §2）。 */
+export const TASK_WRITE_DOMAINS_MAX = 8;
+/** 单条写域模式的字符上限（设计 §2）。 */
+export const TASK_WRITE_DOMAIN_PATTERN_MAX = 200;
+/** `send_to_task` 文本上限；与 `DELEGATION_TASK_MAX_CHARS` 对齐（设计 §4.2）。 */
+export const TASK_PEER_MESSAGE_MAX_CHARS = 4000;
+/** 单个 run 内 `send_to_task` 的发送条数上限，防刷屏（设计 §4.2）。 */
+export const TASK_PEER_SEND_MAX_PER_RUN = 10;
+/** `wait_for_task` 缺省超时（设计 §4.3）。 */
+export const TASK_PEER_WAIT_TTL_MS = 30 * 60_000;
+/** `wait_for_task` 的 `timeout_minutes` 上限（设计 §4.3）。 */
+export const TASK_PEER_WAIT_TTL_MAX_MS = 120 * 60_000;
+/** `wait_for_task` 返回的结果摘要截断长度（设计 §4.3）。 */
+export const TASK_PEER_WAIT_RESULT_MAX_CHARS = 4000;
+/** 单次 `claim` 的路径模式数上限（设计 §5）。 */
+export const TASK_CLAIM_PATHS_MAX = 16;

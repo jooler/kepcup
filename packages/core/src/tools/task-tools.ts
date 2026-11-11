@@ -33,8 +33,13 @@ export interface StartTaskInput {
   instruction: string;
   /** The user's original messages the task works from (verbatim in its brief, §2.4.5). */
   sourceMessageIds: string[];
-  /** Write task: takes the cwd write lease for its whole run (§5.1). */
-  writes: boolean;
+  /**
+   * Write task: takes the cwd write lease for its whole run (§5.1). `true` =
+   * the whole cwd, a glob array = declared write domains (D123), `false` /
+   * omitted = read-only. A continuation without `writes` inherits the source
+   * task's declaration.
+   */
+  writes?: boolean | string[];
   /** Cwd root; default = the bound workdir when available, else the workspace. */
   cwd?: 'workspace' | 'workdir' | undefined;
   /** Replay this settled task's process into the new one (D56 budget, §7.1). */
@@ -353,7 +358,7 @@ export function buildTaskTools(input: {
     title: string;
     instruction: string;
     source_message_ids: string[];
-    writes: boolean;
+    writes?: boolean | string[];
     cwd?: 'workspace' | 'workdir';
     continues_task_id?: string;
     capabilities?: string[];
@@ -364,7 +369,7 @@ export function buildTaskTools(input: {
       '对话轮只有只读查询工具（无 bash / 写入）；任务拥有完整工具面（bash、写文件、浏览器等），执行中会按需申请权限——本轮做不了的，就用 start_task 派任务去做。' +
       '任务完成后它的结果会交回给你，由你决定怎么告诉用户；过程中只有一条状态通知会更新给用户看（不堆消息）。' +
       'instruction 写清要做什么、要什么结果、约束；source_message_ids 填用户的原消息 id（任务会看到原文与附件）。' +
-      'writes=true 表示要改文件（同一目录同时只有一个写任务，其余排队）；只读调研用 writes=false。' +
+      'writes=true 表示要改文件（整目录串行，安全默认）；多个写任务各改一块时，可用 writes 传相对 cwd 的 glob 数组（如 ["apps/renderer/**","packages/core/**"]）声明互不相交的写域，互不相交的写任务可并行；域外写入会被拒绝。只读调研用 writes=false。' +
       '任务要用 <capabilities> 里的外部能力（连接应用 / 自定义 MCP）时，在 capabilities 里列出它们的 id（如 ["app:github"]）：任务只会挂上你列出的能力，其余能力任务里也能用，但要先查一步，更慢。' +
       '要接着一条已结束的任务重做，用 continues_task_id（先 cancel_task 进行中的那条）。派出后不必再复述「已派出」——任务卡会即时出现在对话里；有排队、能力不可用等用户需要知道的情况时才补一句。',
     parameters: Type.Object(
@@ -376,7 +381,12 @@ export function buildTaskTools(input: {
         source_message_ids: Type.Array(Type.String(), {
           description: '相关的用户原消息 id（msg_…），任务简报会带上原文',
         }),
-        writes: Type.Boolean({ description: 'true = 会修改文件的写任务；false = 只读任务' }),
+        writes: Type.Optional(
+          Type.Union([Type.Boolean(), Type.Array(Type.String({ description: '相对 cwd 的 glob，如 apps/renderer/**' }))], {
+            description:
+              'true = 整目录写任务（安全默认，写任务串行）；glob 数组 = 声明互不相交的写域（如 ["apps/renderer/**"]），域不相交的写任务可并行；false / 省略 = 只读。接续任务省略时继承来源任务',
+          }),
+        ),
         cwd: Type.Optional(
           Type.Union([Type.Literal('workspace'), Type.Literal('workdir')], {
             description: '工作目录：workdir（对话绑定的工作目录，缺省时有绑定即用）或 workspace',
@@ -403,7 +413,14 @@ export function buildTaskTools(input: {
         if (blocked !== null) return fail('INVALID_INPUT', blocked);
         const ids = sourceIds(params.source_message_ids);
         if (typeof ids === 'string') return fail('INVALID_INPUT', ids);
-        if (typeof params.writes !== 'boolean') return fail('INVALID_INPUT', 'writes 必须是布尔值');
+        const writes = params.writes;
+        if (
+          writes !== undefined &&
+          typeof writes !== 'boolean' &&
+          !(Array.isArray(writes) && writes.every((pattern) => typeof pattern === 'string'))
+        ) {
+          return fail('INVALID_INPUT', 'writes 必须是布尔值或相对 cwd 的 glob 字符串数组');
+        }
         if (params.cwd !== undefined && params.cwd !== 'workspace' && params.cwd !== 'workdir') {
           return fail('INVALID_INPUT', 'cwd 只能是 workspace 或 workdir');
         }
@@ -413,7 +430,7 @@ export function buildTaskTools(input: {
           title: nonEmpty(params.title, 'title', TASK_TITLE_MAX_CHARS),
           instruction: nonEmpty(params.instruction, 'instruction', TASK_INSTRUCTION_MAX_CHARS),
           sourceMessageIds: ids,
-          writes: params.writes,
+          ...(writes !== undefined ? { writes } : {}),
           ...(params.cwd !== undefined ? { cwd: params.cwd } : {}),
           ...(params.continues_task_id !== undefined && params.continues_task_id.trim() !== ''
             ? { continuesTaskId: params.continues_task_id.trim() }
