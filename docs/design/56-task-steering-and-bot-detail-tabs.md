@@ -19,6 +19,11 @@ Bot 拉起的任务（D75）本质是一个 coding-agent session，但用户对�
 - 注入坞固定在任务详情页最底部（提问卡、审批条之下，最后一位），仅非终态任务渲染（`isActiveTask`：submitted / running，含等待审批 / 等租约 / 等提问的运行中形态）。
 - 任务在等提问（`awaiting_input`）时注入坞照常可用，且显示提示行「任务在等你回答：发送的内容将作为回答」——与提问卡并存，自由文本走注入（`inject()` 内部转 `#resolveQuestion`），结构化选项走提问卡。
 - 文本上限 `TASK_INSTRUCTION_MAX_CHARS`（8000）；Enter 发送、Shift+Enter 换行。
+- **输入组件直接复用对话的 `Composer`**（用户要求「直接复用 Bot 对话组件中的输入组件」，不再自带 Textarea）：`<Composer injectTaskId={taskId}>` 的注入模式，上下文隔离判定收敛在 `features/chats/composer-inject.ts` 的纯函数里。
+  - 不进会话：不读 `chatSession` 的 replyTo / 协作 presence / 共享草稿 / 撤回回填 / `composerInsertion`，不注册 `@` 提及与「选择文件」动作项；草稿用独立键 `task:<taskId>`（与 `conversationId` 同库不同键，互不串台），任务切换靠 `{#key taskId}` 重挂载（编辑器扩展集在挂载时确定）。
+  - 右侧按钮位：录音胶囊 > 空输入的语音键 > 发送键。输入为空显示语音键（点击采集→转写填入）；有内容显示发送键；`asr` 能力未就绪时不显示语音键，直接给发送键且空输入时禁用。**不提供语音对话模式**（Speech 入口 / 播报 / barge-in 在注入模式下不渲染）。
+  - `+` 附件键保留但禁用：`tasks.inject` 只收文本，附件无处可放，悬停说明「追加指令暂不支持附件」（要支持需先扩 RPC 与 TaskHost）。
+  - 文本上限仍为 `TASK_INSTRUCTION_MAX_CHARS`，由编辑器层 `CharacterCount({ limit })` 拦截（等价旧 Textarea 的 `maxlength`）；Enter 发送、Shift+Enter 换行、IME 组字不抢 Enter、发送中防重入、失败回填均沿用 Composer 既有实现。
 
 ### 1.2 结果反馈
 
