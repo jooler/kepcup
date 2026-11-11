@@ -231,17 +231,16 @@ export class WorkdirRuntime {
     if (patterns === null || patterns === undefined || patterns.length === 0) return null;
     if (patterns.length === 1 && patterns[0] === '**') return null;
     if (task.taskCwd === null) return '任务写域缺少工作目录，已拒绝写入';
-    const target = comparableDomainPath(resolvedPath);
-    const clauses = absolutePatterns(task.taskCwd, patterns).map(comparableDomainPath);
-    const inside =
-      clauses.some((pattern) => globMatch(pattern, target)) ||
-      // A literal directory prefix of a glob (e.g. `<cwd>/docs` for
-      // `docs/**`) may itself be created by the write.
-      clauses.some((pattern) => literalDirPrefix(pattern) === target);
-    return inside
+    return pathMatchesPatterns(task.taskCwd, patterns, resolvedPath)
       ? null
       : `写域之外的路径：${resolvedPath}。本任务的写域：${formatWriteDomain(patterns)}` +
           '。需要越域请用 ask_user 说明缘由，由对话轮改派或换域后重派';
+  }
+
+  /** D123: the task row that writes for `identity` (subagent → owning task). */
+  owningTask(identity: RunIdentity): Run | null {
+    const task = this.#writingTask(identity);
+    return task === 'missing' ? null : task;
   }
 
   /** D123 §3.6 sandbox input: the declared write domain, null when undeclared. */
@@ -889,6 +888,24 @@ function comparableDomainPath(value: string): string {
   const normalized = value.replaceAll('\\', '/');
   // macOS and Windows default filesystems are case-insensitive.
   return process.platform === 'linux' ? normalized : normalized.toLowerCase();
+}
+
+/**
+ * D123: true when `resolvedPath` matches one of the root-relative patterns.
+ * A glob's literal directory prefix (e.g. `<cwd>/docs` for `docs/**`) also
+ * matches, so the write can create that directory.
+ */
+export function pathMatchesPatterns(
+  root: string,
+  patterns: string[],
+  resolvedPath: string,
+): boolean {
+  const target = comparableDomainPath(resolvedPath);
+  const clauses = absolutePatterns(root, patterns).map(comparableDomainPath);
+  return (
+    clauses.some((pattern) => globMatch(pattern, target)) ||
+    clauses.some((pattern) => literalDirPrefix(pattern) === target)
+  );
 }
 
 /** The directory part of a pattern before its first glob segment, if any. */

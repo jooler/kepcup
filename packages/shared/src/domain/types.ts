@@ -3851,6 +3851,18 @@ export const taskViewSchema = z.object({
   state: taskStateSchema,
   status: runStatusSchema,
   writes: z.boolean(),
+  /** D123: declared write-domain globs (null = whole cwd / not a write task). */
+  writeDomains: z.array(z.string()).nullable().default(null),
+  /** D123: the task's in-memory runtime claim (empty when none). */
+  claims: z
+    .array(
+      z.object({
+        paths: z.array(z.string()),
+        reason: z.string(),
+        since: z.number(),
+      }),
+    )
+    .default([]),
   /** Where it works: the bound workdir or the bot's workspace. */
   cwdKind: z.enum(['workdir', 'workspace']).nullable(),
   /** Why a submitted task waits (等写入租约 / 等并发额度 / 等智能体并发额度 …). */

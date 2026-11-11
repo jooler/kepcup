@@ -50,7 +50,13 @@ import { buildButlerTools, buildListBotsTool, type ButlerToolFacade } from './bu
 import { buildWorkbenchTools, type WorkbenchToolFacade } from './workbench-tools.js';
 import { buildHandoverTools, type HandoverToolFacade } from './handover-tools.js';
 import { buildDelegationTools, type DelegationToolFacade } from './delegation-tools.js';
-import { buildAskUserTool, buildPeerTaskTools, buildTaskTools, type TaskToolFacade } from './task-tools.js';
+import {
+  buildAskUserTool,
+  buildClaimTools,
+  buildPeerTaskTools,
+  buildTaskTools,
+  type TaskToolFacade,
+} from './task-tools.js';
 import type { SubagentToolFacade } from '../agent/subagent.js';
 import type { McpToolFacade } from '../mcp/tools.js';
 import { buildAppTools, type AppToolFacade } from './app-tools.js';
@@ -621,11 +627,13 @@ export function buildResponseTools(input: {
           ok: false,
           content: `无法复制附件：${decision.reason}`,
           errorCode:
-            decision.outOfDomain === true
-              ? 'WRITE_OUT_OF_DOMAIN'
-              : decision.readOnlyRun === true
-                ? 'RUN_READ_ONLY'
-                : 'PATH_OUT_OF_SCOPE',
+            decision.claimed === true
+              ? 'WRITE_CLAIMED'
+              : decision.outOfDomain === true
+                ? 'WRITE_OUT_OF_DOMAIN'
+                : decision.readOnlyRun === true
+                  ? 'RUN_READ_ONLY'
+                  : 'PATH_OUT_OF_SCOPE',
         };
       }
       const copy = ensureShareAttachmentCopy({
@@ -1350,6 +1358,10 @@ export function buildResponseTools(input: {
     // D123 §4: task-to-task coordination (never on the turn surface).
     ...(identity.loopType === 'task' && deps.tasks !== undefined
       ? buildPeerTaskTools({ identity, tasks: deps.tasks })
+      : []),
+    // D123 §5: runtime path claims (never on the turn surface).
+    ...(identity.loopType === 'task' && deps.tasks !== undefined
+      ? buildClaimTools({ identity, tasks: deps.tasks })
       : []),
     // Tasks keep list_bots (read-only cards); routing to other bots, the
     // butler's proposals and handovers (D88) are the turn's (design 30 §1.2).

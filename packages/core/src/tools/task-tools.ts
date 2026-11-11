@@ -5,6 +5,7 @@ import {
   ASK_USER_OPTION_MAX_CHARS,
   askUserFieldsSchema,
   TASK_CAPABILITIES_MAX,
+  TASK_CLAIM_PATHS_MAX,
   TASK_INSTRUCTION_MAX_CHARS,
   TASK_PEER_MESSAGE_MAX_CHARS,
   TASK_PEER_SEND_MAX_PER_RUN,
@@ -117,6 +118,22 @@ export interface WaitForTaskResult {
   queueReason?: string;
 }
 
+/** D123 §5: runtime claim of a path subset inside the task's write domain. */
+export interface ClaimTaskInput {
+  paths: string[];
+  reason: string;
+}
+
+export interface ReleaseTaskInput {
+  paths?: string[] | undefined;
+}
+
+export interface ClaimTaskResult {
+  paths: string[];
+  reason: string;
+  since: number;
+}
+
 export interface CancelTaskResult {
   taskId: string;
   state: TaskState;
@@ -163,6 +180,10 @@ export interface TaskToolFacade {
     input: WaitForTaskInput,
     signal: AbortSignal,
   ): Promise<WaitForTaskResult>;
+  /** D123 (task surface only): claim a path subset inside the write domain. */
+  claim?(identity: RunIdentity, input: ClaimTaskInput): ClaimTaskResult;
+  /** D123 (task surface only): release claimed paths (no paths = all). */
+  release?(identity: RunIdentity, input: ReleaseTaskInput): string[];
   /**
    * §2.4.6 (task side): asks the user on a visible question card and waits for
    * the answer (a card option, or the turn's inject_task). Optional: only the
@@ -685,4 +706,79 @@ export function buildPeerTaskTools(input: {
   };
 
   return [sendToTask, waitForTask];
+}
+
+/**
+ * D123 §5: runtime claims (task surface only). `claim` reserves paths inside
+ * the task's own write domain; other tasks' writes there fail WRITE_CLAIMED
+ * until `release` or the task ends.
+ */
+export function buildClaimTools(input: {
+  identity: RunIdentity;
+  tasks: TaskToolFacade;
+}): ToolDefinition[] {
+  const { identity, tasks } = input;
+  const claim = tasks.claim;
+  const release = tasks.release;
+  if (claim === undefined || release === undefined) return [];
+
+  const claimPaths: ToolDefinition<{ paths: string[]; reason: string }> = {
+    name: 'claim',
+    description:
+      '认领本任务写域内的一小片路径（相对 cwd 的 glob），让其他任务写到这里时被拒绝（WRITE_CLAIMED）——只用于你们确实要碰同一块区域时，先认领再动手。' +
+      `一次最多 ${TASK_CLAIM_PATHS_MAX} 条；必须在自己的写域内。完成或改道后 release；任务结束会自动释放。这是协调原语，不是永久锁。`,
+    parameters: Type.Object(
+      {
+        paths: Type.Array(Type.String(), {
+          description: `要认领的相对 cwd glob（最多 ${TASK_CLAIM_PATHS_MAX} 条）`,
+        }),
+        reason: Type.String({ description: '为什么认领（对方会在错误里看到）' }),
+      },
+      { additionalProperties: false },
+    ),
+    execute: async (params) =>
+      guarded(() => {
+        if (identity.loopType !== 'task') return fail('NOT_SUPPORTED', '只有任务可以认领路径');
+        if (!Array.isArray(params.paths) || params.paths.length === 0) {
+          return fail('INVALID_INPUT', 'paths 不能为空');
+        }
+        const result = claim(identity, {
+          paths: params.paths.filter((path): path is string => typeof path === 'string'),
+          reason: nonEmpty(params.reason, 'reason', 200),
+        });
+        return {
+          ok: true,
+          content: `已认领：${result.paths.join('、')}（${result.reason}）。其他任务写到这里会被拒绝，完成或改道后记得 release。`,
+        };
+      }),
+  };
+
+  const releasePaths: ToolDefinition<{ paths?: string[] }> = {
+    name: 'release',
+    description: '释放本任务认领的路径；不带参数释放全部。任务结束会自动释放，无需在此调用。',
+    parameters: Type.Object(
+      {
+        paths: Type.Optional(
+          Type.Array(Type.String(), { description: '要释放的路径（缺省 = 全部）' }),
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    execute: async (params) =>
+      guarded(() => {
+        if (identity.loopType !== 'task') return fail('NOT_SUPPORTED', '只有任务可以释放认领');
+        const released = release(identity, {
+          ...(Array.isArray(params.paths)
+            ? { paths: params.paths.filter((path): path is string => typeof path === 'string') }
+            : {}),
+        });
+        return {
+          ok: true,
+          content:
+            released.length > 0 ? `已释放：${released.join('、')}` : '没有需要释放的认领。',
+        };
+      }),
+  };
+
+  return [claimPaths, releasePaths];
 }

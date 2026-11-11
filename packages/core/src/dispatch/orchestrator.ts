@@ -155,6 +155,7 @@ import type { SecretsService } from '../domain/secrets.js';
 import type { ApprovalsService } from '../permissions/approvals.js';
 import type { GrantsService } from '../permissions/grants.js';
 import type { WorkdirRuntime } from '../workdir/service.js';
+import type { TaskClaimRegistry } from '../workdir/claims.js';
 import type { SandboxBackend } from '../sandbox/types.js';
 import type { CoreEventsMap } from '../start-types.js';
 import {
@@ -401,6 +402,8 @@ export interface OrchestratorDeps {
   approvals: ApprovalsService;
   grants: GrantsService;
   workdirs: WorkdirRuntime;
+  /** D123 §5: shared in-memory task claims (gateway + TaskHost). */
+  claims?: TaskClaimRegistry | undefined;
   sandbox: SandboxBackend;
   clock: Clock;
   logger: CoreLogger;
@@ -825,6 +828,7 @@ export class Orchestrator {
     this.#taskHost = new TaskHost({
       db: deps.db,
       runs: deps.runs,
+      ...(deps.claims !== undefined ? { claims: deps.claims } : {}),
       ...(deps.effects !== undefined ? { effects: deps.effects } : {}),
       messages: deps.messages,
       conversations: deps.conversations,

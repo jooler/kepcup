@@ -106,6 +106,7 @@ import { PermissionModeService } from './permissions/mode.js';
 import { CheckpointService } from './workdir/checkpoints.js';
 import { WorkdirRuntime } from './workdir/service.js';
 import { writeDomainKeysConflict } from './workdir/domains.js';
+import { TaskClaimRegistry } from './workdir/claims.js';
 import { WorkdirsService } from './domain/workdirs.js';
 import {
   createSandboxBackend,
@@ -1576,6 +1577,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // D75 审查 H2: lease waits give their scheduler slot back (attached below).
     // D123: keys of domain-scoped write tasks decode to {root, patterns}.
     const leases = new SlotYieldingLeaseService(writeDomainKeysConflict);
+    // D123 §5: in-memory claims, read by the gateway's write check and
+    // written by TaskHost's claim/release tools.
+    const taskClaims = new TaskClaimRegistry();
     const workdirRuntime = new WorkdirRuntime({
       db: mainDb,
       paths,
@@ -1814,6 +1818,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     const gateway = new ToolGateway({
       paths,
       sandbox,
+      // D123 §5: task runtime claims, shared with TaskHost.
+      claims: taskClaims,
       // P12: enhanced-level routing (Lima/Podman) for skills declaring
       // `sandbox: enhanced` — the routing predicate asks the skills service.
       enhanced: sandboxEnhanced ?? undefined,
@@ -2633,6 +2639,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       effects,
       externalEngine,
       llmRouter,
+      claims: taskClaims,
       // D112 P2：微应用进度摘要注入下一轮（55 §8.5）。
       microAppSummariesFor: (conversationId) => {
         const titleByWidget = new Map(
