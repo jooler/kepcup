@@ -338,7 +338,7 @@ schema 写全**（`kepcup-app validate` 用同一 schema 检查，缺字段报 `
 
 ### 3.3 工具（mcp）
 
-两种形态：
+三种形态：
 
 - **内嵌 MCPB**（`kind: "mcpb"`）：标准 MCPB 包（zip + `manifest.json` +
   `server.entry_point`；`manifest_version` 支持 0.1 / 0.2 / 0.3）。由宿主的 MCPB 安装器
@@ -346,19 +346,38 @@ schema 写全**（`kepcup-app validate` 用同一 schema 检查，缺字段报 `
   同意卡标出。`user_config`（与 §2.3 同 schema）在**安装表单**填写，敏感值进 secrets。
 - **远端 http**（`kind: "http"`）：`url` 必须公网 https、无认证。需要 OAuth 的远端请做成
   连接贡献。
+- **http 模版 / 实例**（P4-M2）：清单声明 `instances: ['mcp']` 时，http 贡献从「固定投影的
+  server」变成**实例供给规范**（与 mail 同语义，见 §3.4）——每个用户实例落一条自己的
+  streamable-http server，凭据由用户在实例表单粘贴（只进 secrets）。mcpb 贡献不支持
+  实例化（schema 拒绝）；http 模版至多一份（0 份 = 纯实例通用插件）。
+
+  | 声明 | 形态 | 用户表单 |
+  |---|---|---|
+  | `url` **非空** | 厂商模版（锁定端点） | `label`（选填）/ 各 header 值字段（sensitive，值只进 secrets）+ 插件 `instanceFields` |
+  | `url` **留空 `""`** | 通用模版（自填端点） | 上述 + `url` 必填实例字段（`urlSensitive: true` 时 URL 本身按敏感处理） |
+
+  - `auth: 'headers'` 必须至少声明一个 `headers: [{ name, key? }]`（`key` 是提供该 header
+    值的实例字段键，缺省 = header 名小写）；`auth: 'none'` 不得声明 headers。
+  - **内置实例字段键**（`instanceFields` 不得重名）：`label` / `url` / 各 header 的
+    `key`。
+  - 实例 server id = `plg_` + sha256(`{pluginId}#{instanceId}`) 前 12 位；实例删除 =
+    server、header secrets 一起清场。**用户看到**：插件卡「管理」= 实例列表 +
+    添加 / 编辑 / 删除表单（编辑即 URL 续期 / 令牌轮换）。
 
 **server id 稳定性**：插件贡献的 server id = `plg_` + sha256(`{pluginId}#{id}`) 前 12 位——
 跨版本更新不变，因此用户的工具审批、锁定策略与 Bot 级选择全部保留。**贡献 id 就是稳定性
 契约**：更新时改 `mcp[].id` 等于换了一个 server。
 
-**受管字段（`PLUGIN_MANAGED`）**：插件 server 的 `transport` / `command` / `args` / `env` /
-`url` / `headers` / `auth` / `source` / `tier` 只能由插件生命周期改写；用户在 MCP 设置里
-直改这些字段会被拒绝（`name` / `enabled` / `autoApprove` / `toolPolicies` /
-`description` 可自由改）。退出方式 = 卸载 / 停用插件。
+**受管字段（`PLUGIN_MANAGED`）**：插件 server（含实例来源）的 `transport` / `command` /
+`args` / `env` / `url` / `headers` / `auth` / `source` / `tier` 只能由插件生命周期改写；
+用户在 MCP 设置里直改这些字段会被拒绝（`name` / `enabled` / `autoApprove` / `toolPolicies` /
+`description` 可自由改）。退出方式：贡献 server = 卸载 / 停用插件；实例 server =
+在插件卡更新 / 删除实例。
 
-**用户看到**：同意卡展示启动命令、运行时可用性、sha256、必填 `user_config`（mcpb）或
-远端主机（http）；扩展中心插件卡「管理 · 工具」只列**该插件**的 server；工具的审批 / 风险 /
-锁定语义与手装 server 完全一致（插件化只影响可见性与生命周期）。
+**用户看到**：同意卡展示启动命令、运行时可用性、sha256、必填 `user_config`（mcpb）、
+远端主机（固定 http）或供给规范（模版）；扩展中心插件卡「管理 · 工具」只列**该插件**的
+server / 实例；工具的审批 / 风险 / 锁定语义与手装 server 完全一致（插件化只影响可见性与
+生命周期）。
 
 ### 3.4 邮件（mail）
 

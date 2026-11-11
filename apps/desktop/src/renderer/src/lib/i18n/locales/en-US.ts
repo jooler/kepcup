@@ -3432,6 +3432,29 @@ export const enUS = {
   'mail.ownerOf': 'From plugin: {plugin}',
   'mail.instanceFormNote':
     'A mailbox of "{plugin}". Fields are declared by the plugin; the connection test runs when you save.',
+  // P4-M2: mcp instances (tool services) — the key group mirrors mail.*.
+  'mcp.intro':
+    'Tool services come from plugins: add one on a plugin card and paste the credentials the platform asks for; tools become available to Bots with the plugin enabled.',
+  'mcp.add': 'Add tool service',
+  'mcp.empty':
+    'Once added, the online-document tools provided by this plugin become available to Bots with the plugin enabled.',
+  'mcp.back': 'Back',
+  'mcp.saving': 'Saving…',
+  'mcp.save': 'Save',
+  'mcp.added': 'Tool service added',
+  'mcp.updated': 'Tool service updated',
+  'mcp.delete': 'Delete tool service',
+  'mcp.editHint': 'Click to edit',
+  'mcp.noPlugin':
+    'No plugin can add tool services yet. Install one from the marketplace first (e.g. Tencent Docs, Feishu, Yuque).',
+  'mcp.openMarket': 'Open plugin marketplace',
+  'mcp.instanceCount': '{count} services',
+  'mcp.ownerOf': 'From plugin: {plugin}',
+  'mcp.instanceFormNote':
+    'A tool service of "{plugin}". Fields are declared by the plugin; credentials stay on this device.',
+  'mcp.pluginMissing': 'The plugin does not exist or has been uninstalled — go back to the list and refresh.',
+  'mcp.pluginDisabled':
+    'Plugin "{plugin}" is currently disabled; enable it before saving a new tool service.',
   'mailCard.save': 'Save',
   'mailCard.plugin.saved': 'Mail plugin settings saved',
   'mailCard.plugin.enabledGlobally': 'Enabled plugin "{plugin}"',

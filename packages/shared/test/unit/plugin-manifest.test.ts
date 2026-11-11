@@ -11,6 +11,7 @@ import {
   PLUGIN_SOURCE_PREFIX,
   isReservedPluginNamespace,
   isSafePluginRelPath,
+  mcpHeaderFieldKey,
   parsePluginSkillSource,
   pluginCapabilitySummary,
   pluginCapabilitySummaryFromCategories,
@@ -514,6 +515,194 @@ describe('declarative fields & instances (D105)', () => {
     ).toBe(false);
     // Only two kinds exist; >4 entries is structurally impossible without duplicates, so
     // the cap is asserted through the duplicate rejection above.
+  });
+});
+
+describe('mcp http template (P4-M2)', () => {
+  const base = {
+    format_version: 1,
+    id: 'app.kepcup.example/doc-x',
+    name: '文档平台',
+    version: '1.0.0',
+    usage: '启用后在插件卡里添加服务。',
+    instances: ['mcp'],
+    contributions: { skills: [], connectors: [] },
+  } satisfies Record<string, unknown>;
+
+  it('vendor lock: url + headers template with an explicit field key parses with defaults', () => {
+    const manifest = parse({
+      ...base,
+      contributions: {
+        skills: [],
+        connectors: [],
+        mcp: [
+          {
+            kind: 'http',
+            id: 'docs',
+            name: '文档服务',
+            url: 'https://docs.example.com/openapi/mcp',
+            auth: 'headers',
+            headers: [{ name: 'Authorization', key: 'token' }],
+          },
+        ],
+      },
+    });
+    const entry = manifest.contributions.mcp[0];
+    if (entry.kind !== 'http') throw new Error('expected http');
+    expect(entry.auth).toBe('headers');
+    expect(entry.urlSensitive).toBeUndefined();
+    expect(mcpHeaderFieldKey(entry.headers![0]!)).toBe('token');
+  });
+
+  it('generic template: empty url + urlSensitive parses; header key defaults to lower-cased name', () => {
+    const manifest = parse({
+      ...base,
+      contributions: {
+        skills: [],
+        connectors: [],
+        mcp: [{ kind: 'http', id: 'any', url: '', urlSensitive: true }],
+      },
+    });
+    const entry = manifest.contributions.mcp[0];
+    if (entry.kind !== 'http') throw new Error('expected http');
+    expect(entry.url).toBe('');
+    expect(entry.urlSensitive).toBe(true);
+    expect(entry.auth).toBe('none');
+    expect(entry.headers).toBeUndefined();
+  });
+
+  it('pairing: mcpb × instances(mcp) rejected; >1 http template rejected; empty url without instances rejected', () => {
+    expect(
+      pluginManifestSchema.safeParse({
+        ...base,
+        contributions: {
+          skills: [],
+          connectors: [],
+          mcp: [{ kind: 'mcpb', id: 'bundled', file: 'mcp/x.mcpb' }],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      pluginManifestSchema.safeParse({
+        ...base,
+        contributions: {
+          skills: [],
+          connectors: [],
+          mcp: [
+            { kind: 'http', id: 'a', url: 'https://a.example.com/mcp' },
+            { kind: 'http', id: 'b', url: 'https://b.example.com/mcp' },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      pluginManifestSchema.safeParse({
+        ...minimalManifest,
+        contributions: {
+          skills: [],
+          connectors: [],
+          mcp: [{ kind: 'http', id: 'generic', url: '' }],
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('template field-key clashes: builtin keys, duplicate header keys, instanceFields clashes rejected', () => {
+    expect(
+      pluginManifestSchema.safeParse({
+        ...base,
+        contributions: {
+          skills: [],
+          connectors: [],
+          mcp: [
+            {
+              kind: 'http',
+              id: 'docs',
+              url: '',
+              headers: [{ name: 'Label' }], // lower-cases to the builtin `label`
+            },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      pluginManifestSchema.safeParse({
+        ...base,
+        contributions: {
+          skills: [],
+          connectors: [],
+          mcp: [
+            {
+              kind: 'http',
+              id: 'docs',
+              url: 'https://docs.example.com/mcp',
+              auth: 'headers',
+              headers: [{ name: 'A' }, { name: 'a' }], // case-insensitive key collision
+            },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      pluginManifestSchema.safeParse({
+        ...base,
+        contributions: {
+          skills: [],
+          connectors: [],
+          mcp: [
+            {
+              kind: 'http',
+              id: 'docs',
+              url: 'https://docs.example.com/mcp',
+              instanceFields: [{ key: 'url', type: 'string', title: 'URL' }],
+            },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    // auth 'none' with declared headers is a contradiction.
+    expect(
+      pluginManifestSchema.safeParse({
+        ...base,
+        contributions: {
+          skills: [],
+          connectors: [],
+          mcp: [
+            {
+              kind: 'http',
+              id: 'docs',
+              url: 'https://docs.example.com/mcp',
+              headers: [{ name: 'Authorization' }],
+            },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    // auth 'headers' without headers is a contradiction.
+    expect(
+      pluginManifestSchema.safeParse({
+        ...base,
+        contributions: {
+          skills: [],
+          connectors: [],
+          mcp: [{ kind: 'http', id: 'docs', url: 'https://docs.example.com/mcp', auth: 'headers' }],
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('without instances(mcp) the legacy fixed-projection shape still parses (url required)', () => {
+    const manifest = parse({
+      ...minimalManifest,
+      contributions: {
+        skills: [],
+        connectors: [],
+        mcp: [{ kind: 'http', id: 'fixed', url: 'https://mcp.example.com/mcp' }],
+      },
+    });
+    const entry = manifest.contributions.mcp[0];
+    if (entry.kind !== 'http') throw new Error('expected http');
+    expect(entry.auth).toBe('none');
   });
 });
 
