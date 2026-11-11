@@ -593,7 +593,7 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
     // level only. An out-of-domain target in an 'ask' card gets a hint; the
     // user still decides (no automatic rejection).
     const domainHints = asked
-      .map((entry) => this.#deps.gateway.writeDomainDenial(ctx.identity, entry.target))
+      .map((entry) => this.#deps.gateway.writeDomainDenial?.(ctx.identity, entry.target) ?? null)
       .filter((hint): hint is string => hint !== null);
     const domainNote = domainHints.length > 0 ? `；注意：${domainHints[0]}` : '';
     return this.#ask(request, ctx, classified, roots, {

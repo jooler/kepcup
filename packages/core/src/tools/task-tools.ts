@@ -614,9 +614,7 @@ export function buildPeerTaskTools(input: {
   tasks: TaskToolFacade;
 }): ToolDefinition[] {
   const { identity, tasks } = input;
-  const send = tasks.send;
-  const wait = tasks.wait;
-  if (send === undefined || wait === undefined) return [];
+  if (tasks.send === undefined || tasks.wait === undefined) return [];
 
   const sendToTask: ToolDefinition<{
     task_id: string;
@@ -645,7 +643,7 @@ export function buildPeerTaskTools(input: {
         }
         const ids = sourceIds(params.source_message_ids);
         if (typeof ids === 'string') return fail('INVALID_INPUT', ids);
-        const result = send(identity, {
+        const result = tasks.send!(identity, {
           taskId: nonEmpty(params.task_id, 'task_id', 200),
           text: nonEmpty(params.text, 'text', TASK_PEER_MESSAGE_MAX_CHARS),
           ...(ids.length > 0 ? { sourceMessageIds: ids } : {}),
@@ -687,7 +685,7 @@ export function buildPeerTaskTools(input: {
         return fail('NOT_SUPPORTED', '只有任务可以等待其他任务');
       }
       try {
-        const result = await wait(
+        const result = await tasks.wait!(
           identity,
           {
             taskId: nonEmpty(params.task_id, 'task_id', 200),
@@ -718,9 +716,7 @@ export function buildClaimTools(input: {
   tasks: TaskToolFacade;
 }): ToolDefinition[] {
   const { identity, tasks } = input;
-  const claim = tasks.claim;
-  const release = tasks.release;
-  if (claim === undefined || release === undefined) return [];
+  if (tasks.claim === undefined || tasks.release === undefined) return [];
 
   const claimPaths: ToolDefinition<{ paths: string[]; reason: string }> = {
     name: 'claim',
@@ -742,7 +738,7 @@ export function buildClaimTools(input: {
         if (!Array.isArray(params.paths) || params.paths.length === 0) {
           return fail('INVALID_INPUT', 'paths 不能为空');
         }
-        const result = claim(identity, {
+        const result = tasks.claim!(identity, {
           paths: params.paths.filter((path): path is string => typeof path === 'string'),
           reason: nonEmpty(params.reason, 'reason', 200),
         });
@@ -767,7 +763,7 @@ export function buildClaimTools(input: {
     execute: async (params) =>
       guarded(() => {
         if (identity.loopType !== 'task') return fail('NOT_SUPPORTED', '只有任务可以释放认领');
-        const released = release(identity, {
+        const released = tasks.release!(identity, {
           ...(Array.isArray(params.paths)
             ? { paths: params.paths.filter((path): path is string => typeof path === 'string') }
             : {}),
