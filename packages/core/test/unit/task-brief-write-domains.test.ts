@@ -37,3 +37,44 @@ describe('task brief write domains (D123)', () => {
     expect(readOnly).toContain('这是只读任务');
   });
 });
+
+/**
+ * D123 ①: the header's `writes` attribute used to say `true` for every writer,
+ * so a scoped task could not read its own domain (and misread its queue reason).
+ */
+describe('task brief writes attribute (D123 ①)', () => {
+  const header = (writeDomains: string[] | null, writes = true): string =>
+    buildTaskBriefSegment(brief(writeDomains, writes), options, '/proj').split('\n')[0]!;
+
+  it('says true only for whole-cwd writes', () => {
+    expect(header(null)).toContain('writes="true"');
+    expect(header(['**'])).toContain('writes="true"');
+  });
+
+  it('lists a single declared glob', () => {
+    expect(header(['tmp/parallel-test/multi/a.txt'])).toContain(
+      'writes="tmp/parallel-test/multi/a.txt"',
+    );
+    expect(header(['apps/**'])).not.toContain('writes="true"');
+  });
+
+  it('lists several globs, comma separated, on one line', () => {
+    const line = header(['apps/**', 'packages/core/**']);
+    expect(line).toContain('writes="apps/**, packages/core/**"');
+    expect(line).not.toContain('\n');
+  });
+
+  it('says false for a read-only task even if a domain slipped into the brief', () => {
+    expect(header(['apps/**'], false)).toContain('writes="false"');
+  });
+
+  it('keeps quotes/angle brackets/newlines out of the attribute', () => {
+    const line = header(['apps/"<引号>/**', 'x\ny/**']);
+    const attr = line.slice(line.indexOf('writes="') + 'writes="'.length);
+    const value = attr.slice(0, attr.indexOf('"'));
+    expect(value).not.toContain('<');
+    expect(value).not.toContain('>');
+    expect(value).not.toContain('\n');
+    expect(value).toContain('apps/');
+  });
+});
