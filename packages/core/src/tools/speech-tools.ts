@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { untrustedBlock } from '../infra/data-boundary.js';
 import path from 'node:path';
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { AppError, TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
 import { truncateToBudget } from '../agent/tokens.js';
 import { TOOL_SETUP_REQUIRED, type MediaToolFacade } from './image-tools.js';

@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { scheduleDisplayTitle, type Schedule, type ScheduleOrigin } from '@kepcup/shared';
 import type { RunIdentity, ToolDefinition } from '../agent/types.js';
 import { untrustedBlock } from '../infra/data-boundary.js';

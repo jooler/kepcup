@@ -452,13 +452,11 @@ export function buildCodingTools(
 
   const grep = createGrepToolDefinition(baseDir, {
     operations: {
+      // pi 1.5 起上下文行由 ripgrep 直读，readFile 回调已废弃不再触发；
+      // 搜索根的网关读检查保留在 isDirectory，匹配文件都在已检查的根内。
       isDirectory: async (p: string) => {
         const resolved = await checked(identity, gateway, p, 'read', 'grep');
         return statSync(resolved).isDirectory();
-      },
-      readFile: async (p: string) => {
-        const resolved = await checked(identity, gateway, p, 'read', 'grep');
-        return readFileSync(resolved, 'utf-8');
       },
     },
   });

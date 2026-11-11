@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { WATCH_MIN_INTERVAL_SEC, type Watch } from '@kepcup/shared';
 import type { RunIdentity, ToolDefinition } from '../agent/types.js';
 import { untrustedBlock } from '../infra/data-boundary.js';

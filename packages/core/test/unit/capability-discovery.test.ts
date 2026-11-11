@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import {
   CAPABILITY_CALL_TOOL,
   CAPABILITY_SEARCH_RESULTS_MAX,

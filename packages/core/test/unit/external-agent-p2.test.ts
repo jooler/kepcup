@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   AGENT_CATALOG,

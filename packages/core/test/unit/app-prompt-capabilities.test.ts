@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import {
   AGENT_CATALOG,
   APP_TOOL_NAME_MAX,

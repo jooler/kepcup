@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { neutralizeUntrusted, untrustedBlock } from '../infra/data-boundary.js';
 import { AppError, TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
 import { truncateToBudget } from '../agent/tokens.js';

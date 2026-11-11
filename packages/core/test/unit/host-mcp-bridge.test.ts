@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { request } from 'node:http';
 import { fileURLToPath } from 'node:url';
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';

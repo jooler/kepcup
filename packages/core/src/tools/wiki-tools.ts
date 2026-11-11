@@ -1,5 +1,5 @@
 
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import type { WikiOwner } from '@kepcup/shared';
 import { AppError, isAppError } from '@kepcup/shared';
 import { neutralizeUntrusted, untrustedBlock } from '../infra/data-boundary.js';

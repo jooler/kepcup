@@ -1,5 +1,5 @@
 import type { AppLanguage } from '@kepcup/shared';
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import {
   BOT_KIND_MAX_CHARS,
   BOT_KIND_PRESETS,

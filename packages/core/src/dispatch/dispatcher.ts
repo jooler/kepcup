@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { z } from 'zod';
 import { type Message } from '@kepcup/shared';
 import { builtinModelRef, type LlmRouter } from '../agent/llm-router.js';
