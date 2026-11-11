@@ -441,6 +441,63 @@ html.wco [data-streamdown='table-fullscreen'] {
 }
 
 /*
+ * 用户气泡的 markdown 排版（MessageBody 的 [data-user-markdown]）：与 Bot 气泡
+ * 同一条 markdown 管线，但气泡底色是对话 Bot 的强调色、文字色由
+ * avatarOnFillForeground 决定，而 streamdown 的词色工具类在 node_modules 里、
+ * Tailwind 生成不到——所以这里只补「跟随 currentColor」的结构样式，不改 Bot
+ * 气泡（规则全部限定在 [data-user-markdown] 内）。
+ *
+ * 1. 段落/标题/引用/表格一律继承气泡文字色，链接用 currentColor 下划线（蓝链接
+ *    压在强调色上没法看）。
+ * 2. 块间距：preflight 把 p 的 margin 清零、包里的 my-* 又生成不到，多段文本会
+ *    粘成一团；Streamdown 的根 div 里才是各个块（可能是 display:contents 的 dir
+ *    包装层，所以不用 `> * + *` 也不要靠 sibling margin），给根 div 设 flex
+ *    column + gap 统一补上（原 whitespace-pre-wrap 下空行是有视觉间隙的）。首块
+ *    自然不留上边距，气泡不会被莫名撑高。
+ * 3. 行内代码 / 表格边框用 currentColor 混色，任一强调色下都可见。
+ */
+[data-user-markdown] {
+  overflow-wrap: anywhere;
+}
+[data-user-markdown] :is(p, h1, h2, h3, h4, h5, h6, blockquote, td, th, strong, em, del) {
+  color: inherit;
+  margin-block: 0;
+}
+[data-user-markdown] .streamdown-wrap > :first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+/* flex 子项默认 min-width:auto，长 URL / 长路径 / 宽表格会撑破气泡。 */
+[data-user-markdown] .streamdown-wrap > :first-child > * {
+  min-width: 0;
+}
+/* 间距统一交给 gap，别再叠加包里/全局的块外边距。 */
+[data-user-markdown] [data-streamdown='code-block'],
+[data-user-markdown] [data-streamdown='table-wrapper'],
+[data-user-markdown] :is([data-streamdown-ul], [data-streamdown-ol]) {
+  margin-block: 0;
+}
+[data-user-markdown] a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+[data-user-markdown] [data-streamdown-codespan] {
+  padding: 0.05em 0.3em;
+  border-radius: 0.25rem;
+  background: color-mix(in oklab, currentColor 16%, transparent);
+}
+[data-user-markdown] :is(th, td) {
+  border: 1px solid color-mix(in oklab, currentColor 30%, transparent);
+  padding: 0.2rem 0.5rem;
+}
+[data-user-markdown] blockquote {
+  border-inline-start: 2px solid color-mix(in oklab, currentColor 40%, transparent);
+  padding-inline-start: 0.6rem;
+}
+
+/*
  * 群头像马赛克字影：朝向中心 1px，颜色与主题相反（亮色用深影、暗色用浅影）。
  * 挂在字形 SVG / 字母上，不是瓦片容器的 box-shadow。偏移由 --group-avatar-sx/sy 注入。
  */
