@@ -98,6 +98,39 @@ describe('sandbox violations outside the task write domain (D123 ④)', () => {
     expect(result.content).not.toContain('在本任务写域之外');
   });
 
+  it('a path another task claimed points at waiting, not request_access', async () => {
+    const { bash, ctx } = toolsFor({
+      violation: `bash(x) deny(1) file-write-create ${outside}`,
+      checkPath: () => ({
+        kind: 'forbidden',
+        resolvedPath: outside,
+        reason: '已被任务 task_a 认领',
+        claimed: true,
+      }),
+    });
+    const result = await executeToolSafely(bash, { command: 'echo x > other/file.txt' }, ctx);
+    expect(result.content).toContain('已被其他任务认领');
+    expect(result.content).toContain('request_access 不能解除认领');
+    expect(result.content).not.toContain('可调用 request_access 工具申请');
+    expect(result.content).not.toContain('在本任务写域之外');
+  });
+
+  it('a read-only run writes nothing, and says so instead of offering request_access', async () => {
+    const { bash, ctx } = toolsFor({
+      violation: `bash(x) deny(1) file-write-create ${outside}`,
+      checkPath: () => ({
+        kind: 'forbidden',
+        resolvedPath: outside,
+        reason: '只读任务不能写',
+        readOnlyRun: true,
+      }),
+    });
+    const result = await executeToolSafely(bash, { command: 'echo x > other/file.txt' }, ctx);
+    expect(result.content).toContain('只读任务');
+    expect(result.content).toContain('request_access 不能让只读任务写入');
+    expect(result.content).not.toContain('可调用 request_access 工具申请');
+  });
+
   it('a read denial is never called a domain violation', async () => {
     const { bash, ctx } = toolsFor({
       violation: `cat(x) deny(1) file-read-data ${outside}`,

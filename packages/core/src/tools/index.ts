@@ -762,14 +762,29 @@ export function buildResponseTools(input: {
         if (error instanceof AppError && error.code === 'PATH_OUT_OF_SCOPE') {
           return { ok: false, content: error.message, errorCode: 'PATH_OUT_OF_SCOPE' };
         }
-        // D123 ④: a write-domain denial is fail-closed before any grant (the
-        // gateway re-checks it on every path), so this tool could never grant
-        // it — say what does work instead of throwing at the model.
+        // D123 ④: the step-0 write refusals (write domain, another task's
+        // claim, a read-only run) are fail-closed before any grant — the
+        // gateway re-checks them on every path — so this tool could never grant
+        // them; say what does work instead of throwing at the model.
         if (error instanceof AppError && error.code === 'WRITE_OUT_OF_DOMAIN') {
           return {
             ok: false,
             content: `${error.message}。request_access 不能解除写域限制：请用 ask_user 说明缘由，由对话轮改派任务或换写域后重派。`,
             errorCode: 'WRITE_OUT_OF_DOMAIN',
+          };
+        }
+        if (error instanceof AppError && error.code === 'WRITE_CLAIMED') {
+          return {
+            ok: false,
+            content: `${error.message}。request_access 不能解除其他任务的认领：等持有任务结束，或改用其他路径（需要改域请用 ask_user 说明缘由，由对话轮改派）。`,
+            errorCode: 'WRITE_CLAIMED',
+          };
+        }
+        if (error instanceof AppError && error.code === 'RUN_READ_ONLY') {
+          return {
+            ok: false,
+            content: `${error.message}。request_access 不能让只读任务写入：需要写入请用 ask_user 说明缘由，由对话轮派一个写任务。`,
+            errorCode: 'RUN_READ_ONLY',
           };
         }
         throw error;
