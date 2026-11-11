@@ -483,10 +483,30 @@ export function buildCodingTools(
           ];
           const blocked = extractViolationAccesses(result.violations);
           if (blocked.length > 0) {
-            notes.push(
-              `[提示] 以下路径在可访问范围之外：${blocked.map((item) => item.path).join('、')}。` +
-                '可调用 request_access 工具申请对这些路径的访问授权，批准后重新执行命令。',
-            );
+            // D123 ④: a write-domain denial is fail-closed at step 0 of
+            // `gateway.checkPath` — before any workspace / grant allowance — so
+            // request_access cannot lift it. Split the hint: domain-outside
+            // paths point at ask_user (re-dispatch / re-scope), everything else
+            // keeps the access-approval hint.
+            const outOfDomain = blocked.filter((item) => {
+              if (item.mode !== 'write') return false;
+              const decision = gateway.checkPath(identity, item.path, 'write');
+              return decision.kind === 'forbidden' && decision.outOfDomain === true;
+            });
+            const domainPaths = new Set(outOfDomain.map((item) => item.path));
+            const grantable = blocked.filter((item) => !domainPaths.has(item.path));
+            if (grantable.length > 0) {
+              notes.push(
+                `[提示] 以下路径在可访问范围之外：${grantable.map((item) => item.path).join('、')}。` +
+                  '可调用 request_access 工具申请对这些路径的访问授权，批准后重新执行命令。',
+              );
+            }
+            if (outOfDomain.length > 0) {
+              notes.push(
+                `[提示] 以下路径在本任务写域之外：${[...domainPaths].join('、')}。` +
+                  'request_access 不能解除写域限制：请用 ask_user 说明缘由，由对话轮改派任务或换写域后重派。',
+              );
+            }
             // A task/subagent may ask the user right here: a sandbox denial is
             // otherwise just a hint the model can silently ignore. A turn only
             // gets the hint (a turn never holds its mailbox for a card).

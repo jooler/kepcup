@@ -762,6 +762,16 @@ export function buildResponseTools(input: {
         if (error instanceof AppError && error.code === 'PATH_OUT_OF_SCOPE') {
           return { ok: false, content: error.message, errorCode: 'PATH_OUT_OF_SCOPE' };
         }
+        // D123 ④: a write-domain denial is fail-closed before any grant (the
+        // gateway re-checks it on every path), so this tool could never grant
+        // it — say what does work instead of throwing at the model.
+        if (error instanceof AppError && error.code === 'WRITE_OUT_OF_DOMAIN') {
+          return {
+            ok: false,
+            content: `${error.message}。request_access 不能解除写域限制：请用 ask_user 说明缘由，由对话轮改派任务或换写域后重派。`,
+            errorCode: 'WRITE_OUT_OF_DOMAIN',
+          };
+        }
         throw error;
       }
     },
