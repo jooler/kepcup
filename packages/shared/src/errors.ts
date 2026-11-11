@@ -67,6 +67,19 @@ export const ERROR_CODES = [
    * （task_writes=false）的写路径（文件写、会写入的命令）一律拒绝。
    */
   'RUN_READ_ONLY',
+  /**
+   * D123：任务声明了写域（`start_task.writes` 为 glob 数组），目标路径不在域内。
+   * 越域需要 `ask_user` 回对话轮改派或换域，不提供运行期扩域。
+   */
+  'WRITE_OUT_OF_DOMAIN',
+  /** D123：目标路径被另一任务的运行期认领（claim）占用，需经 `send_to_task` 协商。 */
+  'WRITE_CLAIMED',
+  /** D123：`send_to_task` / `wait_for_task` 找不到同（Bot, 对话）的兄弟任务。 */
+  'TASK_PEER_NOT_FOUND',
+  /** D123：`send_to_task` / `wait_for_task` 的目标任务已经终态。 */
+  'TASK_PEER_FINISHED',
+  /** D123：`wait_for_task` 会形成等待环（A 等 B、B 等 A）。 */
+  'TASK_WAIT_CYCLE',
   // workdirs
   'WORKDIR_MISSING',
   'WORKDIR_SWITCH_BLOCKED',

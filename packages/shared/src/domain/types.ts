@@ -1778,6 +1778,8 @@ export const taskEventPhaseSchema = z.enum([
   'question',
   'result',
   'failure',
+  /** D123：来自兄弟任务的消息（`send_to_task`），`fromTaskId` / `fromTitle` 标识来源。 */
+  'peer_message',
 ]);
 export type TaskEventPhase = z.infer<typeof taskEventPhaseSchema>;
 /** 终态 phase：受 messages_task_terminal 唯一索引约束（§3.2 幂等写入）。 */
@@ -1808,6 +1810,9 @@ export const taskEventContentSchema = z.object({
   continuesTaskId: z.string().optional(),
   /** brief 条目：D91 任务声明的外部能力 id（任务卡 / 简报可见；落库在 runs.task_capabilities）。 */
   capabilities: z.array(z.string()).optional(),
+  /** peer_message 条目：发送方任务 id / 标题（D123，内容与标题渲染时包 `<untrusted>`）。 */
+  fromTaskId: z.string().optional(),
+  fromTitle: z.string().optional(),
   /**
    * 终态条目（result / failure）：这次任务用文件工具创建 / 修改的文件。对话轮
    * 把任务结果转述给用户时，文件卡挂在那条回答消息上。
@@ -2198,6 +2203,11 @@ export const runSchema = z.object({
   taskWrites: z.boolean().nullable().default(null),
   /** 解析后的任务工作目录。 */
   taskCwd: z.string().nullable().default(null),
+  /**
+   * D123: declared write-domain globs relative to `taskCwd` (`start_task.writes`
+   * array). Null = undeclared — interpret through `taskWrites` (`true` = `['**']`).
+   */
+  taskWriteDomains: z.array(z.string()).nullable().default(null),
   /**
    * D91：任务声明要挂的外部能力 id（`start_task.capabilities`，如 `app:github` / `mcp:{serverId}`）；
    * 非任务 run 与宿主自己派的任务（未声明）为 null。

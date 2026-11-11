@@ -37,6 +37,7 @@ interface RunRow {
   task_title: string | null;
   task_writes: number | null;
   task_cwd: string | null;
+  task_write_domains: string | null;
   task_capabilities: string | null;
   origin_run_id: string | null;
   result_consumed_at: number | null;
@@ -124,6 +125,11 @@ function parseCapabilities(raw: string | null): string[] | null {
   }
 }
 
+/** `runs.task_write_domains` (JSON string[], D123); NULL / corrupt = undeclared. */
+function parseWriteDomains(raw: string | null): string[] | null {
+  return parseCapabilities(raw);
+}
+
 function rowToRun(row: RunRow): Run {
   const error = row.error_json ? (JSON.parse(row.error_json) as RunErrorJson) : null;
   return {
@@ -155,6 +161,7 @@ function rowToRun(row: RunRow): Run {
     taskTitle: row.task_title,
     taskWrites: row.task_writes === null ? null : row.task_writes === 1,
     taskCwd: row.task_cwd,
+    taskWriteDomains: parseWriteDomains(row.task_write_domains),
     taskCapabilities: parseCapabilities(row.task_capabilities),
     originRunId: row.origin_run_id,
     resultConsumedAt: row.result_consumed_at,
@@ -206,6 +213,8 @@ export class RunsService {
     taskTitle?: string | null;
     taskWrites?: boolean | null;
     taskCwd?: string | null;
+    /** D123: declared write-domain globs relative to `taskCwd`; omitted = undeclared. */
+    taskWriteDomains?: string[] | null;
     /** D91: external capability ids the task declared (`start_task.capabilities`); omitted = none. */
     taskCapabilities?: string[] | null;
     /** The supervisor turn that started the task. */
@@ -221,7 +230,7 @@ export class RunsService {
     const now = this.clock.now();
     this.db
       .prepare(
-        'insert into runs (id, bot_id, conversation_id, loop_type, status, trigger_reason, trigger_message_ids_json, episode_id, episode_hop, parent_run_id, provider, model, engine, task_title, task_writes, task_cwd, task_capabilities, origin_run_id, continued_from_run_ids_json, trigger_parts_json, retry_of_run_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'insert into runs (id, bot_id, conversation_id, loop_type, status, trigger_reason, trigger_message_ids_json, episode_id, episode_hop, parent_run_id, provider, model, engine, task_title, task_writes, task_cwd, task_write_domains, task_capabilities, origin_run_id, continued_from_run_ids_json, trigger_parts_json, retry_of_run_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         id,
@@ -244,6 +253,11 @@ export class RunsService {
             ? 1
             : 0,
         input.taskCwd ?? null,
+        input.taskWriteDomains !== undefined &&
+          input.taskWriteDomains !== null &&
+          input.taskWriteDomains.length > 0
+          ? JSON.stringify(input.taskWriteDomains)
+          : null,
         input.taskCapabilities !== undefined &&
           input.taskCapabilities !== null &&
           input.taskCapabilities.length > 0

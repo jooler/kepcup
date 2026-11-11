@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -10,6 +10,7 @@ import { runMigrations } from '../../src/infra/migrate.js';
 import { migrationsUrl } from '../../src/start.js';
 import { RunsService } from '../../src/domain/runs.js';
 import type { Clock } from '../../src/infra/clock.js';
+import { runsVersionsAfter } from '../support/migration-versions.js';
 
 /** D75 W0：runs 任务字段读写与任务查询（docs/design/30 §3.4、§3.2）。 */
 
@@ -69,6 +70,14 @@ describe('runs 任务字段', () => {
       expect(runSchema.parse(task)).toEqual(task);
       const readOnly = createTask(runs, { taskWrites: false });
       expect(readOnly.taskWrites).toBe(false);
+      // D123: undeclared write domains read back as null (whole cwd via taskWrites).
+      expect(readOnly.taskWriteDomains).toBeNull();
+      const scoped = createTask(runs, {
+        taskWrites: true,
+        taskWriteDomains: ['apps/renderer/**', 'docs/**'],
+      });
+      expect(scoped.taskWriteDomains).toEqual(['apps/renderer/**', 'docs/**']);
+      expect(runSchema.parse(scoped).taskWriteDomains).toEqual(['apps/renderer/**', 'docs/**']);
     });
   });
 
@@ -85,6 +94,7 @@ describe('runs 任务字段', () => {
         taskTitle: null,
         taskWrites: null,
         taskCwd: null,
+        taskWriteDomains: null,
         originRunId: null,
         resultConsumedAt: null,
         awaitingInput: false,
@@ -315,5 +325,40 @@ describe('turnBotIdsTriggeredBy（D90：群里谁接了那条派发）', () => {
       expect(runs.turnBotIdsTriggeredBy('conv_g', 'msg_1')).toEqual(['bot_a', 'bot_b', 'bot_c']);
       expect(runs.turnBotIdsTriggeredBy('conv_g', 'msg_404')).toEqual([]);
     });
+  });
+});
+
+function migrationsUpTo(maxVersion: number): string {
+  const source = migrationsUrl('runs');
+  const target = mkdtempSync(path.join(dir, 'migrations-runs-'));
+  mkdirSync(target, { recursive: true });
+  for (const name of readdirSync(source)) {
+    if (!/^\d{4}_.*\.sql$/.test(name)) continue;
+    if (Number(name.slice(0, 4)) > maxVersion) continue;
+    copyFileSync(path.join(source, name), path.join(target, name));
+  }
+  return target;
+}
+
+describe('runs 0015 task_write_domains 迁移', () => {
+  it('0014 库升级：新增列取 NULL，既有行保留', () => {
+    const db = openDatabase({
+      path: path.join(dir, `runs-migration-${Math.random().toString(36).slice(2, 8)}.db`),
+      key: deriveKey(Buffer.alloc(32, 11), KEY_INFO.runsDb),
+    });
+    runMigrations(db, migrationsUpTo(14));
+    db.exec(
+      "insert into runs (id, bot_id, conversation_id, loop_type, status, task_title, task_writes, task_cwd, created_at) values ('run_scoped', 'bot_x', 'conv_a', 'task', 'completed', '写域任务', 1, '/proj/root', 1)",
+    );
+
+    const applied = runMigrations(db, migrationsUrl('runs'));
+    expect(applied.map((m) => m.version)).toEqual(runsVersionsAfter(14));
+    expect(db.prepare('select task_write_domains from runs where id = ?').get('run_scoped')).toEqual({
+      task_write_domains: null,
+    });
+
+    const columns = db.prepare('pragma table_info(runs)').all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toContain('task_write_domains');
+    closeDatabase(db);
   });
 });
