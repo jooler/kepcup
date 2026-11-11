@@ -223,6 +223,37 @@ export function writeDomainKeysConflict(a: string, b: string): boolean {
   );
 }
 
+/** True when every claim pattern is inside the task's declared domain (§5). */
+export function claimWithinDomain(
+  root: string,
+  domainPatterns: string[],
+  claimPatterns: string[],
+): boolean {
+  const domains = absolutePatterns(root, domainPatterns).map(comparablePattern);
+  return claimPatterns.every((claim) => {
+    const claimPattern = comparablePattern(absolutePatterns(root, [claim])[0] ?? '');
+    return domains.some(
+      (domain) =>
+        domain === claimPattern ||
+        (globsIntersect(domain, claimPattern) &&
+          literalPrefixPath(claimPattern).startsWith(literalPrefixPath(domain))),
+    );
+  });
+}
+
+/** Case/separator normalization used by every domain comparison. */
+export function comparablePattern(value: string): string {
+  const normalized = toPosix(value);
+  return process.platform === 'linux' ? normalized : normalized.toLowerCase();
+}
+
+/** Path segments before the first glob segment ('' for a leading wildcard). */
+function literalPrefixPath(pattern: string): string {
+  const segments = pattern.split('/');
+  const index = segments.findIndex((segment) => META_CHARS.test(segment));
+  return (index < 0 ? segments : segments.slice(0, index)).join('/');
+}
+
 /** True when one root equals the other or is its ancestor (path-component-wise). */
 function rootsOverlap(a: string, b: string): boolean {
   const left = pathSegments(a);

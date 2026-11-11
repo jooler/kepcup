@@ -96,6 +96,9 @@ function assertMayWrite(
 ): void {
   if (target !== undefined) {
     const decision = gateway.checkPath(identity, target, 'write');
+    if (decision.kind === 'forbidden' && decision.claimed === true) {
+      throw new AppError('WRITE_CLAIMED', decision.reason);
+    }
     if (decision.kind === 'forbidden' && decision.outOfDomain === true) {
       throw new AppError('WRITE_OUT_OF_DOMAIN', decision.reason);
     }

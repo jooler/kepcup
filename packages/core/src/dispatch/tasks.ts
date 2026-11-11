@@ -14,6 +14,8 @@ import {
   TASK_LIST_SETTLED_WINDOW_MS,
   TASK_LOOP_DEFAULTS,
   TASK_MAX_WALL_MS,
+  TASK_CLAIM_PATHS_MAX,
+  TASK_WRITE_DOMAIN_PATTERN_MAX,
   TASK_PEER_MESSAGE_MAX_CHARS,
   TASK_PEER_SEND_MAX_PER_RUN,
   TASK_PEER_WAIT_RESULT_MAX_CHARS,
@@ -36,6 +38,8 @@ import {
   type ToolEffect,
 } from '@kepcup/shared';
 import { capabilityIdOfSetup } from '../capabilities/catalog.js';
+import { claimWithinDomain } from '../workdir/domains.js';
+import type { TaskClaimRegistry } from '../workdir/claims.js';
 import {
   domainsConflict,
   formatWriteDomain,
@@ -62,9 +66,12 @@ import type { SqliteDatabase } from '../infra/db.js';
 import type { CoreLogger } from '../infra/logger.js';
 import type {
   CancelTaskResult,
+  ClaimTaskInput,
+  ClaimTaskResult,
   InjectTaskInput,
   InjectTaskResult,
   PeerTaskStatus,
+  ReleaseTaskInput,
   SendToTaskInput,
   StartTaskInput,
   StartTaskResult,
@@ -284,6 +291,8 @@ export interface TaskHostDeps {
   onSettled(run: Run, executorActive: boolean): void;
   /** Releases an execution's write lease / per-run state (an evicted stuck executor). */
   releaseExecution(runId: string): void;
+  /** D123 §5: in-memory path claims (shared with the gateway's write check). */
+  claims?: TaskClaimRegistry;
   /**
    * The engine slot a task occupies beyond the task caps (design 30 §8.5:
    * task concurrency = min(TASK_CONCURRENCY_*, `agent:{id}` concurrency)):
@@ -441,6 +450,53 @@ function peerWaitTimeoutMs(minutes: number | undefined): number {
     return TASK_PEER_WAIT_TTL_MS;
   }
   return Math.min(Math.max(minutes, 1 / 60), TASK_PEER_WAIT_TTL_MAX_MS / 60_000) * 60_000;
+}
+
+/** D123: claim paths are relative-cwd globs, deduped, capped (§5). */
+function normalizeClaimPaths(paths: string[]): string[] {
+  if (!Array.isArray(paths) || paths.length === 0) {
+    throw new AppError('INVALID_INPUT', 'paths 不能为空');
+  }
+  const issues: string[] = [];
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const raw of paths) {
+    if (typeof raw !== 'string') {
+      issues.push('路径必须是字符串');
+      continue;
+    }
+    const value = raw
+      .trim()
+      .replaceAll('\\', '/')
+      .replace(/^(\.\/)+/, '')
+      .replace(/\/+$/, '');
+    if (value.length === 0) {
+      issues.push('路径不能为空');
+      continue;
+    }
+    if (value.length > TASK_WRITE_DOMAIN_PATTERN_MAX) {
+      issues.push(`路径过长：${value}`);
+      continue;
+    }
+    if (value.startsWith('/') || /^[A-Za-z]:/.test(value) || value.startsWith('~')) {
+      issues.push(`不能用绝对路径：${value}`);
+      continue;
+    }
+    if (value.split('/').some((segment) => segment === '..')) {
+      issues.push(`不能用 .. 越出 cwd：${value}`);
+      continue;
+    }
+    if (seen.has(value)) continue;
+    seen.add(value);
+    normalized.push(value);
+  }
+  if (normalized.length > TASK_CLAIM_PATHS_MAX) {
+    issues.push(`最多 ${TASK_CLAIM_PATHS_MAX} 条`);
+  }
+  if (issues.length > 0) {
+    throw new AppError('INVALID_INPUT', `认领路径不合法：${issues.join('；')}`);
+  }
+  return normalized;
 }
 
 /** An inject on its way into an engine run (its entry id + the caller's fallback). */
@@ -1224,6 +1280,61 @@ export class TaskHost implements TaskToolFacade {
     this.#peerSends.delete(runId);
   }
 
+  /** D123 §5: claims a path subset inside the task's own write domain. */
+  claim(identity: RunIdentity, input: ClaimTaskInput): ClaimTaskResult {
+    const task = this.#claimableTask(identity);
+    const root = task.taskCwd;
+    if (root === null) throw new AppError('INVALID_INPUT', '任务缺少工作目录，无法认领路径');
+    const registry = this.#deps.claims;
+    if (registry === undefined) throw new AppError('NOT_SUPPORTED', '当前宿主不支持路径认领');
+    const paths = normalizeClaimPaths(input.paths);
+    const domains = task.taskWriteDomains ?? ['**'];
+    if (!claimWithinDomain(root, domains, paths)) {
+      throw new AppError(
+        'INVALID_INPUT',
+        `认领路径必须在本任务写域内（${formatWriteDomain(domains)}）：${paths.join('、')}`,
+      );
+    }
+    const reason = input.reason.trim().slice(0, 200) || '未说明';
+    const since = this.#deps.clock.now();
+    registry.set({
+      taskId: task.id,
+      botId: task.botId ?? '',
+      conversationId: task.conversationId ?? '',
+      title: task.taskTitle ?? '',
+      root,
+      paths,
+      reason,
+      since,
+    });
+    return { paths, reason, since };
+  }
+
+  /** D123 §5: releases claimed paths (no paths = everything). */
+  release(identity: RunIdentity, input: ReleaseTaskInput): string[] {
+    const task = this.#claimableTask(identity);
+    const registry = this.#deps.claims;
+    if (registry === undefined) return [];
+    if (input.paths !== undefined && input.paths.length > 0) {
+      return registry.release(task.id, normalizeClaimPaths(input.paths));
+    }
+    return registry.release(task.id);
+  }
+
+  #claimableTask(identity: RunIdentity): Run {
+    if (identity.loopType !== 'task') {
+      throw new AppError('NOT_SUPPORTED', '只有任务可以认领路径');
+    }
+    const task = this.#deps.runs.get(identity.runId);
+    if (task === null || task.loopType !== 'task' || isTerminalStatus(task.status)) {
+      throw new AppError('RUN_ALREADY_FINISHED', '当前任务已结束');
+    }
+    if (task.taskWrites !== true) {
+      throw new AppError('INVALID_INPUT', '只读任务不能认领路径');
+    }
+    return task;
+  }
+
   cancel(identity: RunIdentity, input: { taskId: string; reason: string }): CancelTaskResult {
     const { botId, conversationId } = this.#scope(identity);
     const task = this.#ownTask(botId, conversationId, input.taskId);
@@ -1620,6 +1731,7 @@ export class TaskHost implements TaskToolFacade {
             .find((candidate) => candidate.continuedFromRunIds.includes(task.id))?.id ?? null)
         : null;
     const summary = this.#summary(task);
+    const claim = this.#deps.claims?.entryOf(task.id) ?? null;
     return {
       taskId: task.id,
       botId: task.botId,
@@ -1628,6 +1740,9 @@ export class TaskHost implements TaskToolFacade {
       state: taskState(task.status),
       status: task.status,
       writes: task.taskWrites === true,
+      // D123: declared write domains + this task's runtime claim.
+      writeDomains: task.taskWriteDomains,
+      claims: claim === null ? [] : [claim],
       cwdKind: cwd?.kind ?? null,
       queueReason: terminal ? null : summary.queueReason,
       awaitingInput: task.awaitingInput,
@@ -1792,9 +1907,10 @@ export class TaskHost implements TaskToolFacade {
       ...(keepProgress !== undefined ? { lastProgress: keepProgress } : {}),
     });
     // D123 §4.3: tasks waiting on this one get the terminal digest; this
-    // task's own pending waits / send counters are gone with it.
+    // task's own pending waits / send counters / claims are gone with it.
     this.#resolvePeerWaits(updated);
     this.#removeWaitsOfRun(taskId);
+    this.#deps.claims?.clear(taskId);
     // Chat bubbles for interim are obsolete (status lives on the run); purge leftovers.
     this.#safely(() => {
       this.#deps.messages.purgeTaskInterim(taskId);

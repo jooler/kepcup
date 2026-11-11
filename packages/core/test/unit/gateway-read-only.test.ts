@@ -8,6 +8,7 @@ import Database from 'better-sqlite3-multiple-ciphers';
 import { canonicalPath, resolvePaths, workspacePathFor } from '../../src/infra/paths.js';
 import { ToolGateway, type GatewayDeps } from '../../src/gateway/index.js';
 import { WorkdirRuntime } from '../../src/workdir/service.js';
+import { TaskClaimRegistry } from '../../src/workdir/claims.js';
 import { GrantsService } from '../../src/permissions/grants.js';
 import { buildCodingTools } from '../../src/tools/coding-tools.js';
 import { buildResponseTools } from '../../src/tools/index.js';
@@ -60,6 +61,8 @@ interface RunRow {
   /** D123 write-domain fields (absent = undeclared). */
   taskCwd?: string | null;
   taskWriteDomains?: string[] | null;
+  botId?: string | null;
+  conversationId?: string | null;
 }
 
 const runRows = new Map<string, RunRow>(
@@ -84,7 +87,7 @@ const runRows = new Map<string, RunRow>(
     ] as Array<[string, RunRow['loopType'], boolean | null, string | null, string?]>
   ).map(([id, loopType, taskWrites, parentRunId, status]) => [
     id,
-    { id, loopType, taskWrites, parentRunId, status: status ?? 'running' },
+    { id, loopType, taskWrites, parentRunId, status: status ?? 'running', botId: BOT, conversationId: CONV },
   ]),
 );
 
@@ -108,7 +111,10 @@ function makeGrants(): GrantsService {
   return new GrantsService({ db: db as never, clock: { now: () => clockNow } });
 }
 
-function makeGateway(sandbox: SandboxBackend = new UnavailableSandboxBackend('test')): ToolGateway {
+function makeGateway(
+  sandbox: SandboxBackend = new UnavailableSandboxBackend('test'),
+  claims?: TaskClaimRegistry,
+): ToolGateway {
   // D123: the domain-scoped task writes inside the workspace, `docs/**` only.
   runRows.set('run_scoped_task', {
     id: 'run_scoped_task',
@@ -118,6 +124,8 @@ function makeGateway(sandbox: SandboxBackend = new UnavailableSandboxBackend('te
     status: 'running',
     taskCwd: workspace(),
     taskWriteDomains: ['docs/**'],
+    botId: BOT,
+    conversationId: CONV,
   });
   runRows.set('run_sub_scoped', {
     id: 'run_sub_scoped',
@@ -160,6 +168,7 @@ function makeGateway(sandbox: SandboxBackend = new UnavailableSandboxBackend('te
     } as unknown as GatewayDeps['allowlist'],
     unattended: {} as GatewayDeps['unattended'],
     workdirs,
+    ...(claims !== undefined ? { claims } : {}),
     platform: 'linux',
     readOnlyRootsOverride: [],
     sensitiveOverride: [],
@@ -797,5 +806,83 @@ describe('declared write domains (D123 §3.6)', () => {
     expect(() =>
       gateway.assertWriteDomain(ids.scopedTask, path.join(workspace(), '.generated', 'x.png')),
     ).toThrow(/写域/);
+  });
+});
+
+describe('runtime path claims (D123 §5)', () => {
+  function registryWithPeerClaim(): TaskClaimRegistry {
+    const claims = new TaskClaimRegistry();
+    claims.set({
+      taskId: 'run_peer',
+      botId: BOT,
+      conversationId: CONV,
+      title: '邻居任务',
+      root: workspace(),
+      paths: ['docs/shared/**'],
+      reason: '要改 docs 的公共页',
+      since: 1,
+    });
+    return claims;
+  }
+
+  it('another task\'s claim blocks writes with WRITE_CLAIMED; the holder and other conversations pass', async () => {
+    const claims = registryWithPeerClaim();
+    const gateway = makeGateway(undefined, claims);
+    expect(gateway.checkPath(ids.scopedTask, 'docs/shared/a.md', 'write')).toMatchObject({
+      kind: 'forbidden',
+      claimed: true,
+    });
+    await expect(
+      gateway.ensurePathAccess(ids.scopedTask, 'docs/shared/a.md', 'write', '测试'),
+    ).rejects.toMatchObject({ code: 'WRITE_CLAIMED' });
+    // A path outside the claim but inside the domain is allowed.
+    expect(gateway.checkPath(ids.scopedTask, 'docs/other.md', 'write')).toMatchObject({
+      kind: 'allowed',
+    });
+    claims.clear('run_peer');
+    expect(gateway.checkPath(ids.scopedTask, 'docs/shared/a.md', 'write')).toMatchObject({
+      kind: 'allowed',
+    });
+  });
+
+  it('a claim only applies to the claiming bot + conversation and its root', () => {
+    const claims = new TaskClaimRegistry();
+    claims.set({
+      taskId: 'run_peer',
+      botId: BOT,
+      conversationId: 'conv_other',
+      title: '别处',
+      root: path.join(outside, 'proj'),
+      paths: ['**'],
+      reason: 'x',
+      since: 1,
+    });
+    const gateway = makeGateway(undefined, claims);
+    // Different conversation: no effect.
+    expect(gateway.checkPath(ids.scopedTask, 'docs/a.md', 'write')).toMatchObject({
+      kind: 'allowed',
+    });
+    expect(claims.denial('run_b', BOT, CONV, path.join(workspace(), 'docs', 'a.md'))).toBeNull();
+    expect(claims.denial('run_b', BOT, 'conv_other', path.join(outside, 'proj', 'x'))).toContain(
+      'run_peer',
+    );
+  });
+
+  it('release removes specific paths or the whole claim; clear removes everything', () => {
+    const claims = registryWithPeerClaim();
+    expect(claims.release('run_peer', ['docs/shared/**'])).toEqual(['docs/shared/**']);
+    expect(claims.get('run_peer')).toBeNull();
+    claims.set({
+      taskId: 'run_peer',
+      botId: BOT,
+      conversationId: CONV,
+      title: '邻居任务',
+      root: workspace(),
+      paths: ['docs/shared/**', 'notes/**'],
+      reason: 'x',
+      since: 1,
+    });
+    expect(claims.release('run_peer')).toEqual(['docs/shared/**', 'notes/**']);
+    expect(claims.get('run_peer')).toBeNull();
   });
 });
