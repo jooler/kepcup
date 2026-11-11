@@ -165,6 +165,13 @@ D75 补充：
 - **「仅这一次」= 单次工具调用**（DEV-009）：每次工具调用在 `permissions/tool-call-scope.ts` 的 `AsyncLocalStorage` 作用域里执行；once 授权归属于使用它的调用（`GrantsService.noteOnceUse`），调用结束即撤销；`request_access` 走 `ensurePathAccess(…, { preauthorize: true })`，预授权由第一次用到它的调用认领；另有 `GRANT_ABSOLUTE_TTL_MS` 与 run 结束兜底，自动撤销经 `GrantsService.onAutoRevoke` 发布 `grant.changed`。
 - **对话轮不等用户**（DEV-014）：对话轮的越界读取不发起审批，当场返回 `PATH_OUT_OF_SCOPE`。
 
+D123 补充（并行写任务与任务间协调，[design/59](../design/59-parallel-tasks-and-coordination.md)）：
+
+- **写域判定**：`WorkdirRuntime.writeOutOfDomain(identity, resolvedPath)` 沿子代理 → 父任务的链取 `runs.task_write_domains` / `task_cwd`，用 `workdir/domains.ts` 的保守 glob 相交原语判定；网关 `checkPath` 在只读判定之后、任何 workspace / workdir / grant 放行之前拒绝域外写（`forbidden` + `outOfDomain`，工具错误码 `WRITE_OUT_OF_DOMAIN`，fail-closed）。`writes: true`（无声明）与只读任务行为不变。
+- **任务层互斥**：`TaskHost.#blockedBy` 按「root 重叠 ∧ 域相交」让写任务停在 submitted（原因「等写域（任务 … 持有 …）」）；写租约键升级为 `base|domains:p1,p2`（`workdir/domains.ts` 编解码），`LeaseService` 冲突谓词可注入（`SlotYieldingLeaseService` 构造透传），缺省仍是路径前缀规则。
+- **任务间协调**：`TaskHost` 的等待注册表 `#peerWaits`（target → waiters，settle 时解析终态摘要，等待方结束时拒绝并清理）与每 run 发送计数 `#peerSends`；`<peer_tasks>` 段由 `buildPeerTasksSegment` 生成。等待走 `Scheduler.yieldSlotWhile`，不计入墙钟，写租约保留。
+- **认领**：`workdir/claims.ts` `TaskClaimRegistry` 是进程内共享（`start.ts` 同时注入网关与 `TaskHost`），网关在写域判定之后查其他任务在重叠 root 上的 claim（`WRITE_CLAIMED`）；claim 不持久化，任务 settle / cancel / interrupt 时清除。
+
 ### 连接应用（D73 P0–P3，`core/src/apps/`）
 
 P0 是自定义 Streamable HTTP MCP server 的 OAuth 授权地基（设计 [29](../design/29-connected-apps.md) §5 / §6，执行方案 `todo/connected-apps.md` §4）；P1 在其上加目录、多账号连接、工具风险 / 锁定 / 持续授权与 Bot 勾选（todo §5）；P2 加权限追加限流、污点外发控制、按需工具发现、预注册 / 自带客户端、开发者模式与 MCPB 本地包（todo §6）；P3 加签名目录索引、分级信任、子注册表 Worker、校验器 CLI、MCP Apps 渲染与随附 Skills（todo §7，偏差见 DEV-022）。核心约束是**运行时与交互授权分离**（§5.6）：运行中的 run 只读取令牌、主动刷新，永远不打开浏览器；打开浏览器的只有用户点「连接」触发的交互流程。
