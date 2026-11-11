@@ -179,6 +179,7 @@ export function domainsConflict(a: AbsDomain, b: AbsDomain): boolean; // 两集�
 | W4 | `94717f50` | `<peer_tasks>` 段、`send_to_task` / `wait_for_task`、`peer_message` 私有条目、等待注册表 / 环检测 / 让名额 / 墙钟豁免 |
 | W5 | `7ca4e2a9` | `TaskClaimRegistry` + 网关 `WRITE_CLAIMED`、`claim` / `release` 工具、TaskView 投影、settle 清理 |
 | W6 | `6683c266` | 两版提示词、`<tasks>` 写域列、任务详情页写域 / 认领 / peer 行、新错误码 i18n 两语言 |
+| 审查 | `6cc89e8d` | 独立子代理四线复核后的修正（数据边界、协调生命周期、写域强制、租约、claim 包含、文档） |
 
 验证（逐波定向，W7 全量一次）：
 
@@ -188,7 +189,14 @@ export function domainsConflict(a: AbsDomain, b: AbsDomain): boolean; // 两集�
 - W4：`supervisor-turn` / `tasks-peer-coordination` / `task-timeline-visibility` / `tasks-peer-segment` 36 passed；发送、终态拒绝、ask_user 不当作回答、限流、等待三终态 / 超时 / 环 / 取消清理、泄露契约均覆盖。另加「任务内调用 `wait_for_task`」用例：工具调用在引擎里真实阻塞、目标结束后恢复（覆盖 `yieldSlotWhile` 的在途路径）。
 - W5：`tasks-claims` / `gateway-read-only` / `tasks-write-domains` / `tasks` / `task-cards` 覆盖；域外 / 绝对路径 / 只读任务认领拒绝、幂等、release 全部、TaskView 投影、settle 清除。
 - W6：`supervisor-turn`（含写域列）、`task-run-view` / `task-view` / `bot-tasks` / `tasks` / `chat-session` 渲染端用例、`i18n/locales` 两语言 key 校验通过；desktop typecheck（tsc + svelte-check）0 error。
-- 偏差：DEV-091（沙箱命令按写域收紧的覆盖度；声明域简报始终注明「命令写入不受写域强制」）。
+- 偏差：DEV-091（沙箱命令按写域收紧的覆盖度；声明域简报始终注明「命令写入不受写域强制」）、DEV-092（claim 在现行调度下是第二道防线）。
+- **审查修正（`6cc89e8d`）**：四条独立审查线（写域/租约、执行期强制、协调生命周期、提示词/界面/文档）共 30 余条发现，逐条核实后修正：
+  - 数据边界：`peer_message` 正文与来源标题 `neutralizeUntrusted`、截断补齐闭合标签、写域 glob 注入前转义；`<peer_tasks>` 不再向内外部引擎承诺其拿不到的工具。
+  - 协调：`send_to_task` 对未简报任务返回 `queued` 并在 `#brief` 折入（不再丢消息）；并发等待用 `waitDepth` 共享墙钟窗口（不再误判 stalled）；等自己写域排队任务直接 `INVALID_INPUT`；`claim` 合并 + 超过 16 条报错；发送配额后置；宿主 `dispose()` 清理等待定时器；渲染端只把**以** peer 标签开头的 steer 认作 peer 行，畸形包裹降级为纯文本。
+  - 强制：沙箱双向收紧（域根在 workdir 时 workspace 只读，反之亦然）；workdir 域写入补外部硬链接检查；生成产物先过网关再 `mkdir`；宿主复制与工具输出落盘受域/认领约束；损坏的 `task_write_domains` 标 `taskWriteDomainsCorrupt` 并按拒绝处理；字面量域覆盖子树；大小写折叠只保留 Windows。
+  - 租约与 claim：`conflictingHolder` 让强制收回 / revert 命中域键；`acquire_workdir_write` 对域任务不再 `PATH_OUT_OF_SCOPE`；键加 `dir:` 前缀、根路径重叠、保守包含校验（域外 claim 拒绝）。
+  - 新增/更新定向测试：`workdir-domains`（26）、`workdir-lease`（13）、`policy`（19）、`gateway-read-only`（含域/认领/宿主复制）、`tool-output-spill`、`runs-tasks`（损坏列）、`tasks-write-domains`（简报折入 + cwd 限制）、`tasks-peer-coordination`（超时参数）、`tasks-claims`（合并）、`task-run-view`（元信息与解析降级）。
+  - 全量复跑：`pnpm test` 8179 passed / 44 skipped（768 文件通过、3 跳过，0 failed）；typecheck / eslint 0 error。
 - W7 收口修正：新工具补进副作用分类表（`send_to_task` local；`wait_for_task` / `claim` / `release` none）与信任分类（`send_to_task` / `claim` / `release` trusted；`wait_for_task` untrusted，结果摘要按任务输出看待）；网关与权限桥对测试替身做可选调用（`writeDomain` / `writeOutOfDomain` / `owningTask` / `writeDomainDenial`），生产装配不变；任务版平台规则新增三条后，`context-assembly` 的编号断言同步。
 
 未做 / 遗留：
