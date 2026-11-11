@@ -780,6 +780,13 @@ export const mcpServerSourceSchema = z.discriminatedUnion('kind', [
     key: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/),
     mcpb: mcpbPackageRefSchema.optional(),
   }),
+  // P4-M2：一个插件实例（`plugin_instances` 行）落地的 server，生命周期跟实例走
+  // （`plugins.instances.update/delete`），宿主按插件启用集注入（同 `plugin` 口径）。
+  z.object({
+    kind: z.literal('instance'),
+    pluginId: z.string().min(3).max(200),
+    instanceId: z.string().min(1).max(64),
+  }),
 ]);
 export type McpServerSource = z.infer<typeof mcpServerSourceSchema>;
 

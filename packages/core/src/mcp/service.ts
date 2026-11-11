@@ -222,9 +222,10 @@ export function enabledServers(servers: McpServer[]): McpServer[] {
  * 「应用级 enabled ∩ Bot 选中」——Bot 未勾选的 server 不暴露。
  *
  * P2 注入模型（`extraPluginIds` = 有效启用集，**必传**——P4 收口去掉 undefined=不过滤
- * 的旧口径）：`source.kind === 'plugin'` 的 server 按「应用级 enabled ∧ 其 `pluginId` ∈
- * 启用集」判定——不要求出现在 `selectedIds`（插件 server 的历史勾选读时忽略）；
- * 其他 server（手动 / MCPB 独立安装）维持 `selectedIds` 子集勾选不变。
+ * 的旧口径）：`source.kind === 'plugin'` 与 P4-M2 的 `source.kind === 'instance'` 的
+ * server 按「应用级 enabled ∧ 其 `pluginId` ∈ 启用集」判定——不要求出现在
+ * `selectedIds`（插件 server 的历史勾选读时忽略）；其他 server（手动 / MCPB 独立安装）
+ * 维持 `selectedIds` 子集勾选不变。
  */
 export function serversForBot(
   servers: McpServer[],
@@ -233,8 +234,9 @@ export function serversForBot(
 ): McpServer[] {
   const selected = new Set(selectedIds);
   return enabledServers(servers).filter((server) => {
-    // P2: a plugin-contributed server is gated by the effective plugin set.
-    if (server.source?.kind === 'plugin') {
+    // P2: a plugin-contributed server is gated by the effective plugin set; P4-M2
+    // instance-source servers follow the same gate via their owning plugin.
+    if (server.source?.kind === 'plugin' || server.source?.kind === 'instance') {
       return extraPluginIds.has(server.source.pluginId);
     }
     return selected.has(server.id);

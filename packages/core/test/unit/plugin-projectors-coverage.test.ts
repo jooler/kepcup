@@ -161,9 +161,11 @@ describe('capability kind registry (D105)', () => {
     }
   });
 
-  it('instance kinds are exactly mail + im (both materializers landed)', () => {
+  it('instance kinds are exactly mail + im + mcp (all materializers landed; P4-M2 for mcp)', () => {
     for (const adapter of CAPABILITY_KINDS) {
-      expect(adapter.hasInstances).toBe(adapter.kind === 'mail' || adapter.kind === 'im');
+      expect(adapter.hasInstances).toBe(
+        adapter.kind === 'mail' || adapter.kind === 'im' || adapter.kind === 'mcp',
+      );
     }
   });
 });

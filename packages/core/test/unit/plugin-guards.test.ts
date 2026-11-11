@@ -155,4 +155,64 @@ describe('assertPluginServersIntact', () => {
     expect(() => assertPluginServersIntact([plainServer()], [])).not.toThrow();
     expect(() => assertPluginServersIntact([], [plainServer()])).not.toThrow();
   });
+
+  // P4-M2：instance 来源 server 与 plugin 来源同受守卫（出口是实例表单，不是卸载）。
+  function instanceServer(overrides: Partial<McpServer> = {}): McpServer {
+    return {
+      id: 'plg_instance001',
+      name: '实例服务器',
+      transport: 'http',
+      url: 'https://docs.example.com/openapi/mcp',
+      enabled: true,
+      autoApprove: false,
+      auth: 'headers',
+      headers: { Authorization: 'secret:header:Authorization' },
+      source: { kind: 'instance', pluginId: 'io.github.tester/pkg', instanceId: 'pli_1' },
+      tier: 'developer',
+      ...overrides,
+    } as McpServer;
+  }
+
+  it('instance 来源 server：删除 / 改受保护字段 / 伪造新增被拒，改 name/enabled 放行', () => {
+    const withInstance = [pluginServer(), instanceServer(), plainServer()];
+    expectManaged(
+      () => assertPluginServersIntact(withInstance, [pluginServer(), plainServer()]),
+      /「实例服务器」由插件实例管理，请在插件卡里删除该服务/,
+    );
+    expectManaged(
+      () =>
+        assertPluginServersIntact(withInstance, [
+          pluginServer(),
+          instanceServer({ url: 'https://evil.example.com/mcp' }),
+          plainServer(),
+        ]),
+      /不能修改插件实例的 MCP 服务器的 url（「实例服务器」请在插件卡里更新实例）/,
+    );
+    expectManaged(
+      () =>
+        assertPluginServersIntact(withInstance, [
+          pluginServer(),
+          instanceServer({ source: { kind: 'instance', pluginId: 'io.github.tester/other', instanceId: 'pli_9' } }),
+          plainServer(),
+        ]),
+      /不能修改插件实例的 MCP 服务器的 source（「实例服务器」请在插件卡里更新实例）/,
+    );
+    expectManaged(
+      () =>
+        assertPluginServersIntact(withInstance, [
+          pluginServer(),
+          instanceServer(),
+          plainServer(),
+          instanceServer({ id: 'plg_forged0002' }),
+        ]),
+      /不能手工创建插件来源的 MCP 服务器/,
+    );
+    expect(() =>
+      assertPluginServersIntact(withInstance, [
+        pluginServer(),
+        instanceServer({ name: '改名', enabled: false, headers: { Authorization: 'secret:header:Authorization' } }),
+        plainServer(),
+      ]),
+    ).not.toThrow();
+  });
 });

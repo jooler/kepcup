@@ -787,6 +787,24 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     }),
     'mcp.setSecret': method(mcpSetSecretInputSchema, okOutputSchema, async (input) => {
       if (!services.mcp) throw new AppError('NOT_IMPLEMENTED', 'MCP 模块未就绪');
+      // P4-M2：实例 server 的凭据只能走实例表单（plugins.instances.update）——直写
+      // secrets 会绕过厂商模版的锁定值与占位符契约。固定投影（plugin 来源）同样拒绝，
+      // 与 settings.update 的 PLUGIN_MANAGED 口径一致。
+      const managed = services.domain!.settings
+        .get()
+        .mcpServers.find((server) => server.id === input.serverId);
+      if (managed?.source?.kind === 'instance') {
+        throw new AppError(
+          'PLUGIN_MANAGED',
+          `「${managed.name}」由插件实例管理，请在插件卡里更新该服务`,
+        );
+      }
+      if (managed?.source?.kind === 'plugin') {
+        throw new AppError(
+          'PLUGIN_MANAGED',
+          `「${managed.name}」由插件 ${managed.source.pluginId} 管理，请在扩展中心「已安装」里卸载该插件`,
+        );
+      }
       services.domain!.secrets.setValue(
         `mcp:${input.serverId}:${input.kind}:${input.name}`,
         input.value,
@@ -795,6 +813,21 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     }),
     'mcp.removeSecret': method(mcpRemoveSecretInputSchema, okOutputSchema, async (input) => {
       if (!services.mcp) throw new AppError('NOT_IMPLEMENTED', 'MCP 模块未就绪');
+      const managed = services.domain!.settings
+        .get()
+        .mcpServers.find((server) => server.id === input.serverId);
+      if (managed?.source?.kind === 'instance') {
+        throw new AppError(
+          'PLUGIN_MANAGED',
+          `「${managed.name}」由插件实例管理，请在插件卡里更新该服务`,
+        );
+      }
+      if (managed?.source?.kind === 'plugin') {
+        throw new AppError(
+          'PLUGIN_MANAGED',
+          `「${managed.name}」由插件 ${managed.source.pluginId} 管理，请在扩展中心「已安装」里卸载该插件`,
+        );
+      }
       services.domain!.secrets.removeValue(`mcp:${input.serverId}:${input.kind}:${input.name}`);
       return { ok: true as const };
     }),
