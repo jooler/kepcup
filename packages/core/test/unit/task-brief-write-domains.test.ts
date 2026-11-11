@@ -6,10 +6,10 @@ import type { RenderMessageOptions } from '../../src/agent/context/conversation.
 
 const options = {} as RenderMessageOptions;
 
-function brief(writeDomains: string[] | null, writes = true): TaskBrief {
+function brief(writeDomains: string[] | null, writes = true, title = '前端'): TaskBrief {
   return {
     task: { id: 'run_t' } as never,
-    title: '前端',
+    title,
     instruction: 'TASK',
     writes,
     writeDomains,
@@ -76,5 +76,41 @@ describe('task brief writes attribute (D123 ①)', () => {
     expect(value).not.toContain('>');
     expect(value).not.toContain('\n');
     expect(value).toContain('apps/');
+  });
+});
+
+describe('task brief header attributes (D123 ① review)', () => {
+  const headerValue = (line: string, name: string): string => {
+    const at = line.indexOf(`${name}="`);
+    if (at < 0) return '';
+    const rest = line.slice(at + name.length + 2);
+    return rest.slice(0, rest.indexOf('"'));
+  };
+
+  it('keeps a model-chosen title from breaking out of its attribute', () => {
+    const line = buildTaskBriefSegment(
+      brief(['apps/**'], true, '前"端<注入>\n第二行'),
+      options,
+      '/proj',
+    ).split('\n')[0]!;
+    expect(headerValue(line, 'title')).toBe('前 端 注入 第二行');
+    // The tag opens and closes exactly once, on one line.
+    expect(line).toBe(
+      '<task_brief task_id="run_t" title="前 端 注入 第二行" writes="apps/**" cwd="/proj">',
+    );
+  });
+
+  it('escapes a cwd that contains quotes or angle brackets', () => {
+    const line = buildTaskBriefSegment(brief(['apps/**']), options, '/proj"<x>').split('\n')[0]!;
+    expect(headerValue(line, 'cwd')).toBe('/proj x');
+    expect(line.endsWith('>')).toBe(true);
+  });
+
+  it('never renders an empty writes="" — an empty domain list is not writable', () => {
+    const text = buildTaskBriefSegment(brief([]), options, '/proj');
+    const line = text.split('\n')[0]!;
+    expect(line).toContain('writes="false"');
+    expect(line).not.toContain('writes=""');
+    expect(text).not.toContain('本任务只应写入：');
   });
 });
