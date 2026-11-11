@@ -70,17 +70,46 @@ function peerLine(task: TaskSummary): string {
   return parts.join('  ');
 }
 
+/** D123 ③: `启动前排队 247s（等写域（任务 run_x 持有 a/**））`; '' when unknown. */
+function startupQueueLabel(task: TaskSummary): string {
+  const ms = task.startupQueueMs;
+  if (ms === undefined) return '';
+  const seconds = Math.max(0, ms) / 1000;
+  // Tenths below 10s (short queues), whole seconds above it (a 247s queue
+  // needs no decimals); deterministic either way.
+  const text =
+    seconds < 10 ? `${(Math.round(seconds * 10) / 10).toFixed(1)}s` : `${Math.round(seconds)}s`;
+  const reason = task.startupQueueReason;
+  // An unknown reason is omitted, never guessed.
+  return `启动前排队 ${text}${reason !== null && reason !== undefined ? `（${segmentSafe(reason)}）` : ''}`;
+}
+
+/** D123 ③: the task's own row — same shape as a peer row, prefixed 本任务. */
+function selfLine(task: TaskSummary): string {
+  const parts = [`本任务 [${task.taskId}] ${untrusted(task.title)}`, task.state, writeLabel(task)];
+  const queue = startupQueueLabel(task);
+  if (queue.length > 0) parts.push(queue);
+  if (task.state === 'submitted') parts.push(`排队中（${task.queueReason ?? '等待启动'}）`);
+  if (task.awaitingInput) parts.push('等待用户输入');
+  return parts.join('  ');
+}
+
 /**
  * D123: the task loop's `<peer_tasks>` segment (design 59 §4.1) — sibling
- * tasks of the same (bot, conversation), the task itself excluded. No result
- * or progress text; titles stay `<untrusted>`. Deterministic, no model call.
+ * tasks of the same (bot, conversation) plus one `本任务` row for itself: state,
+ * write domain, and how long it queued before starting plus why (③ — the task
+ * cannot call a model while queued, so this snapshot is its only trace).
+ * No result or progress text; titles stay `<untrusted>`. Deterministic, no
+ * model call under it.
  */
 export function buildPeerTasksSegment(tasks: TaskSummary[], selfTaskId: string): string {
+  const self = tasks.find((task) => task.taskId === selfTaskId) ?? null;
   const peers = tasks.filter((task) => task.taskId !== selfTaskId);
-  if (peers.length === 0) return '';
+  if (self === null && peers.length === 0) return '';
   return [
     '<peer_tasks>',
-    '（同一对话中与你并行/相邻的任务；这是它们的状态，不含你自己）',
+    '（同一对话中与你并行/相邻的任务；`本任务` 一行是你自己（含启动前排队时长与原因），其余是 peers。都是状态，不含结果与进度）',
+    ...(self !== null ? [selfLine(self)] : []),
     ...peers.map(peerLine),
     '</peer_tasks>',
   ].join('\n');

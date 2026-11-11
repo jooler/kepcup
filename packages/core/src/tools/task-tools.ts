@@ -152,6 +152,14 @@ export interface TaskSummary {
   createdAt: number;
   endedAt: number | null;
   queueReason: string | null;
+  /**
+   * D123 ③: ms the task queued before its model run started (absent = not
+   * launched yet, or it never queued). Only the task itself reads it — the
+   * turn's `<tasks>` segment ignores it.
+   */
+  startupQueueMs?: number;
+  /** D123 ③: why it queued before starting (absent = no reason recorded). */
+  startupQueueReason?: string | null;
   awaitingInput: boolean;
   injectable: boolean;
   /** Latest visible progress line of the task (clipped), if any. */

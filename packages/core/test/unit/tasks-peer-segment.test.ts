@@ -23,7 +23,7 @@ function summary(overrides: Partial<TaskSummary> & { taskId: string }): TaskSumm
 }
 
 describe('buildPeerTasksSegment', () => {
-  it('lists sibling tasks with id, title, state, write domain and wait flags — never itself or progress', () => {
+  it('lists sibling tasks with id, title, state, write domain and wait flags — plus one 本任务 row, never progress', () => {
     const segment = buildPeerTasksSegment(
       [
         summary({ taskId: 'run_self', title: '自己' }),
@@ -53,23 +53,59 @@ describe('buildPeerTasksSegment', () => {
       'run_self',
     );
     expect(segment).toContain('<peer_tasks>');
-    expect(segment).not.toContain('run_self');
     expect(segment).not.toContain('进度不应出现');
-    expect(segment).toContain('[run_backend] <untrusted>后端改造</untrusted>  running  写域 packages/core/**');
-    expect(segment).toContain('[run_tests] <untrusted>补测试</untrusted>  running  写域 test/**, e2e/**');
+    // D123 ③: the task now sees one row for itself (state + domain), peers as before.
+    expect(segment).toContain('本任务 [run_self] <untrusted>自己</untrusted>  running  只读');
+    expect(segment).toContain(
+      '[run_backend] <untrusted>后端改造</untrusted>  running  写域 packages/core/**',
+    );
+    expect(segment).toContain(
+      '[run_tests] <untrusted>补测试</untrusted>  running  写域 test/**, e2e/**',
+    );
     expect(segment).toContain('等待用户输入');
     expect(segment).toContain('排队中（等写域（任务 run_backend 持有 packages/core/**））');
     expect(segment).toContain('[run_read] <untrusted>调研</untrusted>  running  只读');
   });
 
-  it('a whole-cwd writer reads 写（全域）; no siblings → empty segment', () => {
+  it('a whole-cwd writer reads 写（全域）; a lone self still gets its own row', () => {
     const whole = buildPeerTasksSegment(
       [summary({ taskId: 'run_a', writes: true, writeDomains: null })],
       'run_self',
     );
     expect(whole).toContain('写（全域）');
-    expect(buildPeerTasksSegment([summary({ taskId: 'run_self' })], 'run_self')).toBe('');
+    expect(buildPeerTasksSegment([summary({ taskId: 'run_self' })], 'run_self')).toContain(
+      '本任务 [run_self]',
+    );
     expect(buildPeerTasksSegment([], 'run_self')).toBe('');
+  });
+
+  it('reports how long it queued before starting, with the reason when known (D123 ③)', () => {
+    const queued = buildPeerTasksSegment(
+      [
+        summary({
+          taskId: 'run_self',
+          writes: true,
+          writeDomains: ['apps/**'],
+          startupQueueMs: 247_000,
+          startupQueueReason: '等写域（任务 run_c2 持有 other3/**）',
+        }),
+      ],
+      'run_self',
+    );
+    expect(queued).toContain('启动前排队 247s（等写域（任务 run_c2 持有 other3/**））');
+    const short = buildPeerTasksSegment(
+      [summary({ taskId: 'run_self', startupQueueMs: 2_400, startupQueueReason: null })],
+      'run_self',
+    );
+    // No reason recorded → say only the duration, never invent one.
+    expect(short).toContain('启动前排队 2.4s');
+    expect(short).not.toContain('启动前排队 2.4s（');
+  });
+
+  it('says nothing about queueing when the task never queued', () => {
+    const segment = buildPeerTasksSegment([summary({ taskId: 'run_self' })], 'run_self');
+    // The header mentions the field; the self row must not claim any duration.
+    expect(segment).not.toMatch(/启动前排队 \d/);
   });
 
   it('neutralizes a title trying to close <untrusted>', () => {
