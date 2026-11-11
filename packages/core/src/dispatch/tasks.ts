@@ -595,13 +595,40 @@ function sourceLines(messages: Message[], options: RenderMessageOptions): string
  * source messages (attachment lines included; images go to the vision channel
  * separately), injects recorded before the start, and the task framing.
  */
+/**
+ * D123 ①: declared write-domain globs, or null for whole-cwd / read-only tasks
+ * (`['**']` is the stored spelling of "whole cwd").
+ */
+function scopedWriteDomains(brief: TaskBrief): string[] | null {
+  const domains = brief.writeDomains;
+  if (!brief.writes || domains === null) return null;
+  return domains.length === 1 && domains[0] === '**' ? null : domains;
+}
+
+/** Model-chosen text must not break out of a tag attribute (§4.2). */
+function attributeSafe(text: string): string {
+  return text.replace(/["<>\r\n\t]+/g, ' ').trim();
+}
+
+/**
+ * D123 ①: the brief header's `writes` mirrors the real declaration — `true`
+ * only for whole-cwd writes, the globs for a scoped domain, `false` for
+ * read-only. Rendering every writer as `writes="true"` made a scoped task
+ * misread its own write domain (and hence its queue reason).
+ */
+function writesAttribute(writes: boolean, scoped: string[] | null): string {
+  if (!writes) return 'false';
+  return scoped === null ? 'true' : attributeSafe(scoped.join(', '));
+}
+
 export function buildTaskBriefSegment(
   brief: TaskBrief,
   options: RenderMessageOptions,
   cwd: string | null,
 ): string {
+  const scoped = scopedWriteDomains(brief);
   const lines: string[] = [
-    `<task_brief task_id="${brief.task.id}" title="${brief.title.replaceAll('"', "'")}" writes="${brief.writes}"${cwd !== null ? ` cwd="${cwd}"` : ''}>`,
+    `<task_brief task_id="${brief.task.id}" title="${brief.title.replaceAll('"', "'")}" writes="${writesAttribute(brief.writes, scoped)}"${cwd !== null ? ` cwd="${cwd}"` : ''}>`,
     '<instruction>',
     brief.instruction,
     '</instruction>',
@@ -616,9 +643,6 @@ export function buildTaskBriefSegment(
     lines.push('</later_instructions>');
   }
   lines.push('</task_brief>');
-  const domains = brief.writeDomains;
-  const scoped =
-    domains !== null && !(domains.length === 1 && domains[0] === '**') ? domains : null;
   if (scoped !== null) {
     lines.push(
       `本任务只应写入：${formatWriteDomain(scoped)}（相对 cwd）。域外写入会被拒绝；需要越域请用 ask_user 说明缘由，由对话轮改派或换域后重派。`,
