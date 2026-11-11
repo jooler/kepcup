@@ -40,6 +40,12 @@ export interface CreateTestCoreOptions {
   clock?: unknown;
   /** P10: virtual timer arming driven by the controllable clock. */
   timers?: TimerScheduler;
+  /**
+   * 任务失败自动重试的退避档位（CoreServicesOptions.taskAutoRetryDelaysMs）。
+   * 测试默认 `[]`（关闭）：既有失败路径用例按「第一次失败即结算」断言，不受
+   * 重试影响；需要验证重试策略的用例显式传 `TASK_AUTO_RETRY_DELAYS_MS`。
+   */
+  taskAutoRetryDelaysMs?: readonly number[];
   /** P11 test hook: fake browser host (pages/cookies/downloads assertions). */
   browserRpc?: unknown;
   /** P12 test hook: replaces the enhanced-level backend (Lima/Podman stub). */
@@ -202,5 +208,7 @@ export async function createTestCore(options: CreateTestCoreOptions = {}): Promi
       ? { projectorWrap: options.projectorWrap as never }
       : {}),
     toolLockTrustFirstList: options.toolLockTrustFirstList ?? true,
+    // 任务失败自动重试：测试宿主默认关闭（见 CreateTestCoreOptions 注释）。
+    taskAutoRetryDelaysMs: options.taskAutoRetryDelaysMs ?? [],
   });
 }

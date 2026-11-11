@@ -40,6 +40,8 @@ export async function createTestStack(
     /** P10: controllable clock + its paired virtual timer scheduler. */
     clock?: unknown;
     timers?: TimerScheduler;
+    /** 任务失败自动重试档位（缺省 [] = 关闭，见 CreateTestCoreOptions）。 */
+    taskAutoRetryDelaysMs?: CreateTestCoreOptions['taskAutoRetryDelaysMs'];
     /** P11 test hook: fake browser host (see createFakeBrowserHost). */
     browserRpc?: unknown;
     /** P12 test hook: replaces the enhanced-level backend (Lima/Podman stub). */
@@ -83,6 +85,9 @@ export async function createTestStack(
     ...(options.memoryEmbedder !== undefined ? { memoryEmbedder: options.memoryEmbedder } : {}),
     ...(options.clock !== undefined ? { clock: options.clock } : {}),
     ...(options.timers !== undefined ? { timers: options.timers } : {}),
+    ...(options.taskAutoRetryDelaysMs !== undefined
+      ? { taskAutoRetryDelaysMs: options.taskAutoRetryDelaysMs }
+      : {}),
     ...(options.browserRpc !== undefined ? { browserRpc: options.browserRpc } : {}),
     ...(options.enhancedSandbox !== undefined ? { enhancedSandbox: options.enhancedSandbox } : {}),
     ...(options.distroInstaller !== undefined ? { distroInstaller: options.distroInstaller } : {}),

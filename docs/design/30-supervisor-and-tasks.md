@@ -277,19 +277,21 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 | 任务终态已写、投递前崩溃 | 对账补投（条目已在库里） |
 | 对话轮消费途中崩溃 | `result_consumed_at` 仍为空 → 对账补投；对话轮可能已说过一部分，重复一次可接受 |
 | 任务在对话轮运行期间结算 | 进 mailbox 缓冲，release 时排空（**不是**丢弃） |
-| 任务长时间没有活动（Agent 无响应、工具卡住） | D93 无活动看门狗：`running` 且无引擎活动超过 `taskLoop.stallTimeoutMinutes` → 强制 `failed`（`stalled`），先写 `failure` 条目再写终态 |
-| 任务超过最长运行时间 | reaper 按 `taskLoop.maxWallMinutes`（默认 240 分钟，0 = 不限制）→ 强制 `failed`（`wall_timeout`），先写 `failure` 条目再写终态 |
+| 任务长时间没有活动（Agent 无响应、工具卡住） | D93 无活动看门狗：`running` 且无引擎活动超过 `taskLoop.stallTimeoutMinutes` → 强制 `failed`（`stalled`）；作为普通失败先入自动重试（§3.2 失败自动重试），用尽档位才写 `failure` 条目结算 |
+| 任务超过最长运行时间 | reaper 按 `taskLoop.maxWallMinutes`（默认 240 分钟，0 = 不限制）→ 强制 `failed`（`wall_timeout`）；同上，先走自动重试再结算 |
 | 对话轮反复在处理触发之前失败（例如构建上下文时抛错） | 不消费、按 at-least-once 补投，至多 `TASK_REDELIVER_MAX_ATTEMPTS` 次，之后标记消费并在对话里明示放弃 |
 | 免打扰时段 | 任务结果**不停放**：任务由用户发起，交付结果不是主动消息（`deliverEventToBot` 的 quiet-hours 停放不适用） |
 
 实现次序固定为：**终态条目（main.db）→ 任务终态（runs.db）→ 投递 → 对话轮终态时标记消费**。语义是 at-least-once；重复消费时对话轮从时间线看得到自己已经转述过（上一条回复就在那里），通常只会得到「没有新话要说」。反过来（先标记再投递）会把丢失变成沉默，禁止。
+
+**失败自动重试（先重试、后提示）。** 普通执行失败（`failed` 且无结构化 setup——缺 setup 的失败由设置卡接管续跑，§7.5；`interrupted` / `cancelled` 涉及用户决定或外部副作用，永不自动重试）不立即结算：任务写回 `submitted`（`queued`），按固定退避档位依次重试——第 N 次失败等 `TASK_AUTO_RETRY_DELAYS_MS[N-1]`（1/2/3/5/8/13/21/34 分钟），共 8 次重试、连同首跑 9 次执行；**用尽档位的最后一次失败才按上文正常结算**（failure 条目 + 唤醒），条目注明「此前已自动重试 N 次仍未成功」。等待期对用户静默——不写条目、不唤醒、不弹横幅，只有任务卡状态行显示「第 N 次执行失败，约 X 分钟后自动重试」（走 `queueReason` 通道）。已重试次数与下次重试时刻持久化在 run 行（`task_retry_attempts` / `task_retry_at`，runs/0016），重启后由启动 `resume` 与 reaper 的 `#pump` 按持久化时刻兜底推进（进程内定时器只是加速，不承担正确性）。重试复用同一 run 行与任务卡（不新建卡片）；退避中的任务不到点不启动（`#pump` 闸），不占并发额度；中途被取消 / 中断 / 删除对话即按原语义处理，重试计划作废。
 
 ### 3.3 唤醒条件（宿主确定性判断，不是模型判断）
 
 | 情况 | 唤醒对话轮 |
 |---|---|
 | 任务 `completed` 且结果非空 | **是**——结果要经对话轮转述（§6.1） |
-| 任务 `failed` / `interrupted` | 是 |
+| 任务 `failed`（自动重试用尽后的最终失败，§3.2）/ `interrupted` | 是 |
 | 任务 `cancelled`（对话轮 `cancel_task`） | 否——Bot 自己的决定，`failure` 条目照写，直接标记消费 |
 | 任务 `cancelled`（用户在卡片上取消，`runs.cancel`） | **是（D93）**——写 `failure` 条目（`errorReason='user_cancelled'`）并唤醒 Bot，明确告知不要自行重派。委派取消 / 更新闸门取消不算用户任务卡取消，不唤醒 |
 | 任务 `cancelled`（关对话 / 删 Bot / 移出群） | 否——没有可唤醒的对象 |

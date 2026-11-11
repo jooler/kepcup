@@ -7,6 +7,7 @@ import {
   type AskUserValues,
   BROWSER_HANDBACK_COALESCE_MS,
   CONTINUATION_REPLAY_TOKEN_BUDGET,
+  TASK_AUTO_RETRY_DELAYS_MS,
   TASK_CAPABILITIES_MAX,
   TASK_CONCURRENCY_GLOBAL,
   TASK_CONCURRENCY_PER_CONVERSATION,
@@ -366,6 +367,12 @@ export interface TaskHostDeps {
   pendingUncertainRepeat?(runIds: readonly string[]): boolean;
   /** Test overrides of the D75 constants. */
   limits?: Partial<TaskHostLimits>;
+  /**
+   * 任务失败自动重试的退避档位（TASK_AUTO_RETRY_DELAYS_MS 的注入点）：failed
+   * 且缺 setup 的任务按档位依次重试，用尽后按普通失败结算。空 / 缺省 = 关闭
+   * （测试宿主默认关闭；生产由 orchestrator 注入完整档位）。
+   */
+  autoRetryDelaysMs?: readonly number[];
   /** Runs at the end of every reaper pass (`sweep`, same `now`): the orchestrator's cleanup. */
   onSweep?: (now: number) => void;
   /**
@@ -759,6 +766,7 @@ const STARTUP_QUEUE_MIN_MS = 1_000;
 export class TaskHost implements TaskToolFacade {
   readonly #deps: TaskHostDeps;
   readonly #limits: TaskHostLimits;
+  readonly #autoRetryDelaysMs: readonly number[];
   readonly #launched = new Map<string, LaunchedTask>();
   /** D123 ③: task id → when/how long it has been seen queued (before launch). */
   readonly #queueTrace = new Map<string, { since: number; reason: string }>();
@@ -808,9 +816,17 @@ export class TaskHost implements TaskToolFacade {
   #pumpAgain = false;
   /** >0 while a lifecycle abort loops over tasks (pump once at the end). */
   #pumpHeld = 0;
+  /** 任务失败自动重试：task id → 到点触发的定时器（launch / 最终结算时清除）。 */
+  readonly #retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /**
+   * 任务失败自动重试·入账：执行已按可重试失败收账、等执行体真正收尾
+   * （control.finish()，或 sweep 驱逐兜底）后写回 queued 退避。
+   */
+  readonly #retryPending = new Map<string, TaskOutcome>();
 
   constructor(deps: TaskHostDeps) {
     this.#deps = deps;
+    this.#autoRetryDelaysMs = deps.autoRetryDelaysMs ?? [];
     this.#limits = {
       perConversation: deps.limits?.perConversation ?? TASK_CONCURRENCY_PER_CONVERSATION,
       global: deps.limits?.global ?? TASK_CONCURRENCY_GLOBAL,
@@ -1945,6 +1961,42 @@ export class TaskHost implements TaskToolFacade {
     // host's decision — cancel, forced failure — wins over the unwinding
     // executor's report).
     const outcome = this.#unsettled.get(taskId) ?? reported;
+    // 任务失败自动重试的两道「旧报告」闸：上一档执行已按失败入账
+    // （#retryPending）、或已写回 queued 退避（行 queued + task_retry_at）之后，
+    // 被 abort 的旧执行体 unwind 还会补一次 settle（通常 'cancelled'）——宿主的
+    // 退避决定优先于 unwind 报告，无 cancel 条目（非用户 / 闸门取消）一律吞掉；
+    // 带 cancel 条目的取消照常生效并作废重试计划。
+    if (this.#retryPending.has(taskId) || (task.status === 'queued' && task.taskRetryAt != null)) {
+      const cancelled = this.#deps.messages
+        .taskEvents(taskId)
+        .some((event) => taskEventOf(event)?.phase === 'cancel');
+      if (!cancelled) {
+        this.#deps.logger.info(
+          { taskId, reported: outcome.status },
+          'task settle swallowed; auto retry pending',
+        );
+        return task;
+      }
+      this.#retryPending.delete(taskId);
+    }
+    // 重试入账（两阶段的第一步）：failed 且缺 setup 的任务不立即结算——先记下
+    // 待重试的 outcome 并按「已结算」收尾本次执行（settledAt / abort，sweep 的
+    // 驱逐兜底照常可用），等执行体真正收尾（control.finish()——executor 的
+    // settle 恒先于 finish；回调丢失由 sweep 驱逐兜底）再写回 `queued` 退避
+    // （#retryRequeueIfPending）。行保持原状，unwind 期间的补投 settle 被上面
+    // 的闸吞掉。用尽档位的最后一次失败跳过入账，落入下方正常结算路径。
+    const attempts = task.taskRetryAttempts ?? 0;
+    if (
+      this.#autoRetryDelaysMs.length > 0 &&
+      outcome.status === 'failed' &&
+      outcome.setup === undefined &&
+      attempts < this.#autoRetryDelaysMs.length &&
+      task.status !== 'queued' &&
+      task.botId !== null &&
+      task.conversationId !== null
+    ) {
+      return this.#armAutoRetry(task, outcome);
+    }
     let error = outcome.error ?? null;
     let entry: Message | null = null;
     let created = true;
@@ -2021,7 +2073,16 @@ export class TaskHost implements TaskToolFacade {
       ...(outcome.setup !== undefined ? { setup: outcome.setup } : {}),
       ...(status !== 'completed' && errorReason !== undefined ? { errorReason } : {}),
       ...(keepProgress !== undefined ? { lastProgress: keepProgress } : {}),
+      // 终态落定：退避计时作废（重试用尽 / 退避期取消等），不留过期时刻。
+      taskRetryAt: null,
     });
+    // 终态落定：作废任何残留的重试计划（入账与退避定时器）。
+    this.#retryPending.delete(taskId);
+    const retryTimer = this.#retryTimers.get(taskId);
+    if (retryTimer !== undefined) {
+      clearTimeout(retryTimer);
+      this.#retryTimers.delete(taskId);
+    }
     // D123 §4.3: tasks waiting on this one get the terminal digest; this
     // task's own pending waits / send counters / claims are gone with it.
     this.#resolvePeerWaits(updated);
@@ -2040,6 +2101,80 @@ export class TaskHost implements TaskToolFacade {
     this.#afterTerminal(updated, entry);
     this.#pump();
     return updated;
+  }
+
+  /**
+   * 任务失败自动重试·入账（两阶段第一步）：记下待重试的 outcome，并按「已
+   * 结算」收尾本次执行（settledAt / abort，sweep 的驱逐兜底照常可用）。不改
+   * run 行——executor 的 settle 恒先于 control.finish()，等收尾回调（或 sweep
+   * 驱逐兜底）里 #retryRequeueIfPending 写回 `queued` 退避；unwind 期间的补投
+   * settle 由 settle 顶部的「旧报告」闸吞掉。无在途执行（sweep 重放等）时直接
+   * 兑现 requeue。
+   */
+  #armAutoRetry(task: Run, outcome: TaskOutcome): Run {
+    this.#unsettled.delete(task.id);
+    this.#retryPending.set(task.id, outcome);
+    this.#deps.logger.info(
+      { taskId: task.id, attempt: (task.taskRetryAttempts ?? 0) + 1, error: outcome.error ?? null },
+      'task failed; auto retry armed',
+    );
+    const launched = this.#launched.get(task.id);
+    if (launched === undefined) {
+      this.#retryRequeueIfPending(task.id);
+      return this.#deps.runs.get(task.id) ?? task;
+    }
+    launched.settledAt ??= this.#deps.clock.now();
+    launched.controller.abort();
+    return task;
+  }
+
+  /**
+   * 任务失败自动重试·兑现（两阶段第二步）：执行体收尾后把任务写回 `queued`
+   * （`task_retry_attempts` +1、`task_retry_at` = now + 下一档延迟），登记到点
+   * `#pump()` 的定时器。对用户静默——不写 failure 条目、不唤醒 Bot；任务卡
+   * 状态行经 `#queueReason` 显示「第 N 次执行失败，约 X 分钟后自动重试」。
+   * 重启后定时器丢失，由 sweep / resume 的 `#pump()` 按持久化的
+   * `task_retry_at` 兜底推进。
+   */
+  #retryRequeueIfPending(taskId: string): void {
+    const outcome = this.#retryPending.get(taskId);
+    if (outcome === undefined) return;
+    this.#retryPending.delete(taskId);
+    const task = this.#deps.runs.get(taskId);
+    if (task === null || isTerminalStatus(task.status)) return;
+    const attempts = task.taskRetryAttempts ?? 0;
+    const delayMs = this.#autoRetryDelaysMs[attempts]!;
+    this.#deps.runs.update(taskId, {
+      status: 'queued',
+      ...(outcome.error !== undefined && outcome.error !== null ? { error: outcome.error } : {}),
+      ...(outcome.errorReason !== undefined ? { errorReason: outcome.errorReason } : {}),
+      taskRetryAttempts: attempts + 1,
+      taskRetryAt: this.#deps.clock.now() + delayMs,
+      // 强制失败可能打断等待输入的任务：退避期不再显示「等待用户输入」。
+      awaitingInput: false,
+      lastProgress: `第 ${attempts + 1} 次执行失败，约 ${Math.round(delayMs / 60_000)} 分钟后自动重试`,
+    });
+    // 退避期不持有写域声明；重试启动时按行重新取。
+    this.#deps.claims?.clear(taskId);
+    this.#deps.logger.info(
+      {
+        taskId,
+        attempt: attempts + 1,
+        maxAttempts: this.#autoRetryDelaysMs.length,
+        delayMs,
+        error: outcome.error ?? null,
+      },
+      'task failed; auto retry scheduled',
+    );
+    this.publishUpdate(taskId);
+    const prior = this.#retryTimers.get(taskId);
+    if (prior !== undefined) clearTimeout(prior);
+    const timer = setTimeout(() => {
+      this.#retryTimers.delete(taskId);
+      this.#pump();
+    }, delayMs);
+    timer.unref?.();
+    this.#retryTimers.set(taskId, timer);
   }
 
   /**
@@ -2386,6 +2521,12 @@ export class TaskHost implements TaskToolFacade {
         continue;
       }
     }
+    // 任务失败自动重试：执行体收尾回调丢失（unwind 卡死被驱逐）时由 reaper
+    // 兑现等待中的退避 requeue。
+    for (const taskId of [...this.#retryPending.keys()]) {
+      if (this.#launched.has(taskId)) continue;
+      this.#safely(() => this.#retryRequeueIfPending(taskId));
+    }
     this.#pump();
     this.#reconcile(now);
     const onSweep = this.#deps.onSweep;
@@ -2713,6 +2854,9 @@ export class TaskHost implements TaskToolFacade {
           if (this.#launched.has(task.id)) continue;
           // Stopped, its settlement pending (#unsettled): never launched again.
           if (this.#unsettled.has(task.id)) continue;
+          // 任务失败自动重试：还在退避等待期的任务不到点不启动（定时器或
+          // sweep 的 #pump 到点后会再次走到这里）。
+          if (task.taskRetryAt != null && task.taskRetryAt > this.#deps.clock.now()) continue;
           if (this.#launched.size >= this.#limits.global) break;
           if (this.#blockedBy(task) !== null) continue;
           this.#launch(task);
@@ -2865,6 +3009,16 @@ export class TaskHost implements TaskToolFacade {
     if (launched !== undefined) {
       return task.status === 'queued' ? (launched.waitReason ?? '启动中') : null;
     }
+    // 任务失败自动重试：退避等待期在任务卡状态行展示失败次数与下一次重试
+    // 时间（卡片走「排队中：{reason}」，不弹任何横幅、不唤醒 Bot）。
+    if (task.status === 'queued' && task.taskRetryAt != null) {
+      const remaining = task.taskRetryAt - this.#deps.clock.now();
+      if (remaining > 0) {
+        const wait =
+          remaining < 60_000 ? '不到 1 分钟' : `约 ${Math.round(remaining / 60_000)} 分钟`;
+        return `第 ${task.taskRetryAttempts ?? 0} 次执行失败，${wait}后自动重试`;
+      }
+    }
     return this.#blockedBy(task) ?? '等待启动';
   }
 
@@ -2872,6 +3026,17 @@ export class TaskHost implements TaskToolFacade {
     if (task.botId === null || task.conversationId === null) {
       this.settle(task.id, { status: 'failed', error: '任务缺少 Bot 或对话' });
       return;
+    }
+    // 任务失败自动重试：真正启动即清退避计时（attempts 保留，供下一次失败
+    // 计算还剩几档）。
+    this.#retryPending.delete(task.id);
+    if (task.taskRetryAt != null) {
+      const timer = this.#retryTimers.get(task.id);
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        this.#retryTimers.delete(task.id);
+      }
+      this.#deps.runs.update(task.id, { taskRetryAt: null });
     }
     // D123 ③: the submit-time queue (the only phase without a model call) is
     // transferred to the launch snapshot, so the task can see what it waited on.
@@ -2980,6 +3145,8 @@ export class TaskHost implements TaskToolFacade {
         if (this.#launched.get(task.id) !== launched) return;
         this.#queueTrace.delete(launched.taskId);
         this.#launched.delete(launched.taskId);
+        // 任务失败自动重试：执行体真正收尾了，兑现等待中的退避 requeue。
+        this.#retryRequeueIfPending(launched.taskId);
         this.#pump();
       },
     };
@@ -3407,8 +3574,14 @@ export class TaskHost implements TaskToolFacade {
             '用户若关闭设置卡片放弃配置，你会另行收到通知，届时再按用户意愿给新的反馈（那时才可给替代做法）。',
           ].join('\n')
         : '';
+    // 任务失败自动重试用尽后的最终结算：让 Bot 与执行记录知道已经重试过。
+    const retryNote =
+      task.taskRetryAttempts !== undefined && task.taskRetryAttempts > 0
+        ? `此前已自动重试 ${task.taskRetryAttempts} 次仍未成功。`
+        : '';
     return [
       `任务${label}${error !== null && error.length > 0 ? `：${error}` : ''}`,
+      retryNote,
       note,
       setupNote,
       digest,

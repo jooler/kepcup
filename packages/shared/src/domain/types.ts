@@ -2218,6 +2218,13 @@ export const runSchema = z.object({
    * 非任务 run 与宿主自己派的任务（未声明）为 null。
    */
   taskCapabilities: z.array(z.string()).nullable().default(null),
+  /**
+   * 任务失败自动重试（TASK_AUTO_RETRY_DELAYS_MS）：已执行的自动重试次数；
+   * 非任务 run 与从未自动重试过的任务为缺省 0。等待重试的任务仍为 `queued`。
+   */
+  taskRetryAttempts: z.number().int().nonnegative().optional(),
+  /** 下次自动重试的时刻（epoch ms）；不在退避等待期为 null / 缺省。 */
+  taskRetryAt: z.number().nullable().optional(),
   /** 派出该任务的对话轮。 */
   originRunId: z.string().nullable().default(null),
   /** 任务结果被对话轮消费的时间（§3.2）；未消费为 null。 */
