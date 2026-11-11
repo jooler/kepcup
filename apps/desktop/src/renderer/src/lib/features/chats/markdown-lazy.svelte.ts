@@ -1,5 +1,5 @@
 import type { Component } from 'svelte';
-import type { PluginConfig, StreamdownControlsConfig } from 'streamdown-svelte';
+import type { PluginConfig, StreamdownComponents, StreamdownControlsConfig } from 'streamdown-svelte';
 
 /** Markdown 渲染的统一控件配置：表格内容不需要导出下载，工具条只留复制 / 全屏。 */
 export const MARKDOWN_CONTROLS: StreamdownControlsConfig = { table: { download: false } };
@@ -8,6 +8,10 @@ export interface MarkdownComponentProps {
   content: string;
   controls?: StreamdownControlsConfig;
   plugins?: PluginConfig;
+  /** 关掉流式残缺语法补全（用户消息是完整文本，不需要 remend）。 */
+  parseIncompleteMarkdown?: boolean;
+  /** 元素级覆盖（用户气泡用它把 @提及链接渲染成胶囊）。 */
+  components?: StreamdownComponents;
 }
 
 /**
