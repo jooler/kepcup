@@ -36,6 +36,8 @@ export type TaskRunEntry =
     }
   | { kind: 'progress'; id: string; text: string }
   | { kind: 'steer'; id: string; text: string }
+  /** D123: a message from a sibling task (steered as `<peer_task_message>`). */
+  | { kind: 'peer'; id: string; fromTaskId: string; fromTitle: string | null; text: string }
   | { kind: 'system'; id: string; text: string };
 
 /** 时间线上的渲染分组：连续的 tool 条目收进一张工具卡（与编程 Agent 的对话一致）。 */
@@ -150,7 +152,13 @@ export function buildTaskRunTimeline(steps: readonly RunStep[]): TaskRunEntry[] 
         break;
       }
       case 'steer': {
-        const text = steerDisplayText(textOf(payload.text));
+        const raw = textOf(payload.text);
+        const peer = peerMessageOf(raw);
+        if (peer !== null) {
+          entries.push({ kind: 'peer', id: step.id, ...peer });
+          break;
+        }
+        const text = steerDisplayText(raw);
         if (text.length > 0) entries.push({ kind: 'steer', id: step.id, text });
         break;
       }
@@ -174,6 +182,23 @@ export function buildTaskRunTimeline(steps: readonly RunStep[]): TaskRunEntry[] 
  */
 export function isToolProgressText(text: string): boolean {
   return text.startsWith('正在');
+}
+
+/**
+ * D123: a steered `<peer_task_message from_task="…" title="…">` (a sibling
+ * task's message) as a timeline entry; null for ordinary steers.
+ */
+export function peerMessageOf(
+  text: string,
+): { fromTaskId: string; fromTitle: string | null; text: string } | null {
+  const message = /<peer_task_message\b([^>]*)>([\s\S]*?)<\/peer_task_message>/.exec(text);
+  if (message === null) return null;
+  const attributes = message[1] ?? '';
+  const fromTaskId = /from_task="([^"]*)"/.exec(attributes)?.[1] ?? '';
+  if (fromTaskId.length === 0) return null;
+  const fromTitle = /title="([^"]*)"/.exec(attributes)?.[1] ?? null;
+  const untrusted = /<untrusted>([\s\S]*?)<\/untrusted>/.exec(message[2] ?? '');
+  return { fromTaskId, fromTitle, text: (untrusted?.[1] ?? message[2] ?? '').trim() };
 }
 
 /**

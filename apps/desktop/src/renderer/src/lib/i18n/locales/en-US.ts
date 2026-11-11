@@ -83,6 +83,14 @@ export const enUS = {
   'chats.errorCode.INTERNAL': 'Internal error',
   'chats.errorCode.RUN_READ_ONLY':
     'This run is read-only: writing files, running commands that write, generating media, and installing skills or environments must happen in a write task',
+  // D123: write domains / claims / peer coordination
+  'chats.errorCode.WRITE_OUT_OF_DOMAIN':
+    'This task may only write inside its declared write domain; the path is outside it. A task must use ask_user to request reassignment',
+  'chats.errorCode.WRITE_CLAIMED':
+    'Another task claimed this path: wait for it to release it, or let the tasks coordinate first',
+  'chats.errorCode.TASK_PEER_NOT_FOUND': 'No such task in this conversation',
+  'chats.errorCode.TASK_PEER_FINISHED': 'The target task has already finished',
+  'chats.errorCode.TASK_WAIT_CYCLE': 'Task waits form a cycle; the request was refused',
   'chats.errorCode.CATASTROPHIC_COMMAND':
     'This command would destroy the system, your home directory or the app data directory and was blocked by the safety policy',
   'chats.errorCode.TASK_LIMIT_REACHED':
@@ -1712,6 +1720,9 @@ export const enUS = {
   'task.run.action.call': 'Called',
   'task.run.action.plan': 'Updated plan',
   'task.run.steer': 'Add instruction',
+  'task.run.peerMessage': 'From task {id}{title}',
+  'task.run.writeDomains': 'Write domain {list}',
+  'task.run.claims': 'Claimed {list}',
   // D115 inject dock (docs/design/56 §1): user steering entry at the bottom of the task page.
   'task.run.injectPlaceholder': 'Add an instruction, Enter to send…',
   'task.run.injectSend': 'Send',

@@ -22,6 +22,8 @@ function view(overrides: Partial<TaskView> = {}): TaskView {
     state: 'running',
     status: 'running',
     writes: true,
+    writeDomains: null,
+    claims: [],
     cwdKind: 'workdir',
     queueReason: null,
     awaitingInput: false,

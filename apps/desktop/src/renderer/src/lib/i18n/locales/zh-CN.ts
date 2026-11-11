@@ -77,6 +77,13 @@ export const zhCN = {
   // D75（design 30 §2.1 / §5.1）：对话只读、写操作在任务里做。
   'chats.errorCode.RUN_READ_ONLY':
     '这次执行是只读的：写文件、运行会写入的命令、生成媒体、安装技能或环境都要在写任务里进行',
+  // D123：写域 / 认领 / 任务间协调
+  'chats.errorCode.WRITE_OUT_OF_DOMAIN':
+    '这个任务只能写声明过的写域，该路径在域外；越域需要任务用 ask_user 说明，由对话轮改派或换域',
+  'chats.errorCode.WRITE_CLAIMED': '该路径已被另一个任务认领：等它释放，或让两个任务先协商',
+  'chats.errorCode.TASK_PEER_NOT_FOUND': '同一对话里没有这个任务',
+  'chats.errorCode.TASK_PEER_FINISHED': '目标任务已经结束',
+  'chats.errorCode.TASK_WAIT_CYCLE': '任务之间的等待形成了环，已拒绝',
   'chats.errorCode.CATASTROPHIC_COMMAND':
     '该命令会破坏系统、用户目录或应用数据目录，已被安全策略直接拒绝',
   'chats.errorCode.TASK_LIMIT_REACHED': '任务数已达上限，请等进行中的任务结束后再试',
@@ -1659,6 +1666,9 @@ export const zhCN = {
   'task.run.action.call': '调用',
   'task.run.action.plan': '更新计划',
   'task.run.steer': '追加指令',
+  'task.run.peerMessage': '来自任务 {id}{title}',
+  'task.run.writeDomains': '写域 {list}',
+  'task.run.claims': '认领 {list}',
   // D115 注入坞（docs/design/56 §1）：任务详情页最底部的用户直注入口。
   'task.run.injectPlaceholder': '追加指令，Enter 发送…',
   'task.run.injectSend': '发送',
