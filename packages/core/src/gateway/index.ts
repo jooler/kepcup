@@ -382,7 +382,7 @@ export class ToolGateway {
    * bridge uses this only to annotate its 'ask' cards.
    */
   writeDomainDenial(identity: RunIdentity, resolvedPath: string): string | null {
-    return this.#deps.workdirs.writeOutOfDomain(identity, resolvedPath);
+    return this.#deps.workdirs.writeOutOfDomain?.(identity, resolvedPath) ?? null;
   }
 
   /**
@@ -393,7 +393,7 @@ export class ToolGateway {
   writeClaimDenial(identity: RunIdentity, resolvedPath: string): string | null {
     const claims = this.#deps.claims;
     if (claims === undefined) return null;
-    const task = this.#deps.workdirs.owningTask(identity);
+    const task = this.#deps.workdirs.owningTask?.(identity) ?? null;
     if (task === null || task.botId === null || task.conversationId === null) return null;
     return claims.denial(task.id, task.botId, task.conversationId, resolvedPath);
   }
@@ -445,7 +445,7 @@ export class ToolGateway {
       if (denial !== null) {
         return { kind: 'forbidden', resolvedPath: resolved, reason: denial, readOnlyRun: true };
       }
-      const outOfDomain = this.#deps.workdirs.writeOutOfDomain(identity, resolved);
+      const outOfDomain = this.#deps.workdirs.writeOutOfDomain?.(identity, resolved) ?? null;
       if (outOfDomain !== null) {
         return { kind: 'forbidden', resolvedPath: resolved, reason: outOfDomain, outOfDomain: true };
       }
@@ -847,7 +847,7 @@ export class ToolGateway {
     const availability = await backend.probe();
     const workdir = this.#deps.workdirs.policyInfo(identity);
     // D123: declared write domain (null when undeclared / whole cwd).
-    const writeDomain = this.#deps.workdirs.writeDomain(identity);
+    const writeDomain = this.#deps.workdirs.writeDomain?.(identity) ?? null;
     // Bound conversation: commands default to the workdir directory and the
     // sandbox permits listening on / reaching localhost (dev servers).
     const cwd = workdir !== null ? workdir.path : workspace;

@@ -119,6 +119,13 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   inject_task: 'local',
   cancel_task: 'local',
   list_tasks: 'none',
+  /** D123：给兄弟任务发消息（写入接收方私有时间线，可能改变它的后续动作）。 */
+  send_to_task: 'local',
+  /** D123：等待兄弟任务终态（只读它的结果摘要）。 */
+  wait_for_task: 'none',
+  /** D123：运行期路径认领 / 释放（纯内存协调状态）。 */
+  claim: 'none',
+  release: 'none',
   /** 宿主 SubAgent（D66）：子 run 自己的外部调用按子 run 入账。 */
   delegate_task: 'local',
   collect_delegate_results: 'none',

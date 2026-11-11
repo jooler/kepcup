@@ -257,6 +257,37 @@ describe('D123 peer coordination', () => {
     stepA.release();
   }, 30_000);
 
+  it('wait_for_task called inside a task blocks on the sibling and resumes with its result', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const bot = await makeBot(core, '工具等待');
+    const conv = await openDirect(core, bot.id);
+    const stepB = step().expect(isTaskRequest('TASK-B')).hold().replyText('B 的结果 WRAP-UP');
+    llm.script('mock-main', [stepB]);
+    const b = await startHeld(stack, bot.id, conv.id, 'TASK-B');
+    await waitFor(() => (stepB.consumed ? true : null), { label: 'B request in flight' });
+    const stepA1 = step()
+      .expect(isTaskRequest('TASK-A'))
+      .replyToolCall('wait_for_task', { task_id: b.taskId });
+    const stepA2 = step().expect(isTaskRequest('TASK-A')).replyText('A 完成了');
+    llm.script('mock-main', [stepA1, stepA2]);
+    const a = host(stack).start(turnIdentity(bot.id, conv.id), {
+      title: 'peer',
+      instruction: 'TASK-A',
+      sourceMessageIds: [],
+      writes: false,
+    });
+    await waitStatus(stack, a.taskId, ['running'], 'A running');
+    // A is parked inside wait_for_task (its tool call is in flight); B finishes.
+    await waitFor(() => (stepA1.consumed ? true : null), { label: 'A wait tool call' });
+    expect(domain(stack).runs.getOrThrow(a.taskId).status).toBe('running');
+    stepB.release();
+    await waitStatus(stack, b.taskId, ['completed'], 'B completed');
+    await waitStatus(stack, a.taskId, ['completed'], 'A completed');
+    const terminal = taskEntries(stack, a.taskId).find((entry) => entry.phase === 'result');
+    expect(terminal?.text ?? '').toContain('A 完成了');
+  }, 30_000);
+
   it('cancelling the waiting task aborts wait_for_task and unregisters it', async () => {
     const stack = await start();
     const { core, llm } = stack;
