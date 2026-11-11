@@ -74,11 +74,10 @@ function peerLine(task: TaskSummary): string {
 function startupQueueLabel(task: TaskSummary): string {
   const ms = task.startupQueueMs;
   if (ms === undefined) return '';
-  const seconds = Math.max(0, ms) / 1000;
-  // Tenths below 10s (short queues), whole seconds above it (a 247s queue
-  // needs no decimals); deterministic either way.
-  const text =
-    seconds < 10 ? `${(Math.round(seconds * 10) / 10).toFixed(1)}s` : `${Math.round(seconds)}s`;
+  // Round to tenths first, then pick the format: rounding a 9.96s queue up to
+  // whole seconds must not print `10.0s` when the ≥10s branch prints `10s`.
+  const tenths = Math.round(Math.max(0, ms) / 100);
+  const text = tenths < 100 ? `${(tenths / 10).toFixed(1)}s` : `${Math.round(tenths / 10)}s`;
   const reason = task.startupQueueReason;
   // An unknown reason is omitted, never guessed.
   return `启动前排队 ${text}${reason !== null && reason !== undefined ? `（${segmentSafe(reason)}）` : ''}`;
