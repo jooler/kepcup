@@ -6,6 +6,10 @@ import {
   askUserFieldsSchema,
   TASK_CAPABILITIES_MAX,
   TASK_INSTRUCTION_MAX_CHARS,
+  TASK_PEER_MESSAGE_MAX_CHARS,
+  TASK_PEER_SEND_MAX_PER_RUN,
+  TASK_PEER_WAIT_TTL_MAX_MS,
+  TASK_PEER_WAIT_TTL_MS,
   TASK_SOURCE_MESSAGES_MAX,
   TASK_TITLE_MAX_CHARS,
   type AskUserField,
@@ -89,6 +93,30 @@ export interface InjectTaskResult {
   delivery: 'delivered' | 'queued';
 }
 
+/** D123: `send_to_task` — a message to a sibling task (task tool surface only). */
+export interface SendToTaskInput {
+  taskId: string;
+  text: string;
+  sourceMessageIds?: string[] | undefined;
+}
+
+/** D123: `wait_for_task` — block on a sibling task's terminal state. */
+export interface WaitForTaskInput {
+  taskId: string;
+  /** Defaults to `TASK_PEER_WAIT_TTL_MS`, capped at `TASK_PEER_WAIT_TTL_MAX_MS`. */
+  timeoutMinutes?: number | undefined;
+}
+
+export type PeerTaskStatus = 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'still_running';
+
+export interface WaitForTaskResult {
+  status: PeerTaskStatus;
+  /** Terminal result text (clipped to `TASK_PEER_WAIT_RESULT_MAX_CHARS`). */
+  resultDigest?: string;
+  /** `still_running`: why the target is not running yet. */
+  queueReason?: string;
+}
+
 export interface CancelTaskResult {
   taskId: string;
   state: TaskState;
@@ -101,6 +129,8 @@ export interface TaskSummary {
   state: TaskState;
   status: RunStatus;
   writes: boolean;
+  /** D123: declared write domains (null = whole cwd / not declared). */
+  writeDomains?: string[] | null;
   cwd: string | null;
   createdAt: number;
   endedAt: number | null;
@@ -125,6 +155,14 @@ export interface TaskToolFacade {
   inject(identity: RunIdentity, input: InjectTaskInput): InjectTaskResult;
   cancel(identity: RunIdentity, input: { taskId: string; reason: string }): CancelTaskResult;
   list(identity: RunIdentity): TaskSummary[];
+  /** D123 (task surface only): message a sibling task. */
+  send?(identity: RunIdentity, input: SendToTaskInput): InjectTaskResult;
+  /** D123 (task surface only): wait for a sibling task's terminal state. */
+  wait?(
+    identity: RunIdentity,
+    input: WaitForTaskInput,
+    signal: AbortSignal,
+  ): Promise<WaitForTaskResult>;
   /**
    * §2.4.6 (task side): asks the user on a visible question card and waits for
    * the answer (a card option, or the turn's inject_task). Optional: only the
@@ -533,4 +571,118 @@ export function buildTaskTools(input: {
   };
 
   return [startTask, injectTask, cancelTask, listTasks] as ToolDefinition[];
+}
+
+function describeWait(result: WaitForTaskResult): string {
+  if (result.status === 'still_running') {
+    const reason = result.queueReason !== null && result.queueReason !== undefined ? `（${result.queueReason}）` : '';
+    return `对方仍未结束${reason}：这次没有等到终态，可以稍后再调 wait_for_task，或先做别的。\n${JSON.stringify(result)}`;
+  }
+  const head = result.status === 'completed' ? '对方已完成' : `对方已结束（${result.status}）`;
+  const digest = result.resultDigest?.trim() ?? '';
+  return `${head}。${digest.length > 0 ? `结果摘要：\n${digest}` : '没有结果摘要。'}\n${JSON.stringify(result)}`;
+}
+
+/**
+ * D123: task-to-task coordination (docs/design/59 §4) — registered on the task
+ * surface only. A task may message and wait for a sibling; it still cannot
+ * start or cancel tasks (depth 1, §4.4).
+ */
+export function buildPeerTaskTools(input: {
+  identity: RunIdentity;
+  tasks: TaskToolFacade;
+}): ToolDefinition[] {
+  const { identity, tasks } = input;
+  const send = tasks.send;
+  const wait = tasks.wait;
+  if (send === undefined || wait === undefined) return [];
+
+  const sendToTask: ToolDefinition<{
+    task_id: string;
+    text: string;
+    source_message_ids?: string[];
+  }> = {
+    name: 'send_to_task',
+    description:
+      '给同一对话里的另一个任务发一条消息（任务之间的协商，例如询问它的写域、约定先后）。' +
+      `每次任务最多发 ${TASK_PEER_SEND_MAX_PER_RUN} 条、每条 ≤ ${TASK_PEER_MESSAGE_MAX_CHARS} 字；对方已结束会失败（TASK_PEER_FINISHED）。` +
+      '这不等于派活或取消任务——需要改派请让对话轮处理。',
+    parameters: Type.Object(
+      {
+        task_id: Type.String({ description: '目标任务的 id（见 <peer_tasks>）' }),
+        text: Type.String({ description: '要发给对方的内容' }),
+        source_message_ids: Type.Optional(
+          Type.Array(Type.String(), { description: '相关用户原消息 id（对方会看到原文）' }),
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    execute: async (params) =>
+      guarded(() => {
+        if (identity.loopType !== 'task') {
+          return fail('NOT_SUPPORTED', '只有任务之间可以互发消息');
+        }
+        const ids = sourceIds(params.source_message_ids);
+        if (typeof ids === 'string') return fail('INVALID_INPUT', ids);
+        const result = send(identity, {
+          taskId: nonEmpty(params.task_id, 'task_id', 200),
+          text: nonEmpty(params.text, 'text', TASK_PEER_MESSAGE_MAX_CHARS),
+          ...(ids.length > 0 ? { sourceMessageIds: ids } : {}),
+        });
+        return {
+          ok: true,
+          content: `${
+            result.delivery === 'delivered'
+              ? '已送达'
+              : '已排队（对方收尾前可能收不到，与 inject_task 同语义）'
+          }任务 ${params.task_id}。\n${JSON.stringify({ task_id: params.task_id, delivery: result.delivery })}`,
+        };
+      }),
+  };
+
+  const waitForTask: ToolDefinition<{
+    task_id: string;
+    timeout_minutes?: number;
+  }> = {
+    name: 'wait_for_task',
+    description:
+      '等待同一对话里的另一个任务结束（completed / failed / cancelled / interrupted），返回它的终态与结果摘要。' +
+      `缺省最多等 ${TASK_PEER_WAIT_TTL_MS / 60_000} 分钟，可用 timeout_minutes 指定（上限 ${TASK_PEER_WAIT_TTL_MAX_MS / 60_000}）；` +
+      '超时返回 still_running 与对方当前排队原因。等待期间让出并发名额、不计任务时长，本任务的写租约保留；' +
+      '等待环（A 等 B、B 等 A）会报 TASK_WAIT_CYCLE。',
+    parameters: Type.Object(
+      {
+        task_id: Type.String({ description: '要等待的任务 id（见 <peer_tasks>）' }),
+        timeout_minutes: Type.Optional(
+          Type.Number({
+            description: `最多等多少分钟（缺省 ${TASK_PEER_WAIT_TTL_MS / 60_000}，上限 ${TASK_PEER_WAIT_TTL_MAX_MS / 60_000}）`,
+          }),
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    execute: async (params, ctx) => {
+      if (identity.loopType !== 'task') {
+        return fail('NOT_SUPPORTED', '只有任务可以等待其他任务');
+      }
+      try {
+        const result = await wait(
+          identity,
+          {
+            taskId: nonEmpty(params.task_id, 'task_id', 200),
+            ...(params.timeout_minutes !== undefined
+              ? { timeoutMinutes: params.timeout_minutes }
+              : {}),
+          },
+          ctx.signal,
+        );
+        return { ok: true, content: describeWait(result) };
+      } catch (error) {
+        if (error instanceof AppError) return fail(String(error.code), error.message);
+        return fail('INTERNAL', error instanceof Error ? error.message : String(error));
+      }
+    },
+  };
+
+  return [sendToTask, waitForTask];
 }
