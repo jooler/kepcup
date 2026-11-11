@@ -372,3 +372,57 @@ describe('runs 0015 task_write_domains 迁移', () => {
     closeDatabase(db);
   });
 });
+
+describe('runs 0016 任务失败自动重试列', () => {
+  it('0015 库升级：新增两列取默认值，既有行保留', () => {
+    const db = openDatabase({
+      path: path.join(dir, `runs-retry-migration-${Math.random().toString(36).slice(2, 8)}.db`),
+      key: deriveKey(Buffer.alloc(32, 12), KEY_INFO.runsDb),
+    });
+    runMigrations(db, migrationsUpTo(15));
+    db.exec(
+      "insert into runs (id, bot_id, conversation_id, loop_type, status, task_title, task_writes, task_cwd, created_at) values ('run_retry_old', 'bot_x', 'conv_a', 'task', 'completed', '重试任务', 0, '/proj/root', 1)",
+    );
+
+    const applied = runMigrations(db, migrationsUrl('runs'));
+    expect(applied.map((m) => m.version)).toEqual(runsVersionsAfter(15));
+    expect(
+      db.prepare('select task_retry_attempts, task_retry_at from runs where id = ?').get('run_retry_old'),
+    ).toEqual({ task_retry_attempts: 0, task_retry_at: null });
+
+    const columns = db.prepare('pragma table_info(runs)').all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toContain('task_retry_attempts');
+    expect(columns.map((column) => column.name)).toContain('task_retry_at');
+    closeDatabase(db);
+  });
+
+  it('update 的 taskRetryAttempts / taskRetryAt 按「未提供即保留」合并，taskRetryAt 可写 null 清除', () => {
+    withRuns((runs) => {
+      const task = createTask(runs);
+      // 入账：写回 queued + 退避计划。
+      const requeued = runs.update(task.id, {
+        status: 'queued',
+        taskRetryAttempts: 1,
+        taskRetryAt: 1_999_000,
+        lastProgress: '第 1 次执行失败，约 1 分钟后自动重试',
+      });
+      expect(requeued.taskRetryAttempts).toBe(1);
+      expect(requeued.taskRetryAt).toBe(1_999_000);
+      // 与重试无关的 patch 不碰两列（即使值为 null 的字段也不会误清）。
+      const untouched = runs.update(task.id, {
+        lastProgress: '仍在执行',
+        resultConsumedAt: null,
+      });
+      expect(untouched.taskRetryAttempts).toBe(1);
+      expect(untouched.taskRetryAt).toBe(1_999_000);
+      // 状态流转（running）保留计数；重启前的行同样如此。
+      const running = runs.update(task.id, { status: 'running' });
+      expect(running.taskRetryAttempts).toBe(1);
+      expect(running.taskRetryAt).toBe(1_999_000);
+      // 显式 null 清除退避计时（重新启动 / 终态结算），计数保留。
+      const cleared = runs.update(task.id, { taskRetryAt: null });
+      expect(cleared.taskRetryAttempts).toBe(1);
+      expect(cleared.taskRetryAt).toBeNull();
+    });
+  });
+});

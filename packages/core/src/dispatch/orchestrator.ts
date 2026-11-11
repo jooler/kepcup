@@ -15,6 +15,7 @@ import {
   presentContextText,
   PROFILE_CHANGE_FOLLOWUP_EVENT,
   TASK_MAX_TURNS,
+  TASK_AUTO_RETRY_DELAYS_MS,
   TURN_MAX_TURNS,
   SETTING_DIRECT_TRIGGERS,
   SETUP_MAX_QUESTIONS,
@@ -368,6 +369,11 @@ export interface OrchestratorDeps {
   };
   /** D72 生效目录（已按发行门禁过滤）；缺省 = 空目录。 */
   agentCatalog?: () => readonly AgentCatalogEntry[];
+  /**
+   * 任务失败自动重试的退避档位（转发给 TaskHost 的 `autoRetryDelaysMs`）；
+   * 缺省 = 完整生产档位（TASK_AUTO_RETRY_DELAYS_MS），空数组 = 关闭。
+   */
+  taskAutoRetryDelaysMs?: readonly number[];
   /**
    * D72 P6 后台调用路由（路由判断、续接仲裁、SubAgent 压缩）：无内置模型时
    * 改走外部 Agent。缺省 = 只用内置模型（P6 之前的行为）。
@@ -828,6 +834,8 @@ export class Orchestrator {
     this.#taskHost = new TaskHost({
       db: deps.db,
       runs: deps.runs,
+      // 任务失败自动重试：生产默认完整档位（测试装配可传 [] 关闭）。
+      autoRetryDelaysMs: deps.taskAutoRetryDelaysMs ?? TASK_AUTO_RETRY_DELAYS_MS,
       ...(deps.claims !== undefined ? { claims: deps.claims } : {}),
       ...(deps.effects !== undefined ? { effects: deps.effects } : {}),
       messages: deps.messages,

@@ -376,6 +376,11 @@ export interface CoreServicesOptions {
   appVersion?: string | undefined;
   dev?: boolean;
   clock?: Clock;
+  /**
+   * 任务失败自动重试的退避档位（缺省 = 生产档位 TASK_AUTO_RETRY_DELAYS_MS）；
+   * 传空数组关闭（测试宿主默认关闭，避免失败路径用例受重试影响）。
+   */
+  taskAutoRetryDelaysMs?: readonly number[];
   /** Injectable timer arming (P10 schedule timer; tests drive it virtually). */
   timers?: TimerScheduler;
   /** Overrides keystore selection (tests inject a shared memory instance). */
@@ -2642,6 +2647,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       externalEngine,
       llmRouter,
       claims: taskClaims,
+      // 任务失败自动重试：测试可传 [] 关闭（testkit 默认关闭）。
+      ...(options.taskAutoRetryDelaysMs !== undefined
+        ? { taskAutoRetryDelaysMs: options.taskAutoRetryDelaysMs }
+        : {}),
       // D112 P2：微应用进度摘要注入下一轮（55 §8.5）。
       microAppSummariesFor: (conversationId) => {
         const titleByWidget = new Map(

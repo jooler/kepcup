@@ -39,6 +39,8 @@ interface RunRow {
   task_cwd: string | null;
   task_write_domains: string | null;
   task_capabilities: string | null;
+  task_retry_attempts: number;
+  task_retry_at: number | null;
   origin_run_id: string | null;
   result_consumed_at: number | null;
   awaiting_input: number;
@@ -183,6 +185,8 @@ function rowToRun(row: RunRow): Run {
     taskWriteDomains: writeDomains.domains,
     ...(writeDomains.corrupt ? { taskWriteDomainsCorrupt: true } : {}),
     taskCapabilities: parseCapabilities(row.task_capabilities),
+    taskRetryAttempts: row.task_retry_attempts,
+    taskRetryAt: row.task_retry_at,
     originRunId: row.origin_run_id,
     resultConsumedAt: row.result_consumed_at,
     awaitingInput: row.awaiting_input === 1,
@@ -381,6 +385,8 @@ export class RunsService {
         | 'agentSessionId'
         | 'resultConsumedAt'
         | 'awaitingInput'
+        | 'taskRetryAttempts'
+        | 'taskRetryAt'
       >
     > & {
       /** Structured setup requirement stored inside error_json (inline setup). */
@@ -394,9 +400,17 @@ export class RunsService {
     const existing = this.getOrThrow(id);
     const status = patch.status ?? existing.status;
     const now = this.clock.now();
+    // 任务失败自动重试：这两列显式 `!== undefined` 合并（不是 `??`），让
+    // `taskRetryAt: null` 能清掉退避计时（任务重新启动 / 最终结算时）。
+    const taskRetryAttempts =
+      patch.taskRetryAttempts !== undefined
+        ? patch.taskRetryAttempts
+        : (existing.taskRetryAttempts ?? 0);
+    const taskRetryAt =
+      patch.taskRetryAt !== undefined ? patch.taskRetryAt : (existing.taskRetryAt ?? null);
     this.db
       .prepare(
-        "update runs set status = ?, provider = ?, model = ?, engine = ?, agent_session_id = ?, summary = ?, last_progress = ?, continued_from_run_ids_json = ?, error_json = ?, output_message_ids_json = ?, episode_id = ?, episode_hop = ?, result_consumed_at = ?, awaiting_input = ?, started_at = coalesce(started_at, ?), ended_at = case when ? in ('completed','failed','cancelled','interrupted') then ? else ended_at end where id = ?",
+        "update runs set status = ?, provider = ?, model = ?, engine = ?, agent_session_id = ?, summary = ?, last_progress = ?, continued_from_run_ids_json = ?, error_json = ?, output_message_ids_json = ?, episode_id = ?, episode_hop = ?, result_consumed_at = ?, awaiting_input = ?, task_retry_attempts = ?, task_retry_at = ?, started_at = coalesce(started_at, ?), ended_at = case when ? in ('completed','failed','cancelled','interrupted') then ? else ended_at end where id = ?",
       )
       .run(
         status,
@@ -417,6 +431,8 @@ export class RunsService {
         patch.episodeHop ?? existing.episodeHop,
         patch.resultConsumedAt !== undefined ? patch.resultConsumedAt : existing.resultConsumedAt,
         (patch.awaitingInput ?? existing.awaitingInput) ? 1 : 0,
+        taskRetryAttempts,
+        taskRetryAt,
         now,
         status,
         now,

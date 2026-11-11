@@ -798,6 +798,18 @@ export const TASK_REDELIVER_AFTER_MS = 10 * 60_000;
  */
 export const TASK_REDELIVER_MAX_ATTEMPTS = 5;
 /**
+ * Failed task auto-retry backoff（任务失败自动重试）：a task that settles as
+ * `failed`（缺 setup 的失败、interrupted、cancelled 除外）is re-queued and
+ * re-executed after these delays, in order — the N-th failure waits
+ * `TASK_AUTO_RETRY_DELAYS_MS[N - 1]`（N 从 1 计）. Eight retries total（连同
+ * 首次执行共 9 次）；every later failure settles for real（failure entry +
+ * wake）only after the last retry failed. Persisted on the run row
+ * (`task_retry_attempts` / `task_retry_at`) so restarts resume the schedule.
+ */
+export const TASK_AUTO_RETRY_DELAYS_MS = [1, 2, 3, 5, 8, 13, 21, 34].map(
+  (minutes) => minutes * 60_000,
+);
+/**
  * How long a task waits on its open `ask_user` question (design 30 §2.4.6,
  * D75 审查 M3). The wait gives its provider slot back and does not count
  * toward TASK_MAX_WALL_MS; after this long the task is told 「用户未回答」 and
