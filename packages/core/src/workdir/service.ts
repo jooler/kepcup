@@ -13,6 +13,7 @@ import {
 import { isInsidePath } from '../sandbox/sensitive-paths.js';
 import type { RunIdentity } from '../agent/types.js';
 import type { LeaseHolder, LeaseService } from './lease.js';
+import { encodeWriteDomainKey } from './domains.js';
 import type { CheckpointService } from './checkpoints.js';
 import { buildWorkdirSection, WORKDIR_SECTION_BUDGET } from './context.js';
 import { gitCliAvailable, runGitRemote, type GitRemoteOperation } from './git-remote.js';
@@ -274,11 +275,17 @@ export class WorkdirRuntime {
       reason?: string;
       /** D72：整 run 持有、不可被替换（外部智能体 run，见 RunLeaseState.pinned）。 */
       pin?: boolean;
+      /**
+       * D123: declared write-domain globs of a pinned write task. Encoded into
+       * the lease key so two tasks on one root with disjoint domains coexist.
+       * Null / omitted = the whole root (`['**']`, today's behavior).
+       */
+      domains?: string[] | null;
     } = {},
   ): Promise<LeaseTarget> {
     const denial = this.writeDenial(identity);
     if (denial !== null) throw new AppError('RUN_READ_ONLY', denial);
-    const target = this.#leaseTarget(identity, resolvedPath);
+    const target = this.#leaseTarget(identity, resolvedPath, options.domains ?? null);
     if (target === null) {
       throw new AppError('INVALID_INPUT', '该路径不涉及 workdir 或 workspace，无需写入租约');
     }
@@ -672,14 +679,20 @@ export class WorkdirRuntime {
 
   // --- internals -----------------------------------------------------------------
 
-  #leaseTarget(identity: RunIdentity, resolvedPath: string): LeaseTarget | null {
+  #leaseTarget(
+    identity: RunIdentity,
+    resolvedPath: string,
+    domains: string[] | null = null,
+  ): LeaseTarget | null {
+    const keyOf = (base: string): string =>
+      domains !== null ? encodeWriteDomainKey(base, domains) : base;
     const workdir = this.boundWorkdir(identity.conversationId);
     if (
       workdir !== null &&
       workdir.status === 'available' &&
       isInsidePath(resolvedPath, workdir.path)
     ) {
-      return { key: workdir.path, workdir };
+      return { key: keyOf(workdir.path), workdir };
     }
     // D75 §5.2: the identity's own workspace (realpath-normalized on both
     // sides; the data home is canonical already, the workspace may not exist).
@@ -688,7 +701,10 @@ export class WorkdirRuntime {
         workspacePathFor(this.#deps.paths, identity.botId, identity.conversationId),
       );
       if (isInsidePath(canonicalPath(resolvedPath), workspace)) {
-        return { key: workspaceLeaseKey(identity.botId, identity.conversationId), workdir: null };
+        return {
+          key: keyOf(workspaceLeaseKey(identity.botId, identity.conversationId)),
+          workdir: null,
+        };
       }
     }
     // Outside the workdir: the longest covering write grant defines the key.
@@ -697,7 +713,7 @@ export class WorkdirRuntime {
       .filter((g) => g.access === 'write' && isInsidePath(resolvedPath, g.path))
       .sort((a, b) => b.path.length - a.path.length);
     const grant = grants[0];
-    return grant !== undefined ? { key: grant.path, workdir: null } : null;
+    return grant !== undefined ? { key: keyOf(grant.path), workdir: null } : null;
   }
 
   #assertNoActiveRuns(conversationId: string): void {

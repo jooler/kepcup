@@ -31,7 +31,11 @@ import {
   type ToolEffect,
 } from '@kepcup/shared';
 import { capabilityIdOfSetup } from '../capabilities/catalog.js';
-import { inspectDeclaredDomains } from '../workdir/domains.js';
+import {
+  domainsConflict,
+  inspectDeclaredDomains,
+  type AbsDomain,
+} from '../workdir/domains.js';
 import { buildRunDigest, type DigestEffect } from '../agent/context/continuation.js';
 import type { ToolEffectsStore } from '../agent/effects/store.js';
 import { neutralizeUntrusted } from '../infra/data-boundary.js';
@@ -356,6 +360,8 @@ interface LaunchedTask {
   conversationId: string;
   writes: boolean;
   cwd: string | null;
+  /** D123: resolved write domain (null for read-only tasks). */
+  domain: AbsDomain | null;
   /** The engine slot key (`launchSlot`), null = none. */
   slotKey: string | null;
   launchedAt: number;
@@ -437,6 +443,12 @@ export function taskState(status: RunStatus): TaskState {
     default:
       return status;
   }
+}
+
+/** D123: human-readable write domain for queue reasons / task segments. */
+export function formatWriteDomain(patterns: readonly string[]): string {
+  if (patterns.length === 1 && patterns[0] === '**') return '整目录';
+  return patterns.join('、');
 }
 
 function taskEventOf(message: Message): TaskEventContent | null {
@@ -2184,9 +2196,13 @@ export class TaskHost implements TaskToolFacade {
       return `等并发额度（本对话 ${inConversation}/${this.#limits.perConversation}）`;
     }
     if (task.taskWrites === true && task.taskCwd !== null) {
+      const domain: AbsDomain = {
+        root: task.taskCwd,
+        patterns: task.taskWriteDomains ?? ['**'],
+      };
       for (const launched of this.#launched.values()) {
-        if (launched.writes && launched.cwd === task.taskCwd) {
-          return `等写入租约（任务 ${launched.taskId} 持有）`;
+        if (launched.domain !== null && domainsConflict(launched.domain, domain)) {
+          return `等写域（任务 ${launched.taskId} 持有 ${formatWriteDomain(launched.domain.patterns)}）`;
         }
       }
     }
@@ -2237,6 +2253,10 @@ export class TaskHost implements TaskToolFacade {
       conversationId: task.conversationId,
       writes: task.taskWrites === true,
       cwd: task.taskCwd,
+      domain:
+        task.taskWrites === true && task.taskCwd !== null
+          ? { root: task.taskCwd, patterns: task.taskWriteDomains ?? ['**'] }
+          : null,
       slotKey: this.#launchSlot(task)?.key ?? null,
       launchedAt: this.#deps.clock.now(),
       attachedAt: null,

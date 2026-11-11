@@ -134,11 +134,75 @@ export function globsIntersect(a: string, b: string): boolean {
   return segmentsIntersect(left, 0, right, 0);
 }
 
-/** Absolute pattern sets intersect pairwise (§2.3). */
+/** Absolute pattern sets intersect pairwise; roots must overlap first (§3.3). */
 export function domainsConflict(a: AbsDomain, b: AbsDomain): boolean {
+  if (!rootsOverlap(a.root, b.root)) return false;
   const left = absolutePatterns(a.root, a.patterns);
   const right = absolutePatterns(b.root, b.patterns);
   return left.some((one) => right.some((other) => globsIntersect(one, other)));
+}
+
+/** Lease keys of domain-scoped write tasks carry their sorted patterns (§2.5). */
+const DOMAIN_KEY_SUFFIX = '|domains:';
+
+/**
+ * Encodes a structured write-domain lease key: `base|domains:p1,p2`
+ * (patterns ASCII-sorted and URI-encoded so a comma inside a pattern cannot
+ * split it). `base` is the workdir root, the workspace key, or a grant path.
+ */
+export function encodeWriteDomainKey(base: string, patterns: string[]): string {
+  const sorted = [...patterns].sort();
+  return `${base}${DOMAIN_KEY_SUFFIX}${sorted.map((pattern) => encodeURIComponent(pattern)).join(',')}`;
+}
+
+/** Decodes a lease key; a key without domains is a whole-root key (`['**']`). */
+export function parseWriteDomainKey(key: string): { base: string; patterns: string[] } {
+  const index = key.lastIndexOf(DOMAIN_KEY_SUFFIX);
+  if (index < 0) return { base: key, patterns: ['**'] };
+  const encoded = key.slice(index + DOMAIN_KEY_SUFFIX.length);
+  try {
+    const patterns = encoded
+      .split(',')
+      .filter((pattern) => pattern.length > 0)
+      .map((pattern) => decodeURIComponent(pattern));
+    return { base: key.slice(0, index), patterns: patterns.length > 0 ? patterns : ['**'] };
+  } catch {
+    // Not one of ours: treat the whole key as an undeclared root.
+    return { base: key, patterns: ['**'] };
+  }
+}
+
+/**
+ * Lease conflict predicate with write domains (§2.5): both keys decode to a
+ * base + patterns; plain keys are whole roots. Roots must overlap before the
+ * domain patterns are compared (two sibling workdirs never conflict).
+ */
+export function writeDomainKeysConflict(a: string, b: string): boolean {
+  const left = parseWriteDomainKey(a);
+  const right = parseWriteDomainKey(b);
+  return domainsConflict(
+    { root: left.base, patterns: left.patterns },
+    { root: right.base, patterns: right.patterns },
+  );
+}
+
+/** True when one root equals the other or is its ancestor (path-component-wise). */
+function rootsOverlap(a: string, b: string): boolean {
+  const left = pathSegments(a);
+  const right = pathSegments(b);
+  if (left.length === 0 || right.length === 0) return left.length === right.length;
+  const shorter = Math.min(left.length, right.length);
+  for (let index = 0; index < shorter; index++) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
+
+function pathSegments(value: string): string[] {
+  const normalized = toPosix(value).toLowerCase().replace(/\/+$/, '');
+  const segments = normalized.split('/');
+  if (segments[0] === '') segments.shift();
+  return segments.filter((segment) => segment.length > 0);
 }
 
 /**

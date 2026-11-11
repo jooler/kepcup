@@ -3,8 +3,11 @@ import { TASK_WRITE_DOMAINS_MAX, TASK_WRITE_DOMAIN_PATTERN_MAX } from '@kepcup/s
 import {
   absolutePatterns,
   domainsConflict,
+  encodeWriteDomainKey,
   globsIntersect,
   normalizeDeclaredDomains,
+  parseWriteDomainKey,
+  writeDomainKeysConflict,
 } from '../../src/workdir/domains.js';
 
 /** D123 写域纯函数（docs/design/59 §3.2、todo/parallel-tasks-and-coordination.md §2.3）。 */
@@ -97,5 +100,42 @@ describe('domainsConflict', () => {
     expect(domainsConflict(domain('/proj', ['docs/**']), domain('/proj/sub', ['docs/**']))).toBe(
       false,
     );
+  });
+});
+
+describe('write-domain lease keys', () => {
+  it('encodes patterns ASCII-sorted and decodes plain keys as whole roots', () => {
+    expect(encodeWriteDomainKey('/proj', ['src/**', 'apps/renderer/**'])).toBe(
+      '/proj|domains:apps%2Frenderer%2F**,src%2F**',
+    );
+    expect(parseWriteDomainKey(encodeWriteDomainKey('/proj', ['src/**']))).toEqual({
+      base: '/proj',
+      patterns: ['src/**'],
+    });
+    expect(parseWriteDomainKey('/proj')).toEqual({ base: '/proj', patterns: ['**'] });
+    expect(parseWriteDomainKey('ws:bot_1:conv_1')).toEqual({
+      base: 'ws:bot_1:conv_1',
+      patterns: ['**'],
+    });
+  });
+
+  it('keeps a comma inside a pattern from splitting the domain list', () => {
+    const key = encodeWriteDomainKey('/proj', ['a,b/**', 'c/**']);
+    expect(parseWriteDomainKey(key).patterns).toEqual(['a,b/**', 'c/**']);
+  });
+
+  it('conflicts only when roots overlap and domains intersect', () => {
+    const a = encodeWriteDomainKey('/proj', ['apps/**']);
+    const b = encodeWriteDomainKey('/proj', ['apps/renderer/**']);
+    const c = encodeWriteDomainKey('/proj', ['packages/**']);
+    expect(writeDomainKeysConflict(a, b)).toBe(true);
+    expect(writeDomainKeysConflict(a, c)).toBe(false);
+    // A plain root key is a whole-root domain.
+    expect(writeDomainKeysConflict('/proj', a)).toBe(true);
+    // Sibling workdirs never conflict, even with whole-root keys.
+    expect(writeDomainKeysConflict('/proj', '/proj2')).toBe(false);
+    // Workspace keys are roots of their own.
+    expect(writeDomainKeysConflict('ws:bot_1:conv_1', 'ws:bot_2:conv_2')).toBe(false);
+    expect(writeDomainKeysConflict('ws:bot_1:conv_1', 'ws:bot_1:conv_1')).toBe(true);
   });
 });
