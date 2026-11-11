@@ -15,7 +15,7 @@
 | 项 | 对话轮（turn） | 任务（task） |
 |---|---|---|
 | 触发 | 用户消息批、`@` / 回复、项目组路由（续接 / 网关）、定时、事件、D71 委派、任务结果 / 失败条目、设置完成后重试 | 对话轮的 `start_task`（唯一入口）；失败任务经设置卡重试、或用户在任务卡上重试失败 / 中断的任务时由宿主派出接续任务 |
-| 串行 / 并发 | 每（Bot, 对话）同时最多一个（mailbox） | 对话级 `TASK_CONCURRENCY_PER_CONVERSATION`（3）、全局 `TASK_CONCURRENCY_GLOBAL`（8）、单个对话轮最多派 `TASK_START_MAX_PER_TURN`（2）个；同一 cwd 同时最多一个写任务 |
+| 串行 / 并发 | 每（Bot, 对话）同时最多一个（mailbox） | 对话级 `TASK_CONCURRENCY_PER_CONVERSATION`（3）、全局 `TASK_CONCURRENCY_GLOBAL`（8）、单个对话轮最多派 `TASK_START_MAX_PER_TURN`（2）个；写任务按**声明写域**互斥——域不相交即并行，`writes: true`（整 cwd）保持串行安全默认（D123，见下文「写互斥」） |
 | 引擎 | 固定内置（无内置模型时见「无内置模型的 Bot」） | 内置 pi 或该 Bot 的外部智能体 |
 | 轮数 / 时限 | 不设步数上限（`TURN_MAX_TURNS=0`）。提示词要求 Bot 自行估计工作量：轻的直接答，重的用 `start_task`；没派任务也不因步数失败 | 无步数上限（`TASK_MAX_TURNS=0`）；用量默认不设上限，D93 起可开启软预算；`taskLoop.maxWallMinutes`（默认 240 分钟，0 = 不限制；等用户回答问题卡的时间不计入）超限或内置任务超过 `taskLoop.stallTimeoutMinutes` 无活动时由 reaper 强制 `failed`。内置 pi 任务另有自动上下文压缩与空转检测，见 [43](43-task-loop-harness.md) |
 | 工具面 | 对话核心 + 只读查询（含只读且免审批的 MCP 工具）+ 任务管理 + 异步托管动作（[dev/04](../dev/04-agent-runtime.md#工具目录)） | 完整工具面，去掉任务管理、跨 Bot 委派与管家提议；多一个 `ask_user` |
@@ -54,6 +54,7 @@
 - 只读任务不取租约、不限 cwd 并发（仍受上述配额封顶）。
 - 写任务启动前取 cwd 根的写租约并**整个任务持有**（`ensureWriteLease(…, { pin: true })`）；租约键对 workdir 是目录根，对 workspace 是 `ws:{botId}:{conversationId}`（D29 扩到 workspace，[08-workdir.md](08-workdir.md#并发写入租约)）。
 - 同一 cwd 的第二个写任务在**任务层**排队（跨对话生效）：停在 submitted，卡片与 `<tasks>` 段显示「等写入租约（任务 … 持有）」，持有方任务结束或被取消后才启动。它不去申请租约，因此「强制收回」对这种排队不起作用，只对租约层的等待（被非任务持有者挡住）出现（见 DEV-015）。对一个持有租约的写任务点强制收回，它就失去写权限：之后的写入以「写入租约已被用户收回」失败，不会悄悄重新取得租约（[30 §5.1](30-supervisor-and-tasks.md#51-规则)）。
+- **D123 修订**：`start_task.writes` 可声明相对 cwd 的 glob **写域**；互斥从「整个 cwd 一个写任务」细化为「写域相交的任务至多一个在跑」——TaskHost 派发预拦截与结构化写域租约键（根重叠 ∧ 域相交才算冲突）双重生效，域不相交的写任务真并行。`writes: true`（缺省安全默认）= 整 cwd，行为与修订前逐字节一致。内置引擎下文件写工具按写域硬拒域外写入（`WRITE_OUT_OF_DOMAIN`），沙箱命令按声明收紧可写挂载、覆盖不到的部分由影子仓库 interleaved 冲突检测兜底；外部智能体仅调度与租约层面生效。任务面另有兄弟任务协调四件（`send_to_task` / `wait_for_task` / `claim` / `release` + `<peer_tasks>` 段）与写域内路径认领。详见 [59-parallel-tasks-and-coordination.md](59-parallel-tasks-and-coordination.md)。
 - workspace 没有影子仓库检查点：workspace 写任务被取消时只列出它的文件工具写过的文件，不提供整次回退；workdir 写任务照常有改动摘要与整次回退（D30）。
 - git worktree / CoW 隔离明确不做（[30 §9](30-supervisor-and-tasks.md#9-非目标)）。
 
