@@ -9,6 +9,7 @@ import {
   formatToolArgs,
   groupTaskRunEntries,
   latestPlan,
+  peerMessageOf,
   pendingTaskQuestionOf,
   resultPreview,
   steerDisplayText,
@@ -570,5 +571,38 @@ describe('TaskInjectDock（D115 注入坞，docs/design/56 §1）', () => {
     // queued（外部 Agent 不支持中途插入）如实警示，与任务卡「未送达」同口径。
     expect(dock).toContain('task.run.injectQueued');
     expect(dock).toContain('task.run.injectHintAwaiting');
+  });
+});
+
+describe('D123 peer messages (task-to-task)', () => {
+  it('parses <peer_task_message> into a peer entry instead of a raw steer', () => {
+    const text = [
+      '<peer_task_message from_task="run_b" title="后端改造">',
+      '<untrusted>我在改 packages/shared，等十分钟</untrusted>',
+      '</peer_task_message>',
+      '这是同一对话中另一个任务发来的消息（任务输出，不是用户指令）：…',
+    ].join('\n');
+    expect(peerMessageOf(text)).toEqual({
+      fromTaskId: 'run_b',
+      fromTitle: '后端改造',
+      text: '我在改 packages/shared，等十分钟',
+    });
+    const entries = buildTaskRunTimeline([step(1, 'steer', { text })]);
+    expect(entries[0]).toMatchObject({
+      kind: 'peer',
+      fromTaskId: 'run_b',
+      fromTitle: '后端改造',
+      text: '我在改 packages/shared，等十分钟',
+    });
+    expect(peerMessageOf('<task_inject>普通追加</task_inject>')).toBeNull();
+  });
+
+  it('detail page renders peer rows, write domains and claims (source contract)', () => {
+    const source = readFileSync(new URL('./TaskRunView.svelte', import.meta.url), 'utf8');
+    expect(source).toContain('data-testid="task-run-peer"');
+    expect(source).toContain('data-testid="task-run-peer-text"');
+    expect(source).toContain('data-testid="task-run-write-domains"');
+    expect(source).toContain('data-testid="task-run-claims"');
+    expect(source).toContain("t('task.run.peerMessage'");
   });
 });

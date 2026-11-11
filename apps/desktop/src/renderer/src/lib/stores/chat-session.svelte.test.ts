@@ -493,6 +493,8 @@ describe('ChatSession', () => {
       state: 'completed' as const,
       status: 'completed' as const,
       writes: false,
+      writeDomains: null,
+      claims: [],
       cwdKind: 'workspace' as const,
       queueReason: null,
       awaitingInput: false,

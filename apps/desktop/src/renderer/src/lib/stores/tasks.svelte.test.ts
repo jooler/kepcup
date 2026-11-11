@@ -37,6 +37,8 @@ function taskView(taskId: string, state: TaskView['state'] = 'running'): TaskVie
     state,
     status: state === 'completed' ? 'completed' : 'running',
     writes: false,
+    writeDomains: null,
+    claims: [],
     cwdKind: 'workspace',
     queueReason: null,
     awaitingInput: false,
