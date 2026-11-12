@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -32,6 +32,19 @@ describe('ToolOutputSpill', () => {
     mkdirSync(workspacePath, { recursive: true });
     const spill = new ToolOutputSpill({ workspacePath, runId: 'run_1', maxChars: 100 });
     expect(spill.spill('short')).toBeNull();
+  });
+
+  it('D123: a run that may not write the spill dir falls back to truncation', () => {
+    const workspacePath = tempWorkspace();
+    mkdirSync(workspacePath, { recursive: true });
+    const spill = new ToolOutputSpill({
+      workspacePath,
+      runId: 'run_1',
+      maxChars: 100,
+      canWrite: () => false,
+    });
+    expect(spill.spill('x'.repeat(500))).toBeNull();
+    expect(existsSync(path.join(workspacePath, '.tool-output'))).toBe(false);
   });
 
   it('超长输出写文件并返回头 + 尾 + 路径 + 字符数', () => {

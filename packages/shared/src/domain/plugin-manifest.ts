@@ -378,6 +378,33 @@ const pluginMcpIdSchema = z.string().regex(PLUGIN_MCP_KEY_PATTERN);
 const pluginMcpDescriptionSchema = z.string().max(200);
 const pluginMcpNameSchema = z.string().max(100);
 
+/**
+ * Header name for an http MCP template. Narrower than the RFC 7230 token set on
+ * purpose: the value lands in secrets as `mcp:{serverId}:header:{name}`
+ * (`SECRET_NAME_PATTERN` = alnum / `:` / `_` / `-`, ≤128 total incl. the ≤64-char
+ * server id), so `. ! # $ % …` names would only fail later at instance create with
+ * an opaque keystore error. Real-world header names stay covered.
+ */
+const PLUGIN_MCP_HEADER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/;
+
+/**
+ * One locked header of an http MCP template (P4-M2): `name` is the wire header, `key`
+ * is the instance field supplying its value (defaults to the lower-cased header name).
+ * The value itself never lives in the manifest — the materializer writes it to secrets.
+ */
+export const pluginMcpHeaderTemplateSchema = z.strictObject({
+  name: z.string().regex(PLUGIN_MCP_HEADER_NAME_PATTERN, {
+    message: 'invalid HTTP header name',
+  }),
+  key: z.string().regex(PLUGIN_FIELD_KEY_PATTERN).optional(),
+});
+export type PluginMcpHeaderTemplate = z.infer<typeof pluginMcpHeaderTemplateSchema>;
+
+/** The instance field key a header template feeds when the manifest omits an explicit one. */
+export function mcpHeaderFieldKey(header: PluginMcpHeaderTemplate): string {
+  return header.key ?? header.name.toLowerCase();
+}
+
 export const pluginMcpContributionSchema = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('mcpb'),
@@ -394,10 +421,104 @@ export const pluginMcpContributionSchema = z.discriminatedUnion('kind', [
     name: pluginMcpNameSchema.optional(),
     description: pluginMcpDescriptionSchema.optional(),
     // The https / public-host check is core's job (it reuses isSafeDirectoryRemoteUrl).
-    url: z.string().url().max(2000),
-  }),
+    // '' (P4-M2) declares a GENERIC template — the URL becomes a required per-instance
+    // field; a non-empty value is a vendor LOCK. Only meaningful alongside
+    // `instances: ['mcp']` (pairing is enforced in `pluginManifestSchema`); without that
+    // declaration the contribution keeps its legacy fixed-projection semantics and ''
+    // is rejected (a fixed server needs a real endpoint).
+    url: z
+      .string()
+      .max(2000)
+      .refine((value) => value === '' || value.trim() === value, {
+        message: 'url must not have leading/trailing whitespace',
+      })
+      .refine((value) => value === '' || z.string().url().safeParse(value).success, {
+        message: 'url must be a valid URL',
+      }),
+    auth: z.enum(['none', 'headers']).default('none'),
+    headers: z.array(pluginMcpHeaderTemplateSchema).max(8).optional(),
+    /**
+     * Generic-template only: when the URL itself carries the credential (e.g. a
+     * per-user key embedded in the endpoint), mark the built-in `url` instance field
+     * sensitive so it lands in secrets instead of `config_json`.
+     */
+    urlSensitive: z.boolean().optional(),
+    /** Vendor-extra form fields, appended after the kind's built-ins (≤16). */
+    instanceFields: z.array(pluginFieldSchema).max(16).optional(),
+  }).superRefine((contribution, ctx) => refineMcpHttpTemplate(contribution, ctx)),
 ]);
 export type PluginMcpContribution = z.infer<typeof pluginMcpContributionSchema>;
+
+/**
+ * Instance form keys the mcp kind adapter generates itself — never manifest-declarable
+ * (`instanceFields` entries with these keys are rejected by the schema below): `label`
+ * is the per-instance display name, `url` the generic-template endpoint.
+ */
+export const PLUGIN_MCP_BUILTIN_INSTANCE_FIELD_KEYS: readonly string[] = ['label', 'url'] as const;
+
+/** The static shape of an http mcp contribution (avoids a circular `z.infer` in the helper). */
+type PluginMcpHttpTemplateShape = {
+  kind: 'http';
+  id: string;
+  name?: string;
+  description?: string;
+  url: string;
+  auth: 'none' | 'headers';
+  headers?: PluginMcpHeaderTemplate[];
+  urlSensitive?: boolean;
+  instanceFields?: PluginField[];
+};
+
+/** Template-level validation shared by the http branch: header shape + field-key clashes. */
+function refineMcpHttpTemplate(
+  contribution: PluginMcpHttpTemplateShape,
+  ctx: z.RefinementCtx,
+): void {
+  const headers = contribution.headers ?? [];
+  if (contribution.auth === 'headers' && headers.length === 0) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['auth'],
+      message: "auth: 'headers' 需要至少声明一个 headers 条目",
+    });
+  }
+  if (contribution.auth === 'none' && headers.length > 0) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['headers'],
+      message: "auth: 'none' 时不能声明 headers",
+    });
+  }
+  const seen = new Set<string>(PLUGIN_MCP_BUILTIN_INSTANCE_FIELD_KEYS);
+  headers.forEach((header, index) => {
+    const key = mcpHeaderFieldKey(header);
+    if (seen.has(key)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['headers', index],
+        message: `header 字段键与内置字段或其它 header 冲突：${key}`,
+      });
+    }
+    seen.add(key);
+  });
+  (contribution.instanceFields ?? []).forEach((field, index) => {
+    if (PLUGIN_MCP_BUILTIN_INSTANCE_FIELD_KEYS.includes(field.key)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['instanceFields', index, 'key'],
+        message: `字段与内置实例字段重名：${field.key}`,
+      });
+    }
+    if (seen.has(field.key)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['instanceFields', index, 'key'],
+        message: `实例字段重复：${field.key}`,
+      });
+    }
+    seen.add(field.key);
+  });
+}
 
 /**
  * Mail contribution (D105 P3): the provisioning spec of ONE mail instance kind. The
@@ -738,6 +859,33 @@ export const pluginManifestSchema = z
         code: 'custom',
         path: ['instances'],
         message: "声明 instances: ['im'] 时必须同时声明一份 IM 贡献",
+      });
+    }
+    // P4-M2 mcp instance templates: an `mcpb` contribution is a bundled server and is
+    // never instantiable; an `http` contribution is a per-instance TEMPLATE only when
+    // the manifest declares `instances: ['mcp']` (at most one — a pure-instance generic
+    // plugin declares none and gets the built-in url/label form), and keeps the legacy
+    // fixed-projection semantics otherwise. The generic '' URL is template-mode-only.
+    if (manifest.instances?.includes('mcp') === true) {
+      if (manifest.contributions.mcp.some((entry) => entry.kind === 'mcpb')) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['contributions', 'mcp'],
+          message: "mcpb 贡献不支持实例化（instances: ['mcp']）",
+        });
+      }
+      if (manifest.contributions.mcp.filter((entry) => entry.kind === 'http').length > 1) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['contributions', 'mcp'],
+          message: 'MCP 实例能力只能声明一个模版配置',
+        });
+      }
+    } else if (manifest.contributions.mcp.some((entry) => entry.kind === 'http' && entry.url === '')) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['contributions', 'mcp'],
+        message: "url 留空表示通用模版，必须同时声明 instances: ['mcp']",
       });
     }
     // Declarative fields / instances (D105): duplicate config keys and duplicate

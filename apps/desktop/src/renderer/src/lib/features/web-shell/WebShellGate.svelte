@@ -4,6 +4,7 @@
   import { t, type MessageKey } from '$lib/i18n';
   import { webGate, type RejectReason } from './gate.svelte';
   import { ENDPOINT_KIND } from './endpoint';
+  import { NATIVE_SHELL, NATIVE_SHELL_HOME } from './shell';
   import { bindWebBackNavigation } from './back-navigation.svelte';
 
   /**
@@ -17,6 +18,25 @@
   let { children }: { children?: Snippet } = $props();
 
   const view = $derived(ENDPOINT_KIND === 'remote' ? webGate.view : 'connected');
+
+  /**
+   * 断开回首页(D122):首页是 WebView history 第 0 项,go 直达、不产生新栈项——
+   * 压栈导航(location.href)会让 Android 返回键退回客户端页、撤销断开(审查修复)。
+   * shellBack(已校验为本地源)只在 history 不可用(length ≤ 1)时兜底;伪造参数
+   * 的场景退化 history.back(),不导去非本地页。
+   */
+  function disconnectToHome(): void {
+    if (ENDPOINT_KIND !== 'remote' || !NATIVE_SHELL) return;
+    if (history.length > 1) {
+      history.go(-(history.length - 1));
+      return;
+    }
+    if (NATIVE_SHELL_HOME !== null) {
+      window.location.href = NATIVE_SHELL_HOME;
+      return;
+    }
+    history.back();
+  }
 
   // 横滑返回（popstate → 关最上层）：只在 web 端点接管，见 back-navigation.svelte.ts。
   $effect(() => {
@@ -177,6 +197,19 @@
 
 {#if view === 'connected'}
   {@render children?.()}
+  <!-- 原生壳的常驻断开出口(D122):fixed 悬浮在安全区内,z-50 压过 App 层;
+       半透明避免遮挡观感。浏览器路径(NATIVE_SHELL=false)不渲染。 -->
+  {#if NATIVE_SHELL && ENDPOINT_KIND === 'remote'}
+    <button
+      type="button"
+      class="fixed top-[max(0.5rem,env(safe-area-inset-top))] right-[max(0.75rem,env(safe-area-inset-right))] z-50 rounded-full border border-border/60 bg-background/70 px-3 py-1.5 text-xs text-muted-foreground backdrop-blur-sm hover:bg-muted"
+      title={t('web.shell.disconnectHint')}
+      onclick={disconnectToHome}
+      data-testid="web-shell-disconnect"
+    >
+      {t('web.shell.disconnect')}
+    </button>
+  {/if}
 {:else}
   <!-- children（App UI）未渲染，主题监听由门自己带一份。 -->
   <ModeWatcher />
@@ -185,9 +218,23 @@
          窗口拖拽由这条 drag 区域承担。logo + 标题居中，天然避开左上角的 mac 红绿灯与
          右上角的 Windows 原生 caption 三键，三平台无需分别留白；浏览器里
          -webkit-app-region 不生效，退化成普通页头。 -->
-    <header class="app-drag flex h-12 shrink-0 select-none items-center justify-center gap-2">
+    <header
+      class="app-drag relative flex h-12 shrink-0 items-center justify-center gap-2 select-none"
+    >
       <img src="/icon.svg" alt="" class="size-6 rounded-md" />
       <span class="text-sm font-medium">{t('web.gate.title')}</span>
+      <!-- 原生壳:门状态页的断开出口(D122),右上角避开居中的 logo/标题。 -->
+      {#if NATIVE_SHELL && ENDPOINT_KIND === 'remote'}
+        <button
+          type="button"
+          class="absolute top-1/2 right-3 -translate-y-1/2 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted"
+          title={t('web.shell.disconnectHint')}
+          onclick={disconnectToHome}
+          data-testid="web-shell-disconnect"
+        >
+          {t('web.shell.disconnect')}
+        </button>
+      {/if}
     </header>
 
     <main class="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6 pb-10">
@@ -250,7 +297,9 @@
             <button
               type="submit"
               class="h-10 w-full rounded-md bg-primary text-sm font-medium text-primary-foreground hover:bg-primary/80 disabled:opacity-50"
-              disabled={webGate.loginPending || loginUser.trim().length === 0 || loginPass.length === 0}
+              disabled={webGate.loginPending ||
+                loginUser.trim().length === 0 ||
+                loginPass.length === 0}
               data-testid="web-login-submit"
             >
               {webGate.loginPending ? t('web.login.pending') : t('web.login.submit')}

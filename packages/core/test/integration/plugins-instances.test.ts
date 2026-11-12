@@ -108,7 +108,7 @@ const instanceRows = (core: TestStack['core']) =>
   >;
 
 describe('plugin config & instances (D105 P1)', () => {
-  it('纯实例清单：inspect 正确、可安装；create 实例在本版本被拒（无 materializer）', async () => {
+  it('纯实例清单：inspect 正确、可安装；通用模版实例 CRUD 全通（P4-M2 materializer）', async () => {
     const { core } = await setup();
     // P3：纯实例形态（无贡献）只剩 mcp；mail 声明必须伴随供给规范贡献。
     const fixture = await pureInstanceFixture({
@@ -141,13 +141,97 @@ describe('plugin config & instances (D105 P1)', () => {
     expect(summary.instanceCounts).toEqual({ mail: 0, mcp: 0, im: 0 });
     expect(summary.configFields).toHaveLength(2);
 
-    // P1：mcp 实例 P4-M2 才接入 —— create 在适配器层停下（预期 PLUGIN_INVALID）。
+    // P4-M2：mcp 实例化落地——通用模版（无贡献）表单 = label + url；create 写出
+    // settings server（instance source、developer 分级、autoApprove 关），删除级联清场。
+    const settings = core.services.domain!.settings;
+    const servers = () => settings.get().mcpServers;
     await expect(
       core.rpc.call('plugins.instances.create', {
         pluginId: PLUGIN_ID,
         values: {},
       }),
-    ).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    const created = (await core.rpc.call('plugins.instances.create', {
+      pluginId: PLUGIN_ID,
+      values: { url: 'https://mcp.example.com/mcp' },
+    })) as { instance: { id: string; title: string } };
+    expect(created.instance.title).toBe('Fixture');
+    expect(servers()).toHaveLength(1);
+    const server = servers()[0]!;
+    expect(server.id).toMatch(/^plg_[0-9a-f]{12}$/);
+    expect(server).toMatchObject({
+      transport: 'http',
+      url: 'https://mcp.example.com/mcp',
+      auth: 'none',
+      autoApprove: false,
+      tier: 'developer',
+      enabled: true,
+    });
+    expect(server.source).toMatchObject({ kind: 'instance', pluginId: PLUGIN_ID });
+    // 注入：instance 来源与 plugin 来源同口径（按插件启用集，不要求勾选）。
+    const injected = core.services.mcp!.serversForBot([], new Set([PLUGIN_ID]));
+    expect(injected.map((entry) => entry.id)).toEqual([server.id]);
+    // 删除级联：实例删除 → server 摘除 + 实例行清场。
+    await core.rpc.call('plugins.instances.delete', { id: created.instance.id });
+    expect(servers()).toHaveLength(0);
+    expect(instanceRows(core)).toHaveLength(0);
+  });
+
+  it('mcp 厂商模版：锁定端点 + headers 走 secrets 占位，更新轮换凭据', async () => {
+    const { core } = await setup();
+    const fixture = await pureInstanceFixture({
+      instances: ['mcp'],
+      contributions: {
+        skills: [],
+        connectors: [],
+        mail: [],
+        im: [],
+        mcp: [
+          {
+            kind: 'http',
+            id: 'docs',
+            name: '文档服务',
+            url: 'https://docs.example.com/openapi/mcp',
+            auth: 'headers',
+            headers: [{ name: 'Authorization', key: 'token' }],
+          },
+        ],
+      },
+    });
+    await install(core, fixture);
+    const settings = core.services.domain!.settings;
+    const servers = () => settings.get().mcpServers;
+    const secrets = core.services.domain!.secrets;
+
+    const created = (await core.rpc.call('plugins.instances.create', {
+      pluginId: PLUGIN_ID,
+      values: { label: '我的文档', token: 'Bearer abc' },
+    })) as { instance: { id: string; title: string } };
+    expect(created.instance.title).toBe('我的文档');
+    expect(servers()).toHaveLength(1);
+    const server = servers()[0]!;
+    expect(server).toMatchObject({
+      transport: 'http',
+      url: 'https://docs.example.com/openapi/mcp',
+      auth: 'headers',
+    });
+    // settings 里只落占位符，真实值在 secrets（mcp:{id}:header:{name}）。
+    expect(server.headers).toEqual({ Authorization: 'secret:header:Authorization' });
+    expect(server.id).toMatch(/^plg_[0-9a-f]{12}$/);
+    expect(secrets.getValue(`mcp:${server.id}:header:Authorization`)).toBe('Bearer abc');
+
+    // 更新：令牌轮换 → secrets 覆盖、server 保持锁定端点；URL 不可改（锁定）。
+    await core.rpc.call('plugins.instances.update', {
+      id: created.instance.id,
+      values: { token: 'Bearer def' },
+    });
+    expect(servers()[0]!.url).toBe('https://docs.example.com/openapi/mcp');
+    expect(secrets.getValue(`mcp:${server.id}:header:Authorization`)).toBe('Bearer def');
+
+    // 删除：server 摘除 + header secret 清扫。
+    await core.rpc.call('plugins.instances.delete', { id: created.instance.id });
+    expect(servers()).toHaveLength(0);
+    expect(secrets.getValue(`mcp:${server.id}:header:Authorization`)).toBeNull();
     expect(instanceRows(core)).toHaveLength(0);
   });
 

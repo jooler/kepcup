@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import type { RunIdentity, ToolDefinition } from '../agent/types.js';
 import type { SetupRequirement } from '@kepcup/shared';
 import { neutralizeUntrusted, untrustedBlock } from '../infra/data-boundary.js';

@@ -83,6 +83,14 @@ export const enUS = {
   'chats.errorCode.INTERNAL': 'Internal error',
   'chats.errorCode.RUN_READ_ONLY':
     'This run is read-only: writing files, running commands that write, generating media, and installing skills or environments must happen in a write task',
+  // D123: write domains / claims / peer coordination
+  'chats.errorCode.WRITE_OUT_OF_DOMAIN':
+    'This task may only write inside its declared write domain; the path is outside it. A task must use ask_user to request reassignment',
+  'chats.errorCode.WRITE_CLAIMED':
+    'Another task claimed this path: wait for it to release it, or let the tasks coordinate first',
+  'chats.errorCode.TASK_PEER_NOT_FOUND': 'No such task in this conversation',
+  'chats.errorCode.TASK_PEER_FINISHED': 'The target task has already finished',
+  'chats.errorCode.TASK_WAIT_CYCLE': 'Task waits form a cycle; the request was refused',
   'chats.errorCode.CATASTROPHIC_COMMAND':
     'This command would destroy the system, your home directory or the app data directory and was blocked by the safety policy',
   'chats.errorCode.TASK_LIMIT_REACHED':
@@ -1712,13 +1720,20 @@ export const enUS = {
   'task.run.action.call': 'Called',
   'task.run.action.plan': 'Updated plan',
   'task.run.steer': 'Add instruction',
+  'task.run.peerMessage': 'From task {id}{title}',
+  'task.run.writeDomains': 'Write domain {list}',
+  'task.run.claims': 'Claimed {list}',
   // D115 inject dock (docs/design/56 §1): user steering entry at the bottom of the task page.
   'task.run.injectPlaceholder': 'Add an instruction, Enter to send…',
-  'task.run.injectSend': 'Send',
   'task.run.injectHintAwaiting': 'The task is waiting for your answer: what you send is the answer',
   'task.run.injectSent': 'Added to the task',
   'task.run.injectQueued': 'Not delivered: it takes effect once the task ends',
   'task.run.injectFailed': 'Failed to add',
+  // Added when the dock reuses the conversation Composer: attachments have nowhere to go
+  // (tasks.inject only takes text), and ASR is not configured.
+  'task.run.injectAttachUnsupported': 'Attachments are not supported for task instructions',
+  'task.run.injectVoiceUnavailable':
+    'Speech recognition is not configured. Set it up in Settings first',
   'task.run.system': 'System',
   'task.run.live': 'Live',
   'task.run.noOutput': 'No output',
@@ -3417,6 +3432,29 @@ export const enUS = {
   'mail.ownerOf': 'From plugin: {plugin}',
   'mail.instanceFormNote':
     'A mailbox of "{plugin}". Fields are declared by the plugin; the connection test runs when you save.',
+  // P4-M2: mcp instances (tool services) — the key group mirrors mail.*.
+  'mcp.intro':
+    'Tool services come from plugins: add one on a plugin card and paste the credentials the platform asks for; tools become available to Bots with the plugin enabled.',
+  'mcp.add': 'Add tool service',
+  'mcp.empty':
+    'Once added, the online-document tools provided by this plugin become available to Bots with the plugin enabled.',
+  'mcp.back': 'Back',
+  'mcp.saving': 'Saving…',
+  'mcp.save': 'Save',
+  'mcp.added': 'Tool service added',
+  'mcp.updated': 'Tool service updated',
+  'mcp.delete': 'Delete tool service',
+  'mcp.editHint': 'Click to edit',
+  'mcp.noPlugin':
+    'No plugin can add tool services yet. Install one from the marketplace first (e.g. Tencent Docs, Feishu, Yuque).',
+  'mcp.openMarket': 'Open plugin marketplace',
+  'mcp.instanceCount': '{count} services',
+  'mcp.ownerOf': 'From plugin: {plugin}',
+  'mcp.instanceFormNote':
+    'A tool service of "{plugin}". Fields are declared by the plugin; credentials stay on this device.',
+  'mcp.pluginMissing': 'The plugin does not exist or has been uninstalled — go back to the list and refresh.',
+  'mcp.pluginDisabled':
+    'Plugin "{plugin}" is currently disabled; enable it before saving a new tool service.',
   'mailCard.save': 'Save',
   'mailCard.plugin.saved': 'Mail plugin settings saved',
   'mailCard.plugin.enabledGlobally': 'Enabled plugin "{plugin}"',
@@ -4187,6 +4225,9 @@ export const enUS = {
   'web.connected.fingerprint': 'Key fingerprint',
   'web.install.hint': 'Add KepCup to your home screen to use it like an app',
   'web.install.action': 'Add to Home Screen',
+  // --- D122 native mobile shell (docs/design/58-mobile-shell.md) ---------------
+  'web.shell.disconnect': 'Disconnect',
+  'web.shell.disconnectHint': 'Disconnect and return to the KepCup app home',
   'settings.desktopOnly': 'Available on the desktop app only',
   'web.failed.title': 'Cannot reach the relay',
   'web.failed.body':

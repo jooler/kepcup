@@ -34,6 +34,7 @@ export * from './domain/mcpb.js';
 export * from './domain/bot-template.js';
 export * from './domain/oauth-clients.js';
 export * from './domain/host-capabilities.js';
+export * from './domain/pairing-link.js';
 export * from './domain/sensors.js';
 export * from './domain/watches.js';
 export * from './domain/mail.js';

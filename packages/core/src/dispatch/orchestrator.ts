@@ -15,6 +15,7 @@ import {
   presentContextText,
   PROFILE_CHANGE_FOLLOWUP_EVENT,
   TASK_MAX_TURNS,
+  TASK_AUTO_RETRY_DELAYS_MS,
   TURN_MAX_TURNS,
   SETTING_DIRECT_TRIGGERS,
   SETUP_MAX_QUESTIONS,
@@ -111,7 +112,7 @@ import {
   type RenderMessageOptions,
 } from '../agent/context/conversation.js';
 import type { ContinuationPlan } from '../agent/context/continuation.js';
-import { buildTasksSegment } from '../agent/context/tasks-segment.js';
+import { buildPeerTasksSegment, buildTasksSegment } from '../agent/context/tasks-segment.js';
 import type {
   AgentEngine,
   AgentSessionMode,
@@ -155,6 +156,7 @@ import type { SecretsService } from '../domain/secrets.js';
 import type { ApprovalsService } from '../permissions/approvals.js';
 import type { GrantsService } from '../permissions/grants.js';
 import type { WorkdirRuntime } from '../workdir/service.js';
+import type { TaskClaimRegistry } from '../workdir/claims.js';
 import type { SandboxBackend } from '../sandbox/types.js';
 import type { CoreEventsMap } from '../start-types.js';
 import {
@@ -368,6 +370,11 @@ export interface OrchestratorDeps {
   /** D72 生效目录（已按发行门禁过滤）；缺省 = 空目录。 */
   agentCatalog?: () => readonly AgentCatalogEntry[];
   /**
+   * 任务失败自动重试的退避档位（转发给 TaskHost 的 `autoRetryDelaysMs`）；
+   * 缺省 = 完整生产档位（TASK_AUTO_RETRY_DELAYS_MS），空数组 = 关闭。
+   */
+  taskAutoRetryDelaysMs?: readonly number[];
+  /**
    * D72 P6 后台调用路由（路由判断、续接仲裁、SubAgent 压缩）：无内置模型时
    * 改走外部 Agent。缺省 = 只用内置模型（P6 之前的行为）。
    */
@@ -401,6 +408,8 @@ export interface OrchestratorDeps {
   approvals: ApprovalsService;
   grants: GrantsService;
   workdirs: WorkdirRuntime;
+  /** D123 §5: shared in-memory task claims (gateway + TaskHost). */
+  claims?: TaskClaimRegistry | undefined;
   sandbox: SandboxBackend;
   clock: Clock;
   logger: CoreLogger;
@@ -825,6 +834,9 @@ export class Orchestrator {
     this.#taskHost = new TaskHost({
       db: deps.db,
       runs: deps.runs,
+      // 任务失败自动重试：生产默认完整档位（测试装配可传 [] 关闭）。
+      autoRetryDelaysMs: deps.taskAutoRetryDelaysMs ?? TASK_AUTO_RETRY_DELAYS_MS,
+      ...(deps.claims !== undefined ? { claims: deps.claims } : {}),
       ...(deps.effects !== undefined ? { effects: deps.effects } : {}),
       messages: deps.messages,
       conversations: deps.conversations,
@@ -1147,6 +1159,14 @@ export class Orchestrator {
   }
 
   // --- voice conversation mode (53 号修订 v3) --------------------------------
+
+  /**
+   * D123 teardown: release the task host's long-lived peer-wait timers before
+   * `core.close()` closes the run database.
+   */
+  dispose(): void {
+    this.#taskHost.dispose();
+  }
 
   /**
    * 同步会话的语音对话模式开关（渲染层经 `conversations.setVoiceMode` 调）。
@@ -3729,7 +3749,14 @@ export class Orchestrator {
           await this.#deps.workdirs.ensureWriteLease(
             { runId: task.id, botId, conversationId, loopType: 'task' },
             root,
-            { pin: true, signal: control.signal, reason: `任务「${brief.title}」` },
+            {
+              pin: true,
+              signal: control.signal,
+              reason: `任务「${brief.title}」`,
+              // D123: a declared domain makes this key structured; undeclared
+              // (`writes: true`) keeps the plain whole-root key.
+              domains: task.taskWriteDomains,
+            },
           );
         } catch (error) {
           // Cancelled while waiting: the host already settled the task.
@@ -4037,7 +4064,7 @@ export class Orchestrator {
       // §4.2: the turn sees its in-flight tasks (state, queue reason) —
       // deterministic, no model call. Progress is UI-only (not in the segment).
       const tasksSegment = isTask
-        ? ''
+        ? buildPeerTasksSegment(this.#taskHost.list(identity), identity.runId)
         : buildTasksSegment(this.#taskHost.list(identity), this.#deps.clock.now());
       const contextAndContinuation = [contextSegment, continuation?.segment, tasksSegment]
         .filter((part): part is string => typeof part === 'string' && part.length > 0)
@@ -4285,7 +4312,18 @@ export class Orchestrator {
       // D93 P3: only built-in tasks spill oversized tool output; external
       // agents keep their own native harness and turn contexts stay bounded.
       const toolOutputSpill =
-        isTask && agentId.length === 0 ? new ToolOutputSpill({ workspacePath, runId }) : undefined;
+        isTask && agentId.length === 0
+          ? new ToolOutputSpill({
+              workspacePath,
+              runId,
+              canWrite: (target) => {
+                const decision = this.#deps.gateway.checkPath(identity, target, 'write');
+                // Host-owned output, like `.attachments`: a read-only run may
+                // still spill, but a declared domain / peer claim still applies.
+                return decision.kind !== 'forbidden' || decision.readOnlyRun === true;
+              },
+            })
+          : undefined;
       const toolDeps: ResponseToolDeps = {
         ...(scheduleSource !== null ? { scheduleSource } : {}),
         ...(todoSource !== null ? { todoSource } : {}),

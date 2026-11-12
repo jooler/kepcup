@@ -1,11 +1,16 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import {
   AppError,
   ASK_USER_FIELDS_MAX,
   ASK_USER_OPTION_MAX_CHARS,
   askUserFieldsSchema,
   TASK_CAPABILITIES_MAX,
+  TASK_CLAIM_PATHS_MAX,
   TASK_INSTRUCTION_MAX_CHARS,
+  TASK_PEER_MESSAGE_MAX_CHARS,
+  TASK_PEER_SEND_MAX_PER_RUN,
+  TASK_PEER_WAIT_TTL_MAX_MS,
+  TASK_PEER_WAIT_TTL_MS,
   TASK_SOURCE_MESSAGES_MAX,
   TASK_TITLE_MAX_CHARS,
   type AskUserField,
@@ -33,8 +38,13 @@ export interface StartTaskInput {
   instruction: string;
   /** The user's original messages the task works from (verbatim in its brief, §2.4.5). */
   sourceMessageIds: string[];
-  /** Write task: takes the cwd write lease for its whole run (§5.1). */
-  writes: boolean;
+  /**
+   * Write task: takes the cwd write lease for its whole run (§5.1). `true` =
+   * the whole cwd, a glob array = declared write domains (D123), `false` /
+   * omitted = read-only. A continuation without `writes` inherits the source
+   * task's declaration.
+   */
+  writes?: boolean | string[];
   /** Cwd root; default = the bound workdir when available, else the workspace. */
   cwd?: 'workspace' | 'workdir' | undefined;
   /** Replay this settled task's process into the new one (D56 budget, §7.1). */
@@ -84,6 +94,46 @@ export interface InjectTaskResult {
   delivery: 'delivered' | 'queued';
 }
 
+/** D123: `send_to_task` — a message to a sibling task (task tool surface only). */
+export interface SendToTaskInput {
+  taskId: string;
+  text: string;
+  sourceMessageIds?: string[] | undefined;
+}
+
+/** D123: `wait_for_task` — block on a sibling task's terminal state. */
+export interface WaitForTaskInput {
+  taskId: string;
+  /** Defaults to `TASK_PEER_WAIT_TTL_MS`, capped at `TASK_PEER_WAIT_TTL_MAX_MS`. */
+  timeoutMinutes?: number | undefined;
+}
+
+export type PeerTaskStatus = 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'still_running';
+
+export interface WaitForTaskResult {
+  status: PeerTaskStatus;
+  /** Terminal result text (clipped to `TASK_PEER_WAIT_RESULT_MAX_CHARS`). */
+  resultDigest?: string;
+  /** `still_running`: why the target is not running yet. */
+  queueReason?: string;
+}
+
+/** D123 §5: runtime claim of a path subset inside the task's write domain. */
+export interface ClaimTaskInput {
+  paths: string[];
+  reason: string;
+}
+
+export interface ReleaseTaskInput {
+  paths?: string[] | undefined;
+}
+
+export interface ClaimTaskResult {
+  paths: string[];
+  reason: string;
+  since: number;
+}
+
 export interface CancelTaskResult {
   taskId: string;
   state: TaskState;
@@ -96,10 +146,20 @@ export interface TaskSummary {
   state: TaskState;
   status: RunStatus;
   writes: boolean;
+  /** D123: declared write domains (null = whole cwd / not declared). */
+  writeDomains?: string[] | null;
   cwd: string | null;
   createdAt: number;
   endedAt: number | null;
   queueReason: string | null;
+  /**
+   * D123 ③: ms the task queued before its model run started (absent = not
+   * launched yet, or it never queued). Only the task itself reads it — the
+   * turn's `<tasks>` segment ignores it.
+   */
+  startupQueueMs?: number;
+  /** D123 ③: why it queued before starting (absent = no reason recorded). */
+  startupQueueReason?: string | null;
   awaitingInput: boolean;
   injectable: boolean;
   /** Latest visible progress line of the task (clipped), if any. */
@@ -120,6 +180,18 @@ export interface TaskToolFacade {
   inject(identity: RunIdentity, input: InjectTaskInput): InjectTaskResult;
   cancel(identity: RunIdentity, input: { taskId: string; reason: string }): CancelTaskResult;
   list(identity: RunIdentity): TaskSummary[];
+  /** D123 (task surface only): message a sibling task. */
+  send?(identity: RunIdentity, input: SendToTaskInput): InjectTaskResult;
+  /** D123 (task surface only): wait for a sibling task's terminal state. */
+  wait?(
+    identity: RunIdentity,
+    input: WaitForTaskInput,
+    signal: AbortSignal,
+  ): Promise<WaitForTaskResult>;
+  /** D123 (task surface only): claim a path subset inside the write domain. */
+  claim?(identity: RunIdentity, input: ClaimTaskInput): ClaimTaskResult;
+  /** D123 (task surface only): release claimed paths (no paths = all). */
+  release?(identity: RunIdentity, input: ReleaseTaskInput): string[];
   /**
    * §2.4.6 (task side): asks the user on a visible question card and waits for
    * the answer (a card option, or the turn's inject_task). Optional: only the
@@ -353,7 +425,7 @@ export function buildTaskTools(input: {
     title: string;
     instruction: string;
     source_message_ids: string[];
-    writes: boolean;
+    writes?: boolean | string[];
     cwd?: 'workspace' | 'workdir';
     continues_task_id?: string;
     capabilities?: string[];
@@ -364,7 +436,7 @@ export function buildTaskTools(input: {
       '对话轮只有只读查询工具（无 bash / 写入）；任务拥有完整工具面（bash、写文件、浏览器等），执行中会按需申请权限——本轮做不了的，就用 start_task 派任务去做。' +
       '任务完成后它的结果会交回给你，由你决定怎么告诉用户；过程中只有一条状态通知会更新给用户看（不堆消息）。' +
       'instruction 写清要做什么、要什么结果、约束；source_message_ids 填用户的原消息 id（任务会看到原文与附件）。' +
-      'writes=true 表示要改文件（同一目录同时只有一个写任务，其余排队）；只读调研用 writes=false。' +
+      'writes=true 表示要改文件（整目录串行，安全默认）；多个写任务各改一块时，可用 writes 传相对 cwd 的 glob 数组（如 ["apps/renderer/**","packages/core/**"]）声明互不相交的写域，互不相交的写任务可并行；域外写入会被拒绝。只读调研用 writes=false。' +
       '任务要用 <capabilities> 里的外部能力（连接应用 / 自定义 MCP）时，在 capabilities 里列出它们的 id（如 ["app:github"]）：任务只会挂上你列出的能力，其余能力任务里也能用，但要先查一步，更慢。' +
       '要接着一条已结束的任务重做，用 continues_task_id（先 cancel_task 进行中的那条）。派出后不必再复述「已派出」——任务卡会即时出现在对话里；有排队、能力不可用等用户需要知道的情况时才补一句。',
     parameters: Type.Object(
@@ -376,7 +448,12 @@ export function buildTaskTools(input: {
         source_message_ids: Type.Array(Type.String(), {
           description: '相关的用户原消息 id（msg_…），任务简报会带上原文',
         }),
-        writes: Type.Boolean({ description: 'true = 会修改文件的写任务；false = 只读任务' }),
+        writes: Type.Optional(
+          Type.Union([Type.Boolean(), Type.Array(Type.String({ description: '相对 cwd 的 glob，如 apps/renderer/**' }))], {
+            description:
+              'true = 整目录写任务（安全默认，写任务串行）；glob 数组 = 声明互不相交的写域（如 ["apps/renderer/**"]），域不相交的写任务可并行；false / 省略 = 只读。接续任务省略时继承来源任务',
+          }),
+        ),
         cwd: Type.Optional(
           Type.Union([Type.Literal('workspace'), Type.Literal('workdir')], {
             description: '工作目录：workdir（对话绑定的工作目录，缺省时有绑定即用）或 workspace',
@@ -403,7 +480,14 @@ export function buildTaskTools(input: {
         if (blocked !== null) return fail('INVALID_INPUT', blocked);
         const ids = sourceIds(params.source_message_ids);
         if (typeof ids === 'string') return fail('INVALID_INPUT', ids);
-        if (typeof params.writes !== 'boolean') return fail('INVALID_INPUT', 'writes 必须是布尔值');
+        const writes = params.writes;
+        if (
+          writes !== undefined &&
+          typeof writes !== 'boolean' &&
+          !(Array.isArray(writes) && writes.every((pattern) => typeof pattern === 'string'))
+        ) {
+          return fail('INVALID_INPUT', 'writes 必须是布尔值或相对 cwd 的 glob 字符串数组');
+        }
         if (params.cwd !== undefined && params.cwd !== 'workspace' && params.cwd !== 'workdir') {
           return fail('INVALID_INPUT', 'cwd 只能是 workspace 或 workdir');
         }
@@ -413,7 +497,7 @@ export function buildTaskTools(input: {
           title: nonEmpty(params.title, 'title', TASK_TITLE_MAX_CHARS),
           instruction: nonEmpty(params.instruction, 'instruction', TASK_INSTRUCTION_MAX_CHARS),
           sourceMessageIds: ids,
-          writes: params.writes,
+          ...(writes !== undefined ? { writes } : {}),
           ...(params.cwd !== undefined ? { cwd: params.cwd } : {}),
           ...(params.continues_task_id !== undefined && params.continues_task_id.trim() !== ''
             ? { continuesTaskId: params.continues_task_id.trim() }
@@ -516,4 +600,189 @@ export function buildTaskTools(input: {
   };
 
   return [startTask, injectTask, cancelTask, listTasks] as ToolDefinition[];
+}
+
+function describeWait(result: WaitForTaskResult): string {
+  if (result.status === 'still_running') {
+    const reason = result.queueReason !== null && result.queueReason !== undefined ? `（${result.queueReason}）` : '';
+    return `对方仍未结束${reason}：这次没有等到终态，可以稍后再调 wait_for_task，或先做别的。\n${JSON.stringify(result)}`;
+  }
+  const head = result.status === 'completed' ? '对方已完成' : `对方已结束（${result.status}）`;
+  const digest = result.resultDigest?.trim() ?? '';
+  return `${head}。${digest.length > 0 ? `结果摘要：\n${digest}` : '没有结果摘要。'}\n${JSON.stringify(result)}`;
+}
+
+/**
+ * D123: task-to-task coordination (docs/design/59 §4) — registered on the task
+ * surface only. A task may message and wait for a sibling; it still cannot
+ * start or cancel tasks (depth 1, §4.4).
+ */
+export function buildPeerTaskTools(input: {
+  identity: RunIdentity;
+  tasks: TaskToolFacade;
+}): ToolDefinition[] {
+  const { identity, tasks } = input;
+  if (tasks.send === undefined || tasks.wait === undefined) return [];
+
+  const sendToTask: ToolDefinition<{
+    task_id: string;
+    text: string;
+    source_message_ids?: string[];
+  }> = {
+    name: 'send_to_task',
+    description:
+      '给同一对话里的另一个任务发一条消息（任务之间的协商，例如询问它的写域、约定先后）。' +
+      `每次任务最多发 ${TASK_PEER_SEND_MAX_PER_RUN} 条、每条 ≤ ${TASK_PEER_MESSAGE_MAX_CHARS} 字；对方已结束会失败（TASK_PEER_FINISHED）。` +
+      '这不等于派活或取消任务——需要改派请让对话轮处理。',
+    parameters: Type.Object(
+      {
+        task_id: Type.String({ description: '目标任务的 id（见 <peer_tasks>）' }),
+        text: Type.String({ description: '要发给对方的内容' }),
+        source_message_ids: Type.Optional(
+          Type.Array(Type.String(), { description: '相关用户原消息 id（对方会看到原文）' }),
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    execute: async (params) =>
+      guarded(() => {
+        if (identity.loopType !== 'task') {
+          return fail('NOT_SUPPORTED', '只有任务之间可以互发消息');
+        }
+        const ids = sourceIds(params.source_message_ids);
+        if (typeof ids === 'string') return fail('INVALID_INPUT', ids);
+        const result = tasks.send!(identity, {
+          taskId: nonEmpty(params.task_id, 'task_id', 200),
+          text: nonEmpty(params.text, 'text', TASK_PEER_MESSAGE_MAX_CHARS),
+          ...(ids.length > 0 ? { sourceMessageIds: ids } : {}),
+        });
+        return {
+          ok: true,
+          content: `${
+            result.delivery === 'delivered'
+              ? '已送达'
+              : '已排队（对方收尾前可能收不到，与 inject_task 同语义）'
+          }任务 ${params.task_id}。\n${JSON.stringify({ task_id: params.task_id, delivery: result.delivery })}`,
+        };
+      }),
+  };
+
+  const waitForTask: ToolDefinition<{
+    task_id: string;
+    timeout_minutes?: number;
+  }> = {
+    name: 'wait_for_task',
+    description:
+      '等待同一对话里的另一个任务结束（completed / failed / cancelled / interrupted），返回它的终态与结果摘要。' +
+      `缺省最多等 ${TASK_PEER_WAIT_TTL_MS / 60_000} 分钟，可用 timeout_minutes 指定（上限 ${TASK_PEER_WAIT_TTL_MAX_MS / 60_000}）；` +
+      '超时返回 still_running 与对方当前排队原因。等待期间让出并发名额、不计任务时长，本任务的写租约保留；' +
+      '等待环（A 等 B、B 等 A）会报 TASK_WAIT_CYCLE。',
+    parameters: Type.Object(
+      {
+        task_id: Type.String({ description: '要等待的任务 id（见 <peer_tasks>）' }),
+        timeout_minutes: Type.Optional(
+          Type.Number({
+            description: `最多等多少分钟（缺省 ${TASK_PEER_WAIT_TTL_MS / 60_000}，上限 ${TASK_PEER_WAIT_TTL_MAX_MS / 60_000}）`,
+          }),
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    execute: async (params, ctx) => {
+      if (identity.loopType !== 'task') {
+        return fail('NOT_SUPPORTED', '只有任务可以等待其他任务');
+      }
+      try {
+        const result = await tasks.wait!(
+          identity,
+          {
+            taskId: nonEmpty(params.task_id, 'task_id', 200),
+            ...(params.timeout_minutes !== undefined
+              ? { timeoutMinutes: params.timeout_minutes }
+              : {}),
+          },
+          ctx.signal,
+        );
+        return { ok: true, content: describeWait(result) };
+      } catch (error) {
+        if (error instanceof AppError) return fail(String(error.code), error.message);
+        return fail('INTERNAL', error instanceof Error ? error.message : String(error));
+      }
+    },
+  };
+
+  return [sendToTask, waitForTask];
+}
+
+/**
+ * D123 §5: runtime claims (task surface only). `claim` reserves paths inside
+ * the task's own write domain; other tasks' writes there fail WRITE_CLAIMED
+ * until `release` or the task ends.
+ */
+export function buildClaimTools(input: {
+  identity: RunIdentity;
+  tasks: TaskToolFacade;
+}): ToolDefinition[] {
+  const { identity, tasks } = input;
+  if (tasks.claim === undefined || tasks.release === undefined) return [];
+
+  const claimPaths: ToolDefinition<{ paths: string[]; reason: string }> = {
+    name: 'claim',
+    description:
+      '认领本任务写域内的一小片路径（相对 cwd 的 glob），让其他任务写到这里时被拒绝（WRITE_CLAIMED）——只用于你们确实要碰同一块区域时，先认领再动手。' +
+      `一次最多 ${TASK_CLAIM_PATHS_MAX} 条；必须在自己的写域内。完成或改道后 release；任务结束会自动释放。这是协调原语，不是永久锁。`,
+    parameters: Type.Object(
+      {
+        paths: Type.Array(Type.String(), {
+          description: `要认领的相对 cwd glob（最多 ${TASK_CLAIM_PATHS_MAX} 条）`,
+        }),
+        reason: Type.String({ description: '为什么认领（对方会在错误里看到）' }),
+      },
+      { additionalProperties: false },
+    ),
+    execute: async (params) =>
+      guarded(() => {
+        if (identity.loopType !== 'task') return fail('NOT_SUPPORTED', '只有任务可以认领路径');
+        if (!Array.isArray(params.paths) || params.paths.length === 0) {
+          return fail('INVALID_INPUT', 'paths 不能为空');
+        }
+        const result = tasks.claim!(identity, {
+          paths: params.paths.filter((path): path is string => typeof path === 'string'),
+          reason: nonEmpty(params.reason, 'reason', 200),
+        });
+        return {
+          ok: true,
+          content: `已认领：${result.paths.join('、')}（${result.reason}）。其他任务写到这里会被拒绝，完成或改道后记得 release。`,
+        };
+      }),
+  };
+
+  const releasePaths: ToolDefinition<{ paths?: string[] }> = {
+    name: 'release',
+    description: '释放本任务认领的路径；不带参数释放全部。任务结束会自动释放，无需在此调用。',
+    parameters: Type.Object(
+      {
+        paths: Type.Optional(
+          Type.Array(Type.String(), { description: '要释放的路径（缺省 = 全部）' }),
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    execute: async (params) =>
+      guarded(() => {
+        if (identity.loopType !== 'task') return fail('NOT_SUPPORTED', '只有任务可以释放认领');
+        const released = tasks.release!(identity, {
+          ...(Array.isArray(params.paths)
+            ? { paths: params.paths.filter((path): path is string => typeof path === 'string') }
+            : {}),
+        });
+        return {
+          ok: true,
+          content:
+            released.length > 0 ? `已释放：${released.join('、')}` : '没有需要释放的认领。',
+        };
+      }),
+  };
+
+  return [claimPaths, releasePaths];
 }

@@ -295,7 +295,7 @@ describe('workdirs (P04)', () => {
       { label: 'B queue reason', timeoutMs: 30_000 },
     );
     expect(queued.state).toBe('submitted');
-    expect(queued.queueReason).toBe(`等写入租约（任务 ${aTask.id} 持有）`);
+    expect(queued.queueReason).toBe(`等写域（任务 ${aTask.id} 持有 整目录）`);
     // Held in the task layer: still `queued`, not on the lease (no waiting_lease, no lease.waiting).
     expect(runOf(core, bTask.id).status).toBe('queued');
     expect(leaseWaits).toEqual([]);
@@ -1077,7 +1077,7 @@ describe('workdirs (P04)', () => {
       label: 'B task submitted',
       timeoutMs: 30_000,
     });
-    const reason = `等写入租约（任务 ${aTask.id} 持有）`;
+    const reason = `等写域（任务 ${aTask.id} 持有 整目录）`;
     await waitFor(
       () => (taskViews(core, botB.id, convB.id).find((t) => t.taskId === bTask.id)?.queueReason === reason ? true : null),
       { label: 'B queued behind A', timeoutMs: 30_000 },

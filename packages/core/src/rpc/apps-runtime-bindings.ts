@@ -44,7 +44,15 @@ export function bindAppsRuntimeMethods(
     'mcp.removeServer': method(mcpRemoveServerInputSchema, okOutputSchema, async (input) => {
       const domain = services.domain!;
       // D104: a plugin-registered server is managed by the plugin — uninstall the plugin instead.
+      // P4-M2: an instance-source server is managed by its plugin instance — edit/delete
+      // the instance on the plugin card instead.
       const target = domain.settings.get().mcpServers.find((server) => server.id === input.serverId);
+      if (target?.source?.kind === 'instance') {
+        throw new AppError(
+          'PLUGIN_MANAGED',
+          `「${target.name}」由插件实例管理，请在插件卡里更新或删除该服务`,
+        );
+      }
       if (target?.source?.kind === 'plugin') {
         throw new AppError(
           'PLUGIN_MANAGED',

@@ -145,8 +145,10 @@ describe('createCore (integration)', () => {
     // + 0011 task last_progress（单一状态通知）
     // + 0012 task_capabilities（D91 任务声明能力）
     // + 0013 task_cwd（D92 T0-1，D75 任务执行根目录改名）
-    // + 0014 runs 的连锁绑定两列改名 episode_id/episode_hop（D92 T1a WP2）。
-    expect(services.runsDb!.pragma('user_version', { simple: true })).toBe(14);
+    // + 0014 runs 的连锁绑定两列改名 episode_id/episode_hop（D92 T1a WP2）
+    // + 0015 task_write_domains（D123 声明写域）
+    // + 0016 task_retry_attempts / task_retry_at（任务失败自动重试退避计划）。
+    expect(services.runsDb!.pragma('user_version', { simple: true })).toBe(16);
     const runsTables = services
       .runsDb!.prepare("select name from sqlite_master where type='table'")
       .all() as Array<{ name: string }>;

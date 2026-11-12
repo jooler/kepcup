@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
 import type { InkcopAgentInfo } from '../inkcop/client.js';
 import type { InkcopHandoffResult } from '../inkcop/handoff.js';

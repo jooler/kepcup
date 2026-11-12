@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import {
   TASK_PLAN_EXPLANATION_MAX_CHARS,
   TASK_PLAN_MAX_STEPS,

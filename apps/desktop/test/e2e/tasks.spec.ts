@@ -374,10 +374,14 @@ test('inject dock steers a running task; bot detail tabs list its tasks', async 
     await card.click();
     await expect(page.locator('[data-testid="task-run-view"]')).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('[data-testid="right-panel"]')).toBeVisible();
-    const injectInput = page.locator('[data-testid="task-run-inject-input"]');
+    // D115 修订：坞里直接复用了对话 Composer，输入是 TipTap contenteditable，
+    // 发送键在有内容后才出现（空输入时该位是语音键或被禁用的发送键）。
+    const injectDock = page.locator('[data-testid="task-run-inject"]');
+    const injectInput = injectDock.locator('[data-testid="composer-input"]');
     await expect(injectInput).toBeVisible();
-    await injectInput.fill('加个日期');
-    await page.locator('[data-testid="task-run-inject-send"]').click();
+    await injectInput.click();
+    await page.keyboard.type('加个日期');
+    await injectDock.locator('[data-testid="composer-send"]').click();
     // Delivered: the steer bubble appears in the timeline.
     await expect(page.locator('[data-testid="task-run-steer-text"]')).toContainText('加个日期', {
       timeout: 30_000,

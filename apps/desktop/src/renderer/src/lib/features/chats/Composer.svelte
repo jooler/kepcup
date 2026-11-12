@@ -3,9 +3,14 @@
   import { Editor } from '@tiptap/core';
   import type { JSONContent } from '@tiptap/core';
   import { Markdown } from '@tiptap/markdown';
-  import { Placeholder } from '@tiptap/extensions';
+  import { CharacterCount, Placeholder } from '@tiptap/extensions';
   import type { SuggestionKeyDownProps, SuggestionProps } from '@tiptap/suggestion';
-  import { fileMentionToken, folderMentionToken, parseLocalPathMentionToken } from '@kepcup/shared';
+  import {
+    TASK_INSTRUCTION_MAX_CHARS,
+    fileMentionToken,
+    folderMentionToken,
+    parseLocalPathMentionToken,
+  } from '@kepcup/shared';
   import { mount, unmount, untrack } from 'svelte';
   import { errorText, t, listSeparator } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
@@ -13,7 +18,9 @@
   import { cn } from '$lib/utils.js';
   import { core } from '$lib/rpc/client.svelte';
   import { chat } from '$lib/stores/chat.svelte';
+  import { tasks } from '$lib/stores/tasks.svelte';
   import { getChatSession } from './chat-session-context';
+  import { composerRightAction, injectContentState, taskDraftKey } from './composer-inject';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { endpointSupports } from '$lib/features/web-shell/endpoint';
@@ -94,13 +101,24 @@
     centered = false,
     readOnlyHint,
     placeholderText = undefined,
+    injectTaskId = null,
   }: {
     readOnly?: boolean;
     centered?: boolean;
     readOnlyHint?: string;
     /** Replaces the default placeholder. A card dialog names the assignee. */
     placeholderText?: string;
+    /**
+     * 任务直注模式（D115）：传任务 id 时本输入坑不再接对话会话，发送改走
+     * `tasks.inject`；会话草稿 / 引用 / 协作 presence / @ 提及 / 语音对话
+     * 全部让位（任务详情里没有那些上下文）。同一实例内不得改变（编辑器
+     * 扩展集在挂载时确定）；调用方应按 taskId 重新挂载。
+     */
+    injectTaskId?: string | null;
   } = $props();
+
+  /** 任务直注模式：所有需要和对话会话隔离的分支都看它。 */
+  const injectMode = $derived(injectTaskId !== null);
 
   /**
    * 输入区是 TipTap 编辑器（contenteditable）：列表（`- `/`1. ` 输入规则自动
@@ -165,8 +183,8 @@
   });
 
   const chatSession = getChatSession();
-  const isProject = $derived(chatSession.view?.conversation.type === 'project');
-  const replyTo = $derived(chatSession.replyTo);
+  const isProject = $derived(!injectMode && chatSession.view?.conversation.type === 'project');
+  const replyTo = $derived(injectMode ? null : chatSession.replyTo);
   const replyToName = $derived(
     replyTo === null
       ? ''
@@ -187,11 +205,27 @@
    * 切换会话/重启应用后按会话重载，不再切换即丢弃。
    */
   const pendingUploads = $derived(
-    composerDrafts.uploadsOf(chatSession.view?.conversation.id ?? ''),
+    // 任务直注不支持附件（`tasks.inject` 只收文本），也不读会话的上传队列。
+    injectMode ? [] : composerDrafts.uploadsOf(chatSession.view?.conversation.id ?? ''),
   );
 
   const composerEmpty = $derived(isComposerDocEmpty(docJson));
   const hasContent = $derived(!composerEmpty || pendingUploads.length > 0);
+
+  /**
+   * 任务直注时右侧语音键的可见性（用户原话）：没配语音识别就不显示语音输入键，
+   * 直接给发送键（空输入时禁用）。对话模式保持原行为（点击时置设置卡）。
+   */
+  const voiceKeyVisible = $derived(!injectMode || settingsStore.isCapabilityReady('asr'));
+
+  /** 右侧按钮位：录音胶囊 > 空输入的语音键 > 发送键（纯逻辑在 composer-inject.ts）。 */
+  const rightAction = $derived(
+    composerRightAction({
+      recording: recording !== null || voiceBusy,
+      hasContent,
+      voiceKeyVisible,
+    }),
+  );
 
   /**
    * 沉底两态的开关：内容换行（multiline）或有待发送图片/文件时，输入占满
@@ -209,20 +243,23 @@
    * ——提及非成员 Bot / 项目组是「引用」，不参与项目组路由。
    */
   const mentionTargets = $derived.by(() =>
-    buildMentionTargets({
-      memberBots: (chatSession.view?.members ?? []).map((m) => m.bot),
-      allBots: contacts.bots,
-      projects: chat.conversations
-        .filter((c) => c.type === 'project')
-        .map((c) => ({ id: c.id, title: c.title })),
-      currentConversationId: chatSession.view?.conversation.id ?? null,
-      // 单聊里排除当前对话的 Bot 自己（@ 自己没有意义）；项目组的成员是
-      // 主力候选，不排除。
-      excludeBotIds:
-        isProject || chatSession.view?.conversation.directBotId == null
-          ? []
-          : [chatSession.view.conversation.directBotId],
-    }),
+    // 任务直注模式：@ 提及（含「选择文件」动作项）整体降级为纯文本。
+    injectMode
+      ? []
+      : buildMentionTargets({
+          memberBots: (chatSession.view?.members ?? []).map((m) => m.bot),
+          allBots: contacts.bots,
+          projects: chat.conversations
+            .filter((c) => c.type === 'project')
+            .map((c) => ({ id: c.id, title: c.title })),
+          currentConversationId: chatSession.view?.conversation.id ?? null,
+          // 单聊里排除当前对话的 Bot 自己（@ 自己没有意义）；项目组的成员是
+          // 主力候选，不排除。
+          excludeBotIds:
+            isProject || chatSession.view?.conversation.directBotId == null
+              ? []
+              : [chatSession.view.conversation.directBotId],
+        }),
   );
 
   /** @ 菜单末尾的「选择文件或文件夹」动作项（不进入 mention 注册表，避免被当成员解析）。 */
@@ -235,7 +272,8 @@
    * 必须经 style 下发。
    */
   const botAccent = $derived(
-    chatSession.view?.conversation.bot
+    // 任务直注没有「当前 Bot」可言：强调色 / @ 文字色都不取会话的。
+    !injectMode && chatSession.view?.conversation.bot
       ? resolveAccentColor(
           chatSession.view.conversation.bot.accentColor,
           chatSession.view.conversation.bot.avatar,
@@ -626,6 +664,7 @@
     // 构造期间 Placeholder 等扩展的闭包会同步读取组件状态（placeholder /
     // mentionTargets），必须 untrack——否则 effect 隐式依赖这些响应式值，
     // 它们一变就销毁重建编辑器（in-flight 的 clearContent 直接踩空）。
+    const inInjectMode = untrack(() => injectMode);
     const ed = untrack(
       () =>
         new Editor({
@@ -633,79 +672,90 @@
           extensions: [
             Markdown.configure({ markedOptions: { breaks: true, gfm: true } }),
             Placeholder.configure({ placeholder: () => placeholder }),
-            composerMention.configure({
-              // 退格删除提及节点时保留触发符 @（扩展内建行为）：删除后的
-              // insertText('@') 事务会让 suggestion 插件立刻重开弹层（空查询
-              // = 全部候选），可直接继续选目标。一次 Backspace 仍删掉整个
-              // mention 节点，不会逐字删除。
-              deleteTriggerWithBackspace: false,
-              renderText: ({ node }) => `@${node.attrs.label ?? node.attrs.id}`,
-              renderHTML: ({ node, options }) => {
-                const token = String(node.attrs.id ?? '');
-                const local = parseLocalPathMentionToken(token);
-                const label = String(node.attrs.label ?? node.attrs.id ?? '');
-                // 本地文件/文件夹：icon + 名称，替换掉常规的 `@名字` 文本。
-                if (local !== null) {
-                  return [
-                    'span',
-                    {
-                      ...options.HTMLAttributes,
-                      'data-type': 'mention',
-                      class: 'composer-mention composer-mention-path',
-                      'data-testid': 'composer-mention',
-                      'data-kind': local.kind,
-                      title: local.path,
+            // 任务直注模式不注册 @ 提及：弹层与「选择文件」动作项都不出现，
+            // 输入 @ 就是普通文字（任务指令里没有可提及的对象）。
+            ...(inInjectMode
+              ? []
+              : [
+                  composerMention.configure({
+                    // 退格删除提及节点时保留触发符 @（扩展内建行为）：删除后的
+                    // insertText('@') 事务会让 suggestion 插件立刻重开弹层（空查询
+                    // = 全部候选），可直接继续选目标。一次 Backspace 仍删掉整个
+                    // mention 节点，不会逐字删除。
+                    deleteTriggerWithBackspace: false,
+                    renderText: ({ node }) => `@${node.attrs.label ?? node.attrs.id}`,
+                    renderHTML: ({ node, options }) => {
+                      const token = String(node.attrs.id ?? '');
+                      const local = parseLocalPathMentionToken(token);
+                      const label = String(node.attrs.label ?? node.attrs.id ?? '');
+                      // 本地文件/文件夹：icon + 名称，替换掉常规的 `@名字` 文本。
+                      if (local !== null) {
+                        return [
+                          'span',
+                          {
+                            ...options.HTMLAttributes,
+                            'data-type': 'mention',
+                            class: 'composer-mention composer-mention-path',
+                            'data-testid': 'composer-mention',
+                            'data-kind': local.kind,
+                            title: local.path,
+                          },
+                          createMentionIcon(local.kind),
+                          ['span', { class: 'composer-mention-label' }, label],
+                        ];
+                      }
+                      return [
+                        'span',
+                        {
+                          ...options.HTMLAttributes,
+                          'data-type': 'mention',
+                          class: 'composer-mention',
+                          'data-testid': 'composer-mention',
+                        },
+                        `@${label}`,
+                      ];
                     },
-                    createMentionIcon(local.kind),
-                    ['span', { class: 'composer-mention-label' }, label],
-                  ];
-                }
-                return [
-                  'span',
-                  {
-                    ...options.HTMLAttributes,
-                    'data-type': 'mention',
-                    class: 'composer-mention',
-                    'data-testid': 'composer-mention',
-                  },
-                  `@${label}`,
-                ];
-              },
-              suggestion: {
-                char: '@',
-                placement: 'top-start',
-                items: ({ query }) => {
-                  const q = query.trim().toLowerCase();
-                  const matched = mentionTargets.filter(
-                    (target) =>
-                      q.length === 0 ||
-                      target.name.toLowerCase().includes(q) ||
-                      target.token.toLowerCase().includes(q),
-                  );
-                  // 文件/文件夹选择是固定动作项：不过滤，始终在列表末尾。
-                  return [...matched, pickFileTarget];
-                },
-                render: suggestionRender,
-                command: ({ editor: targetEditor, range, props }) => {
-                  // suggestion 的选中项泛型默认是节点 attrs；我们的选中项是
-                  // MentionTarget（token + name），在边界收窄一次。
-                  const target = props as unknown as MentionTarget;
-                  if (target.kind === 'pick-file') {
-                    void insertLocalPathMention(targetEditor, range);
-                    return;
-                  }
-                  targetEditor
-                    .chain()
-                    .focus()
-                    .insertContentAt(range, [
-                      { type: 'mention', attrs: { id: target.token, label: target.name } },
-                      { type: 'text', text: ' ' },
-                    ])
-                    .run();
-                },
-              },
-            }),
+                    suggestion: {
+                      char: '@',
+                      placement: 'top-start',
+                      items: ({ query }) => {
+                        const q = query.trim().toLowerCase();
+                        const matched = mentionTargets.filter(
+                          (target) =>
+                            q.length === 0 ||
+                            target.name.toLowerCase().includes(q) ||
+                            target.token.toLowerCase().includes(q),
+                        );
+                        // 文件/文件夹选择是固定动作项：不过滤，始终在列表末尾。
+                        return [...matched, pickFileTarget];
+                      },
+                      render: suggestionRender,
+                      command: ({ editor: targetEditor, range, props }) => {
+                        // suggestion 的选中项泛型默认是节点 attrs；我们的选中项是
+                        // MentionTarget（token + name），在边界收窄一次。
+                        const target = props as unknown as MentionTarget;
+                        if (target.kind === 'pick-file') {
+                          void insertLocalPathMention(targetEditor, range);
+                          return;
+                        }
+                        targetEditor
+                          .chain()
+                          .focus()
+                          .insertContentAt(range, [
+                            { type: 'mention', attrs: { id: target.token, label: target.name } },
+                            { type: 'text', text: ' ' },
+                          ])
+                          .run();
+                      },
+                    },
+                  }),
+                ]),
             ...composerNodes,
+            // 单条指令上限（与旧 Textarea 的 maxlength 同语义）：注入模式下
+            // 编辑器拒绝超限事务，粘贴超长内容也会被截到上限。
+            ...(inInjectMode
+              ? [CharacterCount.configure({ limit: TASK_INSTRUCTION_MAX_CHARS })]
+              : []),
             RemoteCaretExtension,
           ],
           editorProps: {
@@ -772,19 +822,23 @@
     );
     ed.on('update', () => {
       syncFromEditor(ed);
+      // 任务直注没有协作上下文：不报「正在输入」，也不同步共享草稿。
+      if (injectMode) return;
       // 只有用户焦点内的编辑才算「正在输入」；读端镜像与程序化回填不触发。
       if (ed.isFocused && sharedDraft.state !== 'reader') presence.noteTyping();
       if (!applyingRemote) noteSharedDraftChange(ed);
     });
     ed.on('selectionUpdate', () => {
-      if (!ed.isFocused || sharedDraft.state !== 'owner') return;
+      if (injectMode || !ed.isFocused || sharedDraft.state !== 'owner') return;
       const { from, to } = ed.state.selection;
       presence.noteSelection(from, to, sharedDraft.version);
     });
     ed.on('focus', () => {
-      if (sharedDraft.state === 'no-owner') void sharedDraft.claimIfFree();
+      if (!injectMode && sharedDraft.state === 'no-owner') void sharedDraft.claimIfFree();
     });
-    ed.on('blur', () => presence.clearSelection());
+    ed.on('blur', () => {
+      if (!injectMode) presence.clearSelection();
+    });
     editorInstance = ed;
     editor = ed;
     return () => {
@@ -832,34 +886,44 @@
   });
 
   /** 会话草稿的按会话缓存：水合（JSON → 编辑器）与保存（编辑器 → JSON）。 */
-  let activeConversationId: string | null = null;
+  let activeDraftKey: string | null = null;
   /** 本 Composer 的共享草稿会话（事件订阅 / 定时器随组件挂载生命周期）。 */
   $effect(() => {
+    // 任务直注模式完全不进协作：不订阅远端草稿事件，也不上报在线。
+    if (injectMode) return;
     sharedDraft.start();
     return () => sharedDraft.stop();
   });
   /** 组件卸载时清掉本输入框的在线状态 / 释放草稿租约（切换视图 / 关闭看板对话）。 */
   $effect(() => () => {
+    if (injectMode) return;
     presence.leave(presenceSource);
     sharedDraft.leave(presenceSource);
   });
   $effect(() => {
-    const conversationId = chatSession.view?.conversation.id ?? null;
+    // 草稿键：对话按会话 id，任务直注用 `task:<id>`（同库不同键，互不串台）。
+    const draftsKey = injectMode
+      ? injectTaskId === null
+        ? null
+        : taskDraftKey(injectTaskId)
+      : (chatSession.view?.conversation.id ?? null);
     const ed = editor;
     const currentDoc = docJson;
     const currentMentionTokens = mentionTokens;
-    const currentReply = chatSession.replyTo;
-    // D119：进入 / 切换会话即上报在线状态（同一会话重复调用幂等）。
-    presence.enter(conversationId, presenceSource);
-    // D120：加载共享草稿并 claim（被占用则转只读镜像）。
-    void sharedDraft.enter(conversationId, presenceSource);
-    if (conversationId !== activeConversationId) {
-      activeConversationId = conversationId;
-      if (conversationId === null || ed === null) return;
+    const currentReply = replyTo;
+    if (!injectMode) {
+      // D119：进入 / 切换会话即上报在线状态（同一会话重复调用幂等）。
+      presence.enter(draftsKey, presenceSource);
+      // D120：加载共享草稿并 claim（被占用则转只读镜像）。
+      void sharedDraft.enter(draftsKey, presenceSource);
+    }
+    if (draftsKey !== activeDraftKey) {
+      activeDraftKey = draftsKey;
+      if (draftsKey === null || ed === null) return;
       untrack(() => {
-        composerDrafts.hydrate(conversationId);
-        const saved = composerDrafts.loadDraft(conversationId);
-        // 换会话时回单行，按新草稿重新测量。
+        composerDrafts.hydrate(draftsKey);
+        const saved = composerDrafts.loadDraft(draftsKey);
+        // 换会话（换任务）时回单行，按新草稿重新测量。
         multiline = false;
         if (remasureAfterCollapse !== null) {
           cancelAnimationFrame(remasureAfterCollapse);
@@ -868,14 +932,15 @@
         // 草稿缓存是编辑器原生 JSON：mention/列表节点原样回位，无需任何转换。
         ed.commands.setContent(saved.doc);
         syncFromEditor(ed);
-        chatSession.replyTo = saved.reply;
+        // 引用回复是会话状态，任务直注没有它。
+        if (!injectMode) chatSession.replyTo = saved.reply;
       });
       return;
     }
-    if (conversationId === null || ed === null) return;
+    if (draftsKey === null || ed === null) return;
     // 读端不写本地草稿：编辑器里是对方的镜像，不是本机输入。
     if (collabReader) return;
-    composerDrafts.saveComposerDoc(conversationId, currentDoc, currentMentionTokens, currentReply);
+    composerDrafts.saveComposerDoc(draftsKey, currentDoc, currentMentionTokens, currentReply);
   });
 
   /** 只读镜像：他人持有共享草稿租约时禁止编辑。 */
@@ -905,7 +970,8 @@
     const revision = sharedDraft.revision;
     const ed = editor;
     const conversationId = chatSession.view?.conversation.id ?? null;
-    if (ed === null || conversationId === null || revision === 0) return;
+    // 任务直注不接会话草稿：服务端快照变化一律不动本编辑器。
+    if (injectMode || ed === null || conversationId === null || revision === 0) return;
     // 只有“本会话的服务端快照已加载”才动编辑器；enter() 的未加载重置（doc=null）
     // 不能清掉用户正在输入的内容。
     if (!sharedDraft.loaded || sharedDraft.docConversationId !== conversationId) return;
@@ -932,9 +998,10 @@
   $effect(() => {
     const ed = editor;
     const conversationId = chatSession.view?.conversation.id ?? null;
-    void chatSession.replyTo;
+    void replyTo;
     void pendingUploads;
     if (
+      injectMode ||
       ed === null ||
       conversationId === null ||
       collabReader ||
@@ -981,7 +1048,8 @@
   $effect(() => {
     const insertion = chatSession.composerInsertion;
     const ed = editor;
-    if (insertion === null || ed === null) return;
+    // 撤回回填是会话行为（头像行菜单发起），任务直注没有这条通路。
+    if (injectMode || insertion === null || ed === null) return;
     chatSession.composerInsertion = null;
     ed.commands.insertContent(!composerEmpty ? ` ${insertion.text}` : insertion.text);
     ed.commands.focus('end');
@@ -1030,6 +1098,7 @@
    * 失败则回填文本（chip 本就没动）；整个过程由 sendGuard 防重入。
    */
   async function sendCurrent(): Promise<void> {
+    if (injectMode) return sendInjected();
     const ed = editor;
     const conversationId = chatSession.view?.conversation.id;
     if (ed === null || !conversationId) return;
@@ -1113,6 +1182,66 @@
   async function onSendClick(): Promise<void> {
     if (readOnly) return;
     await sendCurrent();
+  }
+
+  // --- 任务直注（D115）：复用同一输入坞，发送走 tasks.inject ------------------
+
+  /** 注入发送进行中（一个输入坞只对应一个任务，不必按会话分闸）。 */
+  let injectSending = $state(false);
+
+  /**
+   * 任务直注发送：内容进 await 前捕获并同步清空编辑器（与对话发送同语义，
+   * 不会抹掉用户接着键入的内容）；失败回填，成功按 delivered / queued 给
+   * 与旧输入坞一致的 toast。指令上限由 CharacterCount 在编辑器层拦住。
+   */
+  async function sendInjected(): Promise<void> {
+    const ed = editor;
+    const taskId = injectTaskId;
+    if (ed === null || taskId === null) return;
+    if (readOnly || collabReader || injectSending) return;
+    const content = injectContentState(ed.getMarkdown());
+    if (!content.sendable) return;
+    const docSnapshot = ed.getJSON();
+    const draftsKey = taskDraftKey(taskId);
+    injectSending = true;
+    ed.commands.clearContent();
+    try {
+      const delivery = await tasks.inject(taskId, content.text);
+      if (delivery === 'queued') {
+        // queued 有两种成因（外部智能体拒绝 steer / 任务已在收尾），条目只存
+        // 二值 delivery，渲染端区分不了——用中性文案，两种成因下都准确。
+        toast.warning(t('task.run.injectQueued'));
+      } else {
+        toast.success(t('task.run.injectSent'));
+      }
+    } catch (error) {
+      restoreInjectedContent(ed, docSnapshot, draftsKey);
+      toast.error(
+        errorText((error as { code?: string } | undefined)?.code, t('task.run.injectFailed')),
+      );
+    } finally {
+      injectSending = false;
+    }
+  }
+
+  /**
+   * 注入失败：把发送前清掉的内容放回。用户等待期间已键入新内容时旧内容插到
+   * 最前面；编辑器已不在了（视图已销毁）就写回任务草稿键，回来仍可见。
+   */
+  function restoreInjectedContent(ed: Editor, doc: JSONContent, draftsKey: string): void {
+    if (editor !== ed || ed.isDestroyed) {
+      const cached = composerDrafts.loadDraft(draftsKey);
+      if (isComposerDocEmpty(cached.doc)) {
+        composerDrafts.saveComposerDoc(draftsKey, doc, collectMentionTokens(doc), cached.reply);
+      }
+      return;
+    }
+    if (ed.isEmpty) {
+      ed.commands.setContent(doc);
+    } else if (doc.content !== undefined && doc.content.length > 0) {
+      ed.commands.insertContentAt(0, doc.content);
+    }
+    syncFromEditor(ed);
   }
 
   // --- 语音输入（docs/design/26-voice-input.md）-------------------------------
@@ -1307,7 +1436,7 @@
   async function startRecording(): Promise<void> {
     if (readOnly || recording !== null || voiceBusy) return;
     if (!settingsStore.isCapabilityReady('asr')) {
-      chatSession.requestCapabilitySetup('asr');
+      requestAsrSetup();
       return;
     }
     const session = ++recordingSession;
@@ -1319,6 +1448,19 @@
     recordingElapsed = 0;
     // 60s 上限从真正开始采集起算（授权弹框期间不占时长）。
     maxRecordingTimer = setTimeout(() => void finishRecording(true), MAX_RECORDING_MS);
+  }
+
+  /**
+   * ASR 未就绪：对话里置起设置卡（与语音模式入口同一口径）。任务直注没有设置卡
+   * 入口，也不该碰会话，只提示（正常路径下语音键此时已不渲染，这里是快照
+   * 中途失效的兜底）。
+   */
+  function requestAsrSetup(): void {
+    if (injectMode) {
+      toast.error(t('task.run.injectVoiceUnavailable'));
+      return;
+    }
+    chatSession.requestCapabilitySetup('asr');
   }
 
   /** 点击胶囊/到时限=停止并转写（send）；Esc/组件卸载=取消丢弃。 */
@@ -1376,7 +1518,7 @@
       }
     } catch (error) {
       if (isCapabilityError(error)) {
-        chatSession.requestCapabilitySetup('asr');
+        requestAsrSetup();
         return;
       }
       toast.error(
@@ -1397,8 +1539,8 @@
   // 静音自动发送（修订 v2 V2-4）：端点检测状态机在 voice-mode（feedLevel 纯
   // 函数），本文件只接信号——待发送武装 2s 自动发送倒计时、5s 未说话自动取消。
 
-  /** 入口可见性：仅私聊（direct / card）且非项目组；readOnly 分支整体不出输入坞。 */
-  const voiceModeEntryVisible = $derived(!isProject);
+  /** 入口可见性：仅私聊（direct / card）且非项目组；任务直注不需要语音对话。 */
+  const voiceModeEntryVisible = $derived(!isProject && !injectMode);
   /** 录音中禁用入口（文字语音输入进行时不得切入语音模式）。 */
   const voiceModeEntryDisabled = $derived(recording !== null || voiceBusy);
   /**
@@ -1407,7 +1549,9 @@
    * 隐藏聊天体）——语音条渲染、播报入队、barge-in 武装与全部收尾路径都只归
    * 归属会话那个实例，否则隐藏实例会抢先把录音写进自己的会话。
    */
-  const voiceModeOwned = $derived(voiceMode.owns(chatSession.view?.conversation.id ?? null));
+  const voiceModeOwned = $derived(
+    !injectMode && voiceMode.owns(chatSession.view?.conversation.id ?? null),
+  );
 
   /**
    * 语音模式即时态同步给 core（53 号修订 v3）：core 据此给对话轮注入
@@ -1877,7 +2021,7 @@
   const canAttachFiles = $derived(endpointSupports('local-file-dialog'));
 
   function pickFiles(): void {
-    if (!canAttachFiles) return;
+    if (!canAttachFiles || injectMode) return;
     fileInputEl?.click();
   }
 
@@ -1905,6 +2049,8 @@
   }
 
   function uploadFiles(files: FileList | File[]): void {
+    // 任务直注不收附件：粘贴 / 拖入也不往会话上传管道里塞。
+    if (injectMode) return;
     const conversationId = chatSession.view?.conversation.id;
     if (!conversationId) return;
     composerDrafts.uploadFiles(conversationId, files);
@@ -2096,16 +2242,23 @@
               </div>
             {/if}
             {#snippet attachButton()}
+              <!-- 任务直注：`tasks.inject` 只收文本，附件无处可放。键保留（用户要求 + 键
+                 不消失），但禁用并说明原因，避免选中文件后才失败。 -->
               <Button
                 variant="ghost"
                 size="icon"
-                class="size-8 shrink-0 rounded-full border-border text-muted-foreground hover:text-foreground {canAttachFiles
+                class="size-8 shrink-0 rounded-full border-border text-muted-foreground hover:text-foreground {canAttachFiles &&
+                !injectMode
                   ? ''
                   : 'opacity-50'}"
                 onclick={pickFiles}
-                disabled={readOnly}
-                aria-disabled={readOnly ? undefined : !canAttachFiles}
-                title={canAttachFiles ? t('composer.attach') : t('settings.desktopOnly')}
+                disabled={readOnly || injectMode}
+                aria-disabled={readOnly || injectMode ? undefined : !canAttachFiles}
+                title={injectMode
+                  ? t('task.run.injectAttachUnsupported')
+                  : canAttachFiles
+                    ? t('composer.attach')
+                    : t('settings.desktopOnly')}
                 aria-label={t('composer.attach')}
                 data-testid="composer-attach"
               >
@@ -2143,7 +2296,7 @@
                 style:background={botAccentPaint?.background}
                 style:color={botAccentPaint?.color}
                 onclick={onSendClick}
-                disabled={readOnly || collabReader}
+                disabled={readOnly || collabReader || !hasContent || injectSending}
                 data-testid="composer-send"
                 aria-label={t('composer.send')}
               >
@@ -2210,7 +2363,7 @@
                         {/each}
                       </span>
                     </button>
-                  {:else if !hasContent}
+                  {:else if rightAction === 'voice'}
                     <!-- 语音键：点击开始录音（录音中原位变胶囊）；有内容时
                        此位让给发送键。语音对话模式的入口在右侧发送键左边（Speech 键）。 -->
                     <button
@@ -2228,7 +2381,7 @@
                       <AudioLines class="size-4" />
                     </button>
                   {/if}
-                  {#if hasContent}
+                  {#if hasContent || rightAction === 'send'}
                     {@render sendButton()}
                   {/if}
                 </div>

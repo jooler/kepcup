@@ -1,0 +1,32 @@
+{
+  "format_version": 1,
+  "id": "app.kepcup/mcp-feishu",
+  "name": "飞书",
+  "icon": "icon.svg",
+  "version": "1.0.0",
+  "description": "让 Bot 读写你的飞书云文档：搜索、阅读、创建与更新文档。凭据只保存在本机。",
+  "usage": "启用后还需要添加工具服务：到 open.feishu.cn/page/mcp 创建「MCP 服务」并一键授权，复制专属服务器地址（地址即密钥，请妥善保管），在扩展中心 → 已安装 → 飞书 →「管理」粘贴保存，然后在 Bot 详情勾选启用本插件。个人 MCP 服务地址有效期 7 天，到期后在实例表单里更新地址即可。",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "homepage": "https://kepcup.com",
+  "engines": {
+    "kepcup": ">=0.5.11"
+  },
+  "instances": [
+    "mcp"
+  ],
+  "contributions": {
+    "mcp": [
+      {
+        "kind": "http",
+        "id": "feishu",
+        "name": "飞书",
+        "description": "飞书官方 MCP（个人 MCP 服务）：搜索、读取、创建与更新飞书云文档。",
+        "url": "",
+        "urlSensitive": true
+      }
+    ]
+  }
+}

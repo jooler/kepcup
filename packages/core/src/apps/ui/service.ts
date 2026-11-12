@@ -1,5 +1,6 @@
 import type { CallToolResult, Tool as McpTool } from '@earendil-works/pi-mcp';
-import { Type, validateToolArguments } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
+import { validateToolArguments } from '@earendil-works/pi-ai';
 import {
   AppError,
   MCP_APP_CALL_ARGS_MAX_CHARS,

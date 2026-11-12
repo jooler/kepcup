@@ -5,6 +5,7 @@ import {
   type PluginConflict,
   type PluginConsentMcp,
   type PluginMcpContribution,
+  type PluginManifest,
   type Settings,
 } from '@kepcup/shared';
 import type { CoreLogger } from '../../infra/logger.js';
@@ -53,6 +54,16 @@ export function mcpTierFor(tier: PluginIdentity['tier']): 'developer' | undefine
 }
 
 /**
+ * P4-M2: an http contribution is a per-instance TEMPLATE (provisioning spec — consent
+ * view only, no settings server) when the manifest declares `instances: ['mcp']`;
+ * mcpb entries can never be templates (schema-rejected). Without the declaration the
+ * legacy fixed-projection semantics apply unchanged.
+ */
+function isTemplate(manifest: PluginManifest, contribution: PluginMcpContribution): boolean {
+  return manifest.instances?.includes('mcp') === true && contribution.kind === 'http';
+}
+
+/**
  * The description lands in the system prompt's `<capabilities>` line — only adopt the
  * manifest's wording for `verified`; other tiers get the default text (undefined).
  */
@@ -91,7 +102,9 @@ export class McpProjector implements PluginProjector<PluginConsentMcp> {
       const serverId = pluginServerId(ctx.plugin.id, contribution.id);
       // Deterministic ids make collisions a programming error, but check anyway (fail-safe).
       // An update's own previous servers are excluded via the ledger-owned set (D104 P1-2).
+      // Templates never claim a server id, so they cannot conflict.
       if (
+        !isTemplate(ctx.manifest, contribution) &&
         this.#deps.settings.get().mcpServers.some((server) => server.id === serverId) &&
         !ctx.owned.mcp.has(serverId)
       ) {
@@ -135,15 +148,20 @@ export class McpProjector implements PluginProjector<PluginConsentMcp> {
           });
         }
       } else {
+        const template = isTemplate(ctx.manifest, contribution);
         const displayName = contribution.name ?? `${ctx.manifest.name} · ${contribution.id}`;
-        if (!isSafeDirectoryRemoteUrl(contribution.url)) {
+        // A generic template ('' url) gets its endpoint per instance — nothing to
+        // validate here; a LOCKED template endpoint is checked at install time like
+        // a fixed server (only the per-instance value goes through the create-time
+        // SSRF gate).
+        if (contribution.url !== '' && !isSafeDirectoryRemoteUrl(contribution.url)) {
           blockers.push(`「${contribution.id}」的端点不是可接受的公网 https 地址`);
         }
-        let host = contribution.url;
+        let host = template && contribution.url === '' ? '' : contribution.url;
         try {
           host = new URL(contribution.url).host;
         } catch {
-          // Schema already required a URL; keep the raw string as the host fallback.
+          // '' (generic template) or a schema-invalid URL: keep the raw string.
         }
         items.push({
           kind: 'http',
@@ -159,6 +177,9 @@ export class McpProjector implements PluginProjector<PluginConsentMcp> {
 
   async project(ctx: PluginProjectionContext): Promise<void> {
     for (const contribution of ctx.manifest.contributions.mcp) {
+      // P4-M2: a template contribution is a provisioning spec only — instances land
+      // their own servers through the materializer, so nothing to register here.
+      if (isTemplate(ctx.manifest, contribution)) continue;
       const serverId = pluginServerId(ctx.plugin.id, contribution.id);
       ctx.ledger.add('mcp', serverId);
       if (contribution.kind === 'mcpb') {
@@ -202,8 +223,10 @@ export class McpProjector implements PluginProjector<PluginConsentMcp> {
   async update(oldCtx: PluginProjectionContext, newCtx: PluginProjectionContext): Promise<void> {
     const previous = this.#deps.settings.get().mcpServers;
     const touched: string[] = [];
-    const keptIds = new Set(newCtx.manifest.contributions.mcp.map((entry) => entry.id));
     for (const contribution of newCtx.manifest.contributions.mcp) {
+      // P4-M2: template contributions register nothing (instances land their own
+      // servers); a fixed server demoted to a template is removed below.
+      if (isTemplate(newCtx.manifest, contribution)) continue;
       const serverId = pluginServerId(newCtx.plugin.id, contribution.id);
       newCtx.ledger.add('mcp', serverId);
       const wasOwned = oldCtx.owned.mcp.has(serverId);
@@ -248,7 +271,10 @@ export class McpProjector implements PluginProjector<PluginConsentMcp> {
       }
     }
     for (const contribution of oldCtx.manifest.contributions.mcp) {
-      if (keptIds.has(contribution.id)) continue;
+      const next = newCtx.manifest.contributions.mcp.find((entry) => entry.id === contribution.id);
+      // A fixed server disappears when its contribution is gone OR demoted to an
+      // instance template (P4-M2); the template keeps the same contribution id.
+      if (next !== undefined && !isTemplate(newCtx.manifest, next)) continue;
       const serverId = pluginServerId(oldCtx.plugin.id, contribution.id);
       await this.#removeOne(serverId);
       oldCtx.ledger.remove('mcp', serverId);

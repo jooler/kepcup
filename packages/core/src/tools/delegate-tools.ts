@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import {
   SUBAGENT_BACKGROUND_CONCURRENCY,
   SUBAGENT_FANOUT_MAX,

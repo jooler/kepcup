@@ -36,6 +36,7 @@
     latestPlan,
     pendingTaskQuestionOf,
     taskElapsedMs,
+    taskMetaChips,
     taskRunUsageParts,
   } from './task-run-view';
   import { isActiveTask } from './task-view';
@@ -90,6 +91,7 @@
   let processInitialized = false;
 
   const task = $derived(tasks.byId[taskId] ?? null);
+  const metaChips = $derived(task === null ? null : taskMetaChips(task, listSeparator()));
   const usageParts = $derived(taskRunUsageParts(usage));
   const reportText = $derived((task?.result?.text ?? '').trim());
   const entries = $derived(buildTaskRunTimeline(steps));
@@ -367,6 +369,18 @@
           {/if}
           <span aria-hidden="true">·</span>
           <span>{task.writes ? t('task.run.writes') : t('task.run.readOnly')}</span>
+          {#if metaChips?.writeDomains != null}
+            <span aria-hidden="true">·</span>
+            <span data-testid="task-run-write-domains"
+              >{t('task.run.writeDomains', { list: metaChips.writeDomains })}</span
+            >
+          {/if}
+          {#if metaChips?.claims != null}
+            <span aria-hidden="true">·</span>
+            <span data-testid="task-run-claims"
+              >{t('task.run.claims', { list: metaChips.claims })}</span
+            >
+          {/if}
           {#if usageParts !== null}
             <span aria-hidden="true">·</span>
             <span class="font-mono" data-testid="task-run-context-usage">
@@ -531,6 +545,23 @@
                         {t('task.run.steer')}
                       </p>
                       <p class="whitespace-pre-wrap" data-testid="task-run-steer-text">
+                        {entry.text}
+                      </p>
+                    </div>
+                  </div>
+                {:else if entry.kind === 'peer'}
+                  <div class="flex justify-end" data-testid="task-run-peer">
+                    <div class="max-w-[85%] rounded-2xl bg-muted px-3 py-2 text-sm">
+                      <p
+                        class="mb-0.5 flex items-center justify-end gap-1 text-[11px] text-muted-foreground"
+                      >
+                        <CornerDownRight class="size-3" aria-hidden="true" />
+                        {t('task.run.peerMessage', {
+                          id: entry.fromTaskId,
+                          title: entry.fromTitle !== null ? ` · ${entry.fromTitle}` : '',
+                        })}
+                      </p>
+                      <p class="whitespace-pre-wrap" data-testid="task-run-peer-text">
                         {entry.text}
                       </p>
                     </div>

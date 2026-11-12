@@ -14,7 +14,7 @@ import {
   type FakeAgentObservation,
   type FakeAgentScript,
 } from '@kepcup/testkit';
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { ExternalAgentEngine } from '../../src/agent/external/engine.js';
 import { AgentHost } from '../../src/agent/external/host.js';
 import { HostMcpBridge } from '../../src/agent/external/mcp-bridge.js';

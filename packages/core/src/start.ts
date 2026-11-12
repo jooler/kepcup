@@ -105,6 +105,8 @@ import { UnattendedService } from './permissions/unattended.js';
 import { PermissionModeService } from './permissions/mode.js';
 import { CheckpointService } from './workdir/checkpoints.js';
 import { WorkdirRuntime } from './workdir/service.js';
+import { writeDomainKeysConflict } from './workdir/domains.js';
+import { TaskClaimRegistry } from './workdir/claims.js';
 import { WorkdirsService } from './domain/workdirs.js';
 import {
   createSandboxBackend,
@@ -213,6 +215,7 @@ import {
 } from './plugins/instances.js';
 import { PluginBotNotice, type PluginActivationEntry } from './plugins/bot-notice.js';
 import { createMailMaterializer, reconcileMailInstanceRows } from './plugins/materializers/mail.js';
+import { createMcpMaterializer, reconcileMcpInstanceRows } from './plugins/materializers/mcp.js';
 import { createImMaterializer, reconcileImInstanceRows } from './plugins/materializers/im.js';
 import { PluginStore } from './plugins/store.js';
 import { AppToolGrants } from './apps/grants.js';
@@ -374,6 +377,11 @@ export interface CoreServicesOptions {
   appVersion?: string | undefined;
   dev?: boolean;
   clock?: Clock;
+  /**
+   * 任务失败自动重试的退避档位（缺省 = 生产档位 TASK_AUTO_RETRY_DELAYS_MS）；
+   * 传空数组关闭（测试宿主默认关闭，避免失败路径用例受重试影响）。
+   */
+  taskAutoRetryDelaysMs?: readonly number[];
   /** Injectable timer arming (P10 schedule timer; tests drive it virtually). */
   timers?: TimerScheduler;
   /** Overrides keystore selection (tests inject a shared memory instance). */
@@ -1079,6 +1087,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       }
       services.agentsService?.dispose();
       services.agents?.host.dispose();
+      // D123: clear task peer-wait timers before the run DB closes.
+      services.orchestrator?.dispose();
       await services.agents?.bridge.stop().catch(() => undefined);
       // D81：杀掉组件查询子进程（它另开了一条到 main.db 的只读连接）。
       services.widgets?.dispose();
@@ -1573,7 +1583,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       effects,
     });
     // D75 审查 H2: lease waits give their scheduler slot back (attached below).
-    const leases = new SlotYieldingLeaseService();
+    // D123: keys of domain-scoped write tasks decode to {root, patterns}.
+    const leases = new SlotYieldingLeaseService(writeDomainKeysConflict);
+    // D123 §5: in-memory claims, read by the gateway's write check and
+    // written by TaskHost's claim/release tools.
+    const taskClaims = new TaskClaimRegistry();
     const workdirRuntime = new WorkdirRuntime({
       db: mainDb,
       paths,
@@ -1812,6 +1826,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     const gateway = new ToolGateway({
       paths,
       sandbox,
+      // D123 §5: task runtime claims, shared with TaskHost.
+      claims: taskClaims,
       // P12: enhanced-level routing (Lima/Podman) for skills declaring
       // `sandbox: enhanced` — the routing predicate asks the skills service.
       enhanced: sandboxEnhanced ?? undefined,
@@ -2594,7 +2610,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         logger.warn({ error: String(error) }, 'plugin revocation enforcement failed');
       });
     });
-    // D105：插件实例服务（materializer 由 P3 mail / P4-M2 custom-mcp 注册）；卸载级联挂到注册表。
+    // D105：插件实例服务（materializer：P3 mail / P4-M2 mcp）；卸载级联挂到注册表。
     const pluginInstances = new PluginInstanceService({
       registry: plugins,
       pluginStore,
@@ -2612,6 +2628,26 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       audit,
     });
     plugins.attachInstanceTeardown((pluginId) => pluginInstances.deleteAllOf(pluginId));
+    // P4-M2：mcp 实例 materializer 落地（实例 = settings.mcpServers 的 streamable-http
+    // server，来自插件的 http 模版）；启动对账清「实例行在、server 不见」的孤儿行。
+    pluginInstances.registerMaterializer(
+      'mcp',
+      createMcpMaterializer({
+        settings,
+        secrets: {
+          getValue: (name) => secrets.getValue(name),
+          setValue: (name, value) => secrets.setValue(name, value),
+          removeValue: (name) => secrets.removeValue(name),
+        },
+        mcp,
+        disconnector: appRuntime.disconnector,
+        revokeMcpServerChanges: (previous, next) =>
+          settingsPermissionEffects.revokeMcpServerChanges(previous, next),
+        tierOf: (pluginId) => pluginStore.get(pluginId)?.tier ?? null,
+        logger,
+      }),
+    );
+    reconcileMcpInstanceRows(pluginInstances, settings, logger);
     // 卸载清洗引用面：Bot 的 plugin_ids 与项目叠加授权（写路径保持严格校验）。
     plugins.attachReferenceCleanup((pluginId) => {
       bots.removePluginFromAll(pluginId);
@@ -2631,6 +2667,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       effects,
       externalEngine,
       llmRouter,
+      claims: taskClaims,
+      // 任务失败自动重试：测试可传 [] 关闭（testkit 默认关闭）。
+      ...(options.taskAutoRetryDelaysMs !== undefined
+        ? { taskAutoRetryDelaysMs: options.taskAutoRetryDelaysMs }
+        : {}),
       // D112 P2：微应用进度摘要注入下一轮（55 §8.5）。
       microAppSummariesFor: (conversationId) => {
         const titleByWidget = new Map(
@@ -3089,6 +3130,17 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
             else if (!accounts.some((account) => account.botIds.includes(botId))) {
               reasons.push('已添加账号，但未在插件卡片里勾选绑定到本 Bot');
             }
+          }
+          // P4-M2：mcp 实例 = 工具服务，注入随插件启用集自动生效（无逐 Bot 勾选），
+          // 就绪判定只有「还没添加实例」一条；固定投影贡献（counts.mcp）无需此步。
+          if (plugin.providesInstances.includes('mcp')) {
+            const serverCount = settings
+              .get()
+              .mcpServers.filter(
+                (server) =>
+                  server.source?.kind === 'instance' && server.source.pluginId === id,
+              ).length;
+            if (serverCount === 0) reasons.push('尚未添加任何工具服务');
           }
           enabled.push({
             id,

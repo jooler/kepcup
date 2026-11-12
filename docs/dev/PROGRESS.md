@@ -2260,3 +2260,26 @@ botId + name 落到首字母占位。
 - **关窗后按键不再绑死旧 id**：按键类动作（pressKey / hotkey / pasteText / 无元素索引的 typeText）在 driver 报窗口失效、且调用方没指定窗口时，丢弃陈旧快照、重新枚举换窗口重试一次。坐标与元素寻址**不**自动换目标（像素栅格与 element_token 都绑定旧窗口，换目标会打到别的位置）；显式 `windowId` 同样不重绑。
 - **drag 默认前台**：后台合成拖拽拿不到 macOS 拖放会话，默认即静默无效（复检实证：前台移动文件成功、后台无任何变化）。`delivery:'background'` 保留给「不能抢焦点」的场景；不做失败后自动重试（拖拽无读回，重放有重复执行风险）。
 - **验证**：provider + host 定向 73 passed；新增用例：关窗后按键自动换窗口并落到新 id、显式 windowId 不换目标、默认目标跳过 sheet、drag 默认前台 / 显式后台。
+
+## 并行写任务与任务间协调（D123，2026-11-11）
+
+写互斥从「整个 cwd 一个写任务」细化到声明写域，并补上任务间协调的最小面。分支 `feat/d123-parallel-write-domains`，提交 `2738ed7e`（设计）→ `3546859f`（W1）→ `19a17b03`（W2）→ `4a1f0e19`（W3）→ `94717f50`（W4）→ `7ca4e2a9`（W5）→ `6683c266`（W6）→ W7 收口提交。
+
+- **写域**：`start_task.writes` 升级为 `boolean | string[]`；`workdir/domains.ts` 提供声明校验、绝对化、保守 glob 相交（判不了即冲突）与域冲突；迁移 0015 落 `runs.task_write_domains`，接续缺省继承、retry 沿用。
+- **调度与租约**：TaskHost `#blockedBy` 按「root 重叠 ∧ 域相交」排队，原因「等写域（任务 … 持有 …）」；任务钉住的租约键编码 `dir:base|domains:p1,p2`，`LeaseService` 冲突谓词可注入（`SlotYieldingLeaseService` 构造透传），非任务调用方保持整根键；`writes: true` 与只读任务的执行行为不变（可见差异两处：排队文案「等写域」与 `<tasks>` 行的「写（全域）」标签，后者由 design 59 §6 规定）。
+- **执行期强制**：网关在只读判定之后按域硬拒（`WRITE_OUT_OF_DOMAIN`，write / edit / 生成产物三条路径），子代理沿父任务域；沙箱命令在模式可表达时把可写挂载收紧到声明目录，覆盖不到的部分与 bypass / 无沙箱如实告知（DEV-091）；外部智能体仅调度与租约层强保证，权限卡对域外路径附提示。
+- **任务间协调**：任务上下文 `<peer_tasks>`；`send_to_task` 复用注入管道并落 `peer_message` 私有条目（不回答 ask_user、每 run 限流）；`wait_for_task` 等待注册表 + 环检测 + `yieldSlotWhile` 让名额 + 墙钟豁免，目标 settle 返回终态摘要；`claim` / `release` 进程内认领，网关拦 `WRITE_CLAIMED`，settle 自动清除。
+- **界面**：`<tasks>` 行显示写域；任务详情页显示写域 / 认领，把 peer steer 渲染成「来自任务 …」行；新错误码与文案 zh-CN / en-US 同步。
+- **审查修正**：独立子代理四条线复核后修正——peer 消息文本与来源标题走 `neutralizeUntrusted` 且截断不切断边界；`send_to_task` 对未简报任务不再谎报 `delivered`（并入简报）；并发等待共享墙钟窗口、不再被误判 stalled；等自己的写域排队任务直接拒绝；`claim` 合并而非覆盖、包含校验改为保守包含；强制收回 / revert / `acquire_workdir_write` 对域键生效；沙箱在域根不在 workspace / workdir 时把另一侧置只读；workdir 写入补硬链接检查；生成产物先过网关再建目录；宿主复制 / 工具输出落盘同样受域与认领约束；损坏的域声明按拒绝处理；写域 glob 不再原样注入提示段（DEV-092 记录 claim 的第二道防线定位）。
+- **验证**：逐波定向测试与证据见 `todo/parallel-tasks-and-coordination.md` §6；`pnpm test` 8179 passed / 44 skipped（768 文件通过、3 跳过，0 failed）；core / shared / desktop typecheck 0 error；eslint 干净。偏差：DEV-091、DEV-092。未做：e2e 分域并行用例（执行方案标注可选）。
+
+## Pi Agent 1.5.2 升级（2026-11-12）
+
+`1.4.0 → 1.5.2`（2026-11-02 的 minor + 两个 patch），安全升级为主：pi-mcp OAuth 只接受 `http:` / `https:` 授权端点（拒绝 `file:` 等自定义协议启动）、glob DoS 加固、多处 abort/cancellation 相关修复。
+
+- **版本与依赖**：`packages/core` 四个 `@earendil-works/pi-*` 包与 `packages/app-validator` 的 `pi-mcp` 统一升到 `1.5.2`，lock 无 `1.4.0` 残留（DEV-041 同标准）；`pi-codemode` / `pi-telemetry` / `pi-tui` 随动到 `1.5.2`。`pnpm-workspace.yaml` 的 7 条 `minimumReleaseAgeExclude` 从 `1.4.0` 同步为 `1.5.2`。
+- **TypeBox re-export 移除（1.5.0 breaking）**：pi-ai / pi-agent-core 不再依赖 TypeBox，工具参数改走 `pi-schema`。本仓 34 处 `import { Type } from '@earendil-works/pi-ai'` 与 1 处 `TSchema` 导入（`dispatch/light-judgement.ts`）全部改从 `typebox` 直连（新增 `typebox@1.3.27` 直接依赖，与 pi-coding-agent 1.5.2 自身锁定一致）；9 个测试文件同改。未采用 pi-schema builders（保留 TypeBox schema，上游兼容：常用 kind 的 `params` 静态类型仍由 TypeBox 给出）；项目未用 `Type.Refine` / `Type.BigInt` / codecs / `Format.Set` 等 JSON Schema 外特性，校验行为变化（pi-schema 统一 coerce、错误文案变更）无依赖点。
+- **行为变化（评估）**：grep 工具上下文行改由 ripgrep 直接读取（`GrepOperations.readFile` 废弃不再回调）——宿主网关检查仍在 `isDirectory`（搜索根）上生效，读取都在已检查的搜索根内，权限模型不变；OpenAI 兼容模型不再发 `"tools": []`（对 vLLM 0.20+ 是修复）；Anthropic 会话启用 message threads（请求只发增量消息，变更时自动回退全量）；工具参数校验失败文案变更（无测试断言旧文案）。
+- **独立审查（两路子代理，机械正确性 + 行为兼容）**：无 P1/P2。修正：grep 死 `readFile` op 清理（pi 1.5 起零引用，留着会误导读者以为逐文件网关检查仍生效）并补「搜索根过网关、恰好一条读检查、拒绝即不搜」两条测试钉住（`coding-tools-wrap`，rg 缺席环境 skip）；`typebox` 依赖项归位字母序。对拍实证：1.4.0 与 1.5.2 的 `validateToolArguments` 在 11 个代表性用例（数值字符串、单值包数组、null 处理、Union/Integer/Unsafe、additionalProperties、错误判例）输出完全一致，pi-schema coerce 是 TypeBox `Value.Convert` 的超集；`step-persistence` 的参数脱敏依赖的 `Received arguments:{JSON}` 结构在 1.5.2 错误里保持不变；grep 拒绝被上游转成「Path not found」fail-closed 与 1.4.0 相同；usage `cost.total` 语义变化（优先供应商报告值）对宿主三处消费是纯精度改善。
+- **未做 / 开放项**：宿主未调用 pi-ai 1.5 新增的 `cleanupSessionResources(sessionId)`（threads 客户端状态 LRU 有界、服务端线程自行过期，影响有界；后续可在 run 结束路径补清理）；Anthropic message threads 下 `onPayload` 记录的 loop context 与 wire payload 出现系统性偏差（continue 请求省略 system / tools / 前缀消息）——run_steps 审计语义注记，暂不改代码；openai-completions 1.5.1 起 `compat.requiresToolsWithToolHistory` 未在宿主设置面暴露（遇到「旧 LiteLLM→Anthropic」这类要求 `tools` 字段的代理再登记支持路径）；pi-schema 校验统一后 MCP / plain JSON Schema 工具的 coerce 与 TypeBox 工具一致、dangling `$ref` 只拒该位置（对宿主 MCP 工具面是纯改善，无适配）。
+- **验证**（macOS arm64，本工作树）：core / app-validator / desktop typecheck 0 error；定向测试——coding-tools-wrap、capability-discovery、host-mcp-bridge、dispatch、external-agent p2/p5/p6、structured-route-switch、mcp-auth-transport / policy / risk / service-auth / tools(-auth)、memory-constraints、workbench-tools、mcp / mcp-loop / mcp-apps-ui(-approvals) / plugins-instances 集成、app-validator 全部测试、light-judgement、skills parse/scan/validate/registry、agent-provider contract，共 36 文件 600+ 例全绿。改动文件 eslint 干净（两个既有未提交文件的 lint 报错与本升级无关）。

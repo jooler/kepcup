@@ -780,6 +780,13 @@ export const mcpServerSourceSchema = z.discriminatedUnion('kind', [
     key: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/),
     mcpb: mcpbPackageRefSchema.optional(),
   }),
+  // P4-M2：一个插件实例（`plugin_instances` 行）落地的 server，生命周期跟实例走
+  // （`plugins.instances.update/delete`），宿主按插件启用集注入（同 `plugin` 口径）。
+  z.object({
+    kind: z.literal('instance'),
+    pluginId: z.string().min(3).max(200),
+    instanceId: z.string().min(1).max(64),
+  }),
 ]);
 export type McpServerSource = z.infer<typeof mcpServerSourceSchema>;
 
@@ -1778,6 +1785,8 @@ export const taskEventPhaseSchema = z.enum([
   'question',
   'result',
   'failure',
+  /** D123：来自兄弟任务的消息（`send_to_task`），`fromTaskId` / `fromTitle` 标识来源。 */
+  'peer_message',
 ]);
 export type TaskEventPhase = z.infer<typeof taskEventPhaseSchema>;
 /** 终态 phase：受 messages_task_terminal 唯一索引约束（§3.2 幂等写入）。 */
@@ -1808,6 +1817,9 @@ export const taskEventContentSchema = z.object({
   continuesTaskId: z.string().optional(),
   /** brief 条目：D91 任务声明的外部能力 id（任务卡 / 简报可见；落库在 runs.task_capabilities）。 */
   capabilities: z.array(z.string()).optional(),
+  /** peer_message 条目：发送方任务 id / 标题（D123，内容与标题渲染时包 `<untrusted>`）。 */
+  fromTaskId: z.string().optional(),
+  fromTitle: z.string().optional(),
   /**
    * 终态条目（result / failure）：这次任务用文件工具创建 / 修改的文件。对话轮
    * 把任务结果转述给用户时，文件卡挂在那条回答消息上。
@@ -2199,10 +2211,27 @@ export const runSchema = z.object({
   /** 解析后的任务工作目录。 */
   taskCwd: z.string().nullable().default(null),
   /**
+   * D123: declared write-domain globs relative to `taskCwd` (`start_task.writes`
+   * array). Null = undeclared — interpret through `taskWrites` (`true` = `['**']`).
+   */
+  taskWriteDomains: z.array(z.string()).nullable().default(null),
+  /**
+   * D123: the stored declaration exists but cannot be parsed. Enforcement is
+   * fail-closed (deny writes); a NULL declaration stays "undeclared".
+   */
+  taskWriteDomainsCorrupt: z.boolean().optional(),
+  /**
    * D91：任务声明要挂的外部能力 id（`start_task.capabilities`，如 `app:github` / `mcp:{serverId}`）；
    * 非任务 run 与宿主自己派的任务（未声明）为 null。
    */
   taskCapabilities: z.array(z.string()).nullable().default(null),
+  /**
+   * 任务失败自动重试（TASK_AUTO_RETRY_DELAYS_MS）：已执行的自动重试次数；
+   * 非任务 run 与从未自动重试过的任务为缺省 0。等待重试的任务仍为 `queued`。
+   */
+  taskRetryAttempts: z.number().int().nonnegative().optional(),
+  /** 下次自动重试的时刻（epoch ms）；不在退避等待期为 null / 缺省。 */
+  taskRetryAt: z.number().nullable().optional(),
   /** 派出该任务的对话轮。 */
   originRunId: z.string().nullable().default(null),
   /** 任务结果被对话轮消费的时间（§3.2）；未消费为 null。 */
@@ -3841,6 +3870,18 @@ export const taskViewSchema = z.object({
   state: taskStateSchema,
   status: runStatusSchema,
   writes: z.boolean(),
+  /** D123: declared write-domain globs (null = whole cwd / not a write task). */
+  writeDomains: z.array(z.string()).nullable().default(null),
+  /** D123: the task's in-memory runtime claim (empty when none). */
+  claims: z
+    .array(
+      z.object({
+        paths: z.array(z.string()),
+        reason: z.string(),
+        since: z.number(),
+      }),
+    )
+    .default([]),
   /** Where it works: the bound workdir or the bot's workspace. */
   cwdKind: z.enum(['workdir', 'workspace']).nullable(),
   /** Why a submitted task waits (等写入租约 / 等并发额度 / 等智能体并发额度 …). */

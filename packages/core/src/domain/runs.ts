@@ -37,7 +37,10 @@ interface RunRow {
   task_title: string | null;
   task_writes: number | null;
   task_cwd: string | null;
+  task_write_domains: string | null;
   task_capabilities: string | null;
+  task_retry_attempts: number;
+  task_retry_at: number | null;
   origin_run_id: string | null;
   result_consumed_at: number | null;
   awaiting_input: number;
@@ -124,8 +127,32 @@ function parseCapabilities(raw: string | null): string[] | null {
   }
 }
 
+/** `runs.task_write_domains` (JSON string[], D123). NULL = undeclared; a
+ * non-NULL value that cannot be parsed is reported so enforcement fails
+ * closed instead of silently widening to the whole cwd. */
+function parseWriteDomains(raw: string | null): {
+  domains: string[] | null;
+  corrupt: boolean;
+} {
+  if (raw === null) return { domains: null, corrupt: false };
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length === 0 ||
+      parsed.some((pattern) => typeof pattern !== 'string')
+    ) {
+      return { domains: null, corrupt: true };
+    }
+    return { domains: parsed as string[], corrupt: false };
+  } catch {
+    return { domains: null, corrupt: true };
+  }
+}
+
 function rowToRun(row: RunRow): Run {
   const error = row.error_json ? (JSON.parse(row.error_json) as RunErrorJson) : null;
+  const writeDomains = parseWriteDomains(row.task_write_domains);
   return {
     id: row.id,
     botId: row.bot_id,
@@ -155,7 +182,11 @@ function rowToRun(row: RunRow): Run {
     taskTitle: row.task_title,
     taskWrites: row.task_writes === null ? null : row.task_writes === 1,
     taskCwd: row.task_cwd,
+    taskWriteDomains: writeDomains.domains,
+    ...(writeDomains.corrupt ? { taskWriteDomainsCorrupt: true } : {}),
     taskCapabilities: parseCapabilities(row.task_capabilities),
+    taskRetryAttempts: row.task_retry_attempts,
+    taskRetryAt: row.task_retry_at,
     originRunId: row.origin_run_id,
     resultConsumedAt: row.result_consumed_at,
     awaitingInput: row.awaiting_input === 1,
@@ -206,6 +237,8 @@ export class RunsService {
     taskTitle?: string | null;
     taskWrites?: boolean | null;
     taskCwd?: string | null;
+    /** D123: declared write-domain globs relative to `taskCwd`; omitted = undeclared. */
+    taskWriteDomains?: string[] | null;
     /** D91: external capability ids the task declared (`start_task.capabilities`); omitted = none. */
     taskCapabilities?: string[] | null;
     /** The supervisor turn that started the task. */
@@ -221,7 +254,7 @@ export class RunsService {
     const now = this.clock.now();
     this.db
       .prepare(
-        'insert into runs (id, bot_id, conversation_id, loop_type, status, trigger_reason, trigger_message_ids_json, episode_id, episode_hop, parent_run_id, provider, model, engine, task_title, task_writes, task_cwd, task_capabilities, origin_run_id, continued_from_run_ids_json, trigger_parts_json, retry_of_run_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'insert into runs (id, bot_id, conversation_id, loop_type, status, trigger_reason, trigger_message_ids_json, episode_id, episode_hop, parent_run_id, provider, model, engine, task_title, task_writes, task_cwd, task_write_domains, task_capabilities, origin_run_id, continued_from_run_ids_json, trigger_parts_json, retry_of_run_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         id,
@@ -244,6 +277,11 @@ export class RunsService {
             ? 1
             : 0,
         input.taskCwd ?? null,
+        input.taskWriteDomains !== undefined &&
+          input.taskWriteDomains !== null &&
+          input.taskWriteDomains.length > 0
+          ? JSON.stringify(input.taskWriteDomains)
+          : null,
         input.taskCapabilities !== undefined &&
           input.taskCapabilities !== null &&
           input.taskCapabilities.length > 0
@@ -347,6 +385,8 @@ export class RunsService {
         | 'agentSessionId'
         | 'resultConsumedAt'
         | 'awaitingInput'
+        | 'taskRetryAttempts'
+        | 'taskRetryAt'
       >
     > & {
       /** Structured setup requirement stored inside error_json (inline setup). */
@@ -360,9 +400,17 @@ export class RunsService {
     const existing = this.getOrThrow(id);
     const status = patch.status ?? existing.status;
     const now = this.clock.now();
+    // 任务失败自动重试：这两列显式 `!== undefined` 合并（不是 `??`），让
+    // `taskRetryAt: null` 能清掉退避计时（任务重新启动 / 最终结算时）。
+    const taskRetryAttempts =
+      patch.taskRetryAttempts !== undefined
+        ? patch.taskRetryAttempts
+        : (existing.taskRetryAttempts ?? 0);
+    const taskRetryAt =
+      patch.taskRetryAt !== undefined ? patch.taskRetryAt : (existing.taskRetryAt ?? null);
     this.db
       .prepare(
-        "update runs set status = ?, provider = ?, model = ?, engine = ?, agent_session_id = ?, summary = ?, last_progress = ?, continued_from_run_ids_json = ?, error_json = ?, output_message_ids_json = ?, episode_id = ?, episode_hop = ?, result_consumed_at = ?, awaiting_input = ?, started_at = coalesce(started_at, ?), ended_at = case when ? in ('completed','failed','cancelled','interrupted') then ? else ended_at end where id = ?",
+        "update runs set status = ?, provider = ?, model = ?, engine = ?, agent_session_id = ?, summary = ?, last_progress = ?, continued_from_run_ids_json = ?, error_json = ?, output_message_ids_json = ?, episode_id = ?, episode_hop = ?, result_consumed_at = ?, awaiting_input = ?, task_retry_attempts = ?, task_retry_at = ?, started_at = coalesce(started_at, ?), ended_at = case when ? in ('completed','failed','cancelled','interrupted') then ? else ended_at end where id = ?",
       )
       .run(
         status,
@@ -383,6 +431,8 @@ export class RunsService {
         patch.episodeHop ?? existing.episodeHop,
         patch.resultConsumedAt !== undefined ? patch.resultConsumedAt : existing.resultConsumedAt,
         (patch.awaitingInput ?? existing.awaitingInput) ? 1 : 0,
+        taskRetryAttempts,
+        taskRetryAt,
         now,
         status,
         now,

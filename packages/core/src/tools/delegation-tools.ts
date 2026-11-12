@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { DELEGATION_TASK_MAX_CHARS, type DelegationIntent } from '@kepcup/shared';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
 

@@ -77,6 +77,13 @@ export const zhCN = {
   // D75（design 30 §2.1 / §5.1）：对话只读、写操作在任务里做。
   'chats.errorCode.RUN_READ_ONLY':
     '这次执行是只读的：写文件、运行会写入的命令、生成媒体、安装技能或环境都要在写任务里进行',
+  // D123：写域 / 认领 / 任务间协调
+  'chats.errorCode.WRITE_OUT_OF_DOMAIN':
+    '这个任务只能写声明过的写域，该路径在域外；越域需要任务用 ask_user 说明，由对话轮改派或换域',
+  'chats.errorCode.WRITE_CLAIMED': '该路径已被另一个任务认领：等它释放，或让两个任务先协商',
+  'chats.errorCode.TASK_PEER_NOT_FOUND': '同一对话里没有这个任务',
+  'chats.errorCode.TASK_PEER_FINISHED': '目标任务已经结束',
+  'chats.errorCode.TASK_WAIT_CYCLE': '任务之间的等待形成了环，已拒绝',
   'chats.errorCode.CATASTROPHIC_COMMAND':
     '该命令会破坏系统、用户目录或应用数据目录，已被安全策略直接拒绝',
   'chats.errorCode.TASK_LIMIT_REACHED': '任务数已达上限，请等进行中的任务结束后再试',
@@ -1659,13 +1666,18 @@ export const zhCN = {
   'task.run.action.call': '调用',
   'task.run.action.plan': '更新计划',
   'task.run.steer': '追加指令',
+  'task.run.peerMessage': '来自任务 {id}{title}',
+  'task.run.writeDomains': '写域 {list}',
+  'task.run.claims': '认领 {list}',
   // D115 注入坞（docs/design/56 §1）：任务详情页最底部的用户直注入口。
   'task.run.injectPlaceholder': '追加指令，Enter 发送…',
-  'task.run.injectSend': '发送',
   'task.run.injectHintAwaiting': '任务在等你回答：发送的内容将作为回答',
   'task.run.injectSent': '已追加到任务',
   'task.run.injectQueued': '未送达：这条指令将在任务结束后生效',
   'task.run.injectFailed': '追加失败',
+  // 复用对话 Composer 后新增：附件无处可放（tasks.inject 只收文本）、ASR 未就绪。
+  'task.run.injectAttachUnsupported': '追加指令暂不支持附件',
+  'task.run.injectVoiceUnavailable': '语音识别模型未配置，先到设置里完成配置',
   'task.run.system': '系统',
   'task.run.live': '实时更新',
   'task.run.noOutput': '没有输出',
@@ -3258,6 +3270,24 @@ export const zhCN = {
   'mail.group.legacy': '未关联插件',
   'mail.ownerOf': '来自插件：{plugin}',
   'mail.instanceFormNote': '「{plugin}」的邮箱账号。字段由插件声明，连接测试在保存时进行。',
+  // P4-M2：mcp 实例（工具服务）——与 mail.* 同构的键组。
+  'mcp.intro': '工具服务由插件提供：在插件卡上添加并填入平台要求的凭据，Bot 启用插件后即可使用。',
+  'mcp.add': '添加工具服务',
+  'mcp.empty': '添加后，该插件提供的在线文档读写工具会随 Bot 启用自动可用。',
+  'mcp.back': '返回',
+  'mcp.saving': '正在保存…',
+  'mcp.save': '保存',
+  'mcp.added': '工具服务已添加',
+  'mcp.updated': '工具服务已更新',
+  'mcp.delete': '删除工具服务',
+  'mcp.editHint': '点击编辑',
+  'mcp.noPlugin': '还没有可添加工具服务的插件。先到市场安装一个（如腾讯文档、飞书、语雀）。',
+  'mcp.openMarket': '打开插件市场',
+  'mcp.instanceCount': '{count} 个服务',
+  'mcp.ownerOf': '来自插件：{plugin}',
+  'mcp.instanceFormNote': '「{plugin}」的工具服务。字段由插件声明，凭据只存本机。',
+  'mcp.pluginMissing': '该插件不存在或已卸载，请回到插件列表刷新。',
+  'mcp.pluginDisabled': '插件「{plugin}」当前已停用，启用后才能保存新的工具服务。',
   'mailCard.save': '保存',
   'mailCard.plugin.saved': '邮件插件设置已保存',
   'mailCard.plugin.enabledGlobally': '已启用插件「{plugin}」',
@@ -3963,6 +3993,9 @@ export const zhCN = {
   'web.connected.fingerprint': '密钥指纹',
   'web.install.hint': '把 KepCup 添加到主屏幕，像应用一样使用',
   'web.install.action': '添加到主屏幕',
+  // --- D122 手机原生壳（docs/design/58-mobile-shell.md）------------------------
+  'web.shell.disconnect': '断开',
+  'web.shell.disconnectHint': '断开并回到 KepCup App 首页',
   'settings.desktopOnly': '此功能仅桌面端可用',
   'web.failed.title': '连不上中转',
   'web.failed.body': '中转服务暂时不可达（配对链接本身仍有效）。请检查网络后重试。',

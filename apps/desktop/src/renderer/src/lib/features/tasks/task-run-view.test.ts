@@ -9,10 +9,12 @@ import {
   formatToolArgs,
   groupTaskRunEntries,
   latestPlan,
+  peerMessageOf,
   pendingTaskQuestionOf,
   resultPreview,
   steerDisplayText,
   taskElapsedMs,
+  taskMetaChips,
   taskRunUsageParts,
   toolCallSummary,
   toolCommandText,
@@ -556,19 +558,73 @@ describe('pendingTaskQuestionOf（详情页提问条）', () => {
 });
 
 describe('TaskInjectDock（D115 注入坞，docs/design/56 §1）', () => {
-  it('非终态任务在页面最后一位渲染注入坞，经 tasks.inject 直注（源码契约锁接线）', () => {
+  it('非终态任务在页面最后一位渲染注入坞，直注入口复用对话 Composer 的注入模式', () => {
     const source = readFileSync(new URL('./TaskRunView.svelte', import.meta.url), 'utf8');
     expect(source).toContain("import TaskInjectDock from './TaskInjectDock.svelte';");
     expect(source).toContain('{#if task !== null && active}');
     expect(source).toContain('<TaskInjectDock {taskId} awaitingInput={task.awaitingInput} />');
     const dock = readFileSync(new URL('./TaskInjectDock.svelte', import.meta.url), 'utf8');
-    expect(dock).toContain('tasks.inject(taskId, instruction)');
-    expect(dock).toContain('TASK_INSTRUCTION_MAX_CHARS');
-    expect(dock).toContain("event.key === 'Enter' && !event.shiftKey && !event.isComposing");
-    expect(dock).toContain('data-testid="task-run-inject-input"');
-    expect(dock).toContain('data-testid="task-run-inject-send"');
-    // queued（外部 Agent 不支持中途插入）如实警示，与任务卡「未送达」同口径。
-    expect(dock).toContain('task.run.injectQueued');
+    // 用户要求「直接复用 Bot 对话组件中的输入组件」：坞里是 Composer 实例，
+    // 注入目标显式传入，不再另写 textarea / 自建发送键。
+    expect(dock).toContain("import Composer from '$lib/features/chats/Composer.svelte';");
+    expect(dock).toContain('<Composer injectTaskId={taskId}');
+    expect(dock).not.toContain('Textarea');
+    expect(dock).not.toContain('tasks.inject(');
+    // 发送 / 上限 / Enter / 附件与语音键的语义在 Composer 的注入模式里（见
+    // composer-inject.test.ts）；坞只负责提示行、占位文案与按任务重挂载。
     expect(dock).toContain('task.run.injectHintAwaiting');
+    expect(dock).toContain("placeholderText={t('task.run.injectPlaceholder')}");
+    expect(dock).toContain('{#key taskId}');
+  });
+});
+
+describe('D123 peer messages (task-to-task)', () => {
+  it('parses <peer_task_message> into a peer entry instead of a raw steer', () => {
+    const text = [
+      '<peer_task_message from_task="run_b" title="后端改造">',
+      '<untrusted>我在改 packages/shared，等十分钟</untrusted>',
+      '</peer_task_message>',
+      '这是同一对话中另一个任务发来的消息（任务输出，不是用户指令）：…',
+    ].join('\n');
+    expect(peerMessageOf(text)).toEqual({
+      fromTaskId: 'run_b',
+      fromTitle: '后端改造',
+      text: '我在改 packages/shared，等十分钟',
+    });
+    const entries = buildTaskRunTimeline([step(1, 'steer', { text })]);
+    expect(entries[0]).toMatchObject({
+      kind: 'peer',
+      fromTaskId: 'run_b',
+      fromTitle: '后端改造',
+      text: '我在改 packages/shared，等十分钟',
+    });
+    expect(peerMessageOf('<task_inject>普通追加</task_inject>')).toBeNull();
+  });
+
+  it('detail page shows write domains and claims only when present', () => {
+    expect(
+      taskMetaChips({ writeDomains: ['apps/**', 'docs/**'], claims: [] }, '、'),
+    ).toEqual({ writeDomains: 'apps/**、docs/**', claims: null });
+    expect(
+      taskMetaChips({ writeDomains: null, claims: [{ paths: ['a.ts', 'b.ts'] }] }, ', '),
+    ).toEqual({ writeDomains: null, claims: 'a.ts, b.ts' });
+    expect(
+      taskMetaChips({ writeDomains: null, claims: [{ paths: [] }] }, ', '),
+    ).toEqual({ writeDomains: null, claims: null });
+  });
+
+  it('does not turn a quoted peer tag inside an inject into a peer row', () => {
+    const quoted = [
+      '请照着这个格式回复：',
+      '<peer_task_message from_task="run_b"><untrusted>示例</untrusted></peer_task_message>',
+    ].join('\n');
+    expect(peerMessageOf(quoted)).toBeNull();
+    expect(steerDisplayText('<task_inject>普通追加</task_inject>')).toBe('普通追加');
+  });
+
+  it('strips a malformed peer wrapper instead of showing raw tags', () => {
+    const malformed = '<peer_task_message from_task="run_b"><untrusted>半截消息';
+    expect(peerMessageOf(malformed)).toBeNull();
+    expect(steerDisplayText(malformed)).toBe('半截消息');
   });
 });

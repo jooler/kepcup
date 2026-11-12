@@ -32,13 +32,21 @@ export const PLUGIN_SERVER_PROTECTED_FIELDS = [
  *    Present with a changed protected field → refuse (name/enabled/autoApprove/
  *    toolPolicies/description are free).
  * ② A plugin server appearing without a same-id plugin source before → forged, refuse.
+ *
+ * P4-M2: instance-source servers (`source.kind === 'instance'`, landed by
+ * `plugins.instances.*`) get the same treatment — their exit is the instance form
+ * (`plugins.instances.update/delete`), not the plugin uninstall.
  */
 export function assertPluginServersIntact(
   previous: readonly McpServer[],
   next: readonly McpServer[],
 ): void {
   const pluginIdOf = (server: McpServer): string | null =>
-    server.source?.kind === 'plugin' ? server.source.pluginId : null;
+    server.source?.kind === 'plugin' || server.source?.kind === 'instance'
+      ? server.source.pluginId
+      : null;
+  const managedByInstance = (server: McpServer): boolean =>
+    server.source?.kind === 'instance';
   for (const before of previous) {
     const pluginId = pluginIdOf(before);
     if (pluginId === null) continue;
@@ -46,7 +54,9 @@ export function assertPluginServersIntact(
     if (after === undefined) {
       throw new AppError(
         'PLUGIN_MANAGED',
-        `「${before.name}」由插件 ${pluginId} 管理，请在扩展中心「已安装」里卸载该插件`,
+        managedByInstance(before)
+          ? `「${before.name}」由插件实例管理，请在插件卡里删除该服务`
+          : `「${before.name}」由插件 ${pluginId} 管理，请在扩展中心「已安装」里卸载该插件`,
       );
     }
     if (pluginIdOf(after) === null) {
@@ -59,7 +69,9 @@ export function assertPluginServersIntact(
       if (!isDeepStrictEqual(before[field], after[field])) {
         throw new AppError(
           'PLUGIN_MANAGED',
-          `不能修改插件管理的 MCP 服务器的 ${field}（「${before.name}」由插件 ${pluginId} 管理）`,
+          managedByInstance(before)
+            ? `不能修改插件实例的 MCP 服务器的 ${field}（「${before.name}」请在插件卡里更新实例）`
+            : `不能修改插件管理的 MCP 服务器的 ${field}（「${before.name}」由插件 ${pluginId} 管理）`,
         );
       }
     }

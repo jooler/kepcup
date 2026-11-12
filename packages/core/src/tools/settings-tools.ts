@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import type { ToolDefinition, ToolResult } from '../agent/types.js';
 
 /**

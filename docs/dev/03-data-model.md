@@ -47,6 +47,7 @@
 | main | `0040_project_conversations.sql` | D92 T1a（WP1）：重建 `conversations`（首行 `-- kepcup:foreign-keys=off` 指令，运行器支持见 `infra/migrate.ts`）——`type` 取值 `direct | project`、增 `lead_bot_id`、`description` 改名 `goal`、删 `setup_state`；旧群纯 SQL 转换（负责人取入群最早的非管家成员，无合格成员的删除）；删除项目会话里的管家成员行 |
 | main | `0041_episodes.sql` | D92 T1a（WP2）：删连锁表，建 `episodes`（协作回合） |
 | runs | `0014_episode_columns.sql` | D92 T1a（WP2）：`runs` 的连锁列改名 `episode_id` / `episode_hop` |
+| runs | `0015_task_write_domains.sql` | D123：`runs` 增 `task_write_domains`（声明的写域 glob 数组，NULL = 未声明） |
 | main | `0042_todos_assignee_project.sql` | D92 T1a（WP4）：`todos` 的项目执行者列改名 `assignee_project_id` |
 | memory | `0003_origin_project.sql` | D92 T1a（WP4）：重建 `memory_items`，`origin` 取值 `('private','project')`，旧值转换 |
 | memory | `0004_drop_private_to_bot.sql` | 2026-10-25：删除 `private_to_bot` 列（「只属于该 Bot」机制移除，见 design/04 修订） |
@@ -1163,6 +1164,7 @@ CREATE TABLE runs (
   task_title           TEXT,           -- 0006（D75）：任务标题；以下任务列在非任务 run 上为 null / 0
   task_writes          INTEGER,        -- 0006：1 = 写任务，0 = 只读任务
   task_cwd             TEXT,           -- 0006（runs 0013 改名）：解析后的任务执行根目录
+  task_write_domains   TEXT,           -- runs 0015（D123）：声明的写域 glob 数组（相对 task_cwd 的 JSON string[]）；NULL = 未声明（按 task_writes 解释：true = ['**']）
   origin_run_id        TEXT,           -- 0006：派出该任务的对话轮
   result_consumed_at   INTEGER,        -- 0006：任务结果被对话轮消费的时间（design/30 §3.2）
   awaiting_input       INTEGER NOT NULL DEFAULT 0, -- 0006：running 下等待用户输入（design/30 §2.4.6）
@@ -1180,6 +1182,7 @@ CREATE INDEX runs_by_parent ON runs(parent_run_id);  -- 0009：台账沿续接�
 ```
 
 - 任务（D75，[design/30](../design/30-supervisor-and-tasks.md) §3.4）就是 `loop_type = 'task'` 的 runs 行，不另建表；任务的 submitted 用现有状态 `queued` 表示；对话轮为 `loop_type = 'turn'`。`continued_from_run_ids_json` 复用为 `start_task({continues_task_id})` 的回放来源。查询入口：`RunsService.listTasks` / `listNonTerminalTasks` / `listUnconsumedTerminalTasks`（终态且 `result_consumed_at IS NULL`）。外部智能体 Bot 的任务在创建时就记 `engine` / `provider = 'agent:{id}'`（门禁未过、引擎未启动就失败的任务也显示正确的引擎）。
+- 任务声明的写域（D123，runs 迁移 0015，[design/59](../design/59-parallel-tasks-and-coordination.md) §2）：`task_write_domains` 是 `start_task.writes` 数组声明校验、去重后的相对 glob（JSON `string[]`），只有 `writes: true` 存 NULL；空数组不是「整目录」而是 `INVALID_INPUT`（不落行），列里出现无法解析的值时读路径标 `taskWriteDomainsCorrupt` 并按拒绝写入处理。`continues_task_id` 缺省继承来源行的值、显式声明覆盖；`runs.retry` 沿用行上的值。读路径把 NULL + `task_writes=1` 解释为整 cwd（`['**']`）；声明本身只存相对模式，比较时经 `task_cwd` 绝对化。
 - 任务声明的能力（D91，runs 迁移 0012，[design/40](../design/40-capability-mounting.md) §4）：`task_capabilities` 是 `start_task.capabilities` 校验、去重后的能力 id（`app:{connectorSlug}` / `mcp:{serverId}`）JSON 数组，空数组存 NULL。`continues_task_id` 的新任务存「被接续任务的能力 ∪ 本次声明」；`runs.retry` 沿用行上的值；宿主自己派的任务（design 30 §8.4 降级）不写。任务启动时与当前能力目录求交后才决定挂什么，所以这里只是「声明」，不保证都挂上了。`Run.taskCapabilities: string[] | null` 经 `Run` / `TaskView.capabilities` 暴露给渲染层。
 - 对话轮：`trigger_parts_json` 让重试按来源段重建合并批（各段保留自己的 reason 与属性，`RunsService.triggerPartsOf`）；`runs.setTrigger` 在对话轮开始执行、吸收缓冲批后更新触发记录（吸收了回合批时一并写 `episode_id` / `episode_hop`，取更深 hop——审查批 E / M1；任务结算唤醒的轮次在唤醒时按起源轮解析继承回合，`retry_of` 重建的批沿用原回合绑定）。`retry_of_run_id`（`RunsService.retryOfRunId`）：重试出来的对话轮派出的任务，与被重试那一轮（及更早的重试链）派出的同名任务视为同一个，不重复派出。
 - 外部 Agent 的 run（D72）：`provider = 'agent:{id}'`、`model` 为伪 ref `agent:{id}/{model|default}`（调度器并发键随之落到 `agent:{id}`）、`engine = 'agent:{id}'`；`run_steps` 的事件形状与内置引擎逐字段一致（续接、反思、中间说明都读它）。

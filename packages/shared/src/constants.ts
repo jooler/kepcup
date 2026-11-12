@@ -798,6 +798,18 @@ export const TASK_REDELIVER_AFTER_MS = 10 * 60_000;
  */
 export const TASK_REDELIVER_MAX_ATTEMPTS = 5;
 /**
+ * Failed task auto-retry backoff（任务失败自动重试）：a task that settles as
+ * `failed`（缺 setup 的失败、interrupted、cancelled 除外）is re-queued and
+ * re-executed after these delays, in order — the N-th failure waits
+ * `TASK_AUTO_RETRY_DELAYS_MS[N - 1]`（N 从 1 计）. Eight retries total（连同
+ * 首次执行共 9 次）；every later failure settles for real（failure entry +
+ * wake）only after the last retry failed. Persisted on the run row
+ * (`task_retry_attempts` / `task_retry_at`) so restarts resume the schedule.
+ */
+export const TASK_AUTO_RETRY_DELAYS_MS = [1, 2, 3, 5, 8, 13, 21, 34].map(
+  (minutes) => minutes * 60_000,
+);
+/**
  * How long a task waits on its open `ask_user` question (design 30 §2.4.6,
  * D75 审查 M3). The wait gives its provider slot back and does not count
  * toward TASK_MAX_WALL_MS; after this long the task is told 「用户未回答」 and
@@ -891,3 +903,21 @@ export const COLLAB_DRAFT_LEASE_SWEEP_MS = 5_000;
 export const COLLAB_PRESENCE_MAX_HZ = 10;
 export const COLLAB_DRAFT_UPDATE_MAX_HZ = 5;
 export const COLLAB_DRAFT_CLAIM_MAX_HZ = 2;
+
+// --- 并行写任务与任务间协调（D123，docs/design/59-parallel-tasks-and-coordination.md §2） ---
+/** `start_task.writes` 数组去重后的写域模式数上限（设计 §2）。 */
+export const TASK_WRITE_DOMAINS_MAX = 8;
+/** 单条写域模式的字符上限（设计 §2）。 */
+export const TASK_WRITE_DOMAIN_PATTERN_MAX = 200;
+/** `send_to_task` 文本上限；与 `DELEGATION_TASK_MAX_CHARS` 对齐（设计 §4.2）。 */
+export const TASK_PEER_MESSAGE_MAX_CHARS = 4000;
+/** 单个 run 内 `send_to_task` 的发送条数上限，防刷屏（设计 §4.2）。 */
+export const TASK_PEER_SEND_MAX_PER_RUN = 10;
+/** `wait_for_task` 缺省超时（设计 §4.3）。 */
+export const TASK_PEER_WAIT_TTL_MS = 30 * 60_000;
+/** `wait_for_task` 的 `timeout_minutes` 上限（设计 §4.3）。 */
+export const TASK_PEER_WAIT_TTL_MAX_MS = 120 * 60_000;
+/** `wait_for_task` 返回的结果摘要截断长度（设计 §4.3）。 */
+export const TASK_PEER_WAIT_RESULT_MAX_CHARS = 4000;
+/** 单次 `claim` 的路径模式数上限（设计 §5）。 */
+export const TASK_CLAIM_PATHS_MAX = 16;

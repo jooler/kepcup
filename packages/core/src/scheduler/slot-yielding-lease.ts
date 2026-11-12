@@ -14,6 +14,11 @@ import type { Scheduler } from './scheduler.js';
 export class SlotYieldingLeaseService extends LeaseService {
   #scheduler: Scheduler | null = null;
 
+  /** §2.5: the conflict predicate must reach `LeaseService`'s internals. */
+  constructor(conflict?: (a: string, b: string) => boolean) {
+    super(conflict);
+  }
+
   /** The scheduler is built after the lease service (start.ts). */
   attachScheduler(scheduler: Scheduler): void {
     this.#scheduler = scheduler;

@@ -7,7 +7,8 @@ import Database from 'better-sqlite3-multiple-ciphers';
 
 import { canonicalPath, resolvePaths, workspacePathFor } from '../../src/infra/paths.js';
 import { ToolGateway, type GatewayDeps } from '../../src/gateway/index.js';
-import { WorkdirRuntime } from '../../src/workdir/service.js';
+import { pathMatchesPatterns, WorkdirRuntime } from '../../src/workdir/service.js';
+import { TaskClaimRegistry } from '../../src/workdir/claims.js';
 import { GrantsService } from '../../src/permissions/grants.js';
 import { buildCodingTools } from '../../src/tools/coding-tools.js';
 import { buildResponseTools } from '../../src/tools/index.js';
@@ -46,6 +47,9 @@ const ids = {
   subOfSubOfReadTask: { runId: 'run_sub_sub', botId: BOT, conversationId: CONV, loopType: 'subagent' },
   subOrphan: { runId: 'run_sub_orphan', botId: BOT, conversationId: CONV, loopType: 'subagent' },
   subCycle: { runId: 'run_sub_cycle_a', botId: BOT, conversationId: CONV, loopType: 'subagent' },
+  /** D123: a write task that declared a write domain (`docs/**`). */
+  scopedTask: { runId: 'run_scoped_task', botId: BOT, conversationId: CONV, loopType: 'task' },
+  subOfScopedTask: { runId: 'run_sub_scoped', botId: BOT, conversationId: CONV, loopType: 'subagent' },
 } satisfies Record<string, RunIdentity>;
 
 interface RunRow {
@@ -54,6 +58,11 @@ interface RunRow {
   taskWrites: boolean | null;
   parentRunId: string | null;
   status: string;
+  /** D123 write-domain fields (absent = undeclared). */
+  taskCwd?: string | null;
+  taskWriteDomains?: string[] | null;
+  botId?: string | null;
+  conversationId?: string | null;
 }
 
 const runRows = new Map<string, RunRow>(
@@ -78,7 +87,7 @@ const runRows = new Map<string, RunRow>(
     ] as Array<[string, RunRow['loopType'], boolean | null, string | null, string?]>
   ).map(([id, loopType, taskWrites, parentRunId, status]) => [
     id,
-    { id, loopType, taskWrites, parentRunId, status: status ?? 'running' },
+    { id, loopType, taskWrites, parentRunId, status: status ?? 'running', botId: BOT, conversationId: CONV },
   ]),
 );
 
@@ -102,12 +111,37 @@ function makeGrants(): GrantsService {
   return new GrantsService({ db: db as never, clock: { now: () => clockNow } });
 }
 
-function makeGateway(sandbox: SandboxBackend = new UnavailableSandboxBackend('test')): ToolGateway {
+function makeGateway(
+  sandbox: SandboxBackend = new UnavailableSandboxBackend('test'),
+  claims?: TaskClaimRegistry,
+): ToolGateway {
+  // D123: the domain-scoped task writes inside the workspace, `docs/**` only.
+  runRows.set('run_scoped_task', {
+    id: 'run_scoped_task',
+    loopType: 'task',
+    taskWrites: true,
+    parentRunId: null,
+    status: 'running',
+    taskCwd: workspace(),
+    taskWriteDomains: ['docs/**'],
+    botId: BOT,
+    conversationId: CONV,
+  });
+  runRows.set('run_sub_scoped', {
+    id: 'run_sub_scoped',
+    loopType: 'subagent',
+    taskWrites: null,
+    parentRunId: 'run_scoped_task',
+    status: 'running',
+  });
   const workdirs = new WorkdirRuntime({
     runs: { get: (id: string) => runRows.get(id) ?? null },
     conversations: { get: () => null },
-    // Only the live write task holds its (pinned) lease.
-    leases: { keyOf: (runId: string) => (runId === 'run_write_task' ? `ws:${BOT}:${CONV}` : null) },
+    // Only the live write tasks hold their (pinned) lease.
+    leases: {
+      keyOf: (runId: string) =>
+        runId === 'run_write_task' || runId === 'run_scoped_task' ? `ws:${BOT}:${CONV}` : null,
+    },
   } as never);
   const deps: GatewayDeps = {
     paths: resolvePaths(home),
@@ -134,6 +168,7 @@ function makeGateway(sandbox: SandboxBackend = new UnavailableSandboxBackend('te
     } as unknown as GatewayDeps['allowlist'],
     unattended: {} as GatewayDeps['unattended'],
     workdirs,
+    ...(claims !== undefined ? { claims } : {}),
     platform: 'linux',
     readOnlyRootsOverride: [],
     sensitiveOverride: [],
@@ -684,5 +719,206 @@ describe('tools that write behind the gateway refuse for read-only runs (D75 rev
     // (A turn has no browser tools at all, D75 W2.)
     expect(await downloadsDirOf(ids.readTask)).toBe(gateway.readOnlyDownloadsDir(ids.readTask));
     expect(await downloadsDirOf(ids.writeTask)).toBe(path.join(workspace(), 'downloads'));
+  });
+});
+
+describe('declared write domains (D123 §3.6)', () => {
+  it('checkPath allows in-domain writes, refuses out-of-domain ones, and follows sub runs', () => {
+    const gateway = makeGateway();
+    expect(gateway.checkPath(ids.scopedTask, 'docs/a.md', 'write')).toMatchObject({
+      kind: 'allowed',
+    });
+    expect(gateway.checkPath(ids.scopedTask, 'src/a.ts', 'write')).toMatchObject({
+      kind: 'forbidden',
+      outOfDomain: true,
+    });
+    // Reads are unaffected.
+    expect(gateway.checkPath(ids.scopedTask, 'src/a.ts', 'read')).toMatchObject({ kind: 'allowed' });
+    // `writes: true` keeps the whole cwd.
+    expect(gateway.checkPath(ids.writeTask, 'src/a.ts', 'write')).toMatchObject({ kind: 'allowed' });
+    // A sub run writes under the owning task's domain.
+    expect(gateway.checkPath(ids.subOfScopedTask, 'docs/a.md', 'write')).toMatchObject({
+      kind: 'allowed',
+    });
+    expect(gateway.checkPath(ids.subOfScopedTask, 'src/a.ts', 'write')).toMatchObject({
+      kind: 'forbidden',
+      outOfDomain: true,
+    });
+  });
+
+  it('ensurePathAccess throws WRITE_OUT_OF_DOMAIN; the message names the domain and the path', async () => {
+    const gateway = makeGateway();
+    await expect(
+      gateway.ensurePathAccess(ids.scopedTask, 'src/a.ts', 'write', '测试'),
+    ).rejects.toMatchObject({ code: 'WRITE_OUT_OF_DOMAIN' });
+    await expect(
+      gateway.ensurePathAccess(ids.scopedTask, 'src/a.ts', 'write', '测试'),
+    ).rejects.toThrow(/docs\/\*\*/);
+  });
+
+  it('write / edit tools return WRITE_OUT_OF_DOMAIN; in-domain writes pass', async () => {
+    const gateway = makeGateway();
+    mkdirSync(path.join(workspace(), 'docs'), { recursive: true });
+    const tools = codingTools(gateway, ids.scopedTask);
+    const inside = await executeToolSafely(
+      tools.get('write')!,
+      { path: 'docs/ok.md', content: '# ok' },
+      ctxFor(ids.scopedTask),
+    );
+    expect(inside.ok, inside.content).toBe(true);
+    expect(existsSync(path.join(workspace(), 'docs', 'ok.md'))).toBe(true);
+
+    const outside = await executeToolSafely(
+      tools.get('write')!,
+      { path: 'src/no.ts', content: 'x' },
+      ctxFor(ids.scopedTask),
+    );
+    expect(outside).toMatchObject({ ok: false, errorCode: 'WRITE_OUT_OF_DOMAIN' });
+    expect(existsSync(path.join(workspace(), 'src', 'no.ts'))).toBe(false);
+
+    const edit = await executeToolSafely(
+      tools.get('edit')!,
+      { path: 'notes.txt', edits: [{ oldText: 'hello', newText: 'bye' }] },
+      ctxFor(ids.scopedTask),
+    );
+    expect(edit).toMatchObject({ ok: false, errorCode: 'WRITE_OUT_OF_DOMAIN' });
+  });
+
+  it('sandbox policy for a scoped task mounts only the declared directories writable', async () => {
+    const sandbox = recordingSandbox();
+    const gateway = makeGateway(sandbox);
+    mkdirSync(path.join(workspace(), 'docs'), { recursive: true });
+    await gateway.exec(ids.scopedTask, {
+      command: 'touch docs/a.md',
+      network: { mode: 'none', allowDomains: [] },
+    });
+    const policy = sandbox.requests[0]!.policy;
+    expect(policy.readWrite).toContain(path.join(workspace(), 'docs'));
+    expect(policy.readWrite).not.toContain(workspace());
+    expect(policy.readOnly).toContain(workspace());
+  });
+
+  it('generated-artifact gate refuses out-of-domain targets', () => {
+    const gateway = makeGateway();
+    expect(() =>
+      gateway.assertWriteDomain(ids.scopedTask, path.join(workspace(), 'docs', 'x.png')),
+    ).not.toThrow();
+    expect(() =>
+      gateway.assertWriteDomain(ids.scopedTask, path.join(workspace(), '.generated', 'x.png')),
+    ).toThrow(/写域/);
+  });
+
+  it('a fully literal domain covers its subtree but not a sibling prefix', () => {
+    expect(pathMatchesPatterns(workspace(), ['docs'], path.join(workspace(), 'docs', 'a.md'))).toBe(
+      true,
+    );
+    expect(
+      pathMatchesPatterns(workspace(), ['docs'], path.join(workspace(), 'docs2', 'a.md')),
+    ).toBe(false);
+  });
+
+  it('host-made copies and generated artifacts still obey domain and claims', () => {
+    const gateway = makeGateway();
+    expect(
+      gateway.checkHostCopyPath(
+        ids.scopedTask,
+        path.join(workspace(), '.attachments', 'a.pdf'),
+        '.attachments',
+      ),
+    ).toMatchObject({ kind: 'forbidden', outOfDomain: true });
+
+    const claims = new TaskClaimRegistry();
+    claims.set({
+      taskId: 'run_peer',
+      botId: BOT,
+      conversationId: CONV,
+      title: 'peer',
+      root: workspace(),
+      paths: ['docs/a.md'],
+      reason: '在改',
+      since: 1,
+    });
+    const claimed = makeGateway(new UnavailableSandboxBackend('test'), claims);
+    expect(() =>
+      claimed.assertWritableArtifact(ids.scopedTask, path.join(workspace(), 'docs', 'a.md')),
+    ).toThrow(/认领/);
+  });
+});
+
+describe('runtime path claims (D123 §5)', () => {
+  function registryWithPeerClaim(): TaskClaimRegistry {
+    const claims = new TaskClaimRegistry();
+    claims.set({
+      taskId: 'run_peer',
+      botId: BOT,
+      conversationId: CONV,
+      title: '邻居任务',
+      root: workspace(),
+      paths: ['docs/shared/**'],
+      reason: '要改 docs 的公共页',
+      since: 1,
+    });
+    return claims;
+  }
+
+  it('another task\'s claim blocks writes with WRITE_CLAIMED; the holder and other conversations pass', async () => {
+    const claims = registryWithPeerClaim();
+    const gateway = makeGateway(undefined, claims);
+    expect(gateway.checkPath(ids.scopedTask, 'docs/shared/a.md', 'write')).toMatchObject({
+      kind: 'forbidden',
+      claimed: true,
+    });
+    await expect(
+      gateway.ensurePathAccess(ids.scopedTask, 'docs/shared/a.md', 'write', '测试'),
+    ).rejects.toMatchObject({ code: 'WRITE_CLAIMED' });
+    // A path outside the claim but inside the domain is allowed.
+    expect(gateway.checkPath(ids.scopedTask, 'docs/other.md', 'write')).toMatchObject({
+      kind: 'allowed',
+    });
+    claims.clear('run_peer');
+    expect(gateway.checkPath(ids.scopedTask, 'docs/shared/a.md', 'write')).toMatchObject({
+      kind: 'allowed',
+    });
+  });
+
+  it('a claim only applies to the claiming bot + conversation and its root', () => {
+    const claims = new TaskClaimRegistry();
+    claims.set({
+      taskId: 'run_peer',
+      botId: BOT,
+      conversationId: 'conv_other',
+      title: '别处',
+      root: path.join(outside, 'proj'),
+      paths: ['**'],
+      reason: 'x',
+      since: 1,
+    });
+    const gateway = makeGateway(undefined, claims);
+    // Different conversation: no effect.
+    expect(gateway.checkPath(ids.scopedTask, 'docs/a.md', 'write')).toMatchObject({
+      kind: 'allowed',
+    });
+    expect(claims.denial('run_b', BOT, CONV, path.join(workspace(), 'docs', 'a.md'))).toBeNull();
+    expect(claims.denial('run_b', BOT, 'conv_other', path.join(outside, 'proj', 'x'))).toContain(
+      'run_peer',
+    );
+  });
+
+  it('release removes specific paths or the whole claim; clear removes everything', () => {
+    const claims = registryWithPeerClaim();
+    expect(claims.release('run_peer', ['docs/shared/**'])).toEqual(['docs/shared/**']);
+    expect(claims.get('run_peer')).toBeNull();
+    claims.set({
+      taskId: 'run_peer',
+      botId: BOT,
+      conversationId: CONV,
+      title: '邻居任务',
+      root: workspace(),
+      paths: ['docs/shared/**', 'notes/**'],
+      reason: 'x',
+      since: 1,
+    });
+    expect(claims.release('run_peer')).toEqual(['docs/shared/**', 'notes/**']);
+    expect(claims.get('run_peer')).toBeNull();
   });
 });

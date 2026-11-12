@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import {
   AGENT_CATALOG,
   AGENT_DEFAULT_CONCURRENCY,

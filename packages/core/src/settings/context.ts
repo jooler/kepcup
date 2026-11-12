@@ -70,6 +70,11 @@ export const TRUSTED_TOOLS: ReadonlySet<string> = new Set([
   'start_task',
   'inject_task',
   'cancel_task',
+  // D123：任务间消息只回执（接收方的结果另经 wait_for_task 按不可信回来）；
+  // claim / release 是宿主回执。
+  'send_to_task',
+  'claim',
+  'release',
   'delegate_to_bot',
   'cancel_delegation',
   // D114：追加补充只回执（补充内容进对方任务 loop，随委派结果按不可信回来）；
@@ -146,6 +151,8 @@ export const UNTRUSTED_TOOLS: ReadonlySet<string> = new Set([
   'watch_list',
   'delegate_task',
   'collect_delegate_results',
+  // D123：兄弟任务的结果摘要同样是任务输出（外部内容）。
+  'wait_for_task',
   'widget_craft',
   'widget_read_state',
   'widget_check',
