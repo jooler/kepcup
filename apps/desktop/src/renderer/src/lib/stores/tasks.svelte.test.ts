@@ -263,4 +263,35 @@ describe('终态 run.status 兜底刷新执行报告', () => {
       expect(tasks.byId['task_steer']?.result?.text).toBe('RESULT 直注完成');
     });
   });
+
+  it('conversation.updated 也会为该会话仍在进行中的任务补拉视图', async () => {
+    const running = taskView('task_steer');
+    tasks.byId = { task_steer: running };
+    getResult.task = running;
+    tasks.openDetail('task_steer');
+    const completed: TaskView = {
+      ...taskView('task_steer', 'completed'),
+      result: { text: 'RESULT 直注完成', status: 'completed' },
+    };
+    getResult.task = completed;
+    for (const handler of eventHandlers['conversation.updated'] ?? []) {
+      handler({ conversation: { id: 'conv_1' } });
+    }
+    await vi.waitFor(() => {
+      expect(tasks.byId['task_steer']?.state).toBe('completed');
+      expect(tasks.byId['task_steer']?.result?.text).toBe('RESULT 直注完成');
+    });
+  });
+
+  it('唤醒已到但 tasks.get 仍返回进行中时，用时间线原文补结算报告', async () => {
+    const running = taskView('task_steer');
+    tasks.byId = { task_steer: running };
+    getResult.task = running;
+    tasks.openDetail('task_steer');
+    tasks.noteTerminalFromTranscript('task_steer', 'RESULT 直注完成');
+    await vi.waitFor(() => {
+      expect(tasks.byId['task_steer']?.state).toBe('completed');
+      expect(tasks.byId['task_steer']?.result?.text).toBe('RESULT 直注完成');
+    });
+  });
 });
