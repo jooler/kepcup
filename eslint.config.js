@@ -94,6 +94,7 @@ export default tseslint.config(
       'scripts/**',
       'apps/desktop/scripts/**',
       'apps/mobile/scripts/**',
+      'plugins/**/build.mjs',
       '**/*.config.*',
       'packages/*/test/**',
     ],

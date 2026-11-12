@@ -326,11 +326,16 @@ describe('model session id on the wire (PiEngine)', () => {
       expect(mistral.length).toBeGreaterThan(0);
 
       const openaiValues = sessionValues(openai[0]!);
-      expect(Object.keys(openaiValues).sort()).toEqual([
-        'body:prompt_cache_key',
-        'header:session_id',
-        'header:x-client-request-id',
-      ]);
+      const openaiKeys = Object.keys(openaiValues).sort();
+      // pi-ai assigns `session_id`; the OpenAI client bundled with pi-ai 1.5.2
+      // emits it on the wire as `session-id`. Accept either name.
+      expect(
+        openaiKeys.filter((k) => k !== 'header:session_id' && k !== 'header:session-id'),
+      ).toEqual(['body:prompt_cache_key', 'header:x-client-request-id']);
+      expect(
+        openaiKeys.includes('header:session_id') || openaiKeys.includes('header:session-id'),
+      ).toBe(true);
+      expect(openaiKeys).toHaveLength(3);
       const mistralValues = sessionValues(mistral[0]!);
       // pi-ai's `promptCacheKey` is serialized as `prompt_cache_key` on the wire.
       expect(Object.keys(mistralValues).sort()).toEqual([
