@@ -142,27 +142,48 @@
   });
   const pendingQuestion = $derived(pendingTaskQuestionOf(questionSession?.messages ?? [], taskId));
 
-  // 打开详情页时记下已有消息；之后同一会话里新出现的 Bot 文本视为唤醒回复
-  // （此时任务已在核心侧结算），若缓存仍是进行中则用时间线原文补报告。
+  // 打开详情页时记下已有消息 / 侧栏预览；之后同一会话里新出现的 Bot 文本
+  // 或预览变化视为唤醒回复（此时任务已在核心侧结算）。唤醒与时间线终态
+  // 原文可能不同步到达：先记下 sawWake，时间线原文稍后补上再出报告卡。
+  // 必须先读 entries，否则 $effect 在「只有唤醒、还没有原文」那一轮不会
+  // 订阅时间线，原文到了也不会再跑。
   let primedTranscript = false;
+  let primedMessagesReady = false;
+  let sawWake = false;
+  let primedPreview = '';
   const knownMessageIds = new SvelteSet<string>();
   $effect(() => {
     const session = questionSession ?? chatSession;
     const msgs = session?.messages ?? [];
+    const timelineEntries = entries;
+    const convId = task?.conversationId ?? task?.userConversationId ?? null;
+    const preview = convId !== null ? (chat.lastMessageText[convId] ?? '') : '';
     if (!primedTranscript) {
       if (task === null) return;
       for (const message of msgs) knownMessageIds.add(message.id);
+      primedPreview = preview;
       primedTranscript = true;
+      primedMessagesReady = msgs.length > 0;
+      return;
+    }
+    // 首屏消息可能比详情页更晚到位：这一批是打开时已有的，不算唤醒。
+    if (!primedMessagesReady) {
+      if (msgs.length === 0) return;
+      for (const message of msgs) knownMessageIds.add(message.id);
+      primedPreview = preview;
+      primedMessagesReady = true;
       return;
     }
     const newcomers = msgs.filter((message) => !knownMessageIds.has(message.id));
     for (const message of newcomers) knownMessageIds.add(message.id);
-    if (task === null || !isActiveTask(task) || reportText.length > 0) return;
-    const woke = newcomers.some(
-      (message) => message.senderType === 'bot' && message.kind === 'text',
-    );
-    if (!woke) return;
-    const lastAssistant = [...entries]
+    if (
+      newcomers.some((message) => message.senderType === 'bot' && message.kind === 'text') ||
+      (preview.length > 0 && preview !== primedPreview)
+    ) {
+      sawWake = true;
+    }
+    if (task === null || !isActiveTask(task) || reportText.length > 0 || !sawWake) return;
+    const lastAssistant = [...timelineEntries]
       .reverse()
       .find((entry) => entry.kind === 'assistant' && entry.text.trim().length > 0);
     const textFromSteps = lastAssistant?.kind === 'assistant' ? lastAssistant.text.trim() : '';

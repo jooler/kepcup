@@ -294,4 +294,20 @@ describe('终态 run.status 兜底刷新执行报告', () => {
       expect(tasks.byId['task_steer']?.result?.text).toBe('RESULT 直注完成');
     });
   });
+
+  it('补结算后的轮询若仍拉到进行中，不会把终态视图打回去', async () => {
+    const running = taskView('task_steer');
+    tasks.byId = { task_steer: running };
+    getResult.task = running;
+    tasks.openDetail('task_steer');
+    tasks.noteTerminalFromTranscript('task_steer', 'RESULT 直注完成');
+    await vi.waitFor(() => {
+      expect(tasks.byId['task_steer']?.state).toBe('completed');
+    });
+    tasks.reload('task_steer');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(tasks.byId['task_steer']?.state).toBe('completed');
+    expect(tasks.byId['task_steer']?.result?.text).toBe('RESULT 直注完成');
+  });
 });
