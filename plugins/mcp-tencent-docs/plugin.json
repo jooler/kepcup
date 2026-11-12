@@ -3,9 +3,9 @@
   "id": "app.kepcup/mcp-tencent-docs",
   "name": "腾讯文档",
   "icon": "icon.svg",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "让 Bot 读写你的腾讯文档空间：搜索文档、读取正文、按 Markdown 建档、写入表格与智能表。凭据只保存在本机。",
-  "usage": "启用后还需要添加工具服务：打开桌面版腾讯文档并进入目标空间，点右上角「≡ → 使用 MCP → 获取 MCP token」复制当前空间的 token（获取需要腾讯文档超级会员，token 按空间发放，多空间需添加多个工具服务），在扩展中心 → 已安装 → 腾讯文档 →「管理」粘贴保存（Authorization 一栏要写 `Bearer <token>`，token 前带 Bearer 和一个空格；只贴裸 token 服务端会回 Bearer token required）；然后在 Bot 详情添加本插件，展开插件卡勾选授权对应的工具服务。token 有效期一年，可在同一页面重置。",
+  "usage": "启用后还需要添加工具服务：打开桌面版腾讯文档并进入目标空间，点右上角「≡ → 使用 MCP → 获取 MCP token」复制当前空间的 token（获取需要腾讯文档超级会员，token 按空间发放，多空间需添加多个工具服务），在扩展中心 → 已安装 → 腾讯文档 →「管理」粘贴保存（Authorization 一栏直接粘裸 token 即可，Bearer 前缀由插件自动补，已带前缀也会被规范化，不会重复叠加）；然后在 Bot 详情添加本插件，展开插件卡勾选授权对应的工具服务。token 有效期一年，可在同一页面重置。",
   "author": {
     "name": "KepCup",
     "url": "https://kepcup.com"
@@ -29,7 +29,8 @@
         "headers": [
           {
             "name": "Authorization",
-            "key": "token"
+            "key": "token",
+            "scheme": "bearer"
           }
         ]
       }
