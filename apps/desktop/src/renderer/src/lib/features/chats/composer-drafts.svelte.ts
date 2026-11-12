@@ -54,6 +54,12 @@ interface ComposerRuntimeDraft {
   /** 与服务端共享草稿的同步状态（D120）。 */
   version: number;
   dirty: boolean;
+  /**
+   * D115 附件直注：附件归属会话（attachments.upload / attachments.status 的
+   * conversationId）。键是会话 id 时缺省；任务直注键为 `task:<id>`，这里存
+   * 任务所在会话，core RPC 都走它。
+   */
+  conversationId?: string;
 }
 
 const PERSIST_DEBOUNCE_MS = 300;
@@ -140,6 +146,14 @@ class ComposerDraftsState {
     return this.#runtime[conversationId]?.uploads ?? [];
   }
 
+  /**
+   * 附件归属会话（D115 附件直注）：core RPC 的 conversationId。键是会话 id 时
+   * 即键本身；任务直注键（`task:<id>`）取 runtime 里记录的归属会话。
+   */
+  #ownerOf(key: string): string {
+    return this.#runtime[key]?.conversationId ?? key;
+  }
+
   /** 组件水合用：当前草稿的文档/提及/引用（非响应式读取，进会话取一次）。 */
   loadDraft(conversationId: string): {
     doc: JSONContent;
@@ -180,6 +194,8 @@ class ComposerDraftsState {
       uploads,
       version: saved?.version ?? 0,
       dirty: saved?.dirty ?? false,
+      // D115 附件直注：任务直注键的归属会话随快照恢复（chip 校验 / 上传 RPC 用）。
+      ...(saved?.conversationId !== undefined ? { conversationId: saved.conversationId } : {}),
     };
     if (uploads.length > 0) void this.#verifyRestored(conversationId, uploads);
   }
@@ -327,14 +343,19 @@ class ComposerDraftsState {
     }
   }
 
-  /** 批量查附件状态（core 一次往返，不读字节），归类为失效附件。 */
+  /**
+   * 批量查附件状态（core 一次往返，不读字节），归类为失效附件。首参是草稿键
+   * （状态缓存键）；core RPC 的 conversationId 缺省按 `#ownerOf` 解析（任务
+   * 直注键 ≠ 会话 id 时走记录的归属会话），第三个参数可显式覆盖。
+   */
   async inspectAttachments(
-    conversationId: string,
+    key: string,
     attachmentIds: readonly string[],
+    conversationId?: string,
   ): Promise<AttachmentIssue> {
     if (attachmentIds.length === 0) return { missing: [], sent: [] };
     const result = (await core.call('attachments.status', {
-      conversationId,
+      conversationId: conversationId ?? this.#ownerOf(key),
       ids: [...attachmentIds],
     })) as { statuses: AttachmentStatusLike[] };
     return classifyAttachmentStatuses(result.statuses);
@@ -383,8 +404,17 @@ class ComposerDraftsState {
   // --- 附件上传管道（原 Composer 内联逻辑，移动后上传完成落点跟随会话，
   //     切换会话/关闭窗口都不再丢弃在途或已就绪的附件） ---------------------
 
-  uploadFiles(conversationId: string, files: FileList | File[]): void {
-    this.hydrate(conversationId);
+  /**
+   * 上传附件：chips 挂在 `key` 的草稿缓存下；core RPC 的 conversationId 缺省
+   * 按 `#ownerOf(key)` 解析（会话键 = 键本身，任务直注键 = 记录的归属会话），
+   * `ownerConversationId` 显式覆盖（首次直注上传时传入任务所在会话并记住）。
+   */
+  uploadFiles(key: string, files: FileList | File[], ownerConversationId?: string): void {
+    this.hydrate(key);
+    if (ownerConversationId !== undefined && ownerConversationId !== key) {
+      this.#ensureEntry(key).conversationId = ownerConversationId;
+    }
+    const conversationId = ownerConversationId ?? this.#ownerOf(key);
     for (const file of Array.from(files)) {
       if (file.size > MAX_UPLOAD_BYTES) {
         toast.error(t('composer.attachmentTooLarge', { name: file.name }));
@@ -401,7 +431,7 @@ class ComposerDraftsState {
         previewUrl: mime.startsWith('image/') ? URL.createObjectURL(file) : null,
         ownsPreviewUrl: true,
       };
-      const runtimeEntry = this.#ensureEntry(conversationId);
+      const runtimeEntry = this.#ensureEntry(key);
       runtimeEntry.uploads = [...runtimeEntry.uploads, entry];
       const task = (async (): Promise<string | null> => {
         try {
@@ -412,13 +442,13 @@ class ComposerDraftsState {
             mime: entry.mime,
             bytesBase64,
           })) as { attachment: { id: string } };
-          this.patchUpload(conversationId, entry.key, {
+          this.patchUpload(key, entry.key, {
             state: 'ready',
             attachmentId: result.attachment.id,
           });
           return result.attachment.id;
         } catch {
-          this.patchUpload(conversationId, entry.key, { state: 'error' });
+          this.patchUpload(key, entry.key, { state: 'error' });
           toast.error(t('composer.attachmentUploadFailed', { name: entry.fileName }));
           return null;
         }

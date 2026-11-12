@@ -1584,10 +1584,17 @@ export const tasksAnswerInputSchema = z.object({
  * 对话轮的 `inject_task` 完全一致（等问即回答 / 运行中 steer / 未启动入简报 /
  * 外部 Agent `queued`），见 docs/design/56 §1。
  */
-export const tasksInjectInputSchema = z.object({
-  taskId: z.string().min(1),
-  text: z.string().min(1).max(TASK_INSTRUCTION_MAX_CHARS),
-});
+export const tasksInjectInputSchema = z
+  .object({
+    taskId: z.string().min(1),
+    /** 指令文本；纯附件注入（只发图片/文件）时可为空（attachments 不可为空）。 */
+    text: z.string().max(TASK_INSTRUCTION_MAX_CHARS).default(''),
+    /** 随注入直发的附件（attachments.upload 先行上传到任务所在会话）：core 校验归属后挂到注入条目。 */
+    attachmentIds: z.array(z.string().min(1)).max(8).optional(),
+  })
+  .refine((input) => input.text.trim().length > 0 || (input.attachmentIds?.length ?? 0) > 0, {
+    message: 'text 与 attachmentIds 至少一项非空',
+  });
 export const tasksInjectOutputSchema = z.object({
   delivery: z.enum(['delivered', 'queued']),
 });

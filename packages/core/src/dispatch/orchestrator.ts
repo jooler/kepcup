@@ -840,6 +840,10 @@ export class Orchestrator {
       ...(deps.claims !== undefined ? { claims: deps.claims } : {}),
       ...(deps.effects !== undefined ? { effects: deps.effects } : {}),
       messages: deps.messages,
+      // D115 附件直注：注入坞直带附件的存取（归属校验 + claim + 字节）。
+      attachments: deps.attachments,
+      // D115 附件直注预检：排队中的任务 run 行还没有 model，回退 Bot 当前模型 ref。
+      taskModelRef: (botId) => this.#modelRefForBot(botId),
       conversations: deps.conversations,
       bots: deps.bots,
       clock: deps.clock,
@@ -4588,7 +4592,12 @@ export class Orchestrator {
           ? (this.#deps.wiki?.topicsSection({ kind: 'project', id: projectId }, { budget: null }) ??
             '')
           : '';
-      const triggerImages = this.#triggerImages(batch.messages);
+      // D115 附件直注：任务简报里注入条目直带的附件图片并入视觉通道
+      //（与触发批同约束，总量仍 ≤4 张）。
+      const triggerImages = this.#triggerImages(
+        batch.messages,
+        exec.kind === 'task' ? exec.brief.injects.flatMap((inject) => inject.attachments) : [],
+      );
       // InkCop v0.4：关联智能体 → call_inkcop_agent 工具（非整轮 divert）。
       let inkcopFacade: InkcopToolFacade | undefined;
       const settingsSnap = this.#deps.settings.get();
@@ -5718,30 +5727,46 @@ export class Orchestrator {
 
   /**
    * 触发批中的图片附件 → 引擎消息的 images（docs/design/20-conversation-media.md）：
-   * 只取 image/*、单张 ≤5MB、一批最多 4 张；超限的留在文本行（附件行已列出）。
-   * 读取失败按没有处理——图片进不了上下文不应阻断响应。
+   * 只取 image/*、非空、单张 ≤5MB、一批最多 4 张；超限的留在文本行（附件行已
+   * 列出）。读取失败按没有处理——图片进不了上下文不应阻断响应。
    */
-  #triggerImages(batchMessages: Message[]): Array<{ mimeType: string; base64: string }> {
+  #triggerImages(
+    batchMessages: Message[],
+    extraAttachments: Attachment[] = [],
+  ): Array<{ mimeType: string; base64: string }> {
     const MAX_IMAGES = 4;
     const MAX_BYTES = 5_000_000;
     const images: Array<{ mimeType: string; base64: string }> = [];
-    for (const message of batchMessages) {
-      for (const attachment of message.attachments) {
-        if (images.length >= MAX_IMAGES) return images;
-        if (!attachment.mime.startsWith('image/') || attachment.size > MAX_BYTES) continue;
-        try {
-          const bytes = this.#deps.attachments.readBytes(attachment);
-          images.push({ mimeType: attachment.mime, base64: bytes.toString('base64') });
-        } catch (error) {
-          this.#deps.logger.warn(
-            {
-              attachment: attachment.id,
-              error: error instanceof Error ? error.message : String(error),
-            },
-            'trigger image read failed; skipping',
-          );
-        }
+    const consider = (attachment: Attachment): void => {
+      if (images.length >= MAX_IMAGES) return;
+      // size 0 会产出空 data 的 image block（部分厂商直接 400），与注入同口径跳过。
+      if (
+        !attachment.mime.startsWith('image/') ||
+        attachment.size === 0 ||
+        attachment.size > MAX_BYTES
+      ) {
+        return;
       }
+      try {
+        const bytes = this.#deps.attachments.readBytes(attachment);
+        images.push({ mimeType: attachment.mime, base64: bytes.toString('base64') });
+      } catch (error) {
+        this.#deps.logger.warn(
+          {
+            attachment: attachment.id,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          'trigger image read failed; skipping',
+        );
+      }
+    };
+    for (const message of batchMessages) {
+      for (const attachment of message.attachments) consider(attachment);
+      if (images.length >= MAX_IMAGES) return images;
+    }
+    for (const attachment of extraAttachments) {
+      consider(attachment);
+      if (images.length >= MAX_IMAGES) return images;
     }
     return images;
   }

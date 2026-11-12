@@ -6,6 +6,7 @@ import {
   type DiffStats,
   type Message,
   type RunStep,
+  type SteerAttachment,
 } from '@kepcup/shared';
 import type { MessageKey } from '$lib/i18n';
 
@@ -35,7 +36,13 @@ export type TaskRunEntry =
       result: TaskRunToolResult | null;
     }
   | { kind: 'progress'; id: string; text: string }
-  | { kind: 'steer'; id: string; text: string }
+  | {
+      kind: 'steer';
+      id: string;
+      text: string;
+      /** D115 附件直注：注入直带的附件元数据（steer payload），气泡渲染 chip。 */
+      attachments: SteerAttachment[];
+    }
   /** D123: a message from a sibling task (steered as `<peer_task_message>`). */
   | { kind: 'peer'; id: string; fromTaskId: string; fromTitle: string | null; text: string }
   | { kind: 'system'; id: string; text: string };
@@ -158,8 +165,19 @@ export function buildTaskRunTimeline(steps: readonly RunStep[]): TaskRunEntry[] 
           entries.push({ kind: 'peer', id: step.id, ...peer });
           break;
         }
-        const text = steerDisplayText(raw);
-        if (text.length > 0) entries.push({ kind: 'steer', id: step.id, text });
+        const stripped = steerDisplayText(raw);
+        const meta = steerAttachmentsOf(payload.attachments);
+        const attachments =
+          meta.length > 0
+            ? meta
+            : // 外部 Agent 引擎的 steer 事件不带元数据（opts 被忽略，附件靠
+              // 文本里的物化提示到达）：从正文行解析出降级元数据，chip 照出。
+              injectAttachmentLinesOf(stripped);
+        // 附件行是给模型的（物化提示）：气泡正文剥掉，chip 另行渲染。
+        const text = stripInjectAttachmentLines(stripped, attachments);
+        if (text.length > 0 || attachments.length > 0) {
+          entries.push({ kind: 'steer', id: step.id, text, attachments });
+        }
         break;
       }
       case 'system': {
@@ -182,6 +200,92 @@ export function buildTaskRunTimeline(steps: readonly RunStep[]): TaskRunEntry[] 
  */
 export function isToolProgressText(text: string): boolean {
   return text.startsWith('正在');
+}
+
+/**
+ * D115 附件直注：剥离 steer 文本里的附件行（`att_… name [mime] 大小KB`，给
+ * 模型的物化提示）。气泡下方已按 payload.attachments 渲染 chip，正文里再显示
+ * 这几行就是重复；按注入附件的 id 精确匹配行首，用户手打的相似文本不受影响。
+ */
+export function stripInjectAttachmentLines(
+  text: string,
+  attachments: readonly SteerAttachment[],
+): string {
+  if (attachments.length === 0) return text;
+  const ids = new Set(attachments.map((attachment) => attachment.id));
+  const kept = text
+    .split('\n')
+    .filter((line) => {
+      const head = line.trimStart().split(/\s/, 1)[0] ?? '';
+      return !ids.has(head);
+    });
+  return kept.join('\n').trim();
+}
+
+/**
+ * D115 附件直注：从 steer 正文解析注入附件行（外部 Agent 引擎的 steer 事件
+ * 不带 payload.attachments，附件靠 buildTaskInjection 的文本行到达）：
+ * `att_… name [mime] NKB`。size 是行里的 KB 取整值（显示足够）；形状不符的行
+ * 不采信——用户手打的相似文本不会误判成附件。
+ */
+export function injectAttachmentLinesOf(text: string): SteerAttachment[] {
+  return text.split('\n').flatMap((line) => {
+    const match = /^(\S+) (.+) \[([^\]]+)\] (\d+)KB$/.exec(line.trim());
+    if (match === null || !match[1]!.startsWith('att_')) return [];
+    return [
+      {
+        id: match[1]!,
+        fileName: match[2]!,
+        mime: match[3]!,
+        size: Number(match[4]) * 1024,
+      },
+    ];
+  });
+}
+
+/**
+ * D115 附件直注：steer payload 里注入直带的附件元数据。旧数据 / 形状不符的
+ * 条目逐个丢弃（payload 是 z.unknown()，渲染端自校验），全部无效 = 空。
+ */
+export function steerAttachmentsOf(value: unknown): SteerAttachment[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((candidate) => {
+    const record = recordOf(candidate);
+    const id = record['id'];
+    const fileName = record['fileName'];
+    const mime = record['mime'];
+    const size = record['size'];
+    if (
+      typeof id !== 'string' ||
+      id.length === 0 ||
+      typeof fileName !== 'string' ||
+      typeof mime !== 'string' ||
+      typeof size !== 'number' ||
+      !Number.isFinite(size)
+    ) {
+      return [];
+    }
+    return [{ id, fileName, mime, size }];
+  });
+}
+
+/**
+ * D115 附件直注：steer 附件元数据 → 消息附件视图形状（MessageAttachments 复用；
+ * 字节按 id 经 attachments.get 取回，存储侧字段是占位——渲染只读 id / mime /
+ * 文件名 / 大小）。
+ */
+export function steerAttachmentViewOf(attachments: readonly SteerAttachment[]): Message['attachments'] {
+  return attachments.map((attachment) => ({
+    id: attachment.id,
+    conversationId: '',
+    messageId: null,
+    fileName: attachment.fileName,
+    mime: attachment.mime,
+    size: attachment.size,
+    sha256: '',
+    relPath: '',
+    createdAt: 0,
+  }));
 }
 
 /**

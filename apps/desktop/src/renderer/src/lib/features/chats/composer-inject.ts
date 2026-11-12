@@ -43,3 +43,30 @@ export function injectContentState(
     overLimit: text.length > maxChars,
   };
 }
+
+/** 注入坞点 + 的动作（D115 附件直注预检，纯函数便于单测）。 */
+export type InjectAttachAction = 'pick' | 'setup' | 'blocked';
+
+/**
+ * 附件键预检（用户要求的语义）：执行模型不支持视觉**且**未配看图模型时不出
+ * 文件框，改由宿主弹「看图模型」配置卡（'setup'）。放行分支：
+ * - 对话模式（!injectMode）恒 'pick'；
+ * - 会话上下文缺失（附件无处上传）'blocked'——调用方按钮此时应为禁用态，
+ *   这里兜底防误触；
+ * - 执行器不是已配置的内置厂商（外部 Agent 伪 ref / null / ''）：不预检直接
+ *   'pick'——附件靠注入文本里的物化路径到达，配置看图模型也帮不上忙。
+ */
+export function injectAttachAction(input: {
+  injectMode: boolean;
+  conversationId: string | null;
+  executorKnownBuiltin: boolean;
+  executorAcceptsImages: boolean;
+  multimodalReady: boolean;
+}): InjectAttachAction {
+  if (!input.injectMode) return 'pick';
+  if (input.conversationId === null) return 'blocked';
+  if (!input.executorKnownBuiltin) return 'pick';
+  if (input.executorAcceptsImages) return 'pick';
+  if (input.multimodalReady) return 'pick';
+  return 'setup';
+}

@@ -22,6 +22,7 @@
   import { registerEscapeLayer, ESCAPE_PRIORITY } from '$lib/features/shell/escape-layers';
   import { Button } from '$lib/components/ui/button';
   import Markdown from '$lib/features/chats/Markdown.svelte';
+  import MessageAttachments from '$lib/features/chats/MessageAttachments.svelte';
   import ApprovalDock from '$lib/features/approvals/ApprovalDock.svelte';
   import TaskInjectDock from './TaskInjectDock.svelte';
   import { getChatSession } from '$lib/features/chats/chat-session-context';
@@ -35,6 +36,7 @@
     groupTaskRunEntries,
     latestPlan,
     pendingTaskQuestionOf,
+    steerAttachmentViewOf,
     taskElapsedMs,
     taskMetaChips,
     taskRunUsageParts,
@@ -560,9 +562,20 @@
                         <CornerDownRight class="size-3" aria-hidden="true" />
                         {t('task.run.steer')}
                       </p>
-                      <p class="whitespace-pre-wrap" data-testid="task-run-steer-text">
-                        {entry.text}
-                      </p>
+                      {#if entry.text.length > 0}
+                        <p class="whitespace-pre-wrap" data-testid="task-run-steer-text">
+                          {entry.text}
+                        </p>
+                      {/if}
+                      {#if entry.attachments.length > 0}
+                        <!-- D115 附件直注：注入直带的附件 chip（字节按 id 经 attachments.get 取回）。 -->
+                        <div
+                          class="mt-1.5 flex flex-wrap justify-end gap-1.5"
+                          data-testid="task-run-steer-attachments"
+                        >
+                          <MessageAttachments attachments={steerAttachmentViewOf(entry.attachments)} />
+                        </div>
+                      {/if}
                     </div>
                   </div>
                 {:else if entry.kind === 'peer'}
@@ -665,8 +678,8 @@
       D115 注入坞（docs/design/56 §1）：非终态任务的最底部自由文本入口，经
       tasks.inject 直达 TaskHost（复用 inject_task 语义：等问即回答 / 运行中
       steer / 未启动入简报 / 外部 Agent queued）。在提问卡与审批条之后、页面
-      最后一位。
+      最后一位。conversationId / model 供附件直注（上传归属与图像输入预检）。
     -->
-    <TaskInjectDock {taskId} awaitingInput={task.awaitingInput} />
+    <TaskInjectDock {taskId} conversationId={task.conversationId} modelRef={task.model ?? null} awaitingInput={task.awaitingInput} />
   {/if}
 </div>
