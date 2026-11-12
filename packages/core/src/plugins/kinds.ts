@@ -311,7 +311,7 @@ function mcpInstanceFields(manifest: PluginManifest): PluginField[] {
       key: mcpHeaderFieldKey(header),
       type: 'string',
       title: header.name,
-      description: `${header.name} 请求头的值，按平台说明整值粘贴`,
+      description: `${header.name} 请求头的值，按服务商要求整值粘贴（要 Bearer 前缀就连前缀一起写，如 Bearer <token>）`,
       required: true,
       sensitive: true,
       multiple: false,

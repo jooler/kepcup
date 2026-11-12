@@ -491,7 +491,7 @@ export class McpService {
     if (!(error instanceof McpHttpError)) return '';
     if (error.status === 401) {
       if (server.auth === 'oauth') return '请在设置中连接该应用';
-      return '服务端要求认证：请在「请求头（密钥）」添加名称 Authorization，值为 Bearer <token>（需带 Bearer 前缀）';
+      return '服务端要求认证：请在「请求头（密钥）」添加名称 Authorization，值为服务商要求的完整值——要 Bearer 前缀就连前缀一起写，如 `Bearer <token>`（腾讯文档、Notion 等多数服务商都要求前缀）';
     }
     if (error.status !== 404 && error.status !== 405) return '';
     if (server.transport === 'http') {
