@@ -158,4 +158,23 @@ describe('tasks.inject（D115 任务直注，docs/design/56 §1）', () => {
       payload: { taskId: 'task_1', text: '先看 README' },
     });
   });
+
+  it('D115 附件直注：随注入携带 attachmentIds；纯附件允许空文本', async () => {
+    await tasks.inject('task_1', '看看这张图', ['att_1']);
+    expect(calls.at(-1)).toEqual({
+      method: 'tasks.inject',
+      payload: { taskId: 'task_1', text: '看看这张图', attachmentIds: ['att_1'] },
+    });
+    await tasks.inject('task_1', '', ['att_1']);
+    expect(calls.at(-1)).toEqual({
+      method: 'tasks.inject',
+      payload: { taskId: 'task_1', text: '', attachmentIds: ['att_1'] },
+    });
+    // 无附件调用不携带 attachmentIds 字段（与既有契约兼容）。
+    await tasks.inject('task_1', '纯文本');
+    expect(calls.at(-1)).toEqual({
+      method: 'tasks.inject',
+      payload: { taskId: 'task_1', text: '纯文本' },
+    });
+  });
 });

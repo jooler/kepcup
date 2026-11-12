@@ -72,6 +72,15 @@ store.set(
     conv_img_gone: persistedDraft([
       { attachmentId: 'att_img_gone', fileName: 'gone.png', mime: 'image/png' },
     ]),
+    // D115 附件直注：任务键快照带归属会话（buildPersistedSnapshot 的写入分支产物）。
+    'task:run_h': {
+      doc: { type: 'doc', content: [{ type: 'paragraph' }] },
+      mentions: [],
+      reply: null,
+      attachments: [{ attachmentId: 'att_h', fileName: 'h.png', mime: 'image/png', size: 10 }],
+      updatedAt: 1,
+      conversationId: 'conv_restored',
+    },
   }),
 );
 vi.stubGlobal('localStorage', {
@@ -170,5 +179,89 @@ describe('composerDrafts.discardAttachments / inspectAttachments', () => {
       method: 'attachments.status',
       payload: { conversationId: 'conv_z', ids: ['a', 'b'] },
     });
+  });
+});
+
+describe('D115 附件直注：任务键的归属会话覆盖', () => {
+  it('uploadFiles(owner) → 上传落到任务所在会话；inspectAttachments 沿用归属；会话键不受影响', async () => {
+    // 无 DOM 环境：fileToBase64 走 FileReader、图片预览走 createObjectURL，都要桩。
+    const objectUrls: string[] = [];
+    vi.stubGlobal(
+      'FileReader',
+      class {
+        result: string | null = 'data:image/png;base64,ew==';
+        onload: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        readAsDataURL(): void {
+          this.onload?.();
+        }
+      },
+    );
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL: () => {
+        const url = `blob:${objectUrls.length}`;
+        objectUrls.push(url);
+        return url;
+      },
+      revokeObjectURL: () => undefined,
+    });
+    calls.length = 0;
+    statusHandler = ({ ids }) => ids.map((id) => ({ id, state: 'pending' }));
+    composerDrafts.uploadFiles(
+      'task:run_a',
+      [new File(['x'], 'a.png', { type: 'image/png' })],
+      'conv_owner',
+    );
+    await flush();
+    const upload = calls.find((call) => call.method === 'attachments.upload');
+    expect(upload?.payload['conversationId']).toBe('conv_owner');
+    // chip 落在任务键下（状态缓存键 ≠ core 归属会话）。
+    expect(composerDrafts.uploadsOf('task:run_a').length).toBe(1);
+    // 状态校验缺省也走记录的归属会话（重启水合同理）。
+    await composerDrafts.inspectAttachments('task:run_a', ['att_x']);
+    const status = calls.filter((call) => call.method === 'attachments.status').at(-1);
+    expect(status?.payload['conversationId']).toBe('conv_owner');
+    // 会话键直传：归属就是键本身（对话行为不变）。
+    composerDrafts.uploadFiles('conv_chat', [new File(['y'], 'b.png', { type: 'image/png' })]);
+    await flush();
+    const chatUpload = calls.filter((call) => call.method === 'attachments.upload').at(-1);
+    expect(chatUpload?.payload['conversationId']).toBe('conv_chat');
+    expect(composerDrafts.uploadsOf('conv_chat').length).toBe(1);
+    composerDrafts.discardAttachments('task:run_a', { missing: [], sent: [] });
+    composerDrafts.discardAttachments('conv_chat', { missing: [], sent: [] });
+    vi.unstubAllGlobals();
+  });
+
+  it('重启水合：快照里记录的归属会话随任务键恢复，status 校验走归属（直达会话键不变）', async () => {
+    calls.length = 0;
+    statusHandler = ({ ids }) => ids.map((id) => ({ id, state: 'pending' }));
+    composerDrafts.hydrate('task:run_h');
+    await flush();
+    const status = calls.filter((call) => call.method === 'attachments.status').at(-1);
+    expect(status?.payload['conversationId']).toBe('conv_restored');
+    // 水合后的上传也走恢复出的归属会话。
+    vi.stubGlobal(
+      'FileReader',
+      class {
+        result: string | null = 'data:image/png;base64,ew==';
+        onload: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        readAsDataURL(): void {
+          this.onload?.();
+        }
+      },
+    );
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL: () => 'blob:restored',
+      revokeObjectURL: () => undefined,
+    });
+    composerDrafts.uploadFiles('task:run_h', [new File(['z'], 'z.png', { type: 'image/png' })]);
+    await flush();
+    const upload = calls.filter((call) => call.method === 'attachments.upload').at(-1);
+    expect(upload?.payload['conversationId']).toBe('conv_restored');
+    composerDrafts.discardAttachments('task:run_h', { missing: [], sent: [] });
+    vi.unstubAllGlobals();
   });
 });

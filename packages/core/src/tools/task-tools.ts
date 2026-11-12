@@ -79,6 +79,12 @@ export interface InjectTaskInput {
   text: string;
   sourceMessageIds?: string[] | undefined;
   /**
+   * D115 附件直注：注入坞直带的附件 id（已上传到任务所在会话、未绑定）。core
+   * 校验归属后 claim 到注入条目；`inject_task` 工具不收它——Bot 侧靠
+   * source_message_ids 引用带附件的原消息。
+   */
+  attachmentIds?: string[] | undefined;
+  /**
    * Replaces the inject tail's「对话中的你追加了新的指令」framing (D114: a
    * delegation supplement comes from another Bot, not the task owner).
    */

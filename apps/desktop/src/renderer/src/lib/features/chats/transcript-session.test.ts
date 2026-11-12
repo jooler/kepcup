@@ -28,7 +28,11 @@ describe('transcript cards follow the chat session', () => {
   it('dismisses the session setup card, not the main chat facade', () => {
     for (const file of ['SetupRequiredCard.svelte', 'ConfirmLocalConnectorBody.svelte']) {
       const source = readFileSync(new URL(file, import.meta.url), 'utf8');
-      expect(source, file).toContain('session.dismissSetupCard()');
+      expect(source, file).toMatch(
+        // 会话上下文里直接持有 session，或（任务详情页等无会话宿主复用时）在
+        // dismiss 里懒取——都走 session，不读 chat.current。
+        /getChatSession\(\)\.dismissSetupCard\(\)|session\.dismissSetupCard\(\)/,
+      );
       expect(source, file).not.toContain('chat.dismissSetupCard');
     }
   });

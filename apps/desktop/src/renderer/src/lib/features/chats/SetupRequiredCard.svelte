@@ -25,8 +25,25 @@
    *   plugins.inspect 后渲染同意面板，用户点 plugins.install / 不装了。
    * 确认 / 保存后 session.continueAfterSetup() 自动续跑（重试原 run 或冲掉保留的草稿）。
    */
-  let { requirement }: { requirement: SetupRequirement } = $props();
-  const session = getChatSession();
+  let {
+    requirement,
+    onDismiss,
+    onProceed,
+  }: {
+    requirement: SetupRequirement;
+    /** 任务详情页等无会话上下文的宿主：自带关闭承接（缺省走当前会话）。 */
+    onDismiss?: () => void;
+    /** 保存 / 继续的承接（缺省走当前会话的 continueAfterSetup）。 */
+    onProceed?: () => void;
+  } = $props();
+
+  function dismiss(): void {
+    if (onDismiss !== undefined) {
+      onDismiss();
+      return;
+    }
+    getChatSession().dismissSetupCard();
+  }
 </script>
 
 <div
@@ -39,11 +56,11 @@
     class="absolute top-1.5 right-1.5 size-6 text-muted-foreground"
     aria-label={t('setupCard.dismiss')}
     title={t('setupCard.dismiss')}
-    onclick={() => session.dismissSetupCard()}
+    onclick={dismiss}
     data-testid="setup-card-dismiss"
   >
     <X class="size-3.5" aria-hidden="true" />
   </Button>
 
-  <SettingSetupBody {requirement} />
+  <SettingSetupBody {requirement} {onProceed} />
 </div>

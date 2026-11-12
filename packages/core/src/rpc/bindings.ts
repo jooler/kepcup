@@ -1615,10 +1615,10 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       orchestrator.tasks.answerQuestion(input.messageId, input.answer, input.values);
       return { ok: true as const };
     }),
-    // D115 任务直注（任务详情页注入坞，docs/design/56 §1）：用户自由文本直达
-    // TaskHost.injectById，复用 inject_task 全部语义。
+    // D115 任务直注（任务详情页注入坞，docs/design/56 §1）：自由文本 + 直带
+    // 附件直达 TaskHost.injectById，复用 inject_task 全部语义。
     'tasks.inject': method(tasksInjectInputSchema, tasksInjectOutputSchema, async (input) =>
-      orchestrator.tasks.injectById(input.taskId, input.text),
+      orchestrator.tasks.injectById(input.taskId, input.text, input.attachmentIds),
     ),
     // D116 Bot 详情「任务」tab：该 Bot 拉起的任务全集（跨对话），最新在前。
     'tasks.listByBot': method(
