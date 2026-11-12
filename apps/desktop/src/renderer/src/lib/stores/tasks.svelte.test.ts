@@ -6,11 +6,12 @@ import type { TaskView } from '@kepcup/shared';
  * taskId 并确保任务视图已加载，关闭时清空；空 id 不改变当前页面。
  */
 
-const { calls, getResult, injectResult, eventHandlers } = vi.hoisted(() => ({
+const { calls, getResult, injectResult, eventHandlers, getDeferred } = vi.hoisted(() => ({
   calls: [] as Array<{ method: string; payload: Record<string, unknown> }>,
   getResult: { task: null as TaskView | null },
   injectResult: { delivery: 'delivered' as 'delivered' | 'queued' },
   eventHandlers: {} as Record<string, Array<(payload: unknown) => void>>,
+  getDeferred: { promise: null as Promise<void> | null },
 }));
 
 vi.mock('$lib/rpc/client.svelte', () => ({
@@ -24,7 +25,10 @@ vi.mock('$lib/rpc/client.svelte', () => ({
     },
     call: async (method: string, payload: Record<string, unknown> = {}) => {
       calls.push({ method, payload });
-      if (method === 'tasks.get') return getResult;
+      if (method === 'tasks.get') {
+        if (getDeferred.promise !== null) await getDeferred.promise;
+        return getResult;
+      }
       if (method === 'tasks.active') return { tasks: [] };
       if (method === 'tasks.inject') return { delivery: injectResult.delivery };
       return {};
@@ -68,6 +72,7 @@ describe('tasks.openDetail / closeDetail', () => {
   beforeEach(() => {
     calls.length = 0;
     getResult.task = null;
+    getDeferred.promise = null;
     tasks.byId = {};
     tasks.closeDetail();
   });
@@ -189,6 +194,7 @@ describe('终态 run.status 兜底刷新执行报告', () => {
   beforeEach(() => {
     calls.length = 0;
     getResult.task = null;
+    getDeferred.promise = null;
     tasks.byId = {};
     tasks.closeDetail();
   });
@@ -207,6 +213,32 @@ describe('终态 run.status 兜底刷新执行报告', () => {
     for (const handler of eventHandlers['run.status'] ?? []) {
       handler({ run: { id: 'task_steer', loopType: 'task', status: 'completed' } });
     }
+    await vi.waitFor(() => {
+      expect(tasks.byId['task_steer']?.state).toBe('completed');
+      expect(tasks.byId['task_steer']?.result?.text).toBe('RESULT 直注完成');
+    });
+  });
+
+  it('重拉得到的终态视图不会被在途的运行中 task.updated 丢掉', async () => {
+    const running = taskView('task_steer');
+    tasks.byId = { task_steer: running };
+    getResult.task = running;
+    tasks.openDetail('task_steer');
+    const completed: TaskView = {
+      ...taskView('task_steer', 'completed'),
+      result: { text: 'RESULT 直注完成', status: 'completed' },
+    };
+    getResult.task = completed;
+    let resume: () => void = () => undefined;
+    getDeferred.promise = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    tasks.reload('task_steer');
+    for (const handler of eventHandlers['task.updated'] ?? []) {
+      handler({ task: running });
+    }
+    expect(tasks.byId['task_steer']?.state).toBe('running');
+    resume();
     await vi.waitFor(() => {
       expect(tasks.byId['task_steer']?.state).toBe('completed');
       expect(tasks.byId['task_steer']?.result?.text).toBe('RESULT 直注完成');

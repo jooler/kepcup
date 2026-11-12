@@ -242,14 +242,30 @@
       if ((payload as { runId?: string }).runId === id) schedule();
     });
     const offStatus = core.onEvent('run.status', (payload) => {
-      if ((payload as { run?: { id?: string } }).run?.id === id) schedule();
+      const run = (payload as { run?: { id?: string; status?: string } }).run;
+      if (run?.id !== id) return;
+      schedule();
+      if (
+        run.status === 'completed' ||
+        run.status === 'failed' ||
+        run.status === 'cancelled' ||
+        run.status === 'interrupted'
+      ) {
+        // ensure() 对已缓存视图是空操作；必须 reload 才能接到结算报告。
+        tasks.reload(id);
+      }
     });
     const offTask = core.onEvent('task.updated', (payload) => {
       if ((payload as { task?: { taskId?: string } }).task?.taskId === id) schedule();
     });
     const poll = setInterval(() => {
       const view = tasks.byId[id];
-      if (view !== undefined && isActiveTask(view)) void refresh(true);
+      if (view !== undefined && isActiveTask(view)) {
+        void refresh(true);
+        // 步骤轮询能看到终态原文，但 ensure() 不会刷新已缓存的运行中视图；
+        // 事件若丢失或被在途 push 盖掉，这里补拉一次才能出报告、收起注入坞。
+        tasks.reload(id);
+      }
     }, 1200);
 
     return () => {
