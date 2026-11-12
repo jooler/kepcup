@@ -48,7 +48,7 @@ metadata 行按可用字段展示：
 任务执行中触发权限请求时，卡片照常进入对话输入坞上方的 ApprovalDock；但执行过程页打开期间原对话以 `display:none` 隐藏，任务停在 `waiting_approval` 时用户在页内毫无感知。因此执行过程页在时间线下方固定渲染同一会话的 ApprovalDock（`task-run-approvals`）：
 
 - 卡片与对话完全同源（`permissions` store 的 pending 列表），可直接在页内批准 / 拒绝，任务随之继续；没有待审批时不渲染，页面布局不变。
-- 会话取 `TaskView.conversationId`，任务视图未读到时回退当前会话（`approvalConversationIdOf`；详情页只属于打开它的会话，切到别的会话时不会渲染）。
+- 会话取任务的卡片归属会话 `TaskView.userConversationId`（27 号文档 §3.7 执行归属映射：普通任务 = `conversationId`，委派执行的任务 = 发起方 A 与用户的私聊——审批卡经同一 resolver 落在那里；v2.3a 修订前取 `conversationId`，委派任务会因卡片在 A 私聊而漏显示），任务视图未读到时回退当前会话（`approvalConversationIdOf`；详情页只属于打开它的会话，切到别的会话时不会渲染）。
 - 打开详情页时补拉一次会话审批（`permissions.reloadApprovals`，只并入审批记录、不动右栏数据），覆盖连接中断期间错过的事件。
 - 焦点与键盘：打开详情页时已有待审批卡、或新卡到达时，焦点交给队首卡片（与对话一致；此时返回键不抢焦点）；卡片聚焦时 Esc 先被卡片消费（拒绝），不会误退详情页。
 
@@ -56,7 +56,7 @@ metadata 行按可用字段展示：
 
 任务用 `ask_user` 提问时，提问卡是会话里的一条 `task_question` 系统事件消息（不在 `run_steps` 里）；执行过程页打开期间对话被隐藏，提问同样会在页内消失。与审批卡同一思路，执行过程页在时间线下方（审批条之上）固定渲染该任务未答的提问卡（`task-run-question`）：
 
-- 数据源是当前会话 session 的 messages（主页面回退 `chat.main`，卡片弹层是弹层自己的 ChatSession），经 `pendingTaskQuestionOf(messages, taskId)` 取该任务绑定、`content.answer` 尚未回写的最新一条；`message.created` / `message.updated` 事件保持与对话同源实时。
+- 数据源是卡片归属会话 session 的 messages（§3.7 执行归属映射：提问卡与审批卡同地——当前会话 session 即归属会话时直接用，否则为归属会话开一个后台 ChatSession；主页面回退 `chat.main`，卡片弹层是弹层自己的 ChatSession），经 `pendingTaskQuestionOf(messages, taskId)` 取该任务绑定、`content.answer` 尚未回写的最新一条；`message.created` / `message.updated` 事件保持与对话同源实时。
 - 卡片复用对话里的 `TaskQuestionCard`，点选 / 多选 / 表单回答直接注入任务（`tasks.answer`），答完卡带上 `answer`，提问条随之收起；没有未答提问或任务已终态（提问作废，时间线里有终态说明）时不渲染。
 - core 保证一个任务同时最多一个未答问题（上一个没答时 `ask_user` 直接拒绝），提问条至多一张卡。
 

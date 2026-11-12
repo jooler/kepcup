@@ -644,14 +644,18 @@ function clip(text: string): string {
 }
 
 /**
- * 详情页审批条（权限请求）归属的会话：任务自带；任务视图还没读到时回退
- * 当前会话——详情页只在本会话内打开（切会话即关闭），两者在打开期间一致。
+ * 详情页审批条（权限请求）归属的会话：任务的卡片归属会话（§3.7 执行归属
+ * 映射——委派任务的审批卡落发起方 A 的私聊，core 在 TaskView.userConversationId
+ * 给出；旧数据 / 未接线时回落任务自己的会话）；任务视图还没读到时回退当前
+ * 会话——详情页只在本会话内打开（切会话即关闭），两者在打开期间一致。
  */
 export function approvalConversationIdOf(
-  task: { conversationId: string | null } | null,
+  task:
+    | { conversationId: string | null; userConversationId?: string | null }
+    | null,
   currentConversationId: string | null | undefined,
 ): string | null {
-  return task?.conversationId ?? currentConversationId ?? null;
+  return task?.userConversationId ?? task?.conversationId ?? currentConversationId ?? null;
 }
 
 /**

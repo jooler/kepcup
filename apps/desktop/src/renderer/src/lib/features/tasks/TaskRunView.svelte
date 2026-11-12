@@ -99,26 +99,41 @@
   const plan = $derived(latestPlan(steps));
   const active = $derived(task !== null && isActiveTask(task));
   // 会话消息随打开详情页的对话而来（主页对话回退 chat.main，卡片弹层是自己的
-  // session）：提问卡从它取，message.created / updated 事件保持同源实时。
+  // session）：提问卡最终取自 questionSession（归属会话直连或下面的后台
+  // session），message.created / updated 事件保持同源实时。
   const chatSession = getChatSession();
-  // D113 执行归属映射：委派产生的任务住在 B 的私聊——详情页从别处打开（如委派
-  // 详情视图）时上下文会话不是任务的归属会话，为任务自己的会话开一个后台
-  // session 供提问卡（ask_user）取数（审批条走 task.conversationId 不受影响）。
+  // §3.7 执行归属映射：任务的提问卡 / 审批卡落 userConversationId（委派任务 =
+  // 发起方 A 的私聊，core 在 TaskView 上给出；普通任务 = conversationId）。
+  // D113：详情页从别处打开（如委派详情视图）时上下文会话不是卡片归属会话，
+  // 为归属会话开一个后台 session 供提问卡取数（审批条同源，见下方
+  // approvalConversationId）。
+  const cardConversationId = $derived(task?.userConversationId ?? task?.conversationId ?? null);
   let homeSession = $state<ChatSession | null>(null);
   $effect(() => {
-    const convId = task?.conversationId;
-    if (convId === null || convId === undefined || chatSession.conversation?.id === convId) return;
+    const convId = cardConversationId;
+    if (convId === null || chatSession.conversation?.id === convId) return;
     const bg = new ChatSession(undefined, { foreground: false });
     homeSession = bg;
-    void bg.open(convId);
+    // 纯取数 session：markOnOpen:false——归属会话可能是用户正在看的私聊，
+    // 打开详情页不能静默清它的未读（多端已读回执）。
+    void bg.open(convId, { markOnOpen: false });
     return () => bg.dispose();
   });
   const questionSession = $derived(
     chatSession.conversation?.id !== undefined &&
-      chatSession.conversation?.id === task?.conversationId
+      chatSession.conversation?.id === cardConversationId
       ? chatSession
       : homeSession,
   );
+  $effect(() => {
+    const convId = task?.conversationId;
+    if (convId === null || convId === undefined) return;
+    // bg session 开的是卡片归属会话，不再 retain 任务自己的会话——详情页挂载
+    // 期间自行 retain，避免归属会话 session 的 tasks.loadActive prune 把已
+    // 结算委派任务的视图清掉（丢标题 / metadata / 执行报告）。
+    tasks.retain(convId);
+    return () => tasks.release(convId);
+  });
   const pendingQuestion = $derived(pendingTaskQuestionOf(questionSession?.messages ?? [], taskId));
   const title = $derived(
     task?.title ?? (taskChecked ? t('task.run.taskId', { id: taskId }) : t('task.run.loading')),
@@ -127,7 +142,8 @@
   const elapsed = $derived(task !== null ? formatElapsed(taskElapsedMs(task, now)) : '');
   const narrow = $derived(narrowLayout.narrow);
   const isMac = /Mac/i.test(navigator.platform);
-  // 审批条归属的会话（approvalConversationIdOf）：任务自带；任务视图还没读
+  // 审批条归属的会话（approvalConversationIdOf）：任务的卡片归属会话
+  // （userConversationId——委派任务落发起方 A 的私聊，§3.7）；任务视图还没读
   // 到时回退当前会话——详情页只在本会话内打开，切会话即关闭。
   const approvalConversationId = $derived(
     approvalConversationIdOf(
