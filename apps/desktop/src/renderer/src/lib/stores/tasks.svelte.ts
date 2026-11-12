@@ -144,6 +144,10 @@ class TasksState {
         this.byId = { ...this.byId, [taskId]: result.task };
         return;
       }
+      // 缓存已是终态时，不要被仍返回进行中的 tasks.get（或随后的轮询）打回去。
+      if (cached !== undefined && !isActiveTask(cached) && isActiveTask(result.task)) {
+        return;
+      }
       this.#apply([result.task], since);
     } catch {
       // The next task.updated push updates it.
