@@ -474,12 +474,17 @@ export class SettingsCatalogHost {
       return reject(`这一项请改用 ${decision.tool ?? '专门'} 工具（settings_change 不代为调用）。`);
     }
 
-    // 已经是想要的状态：不出卡。
+    // 已经是想要的状态：不出卡（适配器声明「values 只是寻址、可填内容不在 values 里」的条目
+    // 除外——值没变也要照常出待填卡，如 mcp.instance 的 token）。
     const unchanged =
       values !== null &&
       snapshot.values !== null &&
       Object.entries(values).every(([key, value]) => jsonEqual(snapshot.values![key], value));
-    if (unchanged && snapshot.status === 'configured') {
+    if (
+      unchanged &&
+      snapshot.status === 'configured' &&
+      adapter.requiresForm?.(item, values ?? {}, snapshot) !== true
+    ) {
       return { ok: true, content: `「${item.title}」当前已经是这个值，无需修改。` };
     }
     const isTask = identity.loopType === 'task';
@@ -953,7 +958,8 @@ export class SettingsCatalogHost {
       return { state: 'applied', verified: null };
     }
     const target = this.#resolveTarget(item, current.card.target, current.message.conversationId);
-    const snapshot = this.#adapterOf(item).read(
+    const adapter = this.#adapterOf(item);
+    const snapshot = adapter.read(
       item,
       target,
       current.card.proposed ?? current.card.before ?? undefined,
@@ -975,11 +981,13 @@ export class SettingsCatalogHost {
       Object.entries(proposed).every(([key, value]) => jsonEqual(snapshot.values?.[key], value));
     if (auto) {
       // 自动核对（用户没点任何东西）要证明「卡上要的事做成了」，不是「这一项动过」：
+      // - values 只是寻址的条目（requiresForm，如 mcp.instance 的 token）：可填内容不在
+      //   values 里，用户没动手就不可能已完成——提议值与现状相同不算数，一律保持 pending；
       // - 有建议值：当前值满足建议值才算；
       // - 没有建议值的放宽类空白卡（user-only）：变化必须是放宽方向（`valuesWiden`）——别处的
       //   反向收紧不能把「请你放开网络」的卡结成「已应用」，误导被唤醒的 Bot；
       // - 其余：变过即可（概要类条目另要求现在不是未配置 / 部分可用，见上）。
-      const adapter = this.#adapterOf(item);
+      const fillable = adapter.requiresForm?.(item, proposed ?? {}, snapshot) === true;
       const directional =
         proposed === null &&
         current.card.mode === 'user-only' &&
@@ -988,9 +996,10 @@ export class SettingsCatalogHost {
         before !== null &&
         snapshot.values !== null;
       const done =
-        proposed !== null
+        !fillable &&
+        (proposed !== null
           ? proposedMet
-          : changed && (!directional || adapter.valuesWiden!(item, before, snapshot.values ?? {}));
+          : changed && (!directional || adapter.valuesWiden!(item, before, snapshot.values ?? {})));
       if (!done) return { state: 'pending', verified: false };
       this.#resolveCard(
         current,
@@ -1009,7 +1018,12 @@ export class SettingsCatalogHost {
     }
     // 用户可能在卡上改成了别的值（确认卡）或填了与预填不同的值（待填卡）：只要已配置好，或本条目
     // 的字段与出卡时不同，就算完成——记的是实际值，不是建议值（用户亲手点的「我已设置好」）。
-    const verified = proposedMet || snapshot.status === 'configured' || changed;
+    // 适配器能给出硬证据的（verifyComplete，如工具服务的必填凭据已存）以它为准：
+    // values 只是寻址的条目，configured / 提议值相同都不代表凭据已填。
+    const evidence =
+      adapter.verifyComplete?.(item, proposed ?? current.card.before ?? null, snapshot) ?? null;
+    const verified =
+      evidence !== null ? evidence : proposedMet || snapshot.status === 'configured' || changed;
     if (!verified) return { state: 'pending', verified: false };
     this.#resolveCard(
       current,

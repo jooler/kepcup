@@ -64,6 +64,7 @@ describe('settings catalog integrity', () => {
       'bot.browser-profile',
       'bot.network',
       'bot.mcp-servers',
+      'mcp.instance',
       'bot.apps',
       'bot.skills',
       'bot.identity',
