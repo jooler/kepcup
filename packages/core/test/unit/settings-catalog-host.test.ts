@@ -788,7 +788,9 @@ describe('settings catalog host: settings_change and cards', () => {
       updateAvailable: null,
       revoked: null,
       configFields: [],
-      instanceFields: [],
+      instanceFields: [
+        { key: 'token', title: 'Token', type: 'string', required: true, sensitive: true },
+      ],
       instanceCounts: { mail: 0, mcp: 1, im: 0 },
       providesInstances: ['mcp'],
     } as PluginSummary;
@@ -828,6 +830,32 @@ describe('settings catalog host: settings_change and cards', () => {
     const editCard = cardOf(rig, messageIdIn(edit.content));
     expect(editCard.mode).toBe('form');
     expect(editCard.proposed).toEqual({ plugin: 'app.kepcup/mcp-tencent-docs', instance: 'pli_1' });
+
+    // 自动核对（打开对话）不得把 values 只是寻址的卡结掉：提议值与现状相同不代表 token 已填。
+    // （add 卡已被 edit 卡顶替，核对最新的 edit 卡。）
+    const auto = rig.host.completeCard(messageIdIn(edit.content), { auto: true });
+    expect(auto).toEqual({ state: 'pending', verified: false });
+
+    // 「我已设置好」按证据核对：寻址实例的必填凭据已存 → 结卡。
+    const manual = rig.host.completeCard(messageIdIn(edit.content));
+    expect(manual.state).toBe('applied');
+
+    // 证据不足（必填敏感字段没存）：保持 pending。
+    const missing = makeRig({
+      plugins: {
+        list: () => [plugin],
+        instances: () => [{ ...instance, storedSensitiveKeys: [] }],
+      },
+    });
+    const refill = await missing.host
+      .forRun(runCtx(missing, { runId: 'run_mcp_refill' }))
+      .change({
+        id: 'mcp.instance',
+        values: { plugin: 'app.kepcup/mcp-tencent-docs', instance: 'pli_1' },
+        reason: '补 token',
+      });
+    expect(refill.ok).toBe(true);
+    expect(missing.host.completeCard(messageIdIn(refill.content)).state).toBe('pending');
   });
 
   it('tightens to a confirm card: other-bot mention, mail wake, untrusted reads, taint, group chat', async () => {
