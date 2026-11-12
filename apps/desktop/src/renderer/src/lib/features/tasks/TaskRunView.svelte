@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { SvelteSet } from 'svelte/reactivity';
   import type { RunStep, TaskRunUsage } from '@kepcup/shared';
   import {
     ArrowLeft,
@@ -144,7 +145,7 @@
   // 打开详情页时记下已有消息；之后同一会话里新出现的 Bot 文本视为唤醒回复
   // （此时任务已在核心侧结算），若缓存仍是进行中则用时间线原文补报告。
   let primedTranscript = false;
-  const knownMessageIds = new Set<string>();
+  const knownMessageIds = new SvelteSet<string>();
   $effect(() => {
     const session = questionSession ?? chatSession;
     const msgs = session?.messages ?? [];
