@@ -40,6 +40,7 @@ export * from './domain/watches.js';
 export * from './domain/mail.js';
 export * from './domain/im.js';
 export * from './domain/plugin-manifest.js';
+export * from './domain/mcp-header.js';
 export * from './domain/plugins.js';
 export * from './domain/plugin-index.js';
 export * from './domain/handover.js';
