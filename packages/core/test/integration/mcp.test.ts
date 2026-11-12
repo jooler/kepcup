@@ -205,7 +205,7 @@ describe('mcp stdio integration', () => {
     await expect(service.listTools(dead)).rejects.toMatchObject({ code: 'MCP_SERVER_FAILED' });
   });
 
-  it('missing secrets stay as placeholders and are reported by testServer', async () => {
+  it('missing secrets are reported by testServer without connecting (R2)', async () => {
     const scriptPath = await makeScriptPath();
     const service = new McpService(makeDeps());
     services.push(service);
@@ -213,7 +213,10 @@ describe('mcp stdio integration', () => {
       serverOf(scriptPath, { env: { TOKEN: 'secret:env:TOKEN', OTHER: 'secret:env:MISSING' } }),
     );
     expect(report.missingSecrets).toEqual(['secret:env:MISSING']);
-    expect(report.tools).toContain('echo');
+    // R2：缺凭据在本地判定、不发请求，因此不会列出工具。
+    expect(report.tools).toEqual([]);
+    expect(report.message).toContain('MISSING');
+    expect(report.message).toContain('缺少凭据');
   });
 
   it('testServer resolves draft secret overrides without the secrets store', async () => {
@@ -228,6 +231,7 @@ describe('mcp stdio integration', () => {
     // 未带覆盖时同一占位符照旧上报 missing。
     const bare = await service.testServer(draft);
     expect(bare.missingSecrets).toEqual(['secret:env:TOKEN']);
+    expect(bare.tools).toEqual([]);
   });
 
   it('connects to a legacy HTTP-with-SSE server via the sse transport', async () => {
