@@ -356,8 +356,39 @@ schema 写全**（`kepcup-app validate` 用同一 schema 检查，缺字段报 `
   | `url` **非空** | 厂商模版（锁定端点） | `label`（选填）/ 各 header 值字段（sensitive，值只进 secrets）+ 插件 `instanceFields` |
   | `url` **留空 `""`** | 通用模版（自填端点） | 上述 + `url` 必填实例字段（`urlSensitive: true` 时 URL 本身按敏感处理） |
 
-  - `auth: 'headers'` 必须至少声明一个 `headers: [{ name, key? }]`（`key` 是提供该 header
-    值的实例字段键，缺省 = header 名小写）；`auth: 'none'` 不得声明 headers。
+  - `auth: 'headers'` 必须至少声明一个 `headers: [{ name, key?, scheme? }]`（`key` 是提供该
+    header 值的实例字段键，缺省 = header 名小写）；`auth: 'none'` 不得声明 headers。
+  - **凭据方案 `scheme`（2026-11-12）**：header 模板可声明 `scheme`，约定「这个 header 用
+    哪种凭据方案」，归一化由宿主统一做，插件不用写代码：
+    - 可选值：`'bearer'`（当前唯一）。语义 = 该 header 的值是**裸凭据**，发送时统一成
+      `Bearer <credential>`；
+    - **保存侧**：实例表单写入的 secret 去掉用户可能自己粘的前缀与前导空白，只存裸值
+      （存储形态单一，不会出现 `Bearer Bearer xxx`）；
+    - **发送侧**：组请求头时补 `Bearer `；已带前缀（大小写不敏感、容忍多余空格 / 换行）
+      不重复叠加；空值 / 纯空白不补成 `Bearer `；
+    - **边界**：只影响显式声明 `scheme` 的 header。未声明 `scheme` 的 header、其他 header
+      （API key 等）与其他 MCP server（含用户手装）原样存储、原样发送，行为不变；
+    - 插件 README / `usage` 据此写「粘贴服务商发放的裸 token 即可，前缀由宿主补」，
+      **不要**让用户手写 `Bearer `。
+
+    示例（腾讯文档 MCP 的实际写法）：
+
+    ```json
+    {
+      "kind": "http",
+      "id": "docs",
+      "url": "https://docs.qq.com/openapi/mcp",
+      "auth": "headers",
+      "headers": [{ "name": "Authorization", "key": "token", "scheme": "bearer" }]
+    }
+    ```
+
+    清单里填未知方案会被 schema 拒绝（`plugin.manifest-schema`，路径形如
+    `contributions.mcp.0.headers.0.scheme`）；校验器对合法声明给一条
+    `plugin.mcp-header-scheme` 提示，便于核对文档口径。新增方案要动四处：
+    `packages/shared/src/domain/mcp-header.ts` 的 `MCP_HEADER_SCHEMES` 与
+    `normalizeMcpHeaderValueForStorage` / `normalizeMcpHeaderValueForWire` 两个分支、
+    `packages/core/src/mcp/header-scheme.ts`（发送侧接线的类型引用）与本文档。
   - **内置实例字段键**（`instanceFields` 不得重名）：`label` / `url` / 各 header 的
     `key`。
   - 实例 server id = `plg_` + sha256(`{pluginId}#{instanceId}`) 前 12 位；实例删除 =

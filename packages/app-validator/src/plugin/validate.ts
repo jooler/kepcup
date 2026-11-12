@@ -1113,6 +1113,22 @@ export async function validatePlugin(
             ),
           );
         }
+        // 凭据方案（scheme）：宿主按声明做保存 strip / 发送补前缀，插件文档要写「粘裸值」。
+        // 未知值在 schema 解析阶段就被拒（plugin.manifest-schema），这里只提示已声明的方案。
+        for (const header of contribution.headers ?? []) {
+          if (header.scheme === undefined) continue;
+          checks.push(
+            makeCheck(
+              'plugin.mcp-header-scheme',
+              'info',
+              `header ${header.name} declares credential scheme '${header.scheme}': the host stores only the bare credential and adds the prefix when sending — document "paste the bare token", never ask the user for a prefix.`,
+              {
+                subject: contribution.id,
+                details: { header: header.name, scheme: header.scheme },
+              },
+            ),
+          );
+        }
       }
     }
     for (const template of contributions.mail) {
