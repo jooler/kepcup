@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  AppError,
   MCP_RECONNECT_MAX,
   MCP_TOOL_LIST_CACHE_MS,
   type McpServer,
@@ -332,5 +333,69 @@ describe('service controls', () => {
     expect((await service.listTools(oauthServer())).length).toBe(1);
     service.resetFailures('srv');
     await service.closeServer('unknown-server'); // no-op
+  });
+});
+
+describe('missing credentials (R2)', () => {
+  function plainService(): McpService {
+    const sink: McpServerStatusSink = { emit: (payload) => events.push(payload) };
+    return new McpService({
+      settings: { get: () => ({ mcpServers: [] }) as unknown as Settings } as never,
+      secrets: { getValue: () => null, hasValue: () => false, redact: (t: string) => t } as never,
+      logger: LOGGER,
+      clock: app.env.clock,
+      statusSink: sink,
+    });
+  }
+
+  it('refuses to connect with an unset header placeholder: no request, says which credential', async () => {
+    const svc = plainService();
+    const target: McpServer = {
+      id: 'docs',
+      name: '腾讯文档',
+      transport: 'http',
+      url: 'http://127.0.0.1:9/mcp', // 不可达：若真发了请求，会得到连接错误而不是 MCP_SECRET_MISSING
+      enabled: true,
+      autoApprove: false,
+      headers: { Authorization: 'secret:header:Authorization' },
+    };
+    const error = await svc.listTools(target).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(AppError);
+    expect((error as AppError).code).toBe('MCP_SECRET_MISSING');
+    expect((error as AppError).message).toContain('Authorization');
+    expect((error as AppError).message).toContain('缺少凭据');
+    expect(events).toEqual([
+      {
+        serverId: 'docs',
+        serverName: '腾讯文档',
+        status: 'needs_auth',
+        detail: expect.stringContaining('Authorization'),
+      },
+    ]);
+    await svc.closeAll();
+  });
+
+  it('resolves the placeholder only from stored secrets; an empty value counts as missing', async () => {
+    const sink: McpServerStatusSink = { emit: (payload) => events.push(payload) };
+    const svc = new McpService({
+      settings: { get: () => ({ mcpServers: [] }) as unknown as Settings } as never,
+      secrets: { getValue: () => '', hasValue: () => true, redact: (t: string) => t } as never,
+      logger: LOGGER,
+      clock: app.env.clock,
+      statusSink: sink,
+    });
+    const target: McpServer = {
+      id: 'docs',
+      name: '腾讯文档',
+      transport: 'http',
+      url: 'http://127.0.0.1:9/mcp',
+      enabled: true,
+      autoApprove: false,
+      headers: { Authorization: 'secret:header:Authorization' },
+    };
+    const error = await svc.listTools(target).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(AppError);
+    expect((error as AppError).code).toBe('MCP_SECRET_MISSING');
+    await svc.closeAll();
   });
 });

@@ -413,6 +413,15 @@ export class McpService {
     secretValues?: McpSecretOverrides | undefined,
   ): Promise<McpTestResult> {
     const missingSecrets = this.missingSecrets(server, secretValues);
+    if (missingSecrets.length > 0) {
+      // R2：缺凭据在本地判定，不发请求——否则占位串会被当成 header / env 发到服务端，
+      // 服务端只会回 401，和「token 无效」无法区分。
+      return {
+        tools: [],
+        missingSecrets,
+        message: this.#missingSecretMessage(server, missingSecrets),
+      };
+    }
     if (server.auth === 'oauth') {
       // 已存的令牌只属于已保存的那个 server（按 id）且 URL / 认证方式没变：`mcp.test` 的入参来自
       // 渲染进程的表单草稿，草稿里的 URL 若与已保存的不同，绝不能带着该 server 的令牌去访问它
@@ -871,6 +880,23 @@ export class McpService {
   }
 
   async #connect(server: McpServer, countFailure: () => boolean): Promise<ConnectionState> {
+    // R2：缺凭据是「用户还没填」，不是连接失败：本地直接报错、不发请求、不计入重连预算，
+    // 并把原因发到状态事件（设置页 / 日志可见）。
+    const missingSecrets = this.missingSecrets(server);
+    if (missingSecrets.length > 0) {
+      const detail = this.#missingSecretMessage(server, missingSecrets);
+      this.#deps.logger.warn(
+        { serverId: server.id, serverName: server.name, missingSecrets },
+        'mcp server credentials missing; not connecting',
+      );
+      this.#deps.statusSink.emit({
+        serverId: server.id,
+        serverName: server.name,
+        status: 'needs_auth',
+        detail,
+      });
+      throw new AppError('MCP_SECRET_MISSING', detail);
+    }
     const existing = this.#connections.get(server.id);
     existing?.offNotification?.();
     this.#connections.delete(server.id);
@@ -896,6 +922,16 @@ export class McpService {
       await this.#connectClient(client, server);
     } catch (error) {
       await client.close().catch(() => {});
+      // 凭据在解析期间被清掉（防御）：按缺凭据处理，不计数、不停用。
+      if (error instanceof AppError && error.code === 'MCP_SECRET_MISSING') {
+        this.#deps.statusSink.emit({
+          serverId: server.id,
+          serverName: server.name,
+          status: 'needs_auth',
+          detail: error.message,
+        });
+        throw error;
+      }
       // D73：授权错误（含被包装的）不是连接失败——不计数、不发 failed、不停用；
       // 发 needs_auth 状态并原样重抛，让调用方走“需要重新连接”的路径。
       const authError = this.#authFailureOf(server, error);
@@ -1071,7 +1107,7 @@ export class McpService {
   /**
    * 占位符解析：`secret:env:<name>` / `secret:header:<name>` → 优先取测试
    * 传入的覆盖值（草稿未保存），否则查 secrets 表 `mcp:{serverId}:env|header:{name}`。
-   * 未找到的占位符保留原样（连接侧会报错，设置页可见），绝不明文落日志。
+   * 未找到直接报缺凭据（R2）：绝不把占位串当值发出去，也绝不明文落日志。
    */
   #resolveSecretValues(
     serverId: string,
@@ -1105,10 +1141,29 @@ export class McpService {
     const prefix = kind === 'env' ? 'secret:env:' : 'secret:header:';
     if (!value.startsWith(prefix)) return value;
     const name = value.slice(prefix.length);
-    return (
+    const found =
       secretValues?.[kind]?.[name] ??
       this.#deps.secrets.getValue(`mcp:${serverId}:${kind}:${name}`) ??
-      value
-    );
+      undefined;
+    if (found === undefined || found === '') {
+      throw new AppError(
+        'MCP_SECRET_MISSING',
+        `缺少凭据：${name} 尚未填写，请在扩展中心 → 已安装 → 该工具服务 →「管理」里填写后重试`,
+      );
+    }
+    return found;
+  }
+
+  /** 缺凭据的一句话说明（设置页 / 状态事件 / 错误共用）。missing 项形如 `secret:header:Authorization`。 */
+  #missingSecretMessage(server: McpServer, missing: readonly string[]): string {
+    const names = [
+      ...new Set(
+        missing.map((item) => {
+          const match = /^secret:(?:env|header):(.+)$/.exec(item);
+          return match?.[1] ?? item;
+        }),
+      ),
+    ];
+    return `「${server.name}」缺少凭据：${names.join('、')} 尚未填写，请在扩展中心 → 已安装 → ${server.name} →「管理」里填写后重试`;
   }
 }
