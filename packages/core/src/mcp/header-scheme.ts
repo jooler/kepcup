@@ -1,6 +1,6 @@
 import {
-  ensureBearerPrefix,
   mcpHeaderTemplateOf,
+  normalizeMcpHeaderValueForWire,
   type McpServer,
   type PluginManifest,
 } from '@kepcup/shared';
@@ -39,8 +39,9 @@ export function createManifestHeaderNormalizer(
       return value;
     }
     if (manifest === null) return value;
+    // 实例供给规范：一个插件至多一份 http 模版（0 份 = 纯实例通用插件），所以按 kind 找即可。
     const contribution = manifest.contributions.mcp.find((entry) => entry.kind === 'http');
     const header = mcpHeaderTemplateOf(contribution, headerName);
-    return header?.scheme === 'bearer' ? ensureBearerPrefix(value) : value;
+    return normalizeMcpHeaderValueForWire(header?.scheme, value);
   };
 }
