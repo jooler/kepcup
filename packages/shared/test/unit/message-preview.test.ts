@@ -52,6 +52,9 @@ describe('cardPreviewText（左栏卡片预览）', () => {
       cardPreviewText({ cardType: 'present', present: { kind: 'line', title: '增长趋势' } }),
     ).toBe('📈 增长趋势');
     expect(
+      cardPreviewText({ cardType: 'present', present: { kind: 'report', title: '翻译任务报告' } }),
+    ).toBe('📄 翻译任务报告');
+    expect(
       cardPreviewText({
         cardType: 'bot_widget',
         widget: { title: '销售看板', description: '按周查看' },

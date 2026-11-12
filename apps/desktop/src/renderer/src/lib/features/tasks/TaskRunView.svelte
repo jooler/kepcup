@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { SvelteSet } from 'svelte/reactivity';
   import type { RunStep, TaskRunUsage } from '@kepcup/shared';
   import {
     ArrowLeft,
@@ -22,6 +23,7 @@
   import { registerEscapeLayer, ESCAPE_PRIORITY } from '$lib/features/shell/escape-layers';
   import { Button } from '$lib/components/ui/button';
   import Markdown from '$lib/features/chats/Markdown.svelte';
+  import MessageAttachments from '$lib/features/chats/MessageAttachments.svelte';
   import ApprovalDock from '$lib/features/approvals/ApprovalDock.svelte';
   import TaskInjectDock from './TaskInjectDock.svelte';
   import { getChatSession } from '$lib/features/chats/chat-session-context';
@@ -35,6 +37,7 @@
     groupTaskRunEntries,
     latestPlan,
     pendingTaskQuestionOf,
+    steerAttachmentViewOf,
     taskElapsedMs,
     taskMetaChips,
     taskRunUsageParts,
@@ -93,33 +96,101 @@
   const task = $derived(tasks.byId[taskId] ?? null);
   const metaChips = $derived(task === null ? null : taskMetaChips(task, listSeparator()));
   const usageParts = $derived(taskRunUsageParts(usage));
-  const reportText = $derived((task?.result?.text ?? '').trim());
   const entries = $derived(buildTaskRunTimeline(steps));
   const renderEntries = $derived(groupTaskRunEntries(entries));
   const plan = $derived(latestPlan(steps));
-  const active = $derived(task !== null && isActiveTask(task));
+  // 结算视图若没落到缓存，时间线已有终态原文、会话也已出现唤醒回复时，
+  // 用这份原文出报告卡并收起注入坞。
+  let transcriptReport = $state('');
+  const reportText = $derived((task?.result?.text ?? transcriptReport).trim());
+  const active = $derived(task !== null && isActiveTask(task) && reportText.length === 0);
   // 会话消息随打开详情页的对话而来（主页对话回退 chat.main，卡片弹层是自己的
-  // session）：提问卡从它取，message.created / updated 事件保持同源实时。
+  // session）：提问卡最终取自 questionSession（归属会话直连或下面的后台
+  // session），message.created / updated 事件保持同源实时。
   const chatSession = getChatSession();
-  // D113 执行归属映射：委派产生的任务住在 B 的私聊——详情页从别处打开（如委派
-  // 详情视图）时上下文会话不是任务的归属会话，为任务自己的会话开一个后台
-  // session 供提问卡（ask_user）取数（审批条走 task.conversationId 不受影响）。
+  // §3.7 执行归属映射：任务的提问卡 / 审批卡落 userConversationId（委派任务 =
+  // 发起方 A 的私聊，core 在 TaskView 上给出；普通任务 = conversationId）。
+  // D113：详情页从别处打开（如委派详情视图）时上下文会话不是卡片归属会话，
+  // 为归属会话开一个后台 session 供提问卡取数（审批条同源，见下方
+  // approvalConversationId）。
+  const cardConversationId = $derived(task?.userConversationId ?? task?.conversationId ?? null);
   let homeSession = $state<ChatSession | null>(null);
   $effect(() => {
-    const convId = task?.conversationId;
-    if (convId === null || convId === undefined || chatSession.conversation?.id === convId) return;
+    const convId = cardConversationId;
+    if (convId === null || chatSession.conversation?.id === convId) return;
     const bg = new ChatSession(undefined, { foreground: false });
     homeSession = bg;
-    void bg.open(convId);
+    // 纯取数 session：markOnOpen:false——归属会话可能是用户正在看的私聊，
+    // 打开详情页不能静默清它的未读（多端已读回执）。
+    void bg.open(convId, { markOnOpen: false });
     return () => bg.dispose();
   });
   const questionSession = $derived(
     chatSession.conversation?.id !== undefined &&
-      chatSession.conversation?.id === task?.conversationId
+      chatSession.conversation?.id === cardConversationId
       ? chatSession
       : homeSession,
   );
+  $effect(() => {
+    const convId = task?.conversationId;
+    if (convId === null || convId === undefined) return;
+    // bg session 开的是卡片归属会话，不再 retain 任务自己的会话——详情页挂载
+    // 期间自行 retain，避免归属会话 session 的 tasks.loadActive prune 把已
+    // 结算委派任务的视图清掉（丢标题 / metadata / 执行报告）。
+    tasks.retain(convId);
+    return () => tasks.release(convId);
+  });
   const pendingQuestion = $derived(pendingTaskQuestionOf(questionSession?.messages ?? [], taskId));
+
+  // 打开详情页时记下已有消息 / 侧栏预览；之后同一会话里新出现的 Bot 文本
+  // 或预览变化视为唤醒回复（此时任务已在核心侧结算）。唤醒与时间线终态
+  // 原文可能不同步到达：先记下 sawWake，时间线原文稍后补上再出报告卡。
+  // 必须先读 entries，否则 $effect 在「只有唤醒、还没有原文」那一轮不会
+  // 订阅时间线，原文到了也不会再跑。
+  let primedTranscript = false;
+  let primedMessagesReady = false;
+  let sawWake = false;
+  let primedPreview = '';
+  const knownMessageIds = new SvelteSet<string>();
+  $effect(() => {
+    const session = questionSession ?? chatSession;
+    const msgs = session?.messages ?? [];
+    const timelineEntries = entries;
+    const convId = task?.conversationId ?? task?.userConversationId ?? null;
+    const preview = convId !== null ? (chat.lastMessageText[convId] ?? '') : '';
+    if (!primedTranscript) {
+      if (task === null) return;
+      for (const message of msgs) knownMessageIds.add(message.id);
+      primedPreview = preview;
+      primedTranscript = true;
+      primedMessagesReady = msgs.length > 0;
+      return;
+    }
+    // 首屏消息可能比详情页更晚到位：这一批是打开时已有的，不算唤醒。
+    if (!primedMessagesReady) {
+      if (msgs.length === 0) return;
+      for (const message of msgs) knownMessageIds.add(message.id);
+      primedPreview = preview;
+      primedMessagesReady = true;
+      return;
+    }
+    const newcomers = msgs.filter((message) => !knownMessageIds.has(message.id));
+    for (const message of newcomers) knownMessageIds.add(message.id);
+    if (
+      newcomers.some((message) => message.senderType === 'bot' && message.kind === 'text') ||
+      (preview.length > 0 && preview !== primedPreview)
+    ) {
+      sawWake = true;
+    }
+    if (task === null || !isActiveTask(task) || reportText.length > 0 || !sawWake) return;
+    const lastAssistant = [...timelineEntries]
+      .reverse()
+      .find((entry) => entry.kind === 'assistant' && entry.text.trim().length > 0);
+    const textFromSteps = lastAssistant?.kind === 'assistant' ? lastAssistant.text.trim() : '';
+    if (textFromSteps.length === 0) return;
+    transcriptReport = textFromSteps;
+    tasks.noteTerminalFromTranscript(taskId, textFromSteps);
+  });
   const title = $derived(
     task?.title ?? (taskChecked ? t('task.run.taskId', { id: taskId }) : t('task.run.loading')),
   );
@@ -127,7 +198,8 @@
   const elapsed = $derived(task !== null ? formatElapsed(taskElapsedMs(task, now)) : '');
   const narrow = $derived(narrowLayout.narrow);
   const isMac = /Mac/i.test(navigator.platform);
-  // 审批条归属的会话（approvalConversationIdOf）：任务自带；任务视图还没读
+  // 审批条归属的会话（approvalConversationIdOf）：任务的卡片归属会话
+  // （userConversationId——委派任务落发起方 A 的私聊，§3.7）；任务视图还没读
   // 到时回退当前会话——详情页只在本会话内打开，切会话即关闭。
   const approvalConversationId = $derived(
     approvalConversationIdOf(
@@ -224,14 +296,30 @@
       if ((payload as { runId?: string }).runId === id) schedule();
     });
     const offStatus = core.onEvent('run.status', (payload) => {
-      if ((payload as { run?: { id?: string } }).run?.id === id) schedule();
+      const run = (payload as { run?: { id?: string; status?: string } }).run;
+      if (run?.id !== id) return;
+      schedule();
+      if (
+        run.status === 'completed' ||
+        run.status === 'failed' ||
+        run.status === 'cancelled' ||
+        run.status === 'interrupted'
+      ) {
+        // ensure() 对已缓存视图是空操作；必须 reload 才能接到结算报告。
+        tasks.reload(id);
+      }
     });
     const offTask = core.onEvent('task.updated', (payload) => {
       if ((payload as { task?: { taskId?: string } }).task?.taskId === id) schedule();
     });
     const poll = setInterval(() => {
       const view = tasks.byId[id];
-      if (view !== undefined && isActiveTask(view)) void refresh(true);
+      if (view !== undefined && isActiveTask(view)) {
+        void refresh(true);
+        // 步骤轮询能看到终态原文，但 ensure() 不会刷新已缓存的运行中视图；
+        // 事件若丢失或被在途 push 盖掉，这里补拉一次才能出报告、收起注入坞。
+        tasks.reload(id);
+      }
     }, 1200);
 
     return () => {
@@ -544,9 +632,20 @@
                         <CornerDownRight class="size-3" aria-hidden="true" />
                         {t('task.run.steer')}
                       </p>
-                      <p class="whitespace-pre-wrap" data-testid="task-run-steer-text">
-                        {entry.text}
-                      </p>
+                      {#if entry.text.length > 0}
+                        <p class="whitespace-pre-wrap" data-testid="task-run-steer-text">
+                          {entry.text}
+                        </p>
+                      {/if}
+                      {#if entry.attachments.length > 0}
+                        <!-- D115 附件直注：注入直带的附件 chip（字节按 id 经 attachments.get 取回）。 -->
+                        <div
+                          class="mt-1.5 flex flex-wrap justify-end gap-1.5"
+                          data-testid="task-run-steer-attachments"
+                        >
+                          <MessageAttachments attachments={steerAttachmentViewOf(entry.attachments)} />
+                        </div>
+                      {/if}
                     </div>
                   </div>
                 {:else if entry.kind === 'peer'}
@@ -649,8 +748,8 @@
       D115 注入坞（docs/design/56 §1）：非终态任务的最底部自由文本入口，经
       tasks.inject 直达 TaskHost（复用 inject_task 语义：等问即回答 / 运行中
       steer / 未启动入简报 / 外部 Agent queued）。在提问卡与审批条之后、页面
-      最后一位。
+      最后一位。conversationId / model 供附件直注（上传归属与图像输入预检）。
     -->
-    <TaskInjectDock {taskId} awaitingInput={task.awaitingInput} />
+    <TaskInjectDock {taskId} conversationId={task.conversationId} modelRef={task.model ?? null} awaitingInput={task.awaitingInput} />
   {/if}
 </div>

@@ -11,8 +11,8 @@ import type { RunIdentity, ToolDefinition } from '../agent/types.js';
 
 /**
  * `present`（D87 P4 L1，设计 32 §12.1）：Bot 只给数据，宿主渲染展示卡——表格、柱 / 折 / 饼图、指标卡、
- * 步骤、时间线、方案对比。对话轮与任务都注册：它只发一条卡片消息，没有其他副作用（不写文件、不调
- * 外部服务），对话轮的只读纪律不受影响。校验失败返回「哪一字段、期望什么」，模型改了重试即可。
+ * 步骤、时间线、方案对比、长报告。对话轮与任务都注册：它只发一条卡片消息，没有其他副作用（不写文件、
+ * 不调外部服务），对话轮的只读纪律不受影响。校验失败返回「哪一字段、期望什么」，模型改了重试即可。
  */
 
 export const PRESENT_TOOL = 'present';
@@ -35,6 +35,7 @@ const KIND_GUIDE = [
   'steps：{steps: [{title, detail?, status?: done|current|todo}…]}',
   'timeline：{events: [{time（给人看的时间文本）, title, detail?}…]}',
   'compare：{options: [方案名…], criteria: [{name, values: [每个方案一格…]}…], recommended?}',
+  'report：{summary, sections: [{heading, body（可多行）}…], conclusion?}（长报告：summary 与 conclusion 是要点，sections 是分节正文）',
 ].join('；');
 
 export function buildPresentTools(input: {
@@ -47,7 +48,7 @@ export function buildPresentTools(input: {
   const tool: ToolDefinition<{ kind?: unknown; title?: unknown; data?: unknown }> = {
     name: PRESENT_TOOL,
     description:
-      '把结构化结果展示成卡片（宿主渲染，无需写代码）：表格、柱状图 / 折线图 / 饼图、指标卡、步骤、时间线、方案对比。展示类结果优先用它；用户要能操作的界面（输入、保存、交互）才用 widget_craft。' +
+      '把结构化结果展示成卡片（宿主渲染，无需写代码）：表格、柱状图 / 折线图 / 饼图、指标卡、步骤、时间线、方案对比、长报告。展示类结果优先用它；汇报、说明类文字超过约 200 字时优先发 report 卡，正文文字只点要点；用户要能操作的界面（输入、保存、交互）才用 widget_craft。' +
       `只给数据，不要写 HTML；data ≤ ${Math.round(PRESENT_DATA_MAX_BYTES / 1024)}KB。各 kind 的 data：${KIND_GUIDE}。卡片发出后不用再用文字复述全部数据，点出要点即可。`,
     parameters: Type.Object({
       kind: Type.Union(

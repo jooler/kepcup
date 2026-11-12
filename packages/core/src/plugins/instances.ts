@@ -10,6 +10,7 @@ import {
 import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
 import type { SqliteDatabase } from '../infra/db.js';
+import { pluginServerId } from './ids.js';
 import { capabilityKindOf } from './kinds.js';
 import type { PluginRegistry } from './registry.js';
 import type { PluginStore } from './store.js';
@@ -612,6 +613,11 @@ export class PluginInstanceService {
       title: instance.title,
       values: this.#storedValues(instance),
       storedSensitiveKeys,
+      // P4-M2：mcp 实例的授权勾选以 server id 为键（`mcp_server_ids`），由 core 派生，
+      // 渲染端不复刻哈希逻辑。
+      ...(instance.kind === 'mcp'
+        ? { serverId: pluginServerId(instance.pluginId, instance.id) }
+        : {}),
       createdAt: instance.createdAt,
       updatedAt: instance.updatedAt,
     };

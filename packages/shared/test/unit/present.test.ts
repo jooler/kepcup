@@ -50,6 +50,14 @@ describe('present', () => {
         'compare',
         { options: ['A', 'B'], criteria: [{ name: '价格', values: [10, 12] }], recommended: 'A' },
       ],
+      [
+        'report',
+        {
+          summary: '已完成三份文件的翻译',
+          sections: [{ heading: '做了什么', body: '逐份翻译并校对\n输出到 output/' }],
+          conclusion: '可以继续下一批',
+        },
+      ],
     ];
     for (const [kind, data] of samples) {
       expect(validatePresent(kind, data)).toMatchObject({ ok: true, kind });
@@ -74,6 +82,15 @@ describe('present', () => {
     expect(badRecommend.ok).toBe(false);
     expect(validatePresent('pie', { slices: [{ label: 'x', value: -1 }] }).ok).toBe(false);
     expect(validatePresent('table', { columns: ['a'], rows: [['x']], extra: 1 }).ok).toBe(false);
+    // report：缺 sections、未知字段、超长 body 都要报可行动的错
+    expect(validatePresent('report', { summary: '只有摘要' }).ok).toBe(false);
+    expect(validatePresent('report', { summary: 's', sections: [], extra: 1 }).ok).toBe(false);
+    const longBody = validatePresent('report', {
+      summary: 's',
+      sections: [{ heading: 'h', body: 'x'.repeat(2_001) }],
+    });
+    expect(longBody.ok).toBe(false);
+    if (!longBody.ok) expect(longBody.message).toContain('data.sections');
   });
 
   it('caps the data size', () => {
@@ -95,6 +112,19 @@ describe('present', () => {
         },
       }),
     ).toBe('[展示卡·bar] 月度支出\n支出：一月=10元，二月=20元');
+    expect(
+      presentContextText({
+        kind: 'report',
+        title: '翻译任务报告',
+        data: {
+          summary: '已完成三份文件的翻译',
+          sections: [{ heading: '做了什么', body: '逐份翻译并校对' }],
+          conclusion: '可以继续下一批',
+        },
+      }),
+    ).toBe(
+      '[展示卡·report] 翻译任务报告\n已完成三份文件的翻译\n做了什么：逐份翻译并校对\n结论：可以继续下一批',
+    );
     const big = presentContextText({
       kind: 'table',
       title: '',

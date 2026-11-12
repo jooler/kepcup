@@ -62,6 +62,7 @@
 | main | `0063_memo_groups.sql` | D90 增强：新表 `memo_groups`（备忘分组）；`memos` 增 `group_id`（FK ON DELETE SET NULL）与 `position`、`todos` 增 `position`（均按改动前显示顺序回填，手动拖拽排序键）；`memos_live` 索引改按 `position`、增 `memos_group` |
 | main | `0065_sidebar_sections.sql` | 左栏对话分组从渲染层 localStorage（`kepcup.sidebar.sections.v1`）改存 main.db：新表 `sidebar_sections`（含内置「未指定」行）、`conversation_sidebar`（会话归属 + 置顶的稀疏偏好行，FK 级联 / `ON DELETE SET DEFAULT`） |
 | main | `0067_bot_direct_exchange.sql` | D113（D71 v2）：重建 `conversations`（`type` 增 `bot_direct`，增 `from_bot_id` / `to_bot_id` 及等式 CHECK）；`delegations` 增 `exchange_conversation_id` |
+| main | `0074_conversation_notes.sql` | 右栏 Bot 详情「便签」tab：新表 `conversation_notes`（对话级用户便签，删除对话时随 FK 级联删除） |
 
   D73（连接应用）从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）；迁移运行器支持首行 `-- kepcup:foreign-keys=off` 指令（D92 T1a WP1：重建被大量引用的枢纽表时先关 FK）。
 
@@ -713,6 +714,24 @@ CREATE INDEX stickies_conversation ON stickies(conversation_id);
 - `z` 由渲染层发牌（单调递增），启动水合时接到库中最大层号之后。
 - 删除对话时随 `conversations` 行 FK 级联删除（含 `global`：来源对话是所有者）。
 
+### conversation_notes（对话便签，main 0074）
+
+右栏 Bot 详情「便签」tab 的条目：用户手动记录协作中值得留存的信息（启动命令、测试账号等）。入口目前只在 Bot 与用户的私聊里提供；纯用户数据，不进入任何 Bot 的上下文，也没有对应工具。
+
+```sql
+CREATE TABLE conversation_notes (
+  id              TEXT PRIMARY KEY,       -- note_...
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  text            TEXT NOT NULL,          -- 正文（≤ CONVERSATION_NOTE_TEXT_MAX_CHARS）
+  created_at      INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL
+);
+CREATE INDEX conversation_notes_conversation ON conversation_notes(conversation_id, created_at);
+```
+
+- 经 `notes.list / create / update / delete` 读写；渲染层新建时先生成 `note_` id（乐观上屏），落库与后续更新用同一个 id。
+- 删除对话时随 `conversations` 行 FK 级联删除。
+
 ### todos / todo_runs / memos（工作台，D90，迁移 0037）
 
 设计见 [design 39](../design/39-workbench.md)。事项（`todos`）是用户派的活；备忘（`memos`）是闪念，不绑对话、不进任何 Bot 的上下文（管家工具除外）。
@@ -1333,6 +1352,7 @@ projects/{projectId}/            # 项目数据根（projectId = 根会话 id）
 | 卡片会话（`parent_project_id` 指向该项目） | `parent_project_id` 的 `ON DELETE CASCADE` 只删 main.db 里的会话行（及其子表），是 FK 安全网。实际删除由 `board.onProjectDeleting` 驱动：先对每张卡片的全部卡片会话调用 `lifecycle.deleteConversation`（清 `runs.db` / FTS / 附件），再 `todos.purge`，然后才删项目会话行 | D103（0051） |
 | watches | 删除 | D79 |
 | stickies（含 global：来源对话是所有者） | 删除（conversations FK 级联） | 便签持久化 |
+| conversation_notes（右栏 Bot 详情「便签」tab 的用户便签） | 删除（conversations FK 级联；纯粹挂在对话上，不随 Bot 删除） | 对话便签（main 0074） |
 | 在该对话发起的 bot_handovers / bot_handover_items | 删除（conversations FK 级联；待确认的移交卡先随 approvals 取消） | D88 |
 | 该对话的 Bot 自制组件（D81 `widgets`，scope='conversation'） | 删除（conversations FK 级联；scope='bot' 的行跨对话存活） | D81 |
 | 以该对话为 A 侧或 B 侧的活动委派（`submitted` / `working`） | 落 `cancelled`（B 有活动 run 的先中止）；行保留 | D71 |

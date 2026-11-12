@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { fade } from 'svelte/transition';
-  import { X, Monitor, Pencil, Info, Blocks, ListTodo } from '@lucide/svelte';
+  import { X, Monitor, Pencil, Info, Blocks, ListTodo, StickyNote } from '@lucide/svelte';
   import type { BotProfile } from '@kepcup/shared';
   import { t, type MessageKey } from '$lib/i18n';
   import { motionMs, MOTION } from '$lib/motion';
@@ -32,6 +32,7 @@
   import BotMenu from './BotMenu.svelte';
   import BotWidgetsTab from './BotWidgetsTab.svelte';
   import BotTasksPanel from './BotTasksPanel.svelte';
+  import NotesTab from './NotesTab.svelte';
   import DetailHeader from './DetailHeader.svelte';
   import { botTasks } from './bot-tasks.svelte';
   import { isActiveTask } from '$lib/features/tasks/task-view';
@@ -55,6 +56,7 @@
   import { browserPages } from '$lib/stores/browser-pages.svelte';
   import { deepEqual, isEngineOnlyChange, reconcileBotDraft } from './bot-draft';
   import { nextFrame, revealSettingsAnchor } from '$lib/features/settings/anchor-scroll';
+  import { loadPanelTab, savePanelTab, type PanelTab } from './panel-tab-persist';
 
   const conversation = $derived(chat.current?.conversation ?? null);
   const bot = $derived(chat.current?.conversation.bot ?? null);
@@ -89,12 +91,29 @@
 
   let draft = $state<BotProfile | null>(null);
   /**
-   * D116 三 tab（docs/design/56 §2）：头部资料卡下切换 详情（默认，原二级菜
-   * 单）/ 组件（卡片直运行）/ 任务（每 Bot 任务列表）。tab 条手写（不用
-   * components/ui/tabs——bits-ui 输出 data-state 而样式变体在 data-active 上）。
+   * D116 三 tab（docs/design/56 §2）+ 便签：头部资料卡下切换 详情（默认，原
+   * 二级菜单）/ 组件（卡片直运行）/ 任务（每 Bot 任务列表）/ 便签（仅私聊）。
+   * tab 条手写（不用 components/ui/tabs——bits-ui 输出 data-state 而样式变体
+   * 在 data-active 上）。
+   *
+   * tab 按对话记忆：每个对话恢复自己上次停留的 tab（localStorage，见
+   * panel-tab-persist.ts）；应用重启 / 面板重新挂载 / 切回对话都走同一条恢复。
    */
-  type PanelTab = 'detail' | 'widgets' | 'tasks';
-  let tab = $state<PanelTab>('detail');
+  const conversationId = $derived(conversation?.id ?? null);
+  /** 该对话上次停留的 tab；没有记录或便签已不适用时回退详情。 */
+  function storedTab(id: string | null, type: string | null): PanelTab {
+    if (id === null) return 'detail';
+    const stored = loadPanelTab(globalThis.localStorage ?? null, id);
+    // 便签只在私聊提供：其它对话即使记住过便签也退回详情。
+    if (stored === 'notes' && type !== 'direct') return 'detail';
+    return stored ?? 'detail';
+  }
+  // 初始值只取一次（untrack）：挂载时的对话决定第一眼的 tab，之后的对话
+  // 切换由下面的 effect 接续。
+  const initialTab = untrack(() => storedTab(conversationId, conversation?.type ?? null));
+  let tab = $state<PanelTab>(initialTab);
+  /** 当前 tab 属于哪个对话；切对话时据此加载新对话的记录。 */
+  let tabConversationId = $state<string | null>(untrack(() => conversationId));
   /**
    * 详情 tab 的统一下钻状态：null = 菜单首页；否则为下钻的详情——配置条目
    * （BotProfileForm section 模式）或原各 tab 的内容。深链锚点按
@@ -111,11 +130,12 @@
     | { kind: 'watches' };
   let detail = $state<PanelDetail | null>(null);
   let workdirSelector = $state<WorkdirSelector | null>(null);
-  /** tab 条的固定顺序（D116：详情 / 组件 / 任务）与图标。 */
+  /** tab 条的固定顺序（详情 / 组件 / 任务 / 便签）与图标。 */
   const PANEL_TABS: Array<{ id: PanelTab; icon: typeof Info }> = [
     { id: 'detail', icon: Info },
     { id: 'widgets', icon: Blocks },
     { id: 'tasks', icon: ListTodo },
+    { id: 'notes', icon: StickyNote },
   ];
 
   /** 详情标题的文案键（返回头 + 深链共用）。 */
@@ -133,7 +153,35 @@
     detail: 'rightPanel.tabDetail',
     widgets: 'rightPanel.tabWidgets',
     tasks: 'rightPanel.tabTasks',
+    notes: 'rightPanel.tabNotes',
   };
+
+  /** 便签目前只在 Bot 与用户的私聊里提供入口（项目组 / Bot 间对话不显示）。 */
+  const panelTabs = $derived(
+    PANEL_TABS.filter((entry) => entry.id !== 'notes' || conversation?.type === 'direct'),
+  );
+
+  // 切到不支持便签的对话时，正在看的便签 tab 退回详情。
+  $effect(() => {
+    if (tab === 'notes' && conversation?.type !== 'direct') tab = 'detail';
+  });
+
+  // 每个对话记住自己上次打开的 tab：切对话先按新对话的记录恢复（应用重启 /
+  // 面板重挂载由上面的初始化 + 本 effect 覆盖），随后 tab 的任何变化都写回
+  // 当前对话。便签的适用性由 storedTab 兜底（非法类型退回详情）。
+  $effect(() => {
+    const id = conversationId;
+    const type = conversation?.type ?? null;
+    if (id === tabConversationId) return;
+    tabConversationId = id;
+    tab = storedTab(id, type);
+  });
+
+  $effect(() => {
+    const id = tabConversationId;
+    const value = tab;
+    if (id !== null) savePanelTab(globalThis.localStorage ?? null, id, value);
+  });
 
   // D80（回执卡 / 提议卡的「全部定时任务」）与设置卡深链（'profile' / 'skills'）：
   // 一律归位详情 tab 再下钻。
@@ -238,11 +286,9 @@
         serverProfile,
       });
       if (result.action === 'replace') {
-        // 换 Bot 时下钻详情与 tab 一并回到首页（详情 tab）。
-        if (draftBotId !== bot.id) {
-          detail = null;
-          tab = 'detail';
-        }
+        // 换 Bot 时下钻详情回到菜单首页；tab 归对话记忆，由上面的对话切换
+        // effect 按新对话恢复。
+        if (draftBotId !== bot.id) detail = null;
         draft = structuredClone(result.draft);
         savedProfile = bot.profile;
         draftBotId = bot.id;
@@ -565,50 +611,63 @@
         <AvatarPicker bind:open={pickerOpen} {bot} />
       </div>
 
-      <!-- D116 三 tab：详情（默认）/ 组件 / 任务。横向居中 + 图标；手写 pill 条
+      <!-- 详情 / 组件 / 任务（D116）+ 便签（仅私聊）。横向居中 + 图标；手写 pill 条
            （components/ui/tabs 的 bits-ui data-state 与样式变体不匹配，见
-           ProjectTabs 注释）。 -->
-      <div
-        class="flex shrink-0 items-center justify-center gap-0.5 px-4 pb-2"
-        role="tablist"
-        data-testid="right-panel-tabs"
-      >
-        {#each PANEL_TABS as entry (entry.id)}
-          {@const tabActive = tab === entry.id}
-          {@const TabIcon = entry.icon}
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tabActive}
-            data-active={tabActive ? 'true' : undefined}
-            data-testid={`right-panel-tab-${entry.id}`}
-            class="inline-flex cursor-pointer items-center justify-center gap-1 rounded-full px-2.5 py-0.5 text-[13px] transition-colors {tabActive
-              ? 'bg-muted font-medium text-foreground'
-              : 'text-foreground/50 hover:bg-accent/60 hover:text-foreground/80'}"
-            onclick={() => {
-              tab = entry.id;
-              // 任务 tab 激活时重拉（幂等，seq 防竞态）：面板挂载很久后点开也拿最新。
-              if (entry.id === 'tasks' && bot?.status === 'active') void botTasks.load(bot.id);
-            }}
-          >
-            <TabIcon class="size-3.5 shrink-0" aria-hidden="true" />
-            {t(TAB_LABEL_KEYS[entry.id])}
-            {#if entry.id === 'tasks' && activeTaskCount > 0}
-              <span
-                class="text-[11px] tabular-nums text-foreground/60"
-                data-testid="right-panel-tab-tasks-badge"
-              >
-                {activeTaskCount}
-              </span>
-            {/if}
-          </button>
-        {/each}
+           ProjectTabs 注释）。外层横向滚动：右栏可窄到 20%，四个 tab 放不下时
+           不换行、不裁掉首尾（内层 w-max + mx-auto 让放得下时仍居中）。 -->
+      <div class="shrink-0 overflow-x-auto px-4 pb-2">
+        <div
+          class="mx-auto flex w-max items-center gap-0.5"
+          role="tablist"
+          data-testid="right-panel-tabs"
+        >
+          {#each panelTabs as entry (entry.id)}
+            {@const tabActive = tab === entry.id}
+            {@const TabIcon = entry.icon}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tabActive}
+              data-active={tabActive ? 'true' : undefined}
+              data-testid={`right-panel-tab-${entry.id}`}
+              class="inline-flex shrink-0 cursor-pointer items-center justify-center gap-1 rounded-full px-2.5 py-0.5 text-[13px] whitespace-nowrap transition-colors {tabActive
+                ? 'bg-muted font-medium text-foreground'
+                : 'text-foreground/50 hover:bg-accent/60 hover:text-foreground/80'}"
+              onclick={() => {
+                tab = entry.id;
+                // 任务 tab 激活时重拉（幂等，seq 防竞态）：面板挂载很久后点开也拿最新。
+                if (entry.id === 'tasks' && bot?.status === 'active') void botTasks.load(bot.id);
+              }}
+            >
+              <TabIcon class="size-3.5 shrink-0" aria-hidden="true" />
+              {t(TAB_LABEL_KEYS[entry.id])}
+              {#if entry.id === 'tasks' && activeTaskCount > 0}
+                <span
+                  class="text-[11px] text-foreground/60 tabular-nums"
+                  data-testid="right-panel-tab-tasks-badge"
+                >
+                  {activeTaskCount}
+                </span>
+              {/if}
+            </button>
+          {/each}
+        </div>
       </div>
 
       {#if tab === 'tasks'}
         <!-- 任务 tab（D116）：该 Bot 拉起的全部任务，行点击进主区任务详情页。 -->
         <div class="flex min-h-0 flex-1 flex-col p-4">
           <BotTasksPanel botId={bot.id} />
+        </div>
+      {:else if tab === 'notes' && conversation?.type === 'direct'}
+        <!-- 便签 tab：仅私聊提供；纯用户数据，不进入 Bot 上下文。按对话重建：切对话
+             时旧实例先 flush 未落库的编辑，新对话从空列表加载（不残留上一对话的条目）。 -->
+        <div class="flex min-h-0 flex-1 flex-col p-4">
+          {#if conversation}
+            {#key conversation.id}
+              <NotesTab conversationId={conversation.id} />
+            {/key}
+          {/if}
         </div>
       {:else if tab === 'widgets'}
         <!-- 组件 tab（D117）：卡片直运行 + 「…」菜单 + 详情下钻。 -->
@@ -618,148 +677,148 @@
       {:else}
         <!-- 详情 tab：统一二级菜单 / 下钻详情（默认）。 -->
         <div class="min-h-0 flex-1 overflow-y-auto p-4" data-testid="bot-panel-content">
-        <!-- 工作目录（P04）：目录设置弹框挂在这里，菜单的工作目录行经 openWorkdir 打开。 -->
-        {#if conversation}
-          <WorkdirSelector
-            bind:this={workdirSelector}
-            conversationId={conversation.id}
-            workdirId={conversation.workdirId}
-            disabled={conversation.readOnly}
-            showBlock={false}
-          />
-        {/if}
-        {#if detail === null}
-          <div class="space-y-4" in:fade={{ duration: motionMs(MOTION.content) }}>
-            <!-- D73 P2：污点外发汇总（有记录才占位），置于菜单之上。 -->
-            <EgressSummary botId={bot.id} />
-            <!-- D48 导出为模板已上移到顶栏（关闭按钮左侧）。 -->
-            <BotMenu
-              profile={draft}
-              botId={bot.id}
-              conversationId={conversation?.id}
-              workdirId={conversation?.workdirId ?? null}
-              workdirDisabled={conversation?.readOnly}
-              deletable={bot.systemRole !== 'butler'}
-              onOpenSection={(section) => (detail = { kind: 'profile', section })}
-              onOpenWorkdir={() => workdirSelector?.openWorkdir()}
-              onOpenMemory={() => (detail = { kind: 'memory' })}
-              onOpenSkills={() => (detail = { kind: 'skills' })}
-              onOpenWiki={() => (detail = { kind: 'wiki' })}
-              onOpenAccess={() => (detail = { kind: 'access' })}
-              onOpenSchedules={() => (detail = { kind: 'schedules' })}
-              onOpenWatches={() => (detail = { kind: 'watches' })}
-              onRemoveBot={() => void askRemove()}
+          <!-- 工作目录（P04）：目录设置弹框挂在这里，菜单的工作目录行经 openWorkdir 打开。 -->
+          {#if conversation}
+            <WorkdirSelector
+              bind:this={workdirSelector}
+              conversationId={conversation.id}
+              workdirId={conversation.workdirId}
+              disabled={conversation.readOnly}
+              showBlock={false}
             />
-          </div>
-        {:else if detail.kind === 'profile'}
-          <!-- 配置条目详情：返回回菜单；字段变化仍走表单自动保存。 -->
-          <div
-            class="space-y-3"
-            data-testid={`bot-detail-${detail.section}`}
-            in:fade={{ duration: motionMs(MOTION.content) }}
-          >
-            <DetailHeader
-              title={t(BOT_CONFIG_SECTION_LABEL_KEYS[detail.section])}
-              onBack={() => (detail = null)}
-            />
-            <!-- 名字/简介走上方头部资料卡的点按直编；表单值变化即自动保存，无需按钮。 -->
-            <BotProfileForm
-              bind:profile={draft}
-              showIdentity={false}
-              botId={bot?.id}
-              onBrowserProfileConfirm={confirmBrowserProfile}
-              section={detail.section}
-            />
-          </div>
-        {:else}
-          <!-- 原 tab 内容详情：授权 / 记忆 / Skills / Wiki / 定时任务 / 网页监看。 -->
-          <div
-            class="flex min-h-0 flex-col gap-3"
-            data-testid={`bot-detail-${detail.kind}`}
-            in:fade={{ duration: motionMs(MOTION.content) }}
-          >
-            {#if detail.kind !== 'wiki' && !(detail.kind === 'skills' && skillNav.selectedName !== null)}
-              <!-- 技能详情态隐藏「< Skills」一行：返回由 SkillsTab 详情内的「返回」承担，
+          {/if}
+          {#if detail === null}
+            <div class="space-y-4" in:fade={{ duration: motionMs(MOTION.content) }}>
+              <!-- D73 P2：污点外发汇总（有记录才占位），置于菜单之上。 -->
+              <EgressSummary botId={bot.id} />
+              <!-- D48 导出为模板已上移到顶栏（关闭按钮左侧）。 -->
+              <BotMenu
+                profile={draft}
+                botId={bot.id}
+                conversationId={conversation?.id}
+                workdirId={conversation?.workdirId ?? null}
+                workdirDisabled={conversation?.readOnly}
+                deletable={bot.systemRole !== 'butler'}
+                onOpenSection={(section) => (detail = { kind: 'profile', section })}
+                onOpenWorkdir={() => workdirSelector?.openWorkdir()}
+                onOpenMemory={() => (detail = { kind: 'memory' })}
+                onOpenSkills={() => (detail = { kind: 'skills' })}
+                onOpenWiki={() => (detail = { kind: 'wiki' })}
+                onOpenAccess={() => (detail = { kind: 'access' })}
+                onOpenSchedules={() => (detail = { kind: 'schedules' })}
+                onOpenWatches={() => (detail = { kind: 'watches' })}
+                onRemoveBot={() => void askRemove()}
+              />
+            </div>
+          {:else if detail.kind === 'profile'}
+            <!-- 配置条目详情：返回回菜单；字段变化仍走表单自动保存。 -->
+            <div
+              class="space-y-3"
+              data-testid={`bot-detail-${detail.section}`}
+              in:fade={{ duration: motionMs(MOTION.content) }}
+            >
+              <DetailHeader
+                title={t(BOT_CONFIG_SECTION_LABEL_KEYS[detail.section])}
+                onBack={() => (detail = null)}
+              />
+              <!-- 名字/简介走上方头部资料卡的点按直编；表单值变化即自动保存，无需按钮。 -->
+              <BotProfileForm
+                bind:profile={draft}
+                showIdentity={false}
+                botId={bot?.id}
+                onBrowserProfileConfirm={confirmBrowserProfile}
+                section={detail.section}
+              />
+            </div>
+          {:else}
+            <!-- 原 tab 内容详情：授权 / 记忆 / Skills / Wiki / 定时任务 / 网页监看。 -->
+            <div
+              class="flex min-h-0 flex-col gap-3"
+              data-testid={`bot-detail-${detail.kind}`}
+              in:fade={{ duration: motionMs(MOTION.content) }}
+            >
+              {#if detail.kind !== 'wiki' && !(detail.kind === 'skills' && skillNav.selectedName !== null)}
+                <!-- 技能详情态隐藏「< Skills」一行：返回由 SkillsTab 详情内的「返回」承担，
                    顶栏出现会造成两层返回（skillNav 状态在 skills-nav.svelte）。
                    Wiki 详情的头行（返回 + 面包屑 + 页面删除）整个由 WikiBrowser 自绘。 -->
-              <DetailHeader
-                title={t(DETAIL_TITLE_KEYS[detail.kind])}
-                onBack={() => (detail = null)}
-                breadcrumb={detailBreadcrumb}
-                breadcrumbTestid={detail.kind === 'memory' ? 'memory-breadcrumb' : undefined}
-              />
-            {/if}
-            {#if detail.kind === 'access'}
-              {#if confirmMode}
-                <p
-                  class="rounded-md bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-400"
-                  data-testid="confirm-mode-hint"
-                >
-                  {t('chats.confirmModeBanner', { reason: permissions.sandbox?.reason ?? '' })}
-                </p>
+                <DetailHeader
+                  title={t(DETAIL_TITLE_KEYS[detail.kind])}
+                  onBack={() => (detail = null)}
+                  breadcrumb={detailBreadcrumb}
+                  breadcrumbTestid={detail.kind === 'memory' ? 'memory-breadcrumb' : undefined}
+                />
               {/if}
-              {#if grants.length === 0}
-                <p class="text-muted-foreground" data-testid="grants-empty">
-                  {t('rightPanel.grantsEmpty')}
-                </p>
-              {:else}
-                <ul class="space-y-2" data-testid="grants-list">
-                  {#each grants as grant (grant.id)}
-                    <li class="rounded-md border p-2" data-testid={`grant-item-${grant.id}`}>
-                      <code class="block text-xs break-all">{grant.path}</code>
-                      <div class="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                        <span
-                          >{t(
-                            grant.access === 'write'
-                              ? 'rightPanel.grantWrite'
-                              : 'rightPanel.grantRead',
-                          )}</span
-                        >
-                        <span>·</span>
-                        <span
-                          >{t(
-                            grant.duration === 'once'
-                              ? 'rightPanel.grantOnce'
-                              : 'rightPanel.grantConversation',
-                          )}</span
-                        >
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          class="ml-auto h-6 px-2 text-xs text-destructive"
-                          onclick={() => void permissions.revokeGrant(grant.id)}
-                          data-testid={`grant-revoke-${grant.id}`}
-                        >
-                          {t('rightPanel.revoke')}
-                        </Button>
-                      </div>
-                    </li>
-                  {/each}
-                </ul>
+              {#if detail.kind === 'access'}
+                {#if confirmMode}
+                  <p
+                    class="rounded-md bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-400"
+                    data-testid="confirm-mode-hint"
+                  >
+                    {t('chats.confirmModeBanner', { reason: permissions.sandbox?.reason ?? '' })}
+                  </p>
+                {/if}
+                {#if grants.length === 0}
+                  <p class="text-muted-foreground" data-testid="grants-empty">
+                    {t('rightPanel.grantsEmpty')}
+                  </p>
+                {:else}
+                  <ul class="space-y-2" data-testid="grants-list">
+                    {#each grants as grant (grant.id)}
+                      <li class="rounded-md border p-2" data-testid={`grant-item-${grant.id}`}>
+                        <code class="block text-xs break-all">{grant.path}</code>
+                        <div class="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                          <span
+                            >{t(
+                              grant.access === 'write'
+                                ? 'rightPanel.grantWrite'
+                                : 'rightPanel.grantRead',
+                            )}</span
+                          >
+                          <span>·</span>
+                          <span
+                            >{t(
+                              grant.duration === 'once'
+                                ? 'rightPanel.grantOnce'
+                                : 'rightPanel.grantConversation',
+                            )}</span
+                          >
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            class="ml-auto h-6 px-2 text-xs text-destructive"
+                            onclick={() => void permissions.revokeGrant(grant.id)}
+                            data-testid={`grant-revoke-${grant.id}`}
+                          >
+                            {t('rightPanel.revoke')}
+                          </Button>
+                        </div>
+                      </li>
+                    {/each}
+                  </ul>
+                {/if}
+                <p class="text-xs text-muted-foreground">{t('rightPanel.grantsHint')}</p>
+              {:else if detail.kind === 'memory'}
+                <MemoryTab botId={bot.id} active={true} />
+              {:else if detail.kind === 'skills'}
+                <SkillsTab botId={bot.id} active={true} />
+              {:else if detail.kind === 'wiki'}
+                <WikiBrowser
+                  owner={{ kind: 'bot', id: bot.id }}
+                  active={true}
+                  onBack={() => (detail = null)}
+                  headerTitle={t(DETAIL_TITLE_KEYS.wiki)}
+                />
+              {:else if conversation}
+                {#if detail.kind === 'schedules'}
+                  <!-- P10: the current conversation's schedules (direct chat = this bot). -->
+                  <SchedulesPanel conversationId={conversation.id} testid="schedules-tab" />
+                {:else}
+                  <!-- W7: the conversation's web-page watches. -->
+                  <WatchesPanel conversationId={conversation.id} testid="watches-tab" />
+                {/if}
               {/if}
-              <p class="text-xs text-muted-foreground">{t('rightPanel.grantsHint')}</p>
-            {:else if detail.kind === 'memory'}
-              <MemoryTab botId={bot.id} active={true} />
-            {:else if detail.kind === 'skills'}
-              <SkillsTab botId={bot.id} active={true} />
-            {:else if detail.kind === 'wiki'}
-              <WikiBrowser
-                owner={{ kind: 'bot', id: bot.id }}
-                active={true}
-                onBack={() => (detail = null)}
-                headerTitle={t(DETAIL_TITLE_KEYS.wiki)}
-              />
-            {:else if conversation}
-              {#if detail.kind === 'schedules'}
-                <!-- P10: the current conversation's schedules (direct chat = this bot). -->
-                <SchedulesPanel conversationId={conversation.id} testid="schedules-tab" />
-              {:else}
-                <!-- W7: the conversation's web-page watches. -->
-                <WatchesPanel conversationId={conversation.id} testid="watches-tab" />
-              {/if}
-            {/if}
-          </div>
-        {/if}
+            </div>
+          {/if}
         </div>
       {/if}
     </div>

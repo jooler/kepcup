@@ -36,6 +36,10 @@ plugins/
 - **IM 插件**：清单声明 `instances: ['im']` 且恰好一份 `contributions.im`
   （transport / apiBase / setup / features，见设计 54）；账号由用户扫码或填表添加，
   再在 Bot 详情勾选绑定后才参与入站唤醒 / 出站转发。
+- **MCP 插件凭据方案**：`contributions.mcp` 的 http 贡献可给 header 模板加
+  `scheme`（当前仅 `"bearer"`）声明该 header 用裸凭据：宿主保存时 strip 用户自己粘的
+  `Bearer `、发送时自动补前缀。未声明 `scheme` 的 header / 其他 MCP server 行为不变。
+  字段语义与示例见 [docs/guides/write-a-plugin.md](../docs/guides/write-a-plugin.md) §3.3。
 - **启用说明 `usage`（2026-11-03 起必填）**：一句话说明「启用之后还要做什么」
   （启用即用 / 需要连接账号 / 需要先添加账号再勾选绑定）。用户操作插件 30 秒后，
   宿主会把状态连同这句话发给 Bot，由它决定是否提醒用户补做遗漏步骤；详见

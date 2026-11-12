@@ -20,7 +20,7 @@
   import { chat } from '$lib/stores/chat.svelte';
   import { tasks } from '$lib/stores/tasks.svelte';
   import { getChatSession } from './chat-session-context';
-  import { composerRightAction, injectContentState, taskDraftKey } from './composer-inject';
+  import { composerRightAction, injectAttachAction, injectContentState, taskDraftKey } from './composer-inject';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { endpointSupports } from '$lib/features/web-shell/endpoint';
@@ -102,6 +102,9 @@
     readOnlyHint,
     placeholderText = undefined,
     injectTaskId = null,
+    injectConversationId = null,
+    injectModelRef = null,
+    onRequestAttachSetup,
   }: {
     readOnly?: boolean;
     centered?: boolean;
@@ -115,6 +118,19 @@
      * 扩展集在挂载时确定）；调用方应按 taskId 重新挂载。
      */
     injectTaskId?: string | null;
+    /**
+     * D115 附件直注：任务所在会话 id（附件上传 / 状态校验的归属）。null =
+     * 附件不可用（按钮禁用，沿用「暂不支持附件」的说法）。
+     */
+    injectConversationId?: string | null;
+    /**
+     * D115 附件直注：任务执行器模型 ref（外部 Agent 任务为 null）。附件键的
+     * 预检据此判图像输入——执行模型不支持视觉且未配看图模型时，点 +
+     * 交由 `onRequestAttachSetup` 弹「看图模型」配置卡。
+     */
+    injectModelRef?: string | null;
+    /** D115 附件直注：预检未过（无视觉能力）时的承接——宿主弹能力配置卡。 */
+    onRequestAttachSetup?: () => void;
   } = $props();
 
   /** 任务直注模式：所有需要和对话会话隔离的分支都看它。 */
@@ -202,11 +218,13 @@
   /**
    * 待发送附件（docs/design/20-conversation-media.md）：选中即上传，随下一
    * 条草稿发出。数据源在 composerDrafts（按会话缓存），组件只持视图——
-   * 切换会话/重启应用后按会话重载，不再切换即丢弃。
+   * 切换会话/重启应用后按会话重载，不再切换即丢弃。任务直注（D115 附件
+   * 直注）读 `task:<id>` 键的上传队列，附件经 tasks.inject 直发。
    */
   const pendingUploads = $derived(
-    // 任务直注不支持附件（`tasks.inject` 只收文本），也不读会话的上传队列。
-    injectMode ? [] : composerDrafts.uploadsOf(chatSession.view?.conversation.id ?? ''),
+    injectMode
+      ? composerDrafts.uploadsOf(injectTaskId === null ? '' : taskDraftKey(injectTaskId))
+      : composerDrafts.uploadsOf(chatSession.view?.conversation.id ?? ''),
   );
 
   const composerEmpty = $derived(isComposerDocEmpty(docJson));
@@ -1193,6 +1211,8 @@
    * 任务直注发送：内容进 await 前捕获并同步清空编辑器（与对话发送同语义，
    * 不会抹掉用户接着键入的内容）；失败回填，成功按 delivered / queued 给
    * 与旧输入坞一致的 toast。指令上限由 CharacterCount 在编辑器层拦住。
+   * D115 附件直注：先等在途上传落定，附件 id 随注入直发——纯附件（无文本）
+   * 也允许；成功后摘 chip，INVALID_INPUT 时按 attachments.status 判因。
    */
   async function sendInjected(): Promise<void> {
     const ed = editor;
@@ -1200,13 +1220,24 @@
     if (ed === null || taskId === null) return;
     if (readOnly || collabReader || injectSending) return;
     const content = injectContentState(ed.getMarkdown());
-    if (!content.sendable) return;
+    if (content.overLimit) return;
     const docSnapshot = ed.getJSON();
     const draftsKey = taskDraftKey(taskId);
+    const reportAttachmentIssue = attachmentIssueReporter(draftsKey);
+    // 空内容（无文本、无附件 chip）不发送——编辑器不动。
+    if (!content.sendable && composerDrafts.uploadsOf(draftsKey).length === 0) return;
     injectSending = true;
     ed.commands.clearContent();
     try {
-      const delivery = await tasks.inject(taskId, content.text);
+      // 等在途上传落定（就绪 chip 不摘，发送成功才 commitSent）。
+      const attachmentIds = await composerDrafts.settle(draftsKey);
+      if (!content.sendable && attachmentIds.length === 0) {
+        // 上传全部失败且没有文本：恢复编辑器内容（错误 chip 留给用户手动移除）。
+        restoreInjectedContent(ed, docSnapshot, draftsKey);
+        return;
+      }
+      const delivery = await tasks.inject(taskId, content.text, attachmentIds);
+      composerDrafts.commitSent(draftsKey, attachmentIds);
       if (delivery === 'queued') {
         // queued 有两种成因（外部智能体拒绝 steer / 任务已在收尾），条目只存
         // 二值 delivery，渲染端区分不了——用中性文案，两种成因下都准确。
@@ -1216,9 +1247,19 @@
       }
     } catch (error) {
       restoreInjectedContent(ed, docSnapshot, draftsKey);
-      toast.error(
-        errorText((error as { code?: string } | undefined)?.code, t('task.run.injectFailed')),
-      );
+      const code = (error as { code?: string } | undefined)?.code;
+      if (code === 'INVALID_INPUT') {
+        // 与直发同款判因：归属 / 占用问题摘掉失效 chip 并按因提示（只查有
+        // attachmentId 的 chip——上传失败的 chip 没有 id，别让空串进 missing）。
+        const ids = composerDrafts
+          .uploadsOf(draftsKey)
+          .flatMap((upload) => (upload.attachmentId !== null ? [upload.attachmentId] : []));
+        const issue = await composerDrafts.inspectAttachments(draftsKey, ids).catch(() => null);
+        if (issue !== null && (issue.missing.length > 0 || issue.sent.length > 0)) {
+          reportAttachmentIssue(issue);
+        }
+      }
+      toast.error(errorText(code, t('task.run.injectFailed')));
     } finally {
       injectSending = false;
     }
@@ -2020,8 +2061,53 @@
   // 文件选择对话框」；手机相册上行是 P1）——按钮置灰、title 提示，不隐藏入口。
   const canAttachFiles = $derived(endpointSupports('local-file-dialog'));
 
+  /**
+   * D115 附件直注：任务直注的附件开关。需要任务所在会话（上传归属）；
+   * 缺省（会话上下文拿不到）沿用「暂不支持附件」的禁用兜底。
+   */
+  const canInjectAttach = $derived(injectMode && injectConversationId !== null);
+
+  /**
+   * 执行模型的图像输入（D115 附件直注预检）：run.model ref → ProviderInfo
+   * 的 model.input。ref 解析不出已配置厂商（外部 Agent 任务 / agent 引擎）→
+   * `executorKnownBuiltin` false——不预检：附件降级为文本行（物化路径），
+   * 预检只拦「内置引擎任务：执行模型不支持视觉 且 未配看图模型」。
+   */
+  const executorAcceptsImages = $derived.by(() => {
+    const ref = injectModelRef;
+    if (ref === null) return false;
+    const slash = ref.indexOf('/');
+    if (slash <= 0) return false;
+    const provider = settingsStore.providers.find(
+      (candidate) => candidate.id === ref.slice(0, slash),
+    );
+    const model = provider?.models.find((candidate) => candidate.id === ref.slice(slash + 1));
+    return model?.input?.includes('image') === true;
+  });
+
+  const executorKnownBuiltin = $derived.by(() => {
+    const ref = injectModelRef;
+    if (ref === null) return false;
+    const slash = ref.indexOf('/');
+    if (slash <= 0) return false;
+    return settingsStore.providers.some((candidate) => candidate.id === ref.slice(0, slash));
+  });
+
+  /** 注入坞点 +：预检（纯函数在 composer-inject.ts）决定弹文件框还是配置卡。 */
   function pickFiles(): void {
-    if (!canAttachFiles || injectMode) return;
+    if (!canAttachFiles) return;
+    const action = injectAttachAction({
+      injectMode,
+      conversationId: injectConversationId,
+      executorKnownBuiltin,
+      executorAcceptsImages,
+      multimodalReady: settingsStore.isCapabilityReady('multimodal'),
+    });
+    if (action === 'setup') {
+      onRequestAttachSetup?.();
+      return;
+    }
+    if (action === 'blocked') return;
     fileInputEl?.click();
   }
 
@@ -2049,14 +2135,23 @@
   }
 
   function uploadFiles(files: FileList | File[]): void {
-    // 任务直注不收附件：粘贴 / 拖入也不往会话上传管道里塞。
-    if (injectMode) return;
+    // D115 附件直注：粘贴 / 拖入同样上传到任务所在会话（归属会话由 composerDrafts
+    // 记住）；会话上下文缺失时保持「不收附件」的兜底。
+    if (injectMode) {
+      if (injectConversationId === null) return;
+      composerDrafts.uploadFiles(taskDraftKey(injectTaskId ?? ''), files, injectConversationId);
+      return;
+    }
     const conversationId = chatSession.view?.conversation.id;
     if (!conversationId) return;
     composerDrafts.uploadFiles(conversationId, files);
   }
 
   function removePendingUpload(key: string): void {
+    if (injectMode) {
+      void composerDrafts.removeUpload(taskDraftKey(injectTaskId ?? ''), key);
+      return;
+    }
     const conversationId = chatSession.view?.conversation.id;
     if (!conversationId) return;
     void composerDrafts.removeUpload(conversationId, key);
@@ -2242,23 +2337,30 @@
               </div>
             {/if}
             {#snippet attachButton()}
-              <!-- 任务直注：`tasks.inject` 只收文本，附件无处可放。键保留（用户要求 + 键
-                 不消失），但禁用并说明原因，避免选中文件后才失败。 -->
+              <!-- 任务直注（D115 附件直注）：+ 键与对话同一入口——附件随注入直发
+                 （图片进视觉通道）。预检（执行模型无视觉且未配看图模型）不过时
+                 不弹文件框，交宿主弹「看图模型」配置卡；会话上下文缺失才禁用。 -->
               <Button
                 variant="ghost"
                 size="icon"
                 class="size-8 shrink-0 rounded-full border-border text-muted-foreground hover:text-foreground {canAttachFiles &&
-                !injectMode
+                (injectMode ? canInjectAttach : true)
                   ? ''
                   : 'opacity-50'}"
                 onclick={pickFiles}
-                disabled={readOnly || injectMode}
-                aria-disabled={readOnly || injectMode ? undefined : !canAttachFiles}
-                title={injectMode
-                  ? t('task.run.injectAttachUnsupported')
-                  : canAttachFiles
-                    ? t('composer.attach')
-                    : t('settings.desktopOnly')}
+                disabled={readOnly || (injectMode ? !canInjectAttach : false)}
+                aria-disabled={
+                  readOnly || (injectMode ? !canInjectAttach : false)
+                    ? undefined
+                    : !canAttachFiles
+                }
+                title={
+                  !canAttachFiles
+                    ? t('settings.desktopOnly')
+                    : injectMode && !canInjectAttach
+                      ? t('task.run.injectAttachUnsupported')
+                      : t('composer.attach')
+                }
                 aria-label={t('composer.attach')}
                 data-testid="composer-attach"
               >

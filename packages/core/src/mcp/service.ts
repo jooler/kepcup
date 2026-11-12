@@ -31,6 +31,7 @@ import type { Clock } from '../infra/clock.js';
 import type { SecretsService } from '../domain/secrets.js';
 import type { SettingsService } from '../domain/settings.js';
 import { classifyRiskDetailed, type ToolRiskDetail } from './risk.js';
+import type { McpHeaderValueNormalizer } from './header-scheme.js';
 import { AppAuthRequiredError, findAppAuthRequiredError } from '../apps/auth/errors.js';
 import {
   customConnectionId,
@@ -222,10 +223,12 @@ export function enabledServers(servers: McpServer[]): McpServer[] {
  * 「应用级 enabled ∩ Bot 选中」——Bot 未勾选的 server 不暴露。
  *
  * P2 注入模型（`extraPluginIds` = 有效启用集，**必传**——P4 收口去掉 undefined=不过滤
- * 的旧口径）：`source.kind === 'plugin'` 与 P4-M2 的 `source.kind === 'instance'` 的
- * server 按「应用级 enabled ∧ 其 `pluginId` ∈ 启用集」判定——不要求出现在
- * `selectedIds`（插件 server 的历史勾选读时忽略）；其他 server（手动 / MCPB 独立安装）
- * 维持 `selectedIds` 子集勾选不变。
+ * 的旧口径）：`source.kind === 'plugin'` 的 server 按「应用级 enabled ∧ 其 `pluginId` ∈
+ * 启用集」判定——不要求出现在 `selectedIds`（插件 server 的历史勾选读时忽略）；
+ * P4-M2 的 `source.kind === 'instance'`（实例模版落地的 server）在插件启用集之上
+ * **还要求** `selectedIds` 勾选——实例是插件卡里逐个「授权给本 Bot」的细选单位
+ * （Bot 详情插件卡展开区的勾选，写入 `mcp_server_ids`），与 mail/im 的账号绑定同语义；
+ * 其他 server（手动 / MCPB 独立安装）维持 `selectedIds` 子集勾选不变。
  */
 export function serversForBot(
   servers: McpServer[],
@@ -234,10 +237,11 @@ export function serversForBot(
 ): McpServer[] {
   const selected = new Set(selectedIds);
   return enabledServers(servers).filter((server) => {
-    // P2: a plugin-contributed server is gated by the effective plugin set; P4-M2
-    // instance-source servers follow the same gate via their owning plugin.
-    if (server.source?.kind === 'plugin' || server.source?.kind === 'instance') {
+    if (server.source?.kind === 'plugin') {
       return extraPluginIds.has(server.source.pluginId);
+    }
+    if (server.source?.kind === 'instance') {
+      return extraPluginIds.has(server.source.pluginId) && selected.has(server.id);
     }
     return selected.has(server.id);
   });
@@ -279,6 +283,11 @@ export class McpService {
   #connectionSource: McpConnectionSource | null = null;
   /** 本机连接：给这类 server 的 HTTP 传输换上带 SSRF 守卫的 fetch（见 {@link attachHttpFetch}）。 */
   #httpFetchFor: ((server: McpServer) => McpFetch | undefined) | null = null;
+  /**
+   * 发送侧 header 归一化（见 {@link attachHeaderNormalizer}）：只对插件清单声明了凭据方案的
+   * header 生效（例如腾讯文档的 `Authorization: scheme: 'bearer'`），缺省 = 不做任何改写。
+   */
+  #headerNormalizer: McpHeaderValueNormalizer | null = null;
   /** 最近见到的 server 名（连接行删除后 `closed` 事件仍能带上名字）。 */
   readonly #serverNames = new Map<string, string>();
 
@@ -324,6 +333,15 @@ export class McpService {
   /** D73 P1：接入目录连接来源（`start.ts`，在连接应用服务构造后）。 */
   attachConnections(source: McpConnectionSource): void {
     this.#connectionSource = source;
+  }
+
+  /**
+   * 插件声明的 header 凭据方案（`start.ts` 在插件注册表构造后接上，见
+   * `mcp/header-scheme.ts`）：链接前对每个 header 值过一遍，只有清单里声明了 `scheme` 的
+   * header 会被改写（例如自动补 `Bearer `），其余原样发送。
+   */
+  attachHeaderNormalizer(normalizer: McpHeaderValueNormalizer): void {
+    this.#headerNormalizer = normalizer;
   }
 
   /** `settings.mcpServers`（仅用户配置的自定义 server）。 */
@@ -410,6 +428,15 @@ export class McpService {
     secretValues?: McpSecretOverrides | undefined,
   ): Promise<McpTestResult> {
     const missingSecrets = this.missingSecrets(server, secretValues);
+    if (missingSecrets.length > 0) {
+      // R2：缺凭据在本地判定，不发请求——否则占位串会被当成 header / env 发到服务端，
+      // 服务端只会回 401，和「token 无效」无法区分。
+      return {
+        tools: [],
+        missingSecrets,
+        message: this.#missingSecretMessage(server, missingSecrets),
+      };
+    }
     if (server.auth === 'oauth') {
       // 已存的令牌只属于已保存的那个 server（按 id）且 URL / 认证方式没变：`mcp.test` 的入参来自
       // 渲染进程的表单草稿，草稿里的 URL 若与已保存的不同，绝不能带着该 server 的令牌去访问它
@@ -479,7 +506,11 @@ export class McpService {
     if (!(error instanceof McpHttpError)) return '';
     if (error.status === 401) {
       if (server.auth === 'oauth') return '请在设置中连接该应用';
-      return '服务端要求认证：请在「请求头（密钥）」添加名称 Authorization，值为 Bearer <token>（需带 Bearer 前缀）';
+      if (server.source?.kind === 'instance') {
+        // 插件工具服务：凭据方案（如 Bearer 前缀）由插件负责，401 只可能是凭据本身不对。
+        return '服务端拒绝了凭据：请在工具服务里重新填写凭据（前缀由插件自动处理）；若仍然 401，通常是凭据已失效、已被重置或不属于该空间';
+      }
+      return '服务端要求认证：请在「请求头（密钥）」添加名称 Authorization，值为服务商要求的完整值——要 Bearer 前缀就连前缀一起写，如 `Bearer <token>`（Notion 等服务商要求前缀；插件工具服务由插件自动补）';
     }
     if (error.status !== 404 && error.status !== 405) return '';
     if (server.transport === 'http') {
@@ -868,6 +899,23 @@ export class McpService {
   }
 
   async #connect(server: McpServer, countFailure: () => boolean): Promise<ConnectionState> {
+    // R2：缺凭据是「用户还没填」，不是连接失败：本地直接报错、不发请求、不计入重连预算，
+    // 并把原因发到状态事件（设置页 / 日志可见）。
+    const missingSecrets = this.missingSecrets(server);
+    if (missingSecrets.length > 0) {
+      const detail = this.#missingSecretMessage(server, missingSecrets);
+      this.#deps.logger.warn(
+        { serverId: server.id, serverName: server.name, missingSecrets },
+        'mcp server credentials missing; not connecting',
+      );
+      this.#deps.statusSink.emit({
+        serverId: server.id,
+        serverName: server.name,
+        status: 'needs_auth',
+        detail,
+      });
+      throw new AppError('MCP_SECRET_MISSING', detail);
+    }
     const existing = this.#connections.get(server.id);
     existing?.offNotification?.();
     this.#connections.delete(server.id);
@@ -893,6 +941,16 @@ export class McpService {
       await this.#connectClient(client, server);
     } catch (error) {
       await client.close().catch(() => {});
+      // 凭据在解析期间被清掉（防御）：按缺凭据处理，不计数、不停用。
+      if (error instanceof AppError && error.code === 'MCP_SECRET_MISSING') {
+        this.#deps.statusSink.emit({
+          serverId: server.id,
+          serverName: server.name,
+          status: 'needs_auth',
+          detail: error.message,
+        });
+        throw error;
+      }
       // D73：授权错误（含被包装的）不是连接失败——不计数、不发 failed、不停用；
       // 发 needs_auth 状态并原样重抛，让调用方走“需要重新连接”的路径。
       const authError = this.#authFailureOf(server, error);
@@ -905,6 +963,12 @@ export class McpService {
       if (counted) this.#failures.set(server.id, attempts);
       const hint = this.#endpointHint(server, error);
       const detail = `${error instanceof Error ? error.message : String(error)}${hint !== '' ? `（${hint}）` : ''}`;
+      // R1：每次连接失败都落一条带 HTTP 状态码 / 错误体（来自 McpHttpError）的日志，便于排障。
+      // detail 只来自服务端响应与本地提示，不含请求头 / token。
+      this.#deps.logger.warn(
+        { serverId: server.id, serverName: server.name, detail, attempts: failures },
+        'mcp server connect failed',
+      );
       if (counted && attempts >= MCP_RECONNECT_MAX) {
         this.#deps.statusSink.emit({
           serverId: server.id,
@@ -962,6 +1026,11 @@ export class McpService {
     secretValues?: McpSecretOverrides | undefined,
   ): Promise<void> {
     const guardedFetch = server.transport === 'http' ? this.#httpFetchFor?.(server) : undefined;
+    // 插件声明的 header 方案（如 Bearer 前缀）在组头时归一化；stdio 没有 header。
+    const headers =
+      server.transport === 'stdio'
+        ? undefined
+        : await this.#resolveHeaderSecrets(server, secretValues);
     const transport =
       server.transport === 'stdio'
         ? new StdioTransport({
@@ -972,21 +1041,11 @@ export class McpService {
         : server.transport === 'sse'
           ? new SseTransport({
               url: server.url ?? '',
-              headers: this.#resolveRecordSecrets(
-                server.id,
-                server.headers,
-                'header',
-                secretValues,
-              ),
+              headers,
             })
           : new StreamableHttpTransport({
               url: server.url ?? '',
-              headers: this.#resolveRecordSecrets(
-                server.id,
-                server.headers,
-                'header',
-                secretValues,
-              ),
+              headers,
               // D73：OAuth 令牌由运行时提供者供给（只读 Vault + 主动刷新；从不自行授权）。
               ...(server.auth === 'oauth' ? { authProvider: this.#authProviderFor(server) } : {}),
               ...(guardedFetch !== undefined ? { fetch: guardedFetch } : {}),
@@ -1068,7 +1127,7 @@ export class McpService {
   /**
    * 占位符解析：`secret:env:<name>` / `secret:header:<name>` → 优先取测试
    * 传入的覆盖值（草稿未保存），否则查 secrets 表 `mcp:{serverId}:env|header:{name}`。
-   * 未找到的占位符保留原样（连接侧会报错，设置页可见），绝不明文落日志。
+   * 未找到直接报缺凭据（R2）：绝不把占位串当值发出去，也绝不明文落日志。
    */
   #resolveSecretValues(
     serverId: string,
@@ -1093,6 +1152,24 @@ export class McpService {
     return resolved;
   }
 
+  /**
+   * http / sse 请求头：先解占位符，再按插件清单声明的方案归一化（`attachHeaderNormalizer`；
+   * 未接入或未声明时为恒等）。只有声明了 `scheme` 的 header 会变，其余值原样发送。
+   */
+  async #resolveHeaderSecrets(
+    server: McpServer,
+    secretValues?: McpSecretOverrides | undefined,
+  ): Promise<Record<string, string> | undefined> {
+    const resolved = this.#resolveRecordSecrets(server.id, server.headers, 'header', secretValues);
+    const normalize = this.#headerNormalizer;
+    if (resolved === undefined || normalize === null) return resolved;
+    const normalized: Record<string, string> = {};
+    for (const [name, value] of Object.entries(resolved)) {
+      normalized[name] = await normalize(server, name, value);
+    }
+    return normalized;
+  }
+
   #resolveSecretValue(
     serverId: string,
     value: string,
@@ -1102,10 +1179,29 @@ export class McpService {
     const prefix = kind === 'env' ? 'secret:env:' : 'secret:header:';
     if (!value.startsWith(prefix)) return value;
     const name = value.slice(prefix.length);
-    return (
+    const found =
       secretValues?.[kind]?.[name] ??
       this.#deps.secrets.getValue(`mcp:${serverId}:${kind}:${name}`) ??
-      value
-    );
+      undefined;
+    if (found === undefined || found === '') {
+      throw new AppError(
+        'MCP_SECRET_MISSING',
+        `缺少凭据：${name} 尚未填写，请在扩展中心 → 已安装 → 该工具服务 →「管理」里填写后重试`,
+      );
+    }
+    return found;
+  }
+
+  /** 缺凭据的一句话说明（设置页 / 状态事件 / 错误共用）。missing 项形如 `secret:header:Authorization`。 */
+  #missingSecretMessage(server: McpServer, missing: readonly string[]): string {
+    const names = [
+      ...new Set(
+        missing.map((item) => {
+          const match = /^secret:(?:env|header):(.+)$/.exec(item);
+          return match?.[1] ?? item;
+        }),
+      ),
+    ];
+    return `「${server.name}」缺少凭据：${names.join('、')} 尚未填写，请在扩展中心 → 已安装 → ${server.name} →「管理」里填写后重试`;
   }
 }

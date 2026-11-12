@@ -442,6 +442,8 @@ export function providerInfoList(
       name: m.name,
       contextWindow: Number(m.contextWindow ?? 0),
       capabilities: ['chat'] as ModelCapability[],
+      // pi meta 的输入种类（含 'image' = 支持视觉）：渲染层附件直注预检用。
+      input: m.input,
     }));
     if (chatModels.length === 0) continue;
     infos.push({
@@ -465,6 +467,7 @@ export function providerInfoList(
             name: m.name,
             contextWindow: Number(m.contextWindow ?? 0),
             capabilities: ['chat'] as ModelCapability[],
+            input: m.input,
           }))
         : [];
       if (chatModels.length === 0) continue;
@@ -491,6 +494,7 @@ export function providerInfoList(
         name: m.name ?? m.id,
         contextWindow: m.contextWindow,
         capabilities: [...m.capabilities],
+        ...(m.input !== undefined ? { input: m.input } : {}),
       })),
       ...keyInfo(instance.id),
     });

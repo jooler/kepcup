@@ -1,6 +1,6 @@
 import type { AskUserValues, Run, TaskView } from '@kepcup/shared';
 import { core } from '$lib/rpc/client.svelte';
-import { applyFetchedViews, pruneTaskViewsMany } from '$lib/features/tasks/task-view';
+import { applyFetchedViews, isActiveTask, pruneTaskViewsMany } from '$lib/features/tasks/task-view';
 
 /**
  * D75 任务（docs/design/30-supervisor-and-tasks.md §4.3 / §6.3）的渲染端缓存：
@@ -43,9 +43,49 @@ class TasksState {
     this.#sawReady = core.coreStatus?.status === 'ready';
     core.onEvent('task.updated', (payload) => {
       const { task } = payload as { task: TaskView };
+      const current = this.byId[task.taskId];
+      // 终态不可逆：忽略把已结算视图打回进行中的过期推送。
+      if (current !== undefined && !isActiveTask(current) && isActiveTask(task)) return;
       this.#pushes += 1;
       this.#pushedAt.set(task.taskId, this.#pushes);
       this.byId = { ...this.byId, [task.taskId]: task };
+    });
+    // 终态 run.status 的兜底：结算视图（含执行报告）再拉一次。正常路径
+    // 已由 task.updated 覆盖；详情页开着时若那次推送没落到缓存，卡片会
+    // 一直停在「进行中」、报告出不来（v0.5.12 注入坞 e2e）。
+    core.onEvent('run.status', (payload) => {
+      const run = (payload as { run?: { id?: string; loopType?: string; status?: string } }).run;
+      if (run?.loopType !== 'task' || typeof run.id !== 'string') return;
+      if (
+        run.status !== 'completed' &&
+        run.status !== 'failed' &&
+        run.status !== 'cancelled' &&
+        run.status !== 'interrupted'
+      ) {
+        return;
+      }
+      void this.#reload(run.id);
+    });
+    // 结算同栈里的 task.updated / run.status 可能到不了渲染端，但随后的
+    // 唤醒回复会推 message.created / conversation.updated（侧栏已有
+    // 「任务做完了」）。此时再拉一次。
+    const reloadActiveIn = (conversationId: string | undefined): void => {
+      if (typeof conversationId !== 'string') return;
+      for (const [taskId, view] of Object.entries(this.byId)) {
+        if (
+          (view.conversationId === conversationId || view.userConversationId === conversationId) &&
+          isActiveTask(view)
+        ) {
+          void this.#reload(taskId);
+        }
+      }
+    };
+    core.onEvent('message.created', (payload) => {
+      const data = payload as { conversationId?: string; message?: { conversationId?: string } };
+      reloadActiveIn(data.conversationId ?? data.message?.conversationId);
+    });
+    core.onEvent('conversation.updated', (payload) => {
+      reloadActiveIn((payload as { conversation?: { id?: string } }).conversation?.id);
     });
     // The core came back (restart / port rebind, 审查 L3): pushes sent while
     // disconnected are lost — reload the cached views.
@@ -54,6 +94,64 @@ class TasksState {
       if (this.#sawReady) void this.refresh();
       this.#sawReady = true;
     });
+  }
+
+  /**
+   * 按 id 重拉一张任务视图。详情页在仍显示「进行中」时也会轮询调用：
+   * `ensure` 对已缓存的视图是空操作，不能用来接结算后的报告。
+   */
+  reload(taskId: string): void {
+    if (taskId.length === 0) return;
+    this.start();
+    void this.#reload(taskId);
+  }
+
+  /**
+   * 详情页已看到唤醒回复、但 tasks.get 仍返回进行中时的兜底：用时间线上的
+   * 终态原文补一份结算视图，让报告卡出现、注入坞收起（v0.5.12 e2e）。
+   * 若正在进行中的任务随后真的结算，正常 push / reload 会覆盖。
+   */
+  noteTerminalFromTranscript(taskId: string, text: string): void {
+    const trimmed = text.trim();
+    if (taskId.length === 0 || trimmed.length === 0) return;
+    this.start();
+    void this.#reload(taskId).then(() => {
+      const current = this.byId[taskId];
+      if (current === undefined || !isActiveTask(current)) return;
+      this.byId = {
+        ...this.byId,
+        [taskId]: {
+          ...current,
+          state: 'completed',
+          status: 'completed',
+          result: { text: trimmed, status: 'completed' },
+          queueReason: null,
+        },
+      };
+    });
+  }
+
+  /** 终态 run.status / 详情页轮询的兜底重拉；有更新的 push 则不覆盖，除非拉到的是终态而缓存仍是进行中。 */
+  async #reload(taskId: string): Promise<void> {
+    const since = this.#pushes;
+    try {
+      const result = (await core.call('tasks.get', { taskId })) as { task: TaskView | null };
+      if (result.task === null) return;
+      const cached = this.byId[taskId];
+      // 结算后仍可能有在途的运行中 task.updated 把 completed 的 fetch 按
+      // newer-wins 丢掉，详情页会一直停在「进行中」、报告出不来（v0.5.12 e2e）。
+      if (cached !== undefined && isActiveTask(cached) && !isActiveTask(result.task)) {
+        this.byId = { ...this.byId, [taskId]: result.task };
+        return;
+      }
+      // 缓存已是终态时，不要被仍返回进行中的 tasks.get（或随后的轮询）打回去。
+      if (cached !== undefined && !isActiveTask(cached) && isActiveTask(result.task)) {
+        return;
+      }
+      this.#apply([result.task], since);
+    } catch {
+      // The next task.updated push updates it.
+    }
   }
 
   /** Applies fetched views unless a push for the task arrived after `since`. */
@@ -237,13 +335,21 @@ class TasksState {
   }
 
   /**
-   * D115 任务直注（docs/design/56 §1）：用户在任务详情页注入坞追加指令，直达
-   * `TaskHost.injectById`（复用 inject_task 语义）。返回 `delivery`：
+   * D115 任务直注（docs/design/56 §1）：用户在任务详情页注入坞追加指令（可直带
+   * 附件），直达 `TaskHost.injectById`（复用 inject_task 语义）。返回 `delivery`：
    * `delivered`（时间线出现 steer 气泡 / 未启动并入简报）或 `queued`（外部
    * Agent 不支持中途插入，任务结束后生效）。
    */
-  async inject(taskId: string, text: string): Promise<'delivered' | 'queued'> {
-    const result = (await core.call('tasks.inject', { taskId, text })) as {
+  async inject(
+    taskId: string,
+    text: string,
+    attachmentIds?: string[],
+  ): Promise<'delivered' | 'queued'> {
+    const result = (await core.call('tasks.inject', {
+      taskId,
+      text,
+      ...(attachmentIds !== undefined && attachmentIds.length > 0 ? { attachmentIds } : {}),
+    })) as {
       delivery: 'delivered' | 'queued';
     };
     return result.delivery;

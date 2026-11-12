@@ -315,6 +315,10 @@ import {
   stickieSchema,
 } from '../domain/stickies.js';
 import {
+  CONVERSATION_NOTE_TEXT_MAX_CHARS,
+  conversationNoteSchema,
+} from '../domain/conversation-notes.js';
+import {
   shareConsumeInputSchema,
   shareConsumeOutputSchema,
   shareFailedDiscardInputSchema,
@@ -1580,10 +1584,17 @@ export const tasksAnswerInputSchema = z.object({
  * 对话轮的 `inject_task` 完全一致（等问即回答 / 运行中 steer / 未启动入简报 /
  * 外部 Agent `queued`），见 docs/design/56 §1。
  */
-export const tasksInjectInputSchema = z.object({
-  taskId: z.string().min(1),
-  text: z.string().min(1).max(TASK_INSTRUCTION_MAX_CHARS),
-});
+export const tasksInjectInputSchema = z
+  .object({
+    taskId: z.string().min(1),
+    /** 指令文本；纯附件注入（只发图片/文件）时可为空（attachments 不可为空）。 */
+    text: z.string().max(TASK_INSTRUCTION_MAX_CHARS).default(''),
+    /** 随注入直发的附件（attachments.upload 先行上传到任务所在会话）：core 校验归属后挂到注入条目。 */
+    attachmentIds: z.array(z.string().min(1)).max(8).optional(),
+  })
+  .refine((input) => input.text.trim().length > 0 || (input.attachmentIds?.length ?? 0) > 0, {
+    message: 'text 与 attachmentIds 至少一项非空',
+  });
 export const tasksInjectOutputSchema = z.object({
   delivery: z.enum(['delivered', 'queued']),
 });
@@ -2158,6 +2169,24 @@ export const stickiesUpdateInputSchema = z.object({
 export const stickiesUpdateOutputSchema = z.object({ stickie: stickieSchema });
 export const stickiesDeleteInputSchema = z.object({ id: z.string().min(1) });
 export const stickiesDeleteOutputSchema = okOutputSchema;
+
+// --- conversation notes（右栏 Bot 详情「便签」tab，main.db conversation_notes） ---
+export const notesListInputSchema = z.object({ conversationId: z.string().min(1) });
+export const notesListOutputSchema = z.object({ notes: z.array(conversationNoteSchema) });
+export const notesCreateInputSchema = z.object({
+  /** 渲染层新建便签时已生成的 id；缺省时由 core 生成。 */
+  id: z.string().min(1).optional(),
+  conversationId: z.string().min(1),
+  text: z.string().min(1).max(CONVERSATION_NOTE_TEXT_MAX_CHARS),
+});
+export const notesCreateOutputSchema = z.object({ note: conversationNoteSchema });
+export const notesUpdateInputSchema = z.object({
+  id: z.string().min(1),
+  text: z.string().min(1).max(CONVERSATION_NOTE_TEXT_MAX_CHARS),
+});
+export const notesUpdateOutputSchema = z.object({ note: conversationNoteSchema });
+export const notesDeleteInputSchema = z.object({ id: z.string().min(1) });
+export const notesDeleteOutputSchema = okOutputSchema;
 
 // --- sidebar（左栏对话分组，main.db sidebar_sections / conversation_sidebar） --------
 /** 左栏分组的完整投影；每次写入后原样返回，渲染层不猜服务端结果。 */
@@ -3128,6 +3157,10 @@ export const rpcMethodSchemas = {
   'stickies.create': { input: stickiesCreateInputSchema, output: stickiesCreateOutputSchema },
   'stickies.update': { input: stickiesUpdateInputSchema, output: stickiesUpdateOutputSchema },
   'stickies.delete': { input: stickiesDeleteInputSchema, output: stickiesDeleteOutputSchema },
+  'notes.list': { input: notesListInputSchema, output: notesListOutputSchema },
+  'notes.create': { input: notesCreateInputSchema, output: notesCreateOutputSchema },
+  'notes.update': { input: notesUpdateInputSchema, output: notesUpdateOutputSchema },
+  'notes.delete': { input: notesDeleteInputSchema, output: notesDeleteOutputSchema },
   // 左栏对话分组（design/12「对话分组」）：读 + 语义化写入，写入后回全量投影。
   'sidebar.get': { input: sidebarGetInputSchema, output: sidebarLayoutOutputSchema },
   'sidebar.sections.create': {
@@ -3749,6 +3782,10 @@ const APP_METHODS = [
   'stickies.create',
   'stickies.update',
   'stickies.delete',
+  'notes.list',
+  'notes.create',
+  'notes.update',
+  'notes.delete',
   'mail.accounts.list',
   'mail.accounts.get',
   'mail.accounts.update',

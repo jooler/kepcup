@@ -218,7 +218,10 @@ export class ChatSession {
     // message load or unarchive, and opens the board instead.
     if (conversation.type === 'card') {
       if (options.afterResolved?.(conversation) === 'stop') return false;
-    } else if (isArchivedConversation(conversation)) {
+    } else if (this.#foreground && isArchivedConversation(conversation)) {
+      // 只有主对话会话把归档会话恢复进侧栏（与构造器的归属约束同理）。后台 /
+      // 弹层 session 是纯取数——任务详情页的归属会话 session 打开用户归档的
+      // 私聊时，静默 unarchive 会把它悄悄顶回左栏。归档会话照常可读。
       const restored = (await core.call('conversations.unarchive', { id })) as {
         conversation: ConversationView;
       };

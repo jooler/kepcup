@@ -484,6 +484,11 @@ export interface ProviderInfo {
     contextWindow: number;
     /** 能力声明；对话下拉只取含 `chat` 的模型，其余能力按槽位路由。 */
     capabilities: ModelCapability[];
+    /**
+     * pi 模型的输入种类（`['text','image',…]`，含 'image' = 支持视觉）。
+     * 内置目录来自 pi meta；自定义 / 厂商实例来自模型声明的 input；缺省 = 未知。
+     */
+    input?: readonly string[];
   }>;
   /** 存在启用中的 Key（全部停用视为无可用 Key）。明文永不出 core。 */
   hasKey: boolean;
@@ -3842,12 +3847,27 @@ export const taskChangesSchema = z.discriminatedUnion('kind', [
 ]);
 export type TaskChanges = z.infer<typeof taskChangesSchema>;
 
+/**
+ * 注入直带附件的元数据（D115 附件直注）：随引擎 steer payload 与 TaskView
+ * 注入条目走的最小形状——渲染 chip 与预览（attachments.get 按 id 取字节）
+ * 够用，不携带路径等存储细节。
+ */
+export const steerAttachmentSchema = z.object({
+  id: z.string(),
+  fileName: z.string(),
+  mime: z.string(),
+  size: z.number(),
+});
+export type SteerAttachment = z.infer<typeof steerAttachmentSchema>;
+
 /** One `inject_task` line of the card (§4.3), incl. later delivered → queued downgrades. */
 export const taskInjectViewSchema = z.object({
   messageId: z.string(),
   text: z.string(),
   delivery: z.enum(['delivered', 'queued']),
   at: z.number(),
+  /** 注入直带的附件（任务卡 chip 展示）；缺省 = 无。 */
+  attachments: z.array(steerAttachmentSchema).optional(),
 });
 
 /**
@@ -3866,6 +3886,13 @@ export const taskViewSchema = z.object({
   taskId: z.string(),
   botId: z.string().nullable(),
   conversationId: z.string().nullable(),
+  /**
+   * 任务的用户操作卡（审批卡 / ask_user 提问卡）归属的会话（27 号文档 §3.7
+   * 执行归属映射）：普通任务 = conversationId；委派执行的任务 = 发起方 A 与
+   * 用户的私聊（卡片经同一 resolver 落在那里，任务详情页据此取待审批条与
+   * 提问条）。缺省 / conversationId 为 null 时同为 null。
+   */
+  userConversationId: z.string().nullable().optional(),
   title: z.string(),
   state: taskStateSchema,
   status: runStatusSchema,
@@ -3910,6 +3937,13 @@ export const taskViewSchema = z.object({
   continuedByTaskId: z.string().nullable(),
   /** D91：任务声明挂载的外部能力 id（`start_task.capabilities`）；缺省 = 未声明。 */
   capabilities: z.array(z.string()).optional(),
+  /**
+   * 执行器模型 ref（`{provider}/{model}`，run 行 model；排队中的任务回退 Bot
+   * 当前模型 ref）。外部 Agent 任务的 ref 形如 `agent:{id}/…`——渲染层查不到
+   * 已配置厂商即视为外部引擎，跳过图像输入预检；bot 未配模型时为 null。
+   * 渲染层据此查 ProviderInfo.models[].input 作附件直注的预检。
+   */
+  model: z.string().nullable().optional(),
   /** 机器可读的中断原因（Run.errorReason），如 `permission_revoked`（W3）。 */
   errorReason: z.string().nullable().optional(),
   /**

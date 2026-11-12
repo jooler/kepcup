@@ -174,3 +174,94 @@ describe('mcp materializer compensation & shape switches (P4-M2 review)', () => 
     expect(servers()).toHaveLength(1);
   });
 });
+
+/**
+ * 凭据方案（`scheme: 'bearer'`，腾讯文档 MCP）：保存侧只存裸凭据——用户可能自己粘了
+ * `Bearer `，发送侧统一补前缀，存储里绝不能出现 `Bearer Bearer x`。只有声明了方案的
+ * header 被 strip，同一 server 的其他 header 与未声明的模版完全不变。
+ */
+describe('mcp materializer header scheme (bearer)', () => {
+  const BEARER_TEMPLATE = {
+    kind: 'http' as const,
+    id: 'docs',
+    name: '文档服务',
+    url: 'https://docs.example.com/openapi/mcp',
+    auth: 'headers' as const,
+    headers: [
+      { name: 'Authorization', key: 'token', scheme: 'bearer' as const },
+      { name: 'X-Api-Key', key: 'apiKey' },
+    ],
+  };
+
+  function ctxWithStoredSecret(
+    manifest: PluginManifest,
+    instanceId: string,
+    values: Record<string, PluginFieldValue>,
+    stored: Record<string, string> = {},
+  ) {
+    return {
+      ...ctxOf(manifest, instanceId, values),
+      readStoredSecret: (key: string) => stored[key] ?? null,
+    };
+  }
+
+  it('create：裸 token 原样存、带前缀（含大小写 / 空白变体）只存裸 token', async () => {
+    for (const [instanceId, input] of [
+      ['pli_bare', 'tok_abc123'],
+      ['pli_bearer', 'Bearer tok_abc123'],
+      ['pli_lower', 'bearer tok_abc123'],
+      ['pli_upper', '  BEARER \n tok_abc123  '],
+    ] as const) {
+      const { deps, secretStore } = makeDeps();
+      const materializer = createMcpMaterializer(deps);
+      await materializer.create(
+        ctxOf(manifestOf(BEARER_TEMPLATE), instanceId, { token: input, apiKey: 'key-1' }),
+      );
+      const secretName = `mcp:${serverIdOf(instanceId)}:header:Authorization`;
+      expect(secretStore.get(secretName)).toBe('tok_abc123');
+    }
+  });
+
+  it('同一 server 里未声明方案的 header（API key）保持整值原样，不被 strip', async () => {
+    const { deps, secretStore } = makeDeps();
+    const materializer = createMcpMaterializer(deps);
+    await materializer.create(
+      ctxOf(manifestOf(BEARER_TEMPLATE), 'pli_mixed', {
+        token: 'Bearer tok_abc123',
+        apiKey: 'Bearer not-a-bearer-header',
+      }),
+    );
+    const serverId = serverIdOf('pli_mixed');
+    expect(secretStore.get(`mcp:${serverId}:header:Authorization`)).toBe('tok_abc123');
+    expect(secretStore.get(`mcp:${serverId}:header:X-Api-Key`)).toBe('Bearer not-a-bearer-header');
+  });
+
+  it('模版未声明方案时行为不变（整值写入）', async () => {
+    const { deps, secretStore } = makeDeps();
+    const materializer = createMcpMaterializer(deps);
+    await materializer.create(ctxOf(manifestOf(VENDOR_TEMPLATE), 'pli_plain', { token: 'Bearer abc' }));
+    expect(secretStore.get(`mcp:${serverIdOf('pli_plain')}:header:Authorization`)).toBe('Bearer abc');
+  });
+
+  it('update：沿用已存 secret（旧记录带前缀）时顺带归一成裸 token', async () => {
+    const { deps, secretStore } = makeDeps();
+    const materializer = createMcpMaterializer(deps);
+    const manifest = manifestOf(BEARER_TEMPLATE);
+    const instanceId = 'pli_legacy';
+    await materializer.create(
+      ctxOf(manifest, instanceId, { token: 'tok_abc123', apiKey: 'key-1' }),
+    );
+    // 模拟旧版本写下的记录：secret 里带 `Bearer `，实例侧也存着同样带前缀的值。
+    const secretName = `mcp:${serverIdOf(instanceId)}:header:Authorization`;
+    secretStore.set(secretName, 'Bearer tok_abc123');
+    await materializer.update(
+      ctxWithStoredSecret(
+        manifest,
+        instanceId,
+        { apiKey: 'key-1' },
+        { token: 'Bearer tok_abc123', apiKey: 'key-1' },
+      ),
+    );
+    expect(secretStore.get(secretName)).toBe('tok_abc123');
+  });
+});

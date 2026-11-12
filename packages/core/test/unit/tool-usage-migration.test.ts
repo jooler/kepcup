@@ -6,6 +6,7 @@ import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
 import { closeDatabase, openDatabase, type SqliteDatabase } from '../../src/infra/db.js';
 import { migrationTargetVersion, runMigrations } from '../../src/infra/migrate.js';
 import { migrationsUrl } from '../../src/start.js';
+import { mainVersionsAfter } from '../support/migration-versions.js';
 
 /** 0073_tool_usage：按工具的任务上下文消耗表（纯新增），版本推进到目标。 */
 
@@ -76,8 +77,9 @@ describe('0073 tool_usage_ledger migration', () => {
     const db = openMainDb();
     try {
       runMigrations(db, migrationsUrl('main'));
-      // 回拨到 0072：新表摘除，既有账本行保留。
+      // 回拨到 0072：0073 之后新增的表摘除，既有账本行保留。
       db.exec('drop table tool_usage_ledger;');
+      db.exec('drop table conversation_notes;');
       db.pragma('user_version = 72');
       db.prepare(
         `insert into usage_ledger (id, run_id, bot_id, conversation_id, loop_type, provider, model,
@@ -87,8 +89,10 @@ describe('0073 tool_usage_ledger migration', () => {
       ).run();
 
       const applied = runMigrations(db, migrationsUrl('main'));
-      expect(applied.map((row) => row.version)).toEqual([73]);
-      expect(db.pragma('user_version', { simple: true })).toBe(73);
+      expect(applied.map((row) => row.version)).toEqual(mainVersionsAfter(72));
+      expect(db.pragma('user_version', { simple: true })).toBe(
+        migrationTargetVersion(migrationsUrl('main')),
+      );
       expect(db.prepare('select count(*) as n from usage_ledger').get()).toEqual({ n: 1 });
 
       db.prepare(

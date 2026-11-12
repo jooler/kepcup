@@ -311,7 +311,11 @@ function mcpInstanceFields(manifest: PluginManifest): PluginField[] {
       key: mcpHeaderFieldKey(header),
       type: 'string',
       title: header.name,
-      description: `${header.name} 请求头的值，按平台说明整值粘贴`,
+      // 声明了凭据方案（如 `scheme: 'bearer'`）的 header 由插件补前缀，用户只粘裸凭据。
+      description:
+        header.scheme === 'bearer'
+          ? `${header.name} 请求头的值：粘贴服务商发放的 token 即可，Bearer 前缀由插件自动补`
+          : `${header.name} 请求头的值，按服务商要求整值粘贴（要 Bearer 前缀就连前缀一起写，如 Bearer <token>）`,
       required: true,
       sensitive: true,
       multiple: false,

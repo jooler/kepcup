@@ -25,8 +25,32 @@
    *   plugins.inspect 后渲染同意面板，用户点 plugins.install / 不装了。
    * 确认 / 保存后 session.continueAfterSetup() 自动续跑（重试原 run 或冲掉保留的草稿）。
    */
-  let { requirement }: { requirement: SetupRequirement } = $props();
+  let {
+    requirement,
+    onDismiss,
+    onProceed,
+  }: {
+    requirement: SetupRequirement;
+    /** 任务详情页等无会话上下文的宿主：自带关闭承接（缺省走当前会话）。 */
+    onDismiss?: () => void;
+    /** 保存 / 继续的承接（缺省走当前会话的 continueAfterSetup）。 */
+    onProceed?: () => void;
+  } = $props();
+
+  // getChatSession 必须在组件初始化时调用（Svelte context 规则）：点
+  // 击回调里再取会抛 lifecycle_outside_component，关闭按钮无效果，
+  // runs.setupDismissed 也不会发出（v0.5.12 把取值挪到 onclick 后
+  // 本机连接 e2e 的「暂不设置」因此失活）。有 onDismiss 时仍在初始化
+  // 取一次（回落主会话），只是不用它。
   const session = getChatSession();
+
+  function dismiss(): void {
+    if (onDismiss !== undefined) {
+      onDismiss();
+      return;
+    }
+    session.dismissSetupCard();
+  }
 </script>
 
 <div
@@ -39,11 +63,11 @@
     class="absolute top-1.5 right-1.5 size-6 text-muted-foreground"
     aria-label={t('setupCard.dismiss')}
     title={t('setupCard.dismiss')}
-    onclick={() => session.dismissSetupCard()}
+    onclick={dismiss}
     data-testid="setup-card-dismiss"
   >
     <X class="size-3.5" aria-hidden="true" />
   </Button>
 
-  <SettingSetupBody {requirement} />
+  <SettingSetupBody {requirement} {onProceed} />
 </div>

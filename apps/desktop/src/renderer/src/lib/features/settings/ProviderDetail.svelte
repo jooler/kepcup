@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { FetchedProviderModel, ProviderApi, ProviderInstance, ProviderModel } from '@kepcup/shared';
+  import type { FetchedProviderModel, ProviderApi, ProviderInstance } from '@kepcup/shared';
   import { isCustomInstanceId, VENDOR_DESCRIPTORS } from '@kepcup/shared';
   import { t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
@@ -307,7 +307,7 @@
     editingModelId = null;
     modelDialogOpen = true;
   }
-  function openEditModel(model: ProviderModel): void {
+  function openEditModel(model: { id: string }): void {
     editingModelId = model.id;
     modelDialogOpen = true;
   }

@@ -49,6 +49,8 @@ export const ID_PREFIXES = {
   wat: 'wat_',
   /** 辅助阅读便签（main.db stickies）。 */
   stc: 'stc_',
+  /** 对话便签（main.db conversation_notes，右栏 Bot 详情「便签」tab）。 */
+  note: 'note_',
   /** Bot 自制交互组件（D81，main.db widgets）。 */
   wgt: 'wgt_',
   /** 组件制作（D87，草稿目录名 / craftId）。 */

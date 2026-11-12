@@ -101,8 +101,19 @@ export interface McpToolResolution {
    * 报为「暂时不可达」，而不是「没有工具」。
    */
   failed: string[];
+  /**
+   * R1：`failed` 里每个 server 的失败原因（HTTP 状态码 + 错误体摘要，已压成单行并限长）。
+   * 能力状态 / `capability_search` / 任务提示都拿它告诉用户「为什么没工具」。
+   */
+  failureDetails: Record<string, string>;
   /** 工具锁定拦下的工具（无锁定或全部已批准时为空数组）。 */
   locked: McpLockedServer[];
+}
+
+/** 失败原因摘要：单行、去多余空白、限长（来自服务端响应 / 本地错误，不含凭据）。 */
+export function failureDetailOf(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  return raw.replace(/\s+/g, ' ').trim().slice(0, 300);
 }
 
 /** 一个已解析的 MCP 工具：所属 server、原始定义、模型侧名字与构建时的决定。 */
@@ -142,6 +153,7 @@ export async function resolveMcpToolEntries(input: {
   const entries: McpToolEntry[] = [];
   const unavailable: McpUnavailableServer[] = [];
   const failed: string[] = [];
+  const failureDetails: Record<string, string> = {};
   const locked: McpLockedServer[] = [];
   const taken = new Set<string>();
   for (const server of servers) {
@@ -161,11 +173,13 @@ export async function resolveMcpToolEntries(input: {
         });
         continue;
       }
+      const detail = failureDetailOf(error);
       logger.warn(
-        { serverId: server.id, error: error instanceof Error ? error.message : String(error) },
+        { serverId: server.id, serverName: server.name, detail },
         'mcp server unavailable; skipping its tools',
       );
       failed.push(server.id);
+      failureDetails[server.id] = detail;
       continue;
     }
     if (input.toolFilter !== undefined) {
@@ -225,7 +239,7 @@ export async function resolveMcpToolEntries(input: {
       });
     }
   }
-  return { entries, unavailable, failed, locked };
+  return { entries, unavailable, failed, failureDetails, locked };
 }
 
 /**

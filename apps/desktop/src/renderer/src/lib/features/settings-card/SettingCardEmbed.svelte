@@ -16,6 +16,7 @@
   import ConnectAppPanel from '$lib/features/apps/ConnectAppPanel.svelte';
   import AppConnectionDetail from '$lib/features/apps/AppConnectionDetail.svelte';
   import McpSection from '$lib/features/settings/McpSection.svelte';
+  import McpInstanceCard from './McpInstanceCard.svelte';
   import BrowserProfilesSection from '$lib/features/settings/BrowserProfilesSection.svelte';
   import EnvironmentSection from '$lib/features/settings/EnvironmentSection.svelte';
   import SandboxSection from '$lib/features/settings/SandboxSection.svelte';
@@ -247,6 +248,8 @@
     onSaved={() => onSaved()}
     {onConflict}
   />
+{:else if item.card === 'mcp-instance' && botId !== null}
+  <McpInstanceCard {botId} {prefill} testid={`${testidPrefix}-mcp-instance`} onSaved={() => onSaved()} />
 {:else if item.card === 'browser-profiles'}
   <BrowserProfilesSection embedded {prefill} onSaved={() => onSaved()} />
 {:else if item.card === 'environment-toolchains'}

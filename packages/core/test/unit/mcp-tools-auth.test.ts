@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { McpServer, SetupRequirement } from '@kepcup/shared';
+import { AppError, type McpServer, type SetupRequirement } from '@kepcup/shared';
 
 import { AppAuthRequiredError } from '../../src/apps/auth/errors.js';
-import { buildCapabilityCatalog, markUnavailable } from '../../src/capabilities/catalog.js';
+import {
+  buildCapabilityCatalog,
+  markUnavailable,
+  markUnreachable,
+} from '../../src/capabilities/catalog.js';
 import { capabilitiesPromptBody } from '../../src/capabilities/prompt.js';
 import { buildSystemPrompt, buildAgentRunContext } from '../../src/agent/context/system-prompt.js';
 import { buildMcpTools, resolveMcpToolEntries } from '../../src/mcp/tools.js';
@@ -320,5 +324,51 @@ describe('app_request_connection tool', () => {
       }).map((t) => t.name);
       expect(withApps).toContain('app_request_connection');
     }
+  });
+});
+
+describe('connection failure visibility (R1)', () => {
+  it('resolveMcpToolEntries records the reason next to failed ids', async () => {
+    const ok = server('ok', 'Notion');
+    const broken = server('broken', '腾讯文档', 'none');
+    const mcp = {
+      listTools: async (s: McpServer) => {
+        if (s.id === 'broken') {
+          throw new AppError('MCP_SERVER_FAILED', 'HTTP 401 invalid or expired token');
+        }
+        return [ECHO_TOOL];
+      },
+    } as never;
+    const { failed, failureDetails } = await resolveMcpToolEntries({
+      servers: [ok, broken],
+      mcp,
+      logger: { warn() {} },
+    });
+    expect(failed).toEqual(['broken']);
+    expect(failureDetails.broken).toContain('HTTP 401');
+  });
+
+  it('markUnreachable puts the failure detail into the capability status instead of "no such capability"', () => {
+    const catalog = buildCapabilityCatalog({
+      connectedApps: { forBot: () => ({ servers: [], views: [] }), connectionStatus: () => null },
+      mcp: { serversForBot: () => [server('docs', '腾讯文档')] },
+      appConnectionIds: [],
+      mcpServerIds: ['docs'],
+    });
+    const body = capabilitiesPromptBody({
+      entries: markUnreachable(catalog.entries, ['docs'], {
+        docs: 'HTTP 401 invalid or expired token',
+      }),
+      surface: 'task',
+      hasDiscovery: false,
+    });
+    expect(body).toContain('- mcp:docs（腾讯文档）：暂时不可达：HTTP 401 invalid or expired token');
+    // 不再是「可用」：模型不会当成工具没挂上，也不会以为能力不存在。
+    expect(body).not.toContain('- mcp:docs（腾讯文档）：可用');
+    // 没有 detail 时也有兜底状态文本。
+    const fallback = markUnreachable(catalog.entries, ['docs']);
+    expect(fallback.find((entry) => entry.id === 'mcp:docs')?.statusText).toBe(
+      '暂时不可达，可稍后重试',
+    );
   });
 });
