@@ -6,16 +6,22 @@ import type { TaskView } from '@kepcup/shared';
  * taskId 并确保任务视图已加载，关闭时清空；空 id 不改变当前页面。
  */
 
-const { calls, getResult, injectResult } = vi.hoisted(() => ({
+const { calls, getResult, injectResult, eventHandlers } = vi.hoisted(() => ({
   calls: [] as Array<{ method: string; payload: Record<string, unknown> }>,
   getResult: { task: null as TaskView | null },
   injectResult: { delivery: 'delivered' as 'delivered' | 'queued' },
+  eventHandlers: {} as Record<string, Array<(payload: unknown) => void>>,
 }));
 
 vi.mock('$lib/rpc/client.svelte', () => ({
   core: {
     coreStatus: null,
-    onEvent: () => () => undefined,
+    onEvent: (event: string, handler: (payload: unknown) => void) => {
+      (eventHandlers[event] ??= []).push(handler);
+      return () => {
+        eventHandlers[event] = (eventHandlers[event] ?? []).filter((item) => item !== handler);
+      };
+    },
     call: async (method: string, payload: Record<string, unknown> = {}) => {
       calls.push({ method, payload });
       if (method === 'tasks.get') return getResult;
@@ -175,6 +181,35 @@ describe('tasks.inject（D115 任务直注，docs/design/56 §1）', () => {
     expect(calls.at(-1)).toEqual({
       method: 'tasks.inject',
       payload: { taskId: 'task_1', text: '纯文本' },
+    });
+  });
+});
+
+describe('终态 run.status 兜底刷新执行报告', () => {
+  beforeEach(() => {
+    calls.length = 0;
+    getResult.task = null;
+    tasks.byId = {};
+    tasks.closeDetail();
+  });
+
+  it('completed 的 run.status 会重拉任务视图（含 result），不长期停在进行中', async () => {
+    const running = taskView('task_steer');
+    tasks.byId = { task_steer: running };
+    // 注册监听：open / ensure 会 start()。
+    getResult.task = running;
+    tasks.openDetail('task_steer');
+    const completed: TaskView = {
+      ...taskView('task_steer', 'completed'),
+      result: { text: 'RESULT 直注完成', status: 'completed' },
+    };
+    getResult.task = completed;
+    for (const handler of eventHandlers['run.status'] ?? []) {
+      handler({ run: { id: 'task_steer', loopType: 'task', status: 'completed' } });
+    }
+    await vi.waitFor(() => {
+      expect(tasks.byId['task_steer']?.state).toBe('completed');
+      expect(tasks.byId['task_steer']?.result?.text).toBe('RESULT 直注完成');
     });
   });
 });

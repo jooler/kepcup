@@ -2302,6 +2302,10 @@ export class TaskHost implements TaskToolFacade {
     }
     this.#cleanup(updated, launched !== undefined);
     this.#afterTerminal(updated, entry);
+    // 结算是可见变化：直接推 task.updated（含 result 报告）。start.ts
+    // 的 run.status 钩子也会再推一次，幂等；不依赖钩子重入是否把嵌套
+    // 的 task.updated 送到渲染端。
+    this.publishUpdate(taskId);
     this.#pump();
     return updated;
   }

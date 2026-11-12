@@ -37,12 +37,19 @@
     onProceed?: () => void;
   } = $props();
 
+  // getChatSession 必须在组件初始化时调用（Svelte context 规则）：点
+  // 击回调里再取会抛 lifecycle_outside_component，关闭按钮无效果，
+  // runs.setupDismissed 也不会发出（v0.5.12 把取值挪到 onclick 后
+  // 本机连接 e2e 的「暂不设置」因此失活）。有 onDismiss 时仍在初始化
+  // 取一次（回落主会话），只是不用它。
+  const session = getChatSession();
+
   function dismiss(): void {
     if (onDismiss !== undefined) {
       onDismiss();
       return;
     }
-    getChatSession().dismissSetupCard();
+    session.dismissSetupCard();
   }
 </script>
 
