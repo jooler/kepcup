@@ -18,6 +18,7 @@ const PRESENT_KIND_ICON: Record<string, string> = {
   steps: '🪜',
   timeline: '🕘',
   compare: '⚖️',
+  report: '📄',
 };
 
 const PRESENT_KIND_LABEL: Record<string, string> = {
@@ -29,6 +30,7 @@ const PRESENT_KIND_LABEL: Record<string, string> = {
   steps: '步骤',
   timeline: '时间线',
   compare: '对比',
+  report: '报告',
 };
 
 /** 审批类卡片的标题（payload 在审批表里，消息本身只有 cardType）。 */
