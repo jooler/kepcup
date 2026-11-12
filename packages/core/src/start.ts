@@ -3135,16 +3135,24 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
               reasons.push('已添加账号，但未在插件卡片里勾选绑定到本 Bot');
             }
           }
-          // P4-M2：mcp 实例 = 工具服务，注入随插件启用集自动生效（无逐 Bot 勾选），
-          // 就绪判定只有「还没添加实例」一条；固定投影贡献（counts.mcp）无需此步。
+          // P4-M2：mcp 实例 = 工具服务，注入 = 插件启用 ∧ 本 Bot 在插件卡里勾选
+          // 授权（`mcp_server_ids`）；固定投影贡献（counts.mcp）随启用自动可用，无需此步。
           if (plugin.providesInstances.includes('mcp')) {
-            const serverCount = settings
+            const instanceServerIds = settings
               .get()
               .mcpServers.filter(
                 (server) =>
                   server.source?.kind === 'instance' && server.source.pluginId === id,
-              ).length;
-            if (serverCount === 0) reasons.push('尚未添加任何工具服务');
+              )
+              .map((server) => server.id);
+            if (instanceServerIds.length === 0) {
+              reasons.push('尚未添加任何工具服务');
+            } else {
+              const selected = new Set(bots.get(botId)?.profile.runtime.mcp_server_ids ?? []);
+              if (!instanceServerIds.some((serverId) => selected.has(serverId))) {
+                reasons.push('已添加工具服务，但未在插件卡里勾选授权给本 Bot');
+              }
+            }
           }
           enabled.push({
             id,

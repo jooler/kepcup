@@ -751,6 +751,10 @@ export const enUS = {
   'botPanel.plugins.usage': 'Activation',
   'botPanel.plugins.serversAuto':
     "This plugin's tool services come with the plugin — no per-server checkbox needed.",
+  'botPanel.plugins.instanceServersEmpty':
+    'No tool services yet: add one under Extension Center → Installed → this plugin → Manage.',
+  'botPanel.plugins.instanceServersHint':
+    'When checked, this bot can use the corresponding tool services: read-only tools run directly, while write/destructive tools require approval for each call (unless auto-approve or per-tool settings are enabled).',
   'botPanel.plugins.localAccounts': 'Local connections',
   'botPanel.plugins.pluginDisabled': 'Plugin disabled',
   'botPanel.plugins.manualServers': 'Manually added tool services',

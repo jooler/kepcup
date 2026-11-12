@@ -293,6 +293,8 @@ export const pluginInstanceSummarySchema = z.object({
   title: z.string().max(200),
   values: z.record(z.string(), pluginFieldValueSchema),
   storedSensitiveKeys: z.array(z.string()),
+  /** P4-M2，仅 `kind: 'mcp'`：实例落地的 MCP server id（`plg_` + sha256 前缀），Bot 详情勾选授权用。 */
+  serverId: z.string().optional(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
 });

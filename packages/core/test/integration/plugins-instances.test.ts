@@ -168,8 +168,10 @@ describe('plugin config & instances (D105 P1)', () => {
       enabled: true,
     });
     expect(server.source).toMatchObject({ kind: 'instance', pluginId: PLUGIN_ID });
-    // 注入：instance 来源与 plugin 来源同口径（按插件启用集，不要求勾选）。
-    const injected = core.services.mcp!.serversForBot([], new Set([PLUGIN_ID]));
+    // 注入：instance 来源 = 插件启用 ∧ 本 Bot 勾选（`mcp_server_ids`）——未勾选不可见，
+    // 勾选后可见（P4-M2 审查修订，与 mail/im 的账号绑定同语义）。
+    expect(core.services.mcp!.serversForBot([], new Set([PLUGIN_ID]))).toEqual([]);
+    const injected = core.services.mcp!.serversForBot([server.id], new Set([PLUGIN_ID]));
     expect(injected.map((entry) => entry.id)).toEqual([server.id]);
     // 删除级联：实例删除 → server 摘除 + 实例行清场。
     await core.rpc.call('plugins.instances.delete', { id: created.instance.id });
