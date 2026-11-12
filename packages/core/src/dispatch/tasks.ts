@@ -1116,7 +1116,7 @@ export class TaskHost implements TaskToolFacade {
       // The task is blocked on its question card (§2.4.6): the turn relays the
       // user's free-text answer — it is the answer, not a steer.
       // 落库与 claim 同事务（审查 P1-1）：要么条目带附件转正，要么都不发生。
-      const answerEntry = this.#deps.db.transaction(() => {
+      this.#deps.db.transaction(() => {
         const { message } = this.#deps.messages.appendTaskEvent({
           conversationId,
           ownerBotId: botId,
