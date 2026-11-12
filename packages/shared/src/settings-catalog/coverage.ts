@@ -67,6 +67,11 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
   },
   {
     kind: 'bot-panel-tab',
+    id: 'notes',
+    reason: '便签是用户手动记录的数据（仅自己可见），不是设置；不进入 Bot 上下文',
+  },
+  {
+    kind: 'bot-panel-tab',
     id: 'wiki',
     reason: '知识库内容是 Bot 的数据，不是设置；收录走 wiki_enqueue',
   },

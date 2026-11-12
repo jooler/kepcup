@@ -315,6 +315,14 @@ import {
   stickiesUpdateOutputSchema,
   stickiesDeleteInputSchema,
   stickiesDeleteOutputSchema,
+  notesListInputSchema,
+  notesListOutputSchema,
+  notesCreateInputSchema,
+  notesCreateOutputSchema,
+  notesUpdateInputSchema,
+  notesUpdateOutputSchema,
+  notesDeleteInputSchema,
+  notesDeleteOutputSchema,
   sidebarGetInputSchema,
   sidebarLayoutOutputSchema,
   sidebarSectionsCreateInputSchema,
@@ -790,8 +798,8 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       // P4-M2：实例 server 的凭据只能走实例表单（plugins.instances.update）——直写
       // secrets 会绕过厂商模版的锁定值与占位符契约。固定投影（plugin 来源）同样拒绝，
       // 与 settings.update 的 PLUGIN_MANAGED 口径一致。
-      const managed = services.domain!.settings
-        .get()
+      const managed = services
+        .domain!.settings.get()
         .mcpServers.find((server) => server.id === input.serverId);
       if (managed?.source?.kind === 'instance') {
         throw new AppError(
@@ -813,8 +821,8 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     }),
     'mcp.removeSecret': method(mcpRemoveSecretInputSchema, okOutputSchema, async (input) => {
       if (!services.mcp) throw new AppError('NOT_IMPLEMENTED', 'MCP 模块未就绪');
-      const managed = services.domain!.settings
-        .get()
+      const managed = services
+        .domain!.settings.get()
         .mcpServers.find((server) => server.id === input.serverId);
       if (managed?.source?.kind === 'instance') {
         throw new AppError(
@@ -2327,6 +2335,22 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         return { ok: true as const };
       },
     ),
+
+    // --- conversation notes（右栏 Bot 详情「便签」tab） ----------------------
+    'notes.list': method(notesListInputSchema, notesListOutputSchema, async (input) => ({
+      notes: domain.conversationNotes.list(input.conversationId),
+    })),
+    'notes.create': method(notesCreateInputSchema, notesCreateOutputSchema, async (input) => {
+      domain.conversations.getOrThrow(input.conversationId);
+      return { note: domain.conversationNotes.create(input) };
+    }),
+    'notes.update': method(notesUpdateInputSchema, notesUpdateOutputSchema, async (input) => ({
+      note: domain.conversationNotes.update(input.id, input.text),
+    })),
+    'notes.delete': method(notesDeleteInputSchema, notesDeleteOutputSchema, async (input) => {
+      domain.conversationNotes.remove(input.id);
+      return { ok: true as const };
+    }),
 
     // --- 左栏对话分组（main.db sidebar_sections / conversation_sidebar） ---
     'sidebar.get': method(sidebarGetInputSchema, sidebarLayoutOutputSchema, async () => ({

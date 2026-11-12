@@ -686,9 +686,18 @@ export const enUS = {
   'rightPanel.tabSkills': 'Skills',
   'rightPanel.tabWidgets': 'Widgets',
   'rightPanel.tabWiki': 'Wiki',
-  // --- D116 three tabs (docs/design/56 §2): detail / widgets / tasks ------------
+  // --- D116 tabs (docs/design/56 §2) + notes: detail / widgets / tasks / notes ----
   'rightPanel.tabDetail': 'Details',
   'rightPanel.tabTasks': 'Tasks',
+  'rightPanel.tabNotes': 'Notes',
+  'rightPanel.notesAdd': 'New note',
+  'rightPanel.notesPlaceholder': 'Write down something worth keeping…',
+  'rightPanel.notesDelete': 'Delete note',
+  'rightPanel.notesCollapse': 'Collapse',
+  'rightPanel.notesExpand': 'Expand',
+  'rightPanel.notesLoadFailed': 'Failed to load notes',
+  'rightPanel.notesSaveFailed': 'Failed to save note',
+  'rightPanel.notesDeleteFailed': 'Failed to delete note',
   'rightPanel.tasksHint': 'All tasks this bot has started (across conversations).',
   'rightPanel.tasksEmpty': 'This bot has not started any task yet.',
   'rightPanel.tasksActiveGroup': 'In progress ({count})',
@@ -3452,7 +3461,8 @@ export const enUS = {
   'mcp.ownerOf': 'From plugin: {plugin}',
   'mcp.instanceFormNote':
     'A tool service of "{plugin}". Fields are declared by the plugin; credentials stay on this device.',
-  'mcp.pluginMissing': 'The plugin does not exist or has been uninstalled — go back to the list and refresh.',
+  'mcp.pluginMissing':
+    'The plugin does not exist or has been uninstalled — go back to the list and refresh.',
   'mcp.pluginDisabled':
     'Plugin "{plugin}" is currently disabled; enable it before saving a new tool service.',
   'mailCard.save': 'Save',

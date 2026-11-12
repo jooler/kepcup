@@ -145,6 +145,8 @@ describe('0013 public_skills 迁移', () => {
     db.exec('drop table watches;');
     // main 0024（辅助阅读便签）的 stickies 表同样摘除。
     db.exec('drop table stickies;');
+    // main 0074（右栏对话便签）的 conversation_notes 表同样摘除（纯新增，回放时重建）。
+    db.exec('drop table conversation_notes;');
     // main 0026（D73 P2 污点外发）的 app_taint 表同样摘除（approvals 重建可原样重放）。
     db.exec('drop table app_taint;');
     // main 0043（污点外发的对话级放行）同样摘除（纯新增，回放时重建）。
