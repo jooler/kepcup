@@ -10,8 +10,10 @@ import type { Message, Run, Settings } from '@kepcup/shared';
  * (`approvals.list` + `grants.list`). It does not call `permissions.reloadApprovals`.
  */
 
-const handlers = new Map<string, (payload: unknown) => void>();
-const emit = (event: string, payload: unknown): void => handlers.get(event)?.(payload);
+const handlers = new Map<string, Array<(payload: unknown) => void>>();
+const emit = (event: string, payload: unknown): void => {
+  for (const handler of handlers.get(event) ?? []) handler(payload);
+};
 
 const state = {
   model: '',
@@ -87,8 +89,16 @@ vi.mock('$lib/rpc/client.svelte', () => ({
   core: {
     coreStatus: null,
     onEvent: (event: string, handler: (payload: unknown) => void) => {
-      handlers.set(event, handler);
-      return () => handlers.delete(event);
+      const list = handlers.get(event) ?? [];
+      list.push(handler);
+      handlers.set(event, list);
+      return () => {
+        const current = handlers.get(event) ?? [];
+        handlers.set(
+          event,
+          current.filter((item) => item !== handler),
+        );
+      };
     },
     call: async (method: string, params?: unknown) => {
       state.calls.push({ method, params });
