@@ -713,6 +713,9 @@ export const zhCN = {
   'botPanel.plugins.connections': '连接账号',
   'botPanel.plugins.usage': '启用说明',
   'botPanel.plugins.serversAuto': '该插件的工具服务随启用自动可用，无需逐个勾选。',
+  'botPanel.plugins.instanceServersEmpty': '还没有工具服务：到扩展中心 → 已安装 → 本插件的「管理」里添加。',
+  'botPanel.plugins.instanceServersHint':
+    '勾选后该 Bot 可使用对应工具服务：只读工具默认直接执行，写入 / 破坏性工具每次调用需批准（除非开启了免审批或逐工具设置）。',
   'botPanel.plugins.localAccounts': '本机连接的账号',
   'botPanel.plugins.pluginDisabled': '插件已停用',
   'botPanel.plugins.manualServers': '手动添加的工具服务',
