@@ -12,6 +12,8 @@ import {
   type Bot,
   type MailAccount,
   type Message,
+  type PluginInstanceSummary,
+  type PluginSummary,
   type ProviderInfo,
   type SettingCardContent,
   type SettingCardResolved,
@@ -762,6 +764,70 @@ describe('settings catalog host: settings_change and cards', () => {
     expect(mailboxCard.itemId).toBe('mail.mailbox');
     expect(mailboxCard.mode).toBe('form');
     expect(mailboxCard.proposed).toEqual({ account: 'mal_1', bots: ['bot_a'] });
+  });
+
+  it('mcp instance plugin: a fillable form card, even when the values already match', async () => {
+    const plugin = {
+      id: 'app.kepcup/mcp-tencent-docs',
+      name: '腾讯文档',
+      iconDataUri: null,
+      version: '1.0.1',
+      description: '',
+      usage: '启用后添加工具服务并勾选授权给 Bot。',
+      author: null,
+      origin: 'marketplace',
+      tier: 'verified',
+      state: 'installed',
+      enabled: true,
+      dirPath: null,
+      marketplace: null,
+      installedAt: 1,
+      updatedAt: 1,
+      counts: { skills: 0, connectors: 0, mcp: 3, mail: 0 },
+      items: [],
+      updateAvailable: null,
+      revoked: null,
+      configFields: [],
+      instanceFields: [],
+      instanceCounts: { mail: 0, mcp: 1, im: 0 },
+      providesInstances: ['mcp'],
+    } as PluginSummary;
+    const instance = {
+      id: 'pli_1',
+      pluginId: 'app.kepcup/mcp-tencent-docs',
+      kind: 'mcp',
+      title: '我的腾讯文档',
+      values: {},
+      storedSensitiveKeys: ['token'],
+      serverId: 'plg_abc',
+      createdAt: 1,
+      updatedAt: 1,
+    } as PluginInstanceSummary;
+    const rig = makeRig({
+      plugins: { list: () => [plugin], instances: () => [instance] },
+    });
+    const facade = rig.host.forRun(runCtx(rig, { runId: 'run_mcp_add' }));
+    const add = await facade.change({
+      id: 'mcp.instance',
+      values: { plugin: 'app.kepcup/mcp-tencent-docs' },
+      reason: '配置腾讯文档的 token',
+    });
+    expect(add.ok).toBe(true);
+    const addCard = cardOf(rig, messageIdIn(add.content));
+    expect(addCard.itemId).toBe('mcp.instance');
+    expect(addCard.mode).toBe('form');
+    expect(addCard.proposed).toEqual({ plugin: 'app.kepcup/mcp-tencent-docs' });
+
+    // 提议值与现状相同（同一个实例已配置）：values 只寻址，不能被「已经是这个值」短路。
+    const edit = await rig.host.forRun(runCtx(rig, { runId: 'run_mcp_edit' })).change({
+      id: 'mcp.instance',
+      values: { plugin: 'app.kepcup/mcp-tencent-docs', instance: 'pli_1' },
+      reason: '换一个 token',
+    });
+    expect(edit.ok).toBe(true);
+    const editCard = cardOf(rig, messageIdIn(edit.content));
+    expect(editCard.mode).toBe('form');
+    expect(editCard.proposed).toEqual({ plugin: 'app.kepcup/mcp-tencent-docs', instance: 'pli_1' });
   });
 
   it('tightens to a confirm card: other-bot mention, mail wake, untrusted reads, taint, group chat', async () => {

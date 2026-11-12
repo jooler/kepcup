@@ -92,6 +92,8 @@ export const settingOptionSourceSchema = z.enum([
   'app-catalog',
   'connections',
   'mcp-servers',
+  'mcp-instance-plugins',
+  'mcp-instances',
   'mail-plugins',
   'mail-accounts',
   'agents',
@@ -219,6 +221,8 @@ export const CARD_KEYS = [
   'tool-policy',
   /** 一个已安装 MCP 服务的启用开关（`McpSection` 片段；组件自己 `settings.update`）。 */
   'mcp-servers',
+  /** 插件工具服务实例（`McpInstanceCard`：新建 / 编辑 + 授权给本 Bot；组件自己 `plugins.instances.*`）。 */
+  'mcp-instance',
   /** 新建共享浏览器资料（`BrowserProfilesSection` 的名称和「新建」；重命名 / 清除 / 删除留在设置页）。 */
   'browser-profiles',
   /** 工具链（`EnvironmentSection`：已安装列表、重新检测、失败项重装；卸载留在设置页）。 */

@@ -14,6 +14,7 @@ import { environmentContribution } from './environment.js';
 import { generalContribution } from './general.js';
 import { legacyContribution } from './legacy.js';
 import { mailContribution } from './mail.js';
+import { mcpContribution } from './mcp.js';
 import { modelsContribution } from './models.js';
 import { profileContribution } from './profile.js';
 import { remoteContribution } from './remote.js';
@@ -32,6 +33,7 @@ export const SETTING_ADAPTER_CONTRIBUTIONS: readonly SettingAdapterContribution[
   environmentContribution,
   remoteContribution,
   mailContribution,
+  mcpContribution,
   legacyContribution,
 ];
 

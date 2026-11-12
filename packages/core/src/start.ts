@@ -2342,6 +2342,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // 插件注册表在设置宿主之后才构造（它依赖 MCP 撤销效果）；`mail.plugin` 适配器经这个
     // 晚绑定引用读已安装插件，构造完立即赋值（同 remoteHub 的做法）。
     let pluginRegistryForSettings: PluginRegistry | null = null;
+    // P4-M2：实例服务同样晚绑定（构造在设置宿主之后）；`mcp.instance` 适配器用它列实例概要。
+    let pluginInstancesForSettings: PluginInstanceService | null = null;
     const settingsCatalog = new SettingsCatalogHost({
       db: mainDb,
       messages,
@@ -2352,7 +2354,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       secrets,
       providers,
       bots,
-      plugins: { list: () => pluginRegistryForSettings?.list() ?? [] },
+      plugins: {
+        list: () => pluginRegistryForSettings?.list() ?? [],
+        instances: (pluginId) => pluginInstancesForSettings?.list(pluginId) ?? [],
+      },
       mail: { list: () => mailService?.list() ?? [] },
       botProfiles: {
         apply: (botId, profile) =>
@@ -2631,6 +2636,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       events,
       audit,
     });
+    pluginInstancesForSettings = pluginInstances;
     plugins.attachInstanceTeardown((pluginId) => pluginInstances.deleteAllOf(pluginId));
     // P4-M2：mcp 实例 materializer 落地（实例 = settings.mcpServers 的 streamable-http
     // server，来自插件的 http 模版）；启动对账清「实例行在、server 不见」的孤儿行。
