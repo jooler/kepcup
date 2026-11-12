@@ -43,6 +43,9 @@ class TasksState {
     this.#sawReady = core.coreStatus?.status === 'ready';
     core.onEvent('task.updated', (payload) => {
       const { task } = payload as { task: TaskView };
+      const current = this.byId[task.taskId];
+      // 终态不可逆：忽略把已结算视图打回进行中的过期推送。
+      if (current !== undefined && !isActiveTask(current) && isActiveTask(task)) return;
       this.#pushes += 1;
       this.#pushedAt.set(task.taskId, this.#pushes);
       this.byId = { ...this.byId, [task.taskId]: task };
@@ -62,6 +65,18 @@ class TasksState {
         return;
       }
       void this.#reload(run.id);
+    });
+    // 结算同栈里的 task.updated / run.status 可能到不了渲染端，但随后的
+    // 唤醒消息（message.created）能到——e2e 失败时侧栏已有「任务做完了」，
+    // 详情页却仍停在进行中。此时再拉一次，不依赖被节流的 setInterval。
+    core.onEvent('message.created', (payload) => {
+      const conversationId = (payload as { conversationId?: string }).conversationId;
+      if (typeof conversationId !== 'string') return;
+      for (const [taskId, view] of Object.entries(this.byId)) {
+        if (view.conversationId === conversationId && isActiveTask(view)) {
+          void this.#reload(taskId);
+        }
+      }
     });
     // The core came back (restart / port rebind, 审查 L3): pushes sent while
     // disconnected are lost — reload the cached views.
