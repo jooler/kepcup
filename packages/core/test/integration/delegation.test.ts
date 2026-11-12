@@ -598,6 +598,13 @@ describe('W6: delegation intent + 跟随任务（DEV-012 方案二）', () => {
       approvals: Array<{ id: string }>;
     };
     expect(inExchange.approvals.some((a) => a.id === approval.id)).toBe(false);
+    // 任务详情页同源：TaskView.userConversationId 与卡片落点同一 resolver——
+    // 委派任务给出发起方 A 的私聊（详情页审批条 / 提问条据它取数），任务行
+    // 仍住交换会话。
+    const delegatedTask = core.services.domain!.runs.listTasks({ conversationId: exchange })[0]!;
+    const view = core.services.orchestrator!.tasks.view(delegatedTask.id)!;
+    expect(view.conversationId).toBe(exchange);
+    expect(view.userConversationId).toBe(aConv);
     turnHold.release();
     taskStep.release();
     await waitDelegation(stack, (d) => d.id === row.id && d.status === 'completed');

@@ -457,6 +457,19 @@ describe('approvalConversationIdOf（详情页审批条的会话）', () => {
     expect(approvalConversationIdOf({ conversationId: null }, 'conv_current')).toBe('conv_current');
   });
 
+  it('卡片归属会话（userConversationId）最优先：委派任务的审批卡在发起方 A 的私聊', () => {
+    expect(
+      approvalConversationIdOf(
+        { conversationId: 'conv_exchange', userConversationId: 'conv_a' },
+        'conv_current',
+      ),
+    ).toBe('conv_a');
+    // 旧 core / 未接线（字段缺失或 null）回落任务自己的会话。
+    expect(
+      approvalConversationIdOf({ conversationId: 'conv_task', userConversationId: null }, null),
+    ).toBe('conv_task');
+  });
+
   it('两头都没有会话时为 null（不渲染审批条）', () => {
     expect(approvalConversationIdOf({ conversationId: null }, null)).toBeNull();
     expect(approvalConversationIdOf(null, undefined)).toBeNull();
@@ -548,9 +561,13 @@ describe('pendingTaskQuestionOf（详情页提问条）', () => {
       "import { getChatSession } from '$lib/features/chats/chat-session-context';",
     );
     expect(source).toContain("import TaskQuestionCard from './TaskQuestionCard.svelte';");
-    // D113：委派任务住在 B 的私聊——上下文会话不是任务归属会话时回退到后台
-    // homeSession（questionSession），不再直接读 chatSession.messages。
+    // §3.7 执行归属映射：委派任务的卡落发起方 A 的私聊（任务行住交换会话）
+    // ——上下文会话不是卡片归属会话时回退到后台 homeSession（questionSession），
+    // 不再直接读 chatSession.messages。
     expect(source).toContain('pendingTaskQuestionOf(questionSession?.messages ?? [], taskId)');
+    // 提问条与审批条同源：派生来源锁定 userConversationId 优先（防止回退成
+    // conversationId 而只锁住审批条一半）。
+    expect(source).toContain('task?.userConversationId ?? task?.conversationId');
     expect(source).toContain('{#if active && pendingQuestion !== null}');
     expect(source).toContain('data-testid="task-run-question"');
     expect(source).toContain('<TaskQuestionCard message={pendingQuestion} />');

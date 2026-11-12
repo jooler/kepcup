@@ -3866,6 +3866,13 @@ export const taskViewSchema = z.object({
   taskId: z.string(),
   botId: z.string().nullable(),
   conversationId: z.string().nullable(),
+  /**
+   * 任务的用户操作卡（审批卡 / ask_user 提问卡）归属的会话（27 号文档 §3.7
+   * 执行归属映射）：普通任务 = conversationId；委派执行的任务 = 发起方 A 与
+   * 用户的私聊（卡片经同一 resolver 落在那里，任务详情页据此取待审批条与
+   * 提问条）。缺省 / conversationId 为 null 时同为 null。
+   */
+  userConversationId: z.string().nullable().optional(),
   title: z.string(),
   state: taskStateSchema,
   status: runStatusSchema,

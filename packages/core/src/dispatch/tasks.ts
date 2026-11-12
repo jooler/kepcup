@@ -1860,10 +1860,23 @@ export class TaskHost implements TaskToolFacade {
         : null;
     const summary = this.#summary(task);
     const claim = this.#deps.claims?.entryOf(task.id) ?? null;
+    // §3.7 执行归属映射：审批卡 / 提问卡的归属会话与卡片落点同一 resolver
+    // （委派任务 → 发起方 A 的私聊；普通任务 / 未接线 → 任务自己的会话），
+    // 详情页据此取审批条与提问条。
+    const userConversationId =
+      task.conversationId === null
+        ? null
+        : (this.#deps.userHomeOf?.({
+            runId: task.id,
+            botId: task.botId,
+            conversationId: task.conversationId,
+            loopType: 'task',
+          }) ?? task.conversationId);
     return {
       taskId: task.id,
       botId: task.botId,
       conversationId: task.conversationId,
+      userConversationId,
       title: task.taskTitle ?? '',
       state: taskState(task.status),
       status: task.status,
