@@ -47,6 +47,22 @@ class TasksState {
       this.#pushedAt.set(task.taskId, this.#pushes);
       this.byId = { ...this.byId, [task.taskId]: task };
     });
+    // 终态 run.status 的兜底：结算视图（含执行报告）再拉一次。正常路径
+    // 已由 task.updated 覆盖；详情页开着时若那次推送没落到缓存，卡片会
+    // 一直停在「进行中」、报告出不来（v0.5.12 注入坞 e2e）。
+    core.onEvent('run.status', (payload) => {
+      const run = (payload as { run?: { id?: string; loopType?: string; status?: string } }).run;
+      if (run?.loopType !== 'task' || typeof run.id !== 'string') return;
+      if (
+        run.status !== 'completed' &&
+        run.status !== 'failed' &&
+        run.status !== 'cancelled' &&
+        run.status !== 'interrupted'
+      ) {
+        return;
+      }
+      void this.#reload(run.id);
+    });
     // The core came back (restart / port rebind, 审查 L3): pushes sent while
     // disconnected are lost — reload the cached views.
     core.onEvent('core.status', (payload) => {
@@ -54,6 +70,17 @@ class TasksState {
       if (this.#sawReady) void this.refresh();
       this.#sawReady = true;
     });
+  }
+
+  /** 按 id 重拉一张任务视图（终态 run.status 的兜底）；有更新的 push 则不覆盖。 */
+  async #reload(taskId: string): Promise<void> {
+    const since = this.#pushes;
+    try {
+      const result = (await core.call('tasks.get', { taskId })) as { task: TaskView | null };
+      if (result.task !== null) this.#apply([result.task], since);
+    } catch {
+      // The next task.updated push updates it.
+    }
   }
 
   /** Applies fetched views unless a push for the task arrived after `since`. */
