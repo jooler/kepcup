@@ -6,6 +6,7 @@ import {
   TASK_IDLE_STOP_AFTER,
   TASK_IDLE_WARN_AFTER,
   TASK_IDLE_WINDOW_CALLS,
+  type SteerAttachment,
 } from '@kepcup/shared';
 import { executeToolSafely, toolResultBlocks } from './tool-execution.js';
 import { buildModelRegistry, mapProviderError, resolveModel, type AnyModel } from './models.js';
@@ -199,6 +200,7 @@ export class PiEngine implements AgentEngine {
           ((next as { input?: unknown }).input as readonly string[] | undefined)?.includes(
             'image',
           ) === true;
+        handleRef?.updateAcceptsImages(acceptsImages);
         // Every restart counts (a ref that keeps flipping would otherwise
         // restart without bound).
         routeRestarts += 1;
@@ -564,6 +566,7 @@ export class PiEngine implements AgentEngine {
       },
     });
     handleRef = handle;
+    handleRef.updateAcceptsImages(acceptsImages);
     // The transcript already carries the trigger messages; continue() starts
     // the loop from them (prompt() would append a duplicate user message).
     void agent.continue().catch(() => {
@@ -648,6 +651,8 @@ class RunHandleImpl implements RunHandle {
   #resolved = false;
   readonly done: Promise<RunOutcome>;
   #resolveDone!: (outcome: RunOutcome) => void;
+  /** 当前模型支持图像输入（steer 直带图片转 image blocks 的判定）；路由重启时更新。 */
+  #acceptsImages = false;
 
   constructor(spec: RunSpec, agent: Agent, onSteer?: () => void, restart?: RunRouteRestart) {
     this.#agent = agent;
@@ -773,13 +778,33 @@ class RunHandleImpl implements RunHandle {
     this.#terminatedReason = reason ?? 'skip_reply';
   }
 
-  steer(text: string): boolean {
+  steer(text: string, opts?: { images?: Array<{ mimeType: string; base64: string }>; attachments?: SteerAttachment[] }): boolean {
     if (this.#agentEnded) return false;
-    this.emit({ type: 'steer', payload: { text } });
+    this.emit({
+      type: 'steer',
+      payload: {
+        text,
+        ...(opts?.attachments !== undefined && opts.attachments.length > 0
+          ? { attachments: opts.attachments }
+          : {}),
+      },
+    });
     // A new instruction may legitimately ask for a retry.
     this.#onSteer?.();
-    this.#agent.steer({ role: 'user', content: text, timestamp: Date.now() });
+    // 注入直带的图片（D115 附件直注）：与触发批同一判定——支持视觉的模型转
+    // image 内容块，不支持的丢弃字节、追加提示文本（buildUserMessageContent）。
+    const content = buildUserMessageContent(text, opts?.images, this.#acceptsImages);
+    this.#agent.steer({
+      role: 'user',
+      content,
+      timestamp: Date.now(),
+    });
     return true;
+  }
+
+  /** 路由重启换模型后由 startRun 闭包同步（图像输入判定跟随当前模型）。 */
+  updateAcceptsImages(value: boolean): void {
+    this.#acceptsImages = value;
   }
 
   /** D93: abort with a structured failure instead of a plain cancellation. */

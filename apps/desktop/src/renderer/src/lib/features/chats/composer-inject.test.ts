@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { composerRightAction, injectContentState, taskDraftKey } from './composer-inject.js';
+import { composerRightAction, injectAttachAction, injectContentState, taskDraftKey } from './composer-inject.js';
 
 describe('任务直注模式（Composer 复用，D115）', () => {
   it('任务草稿用独立键，绝不落在会话草稿键上', () => {
@@ -42,15 +42,48 @@ describe('任务直注模式（Composer 复用，D115）', () => {
     });
   });
 
+  it('D115 附件直注预检：无视觉且无看图模型 → setup；外部引擎 / null ref → pick', () => {
+    const base = {
+      injectMode: true,
+      conversationId: 'conv_1' as string | null,
+      executorKnownBuiltin: true,
+      executorAcceptsImages: false,
+      multimodalReady: false,
+    };
+    // 内置引擎 + 无视觉 + 无看图模型：弹配置卡（用户要求的正确逻辑）。
+    expect(injectAttachAction(base)).toBe('setup');
+    // 配了看图模型（多模态能力就绪）：直接弹文件框。
+    expect(injectAttachAction({ ...base, multimodalReady: true })).toBe('pick');
+    // 执行模型本身支持视觉：直接弹文件框。
+    expect(injectAttachAction({ ...base, executorAcceptsImages: true })).toBe('pick');
+    // 外部 Agent 任务：伪 ref（agent:{id}/…）解析不到已配置厂商 → 不预检。
+    expect(injectAttachAction({ ...base, executorKnownBuiltin: false })).toBe('pick');
+    // ref 为 null（bot 未配模型 / 契约缺省）：同样放行，不落入看图模型预检。
+    expect(
+      injectAttachAction({
+        ...base,
+        executorKnownBuiltin: false,
+        executorAcceptsImages: false,
+        multimodalReady: false,
+      }),
+    ).toBe('pick');
+    // 会话上下文缺失：blocked（按钮此时应为禁用态，这里兜底防误触）。
+    expect(injectAttachAction({ ...base, conversationId: null })).toBe('blocked');
+    // 对话模式恒弹文件框（预检只属于注入坞）。
+    expect(injectAttachAction({ ...base, injectMode: false })).toBe('pick');
+  });
+
   it('Composer 注入模式不碰会话发送 / 草稿 / 协作 / 语音对话', () => {
     const source = readFileSync(new URL('./Composer.svelte', import.meta.url), 'utf8');
     // 注入目标由 prop 决定，创建即隔离（调用方必须显式传参，不能默认注进主对话）。
     expect(source).toContain('injectTaskId');
     expect(source).toContain('taskDraftKey(injectTaskId)');
-    expect(source).toContain('tasks.inject(taskId, content.text)');
-    // 注入模式下 replyTo / 待发附件 / 提及 / 共享草稿 / 语音模式入口全部让位。
+    // D115 附件直注：注入发送随 attachmentIds 直发（纯附件允许空文本）。
+    expect(source).toContain('tasks.inject(taskId, content.text, attachmentIds)');
+    // 注入模式下 replyTo / 提及 / 共享草稿 / 语音模式入口全部让位。
     expect(source).toContain('injectMode ? null : chatSession.replyTo');
-    expect(source).toContain('injectMode ? [] : composerDrafts.uploadsOf');
+    // D115 附件直注：注入模式读 `task:<id>` 键的上传队列（不再整体让位）。
+    expect(source).toContain('injectMode\n      ? composerDrafts.uploadsOf(injectTaskId');
     expect(source).toContain('const voiceModeEntryVisible = $derived(!isProject && !injectMode);');
     expect(source).toContain('const voiceKeyVisible = $derived(');
     expect(source).toContain('composerRightAction({');
@@ -65,9 +98,13 @@ describe('任务直注模式（Composer 复用，D115）', () => {
     // 有内容时也渲染发送键（与对话里一致）。
     expect(source).toContain("{#if hasContent || rightAction === 'send'}");
     expect(source).toContain('disabled={readOnly || collabReader || !hasContent || injectSending}');
-    // + 附件键保留但禁用：tasks.inject 只收文本。
-    expect(source).toContain('disabled={readOnly || injectMode}');
+    // D115 附件直注：+ 键注入模式不再整体禁用；会话上下文缺失才禁用并说明。
+    expect(source).toContain('disabled={readOnly || (injectMode ? !canInjectAttach : false)}');
     expect(source).toContain("t('task.run.injectAttachUnsupported')");
+    // D115 附件直注预检：执行模型不支持视觉且未配看图模型 → 宿主弹配置卡。
+    expect(source).toContain('executorAcceptsImages');
+    expect(source).toContain("settingsStore.isCapabilityReady('multimodal')");
+    expect(source).toContain('onRequestAttachSetup?.()');
     // 发送反馈与旧注入坞同口径（delivered / queued / 失败代码）。
     expect(source).toContain("toast.success(t('task.run.injectSent'));");
     expect(source).toContain("toast.warning(t('task.run.injectQueued'));");

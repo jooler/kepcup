@@ -86,6 +86,7 @@ import { BotTemplateService } from './domain/bot-templates.js';
 import { ConversationsService } from './domain/conversations.js';
 import { MessagesService } from './domain/messages.js';
 import { StickiesService } from './domain/stickies.js';
+import { ConversationNotesService } from './domain/conversation-notes.js';
 import { SidebarService } from './domain/sidebar.js';
 import { AttachmentsService } from './domain/attachments.js';
 import { JobsService } from './domain/jobs.js';
@@ -150,6 +151,7 @@ import { MemoryService } from './memory/service.js';
 import { MediaService } from './media/service.js';
 import { SearchService } from './search/service.js';
 import { McpService } from './mcp/service.js';
+import { createManifestHeaderNormalizer } from './mcp/header-scheme.js';
 import { decideMcpTool, type McpToolDecision } from './mcp/policy.js';
 import type { Embedder } from './memory/embedder.js';
 import { SkillImporter } from './skills/library.js';
@@ -561,6 +563,8 @@ export interface CoreDomainServices {
   messages: MessagesService;
   /** 辅助阅读便签（main.db stickies）。 */
   stickies: StickiesService;
+  /** 对话便签（main.db conversation_notes，右栏 Bot 详情「便签」tab）。 */
+  conversationNotes: ConversationNotesService;
   /** 左栏对话分组（main.db sidebar_sections / conversation_sidebar）。 */
   sidebar: SidebarService;
   attachments: AttachmentsService;
@@ -1311,6 +1315,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
     bots.attachLeadProjectGuard((botId) => projects.ledProjectsOf(botId));
     const stickies = new StickiesService(mainDb, clock);
+    const conversationNotes = new ConversationNotesService(mainDb, clock);
     const sidebar = new SidebarService(mainDb, clock);
     const delegations = new DelegationsService(mainDb, clock);
     const attachments = new AttachmentsService({ db: mainDb, paths, clock });
@@ -2338,6 +2343,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // 插件注册表在设置宿主之后才构造（它依赖 MCP 撤销效果）；`mail.plugin` 适配器经这个
     // 晚绑定引用读已安装插件，构造完立即赋值（同 remoteHub 的做法）。
     let pluginRegistryForSettings: PluginRegistry | null = null;
+    // P4-M2：实例服务同样晚绑定（构造在设置宿主之后）；`mcp.instance` 适配器用它列实例概要。
+    let pluginInstancesForSettings: PluginInstanceService | null = null;
     const settingsCatalog = new SettingsCatalogHost({
       db: mainDb,
       messages,
@@ -2348,7 +2355,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       secrets,
       providers,
       bots,
-      plugins: { list: () => pluginRegistryForSettings?.list() ?? [] },
+      plugins: {
+        list: () => pluginRegistryForSettings?.list() ?? [],
+        instances: (pluginId) => pluginInstancesForSettings?.list(pluginId) ?? [],
+      },
       mail: { list: () => mailService?.list() ?? [] },
       botProfiles: {
         apply: (botId, profile) =>
@@ -2604,6 +2614,13 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       audit,
     });
     pluginRegistryForSettings = plugins;
+    // 插件声明的 header 凭据方案（如腾讯文档的 `Authorization: scheme: 'bearer'`）：
+    // McpService 先于插件注册表构造，这里把「按清单归一化发送值」的钩子接上——只对声明了
+    // scheme 的 header 生效，通用 MCP / 其他 header 不经过任何改写。清单实时查，插件升级后
+    // 已存在的实例（旧记录里可能还带 `Bearer `）也能直接恢复正常。
+    mcp.attachHeaderNormalizer(
+      createManifestHeaderNormalizer({ manifestOf: (pluginId) => plugins.manifestOf(pluginId) }),
+    );
     // 每次采纳新索引后强制执行撤销名单（disable 自动停用）；失败只记日志。
     marketplace.onAdopted(() => {
       void plugins.applyRevocations().catch((error: unknown) => {
@@ -2627,6 +2644,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       events,
       audit,
     });
+    pluginInstancesForSettings = pluginInstances;
     plugins.attachInstanceTeardown((pluginId) => pluginInstances.deleteAllOf(pluginId));
     // P4-M2：mcp 实例 materializer 落地（实例 = settings.mcpServers 的 streamable-http
     // server，来自插件的 http 模版）；启动对账清「实例行在、server 不见」的孤儿行。
@@ -3131,16 +3149,24 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
               reasons.push('已添加账号，但未在插件卡片里勾选绑定到本 Bot');
             }
           }
-          // P4-M2：mcp 实例 = 工具服务，注入随插件启用集自动生效（无逐 Bot 勾选），
-          // 就绪判定只有「还没添加实例」一条；固定投影贡献（counts.mcp）无需此步。
+          // P4-M2：mcp 实例 = 工具服务，注入 = 插件启用 ∧ 本 Bot 在插件卡里勾选
+          // 授权（`mcp_server_ids`）；固定投影贡献（counts.mcp）随启用自动可用，无需此步。
           if (plugin.providesInstances.includes('mcp')) {
-            const serverCount = settings
+            const instanceServerIds = settings
               .get()
               .mcpServers.filter(
                 (server) =>
                   server.source?.kind === 'instance' && server.source.pluginId === id,
-              ).length;
-            if (serverCount === 0) reasons.push('尚未添加任何工具服务');
+              )
+              .map((server) => server.id);
+            if (instanceServerIds.length === 0) {
+              reasons.push('尚未添加任何工具服务');
+            } else {
+              const selected = new Set(bots.get(botId)?.profile.runtime.mcp_server_ids ?? []);
+              if (!instanceServerIds.some((serverId) => selected.has(serverId))) {
+                reasons.push('已添加工具服务，但未在插件卡里勾选授权给本 Bot');
+              }
+            }
           }
           enabled.push({
             id,
@@ -3765,6 +3791,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       conversations,
       messages,
       stickies,
+      conversationNotes,
       sidebar,
       attachments,
       jobs,

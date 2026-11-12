@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { connectorNameSchema } from './connector-catalog.js';
 import { imMediaKindSchema, imSetupSchema, imTransportSchema } from './im.js';
+import { MCP_HEADER_SCHEMES } from './mcp-header.js';
 import { mailModeSchema, mailSecureSchema } from './mail.js';
 import { sanitizeDisplayText } from './text-sanitize.js';
 
@@ -397,8 +398,23 @@ export const pluginMcpHeaderTemplateSchema = z.strictObject({
     message: 'invalid HTTP header name',
   }),
   key: z.string().regex(PLUGIN_FIELD_KEY_PATTERN).optional(),
+  /**
+   * 凭据方案（可选）：声明后该 header 的值按方案归一化——保存时 strip 前缀只存裸凭据，
+   * 发送时按需补前缀（见 `mcp-header.ts`）。未声明的 header 值原样透传，所以这条规则
+   * 不会波及通用 MCP / 其他 header / API key 类 secret。
+   */
+  scheme: z.enum(MCP_HEADER_SCHEMES).optional(),
 });
 export type PluginMcpHeaderTemplate = z.infer<typeof pluginMcpHeaderTemplateSchema>;
+
+/** 清单里某个 http 模板声明的 header（按名字，大小写不敏感）；未声明时 undefined。 */
+export function mcpHeaderTemplateOf(
+  contribution: Pick<Extract<PluginMcpContribution, { kind: 'http' }>, 'headers'> | undefined,
+  headerName: string,
+): PluginMcpHeaderTemplate | undefined {
+  const wanted = headerName.toLowerCase();
+  return contribution?.headers?.find((header) => header.name.toLowerCase() === wanted);
+}
 
 /** The instance field key a header template feeds when the manifest omits an explicit one. */
 export function mcpHeaderFieldKey(header: PluginMcpHeaderTemplate): string {

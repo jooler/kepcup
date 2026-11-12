@@ -9,6 +9,7 @@
     ListChecks,
     Loader2,
     MessageCircleQuestion,
+    Paperclip,
   } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
   import { t, errorText, listSeparator } from '$lib/i18n';
@@ -181,19 +182,43 @@
     {/if}
 
     {#each task.injects as inject (inject.messageId)}
-      <p
-        class="mt-1.5 flex items-start gap-1 text-xs text-muted-foreground"
-        data-testid="task-inject"
-        data-delivery={inject.delivery}
-      >
-        <CornerDownRight class="mt-0.5 size-3 shrink-0" aria-hidden="true" />
-        <span class="min-w-0">
-          {t('task.injected', { text: model.clip(inject.text) })}
-          {#if inject.delivery === 'queued'}
-            <span class="text-amber-700 dark:text-amber-400">{t('task.injectNotDelivered')}</span>
+      {#if inject.text.length > 0}
+        <p
+          class="mt-1.5 flex items-start gap-1 text-xs text-muted-foreground"
+          data-testid="task-inject"
+          data-delivery={inject.delivery}
+        >
+          <CornerDownRight class="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+          <span class="min-w-0">
+            {t('task.injected', { text: model.clip(inject.text) })}
+            {#if inject.delivery === 'queued'}
+              <span class="text-amber-700 dark:text-amber-400">{t('task.injectNotDelivered')}</span>
+            {/if}
+          </span>
+        </p>
+      {/if}
+      {#if (inject.attachments ?? []).length > 0}
+        <!-- D115 附件直注：注入直带的附件（轻量 chip，字节在详情页 / 灯箱按 id 取）。
+             纯附件注入（无文本）只渲染 chip 行，不出悬空的「已把新指令转给此任务：」。 -->
+        <div
+          class="ml-4 mt-1 flex flex-wrap items-center gap-1"
+          data-testid="task-inject-attachments"
+        >
+          {#each inject.attachments ?? [] as attachment (attachment.id)}
+            <span
+              class="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted/50 px-2 py-0.5 text-[11px] text-muted-foreground"
+            >
+              <Paperclip class="size-3 shrink-0" aria-hidden="true" />
+              <span class="truncate">{attachment.fileName}</span>
+            </span>
+          {/each}
+          {#if inject.text.length === 0 && inject.delivery === 'queued'}
+            <span class="text-[11px] text-amber-700 dark:text-amber-400">
+              {t('task.injectNotDelivered')}
+            </span>
           {/if}
-        </span>
-      </p>
+        </div>
+      {/if}
     {/each}
 
     {#if model.cancelReason !== null}

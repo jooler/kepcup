@@ -16,6 +16,7 @@ import {
   type MailAccount,
   type McpServer,
   type McpToolPolicy,
+  type PluginInstanceSummary,
   type PluginSummary,
   type ProviderInfo,
   type Settings,
@@ -101,6 +102,21 @@ export interface ItemAdapter {
   proposal?(item: SettingItem, values: SettingValues, snapshot: ItemSnapshot): SettingValues;
   /** 这次修改需要用户自填敏感字段（缺 Key、新厂商……）→ 至少 form。 */
   needsSensitiveInput?(item: SettingItem, proposed: SettingValues, snapshot: ItemSnapshot): boolean;
+  /**
+   * 值没变也要出待填卡：条目的可填内容（token 等敏感凭据）不在 values 里，Bot 给的 values
+   * 只是「寻址」；缺省 = 值相同且已配置就按「无需修改」短路，不出卡。
+   */
+  requiresForm?(item: SettingItem, proposed: SettingValues, snapshot: ItemSnapshot): boolean;
+  /**
+   * 「卡上要的事做成了」的硬证据（「我已设置好」核对用）：true = 完成、false = 未完成
+   * （保持 pending）、null = 核对不了（宿主按现有启发式兜底）。values 只是寻址
+   * （`requiresForm`）的条目应当提供：configured / 提议值相同都不代表凭据已填。
+   */
+  verifyComplete?(
+    item: SettingItem,
+    proposed: SettingValues | null,
+    snapshot: ItemSnapshot,
+  ): boolean | null;
   /** 这次修改是不是放宽方向（只对带 `wideningMode` 的条目有意义）；缺省 = 未知（按放宽处理）。 */
   valuesWiden?(item: SettingItem, before: SettingValues | null, proposed: SettingValues): boolean;
 }
@@ -248,6 +264,11 @@ export interface AdapterDeps {
    */
   plugins?: {
     list(): readonly PluginSummary[];
+    /**
+     * 一个插件的实例概要（安全投影，凭据只回「已存」键；`plugins.instances.list` 同源）。
+     * 缺省时 `mcp.instance` 回 unknown。
+     */
+    instances?(pluginId: string): readonly PluginInstanceSummary[];
   };
   /**
    * 邮箱账号概要（只读）：已配置邮箱的绑定 / 暂停状态。

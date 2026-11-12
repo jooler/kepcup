@@ -42,6 +42,12 @@ export interface PersistedComposerDraft {
   version: number;
   /** 本地有未确认的修改（断线 / 版本冲突恢复用）。 */
   dirty: boolean;
+  /**
+   * D115 附件直注：附件归属会话（attachments.upload / attachments.status 的
+   * conversationId）。键是会话 id 时等于键本身；任务直注键为 `task:<id>`，
+   * 这里存任务所在会话——重启后校验 chip 与上传都要用它。缺省 = 键即会话。
+   */
+  conversationId?: string;
 }
 
 export const COMPOSER_DRAFTS_STORAGE_KEY = 'kepcup.composer.drafts.v3';
@@ -139,6 +145,10 @@ function normalizeDraft(value: unknown): PersistedComposerDraft | null {
       ? record.version
       : 0;
   const dirty = typeof record.dirty === 'boolean' ? record.dirty : true;
+  const conversationId =
+    typeof record.conversationId === 'string' && record.conversationId.length > 0
+      ? record.conversationId
+      : undefined;
   if (
     isComposerDocEmpty(doc) &&
     mentions.length === 0 &&
@@ -147,7 +157,16 @@ function normalizeDraft(value: unknown): PersistedComposerDraft | null {
   ) {
     return null;
   }
-  return { doc, mentions, reply, attachments, updatedAt, version, dirty };
+  return {
+    doc,
+    mentions,
+    reply,
+    attachments,
+    updatedAt,
+    version,
+    dirty,
+    ...(conversationId !== undefined ? { conversationId } : {}),
+  };
 }
 
 function normalizeReply(value: unknown): ComposerReplyRef | null {
@@ -213,6 +232,8 @@ export function buildPersistedSnapshot(input: {
       uploads: SnapshotUpload[];
       version?: number;
       dirty?: boolean;
+      /** D115 附件直注：附件归属会话（任务直注键 ≠ 会话 id 时记录）。 */
+      conversationId?: string;
     }
   >;
   previous: Record<string, PersistedComposerDraft>;
@@ -235,6 +256,9 @@ export function buildPersistedSnapshot(input: {
       updatedAt: input.now,
       version: entry.version ?? 0,
       dirty: entry.dirty ?? true,
+      ...(entry.conversationId !== undefined && entry.conversationId !== conversationId
+        ? { conversationId: entry.conversationId }
+        : {}),
     };
   }
   for (const [conversationId, draft] of Object.entries(input.previous)) {

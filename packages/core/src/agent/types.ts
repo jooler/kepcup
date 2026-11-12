@@ -1,4 +1,9 @@
-import type { AgentPermissionTier, McpToolRisk, TaskLoopSettings } from '@kepcup/shared';
+import type {
+  AgentPermissionTier,
+  McpToolRisk,
+  SteerAttachment,
+  TaskLoopSettings,
+} from '@kepcup/shared';
 import type { ToolOutputSpill } from './tool-output-spill.js';
 
 /**
@@ -111,7 +116,7 @@ export type EngineEvent =
     }
   /** 路由变更后本 run 已换到新的内置模型（run 行的 provider/model 跟着更新）。 */
   | { type: 'route_switched'; payload: { provider: string; model: string } }
-  | { type: 'steer'; payload: { text: string } };
+  | { type: 'steer'; payload: { text: string; attachments?: SteerAttachment[] } };
 
 export interface EngineMessage {
   role: 'user';
@@ -343,8 +348,17 @@ export interface RunHandle {
    * Queues the text for the running loop. Returns false when the loop has
    * already ended (the queue would never be consumed) — the caller must then
    * treat the batch as arriving at a finished run (buffer → new run).
+   *
+   * `opts.images` 是注入直带的图片字节（D115 附件直注）：支持视觉的模型转
+   * image 内容块，不支持的丢弃字节、在文本后追加提示（与触发批同一判定）。
+   * `opts.attachments` 是附件元数据，随 steer 事件 payload 落 run_steps，
+   * 任务时间线据此渲染 chip。外部 Agent 引擎（ACP）只支持文本：opts 被忽略，
+   * 附件靠注入文本里的附件行（物化路径）到达。
    */
-  steer(text: string): boolean;
+  steer(
+    text: string,
+    opts?: { images?: Array<{ mimeType: string; base64: string }>; attachments?: SteerAttachment[] },
+  ): boolean;
   abort(reason: string): void;
   onEvent(listener: (e: EngineEvent) => void): () => void;
   /** Input+output tokens spent so far in this run (chain budget, P05). */

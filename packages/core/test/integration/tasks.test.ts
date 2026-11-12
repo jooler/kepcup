@@ -95,6 +95,26 @@ const isTaskRequest = (marker: string) => (req: MockChatRequest) =>
 const isWakeRequest = (req: MockChatRequest) =>
   req.lastUserText().includes('<trigger reason="task"');
 
+/** Restarts on `home` with a mock model scripted BEFORE boot (recovery runs at boot). */
+async function boot(
+  home: string,
+  keystore: ReturnType<typeof createMemoryKeystore>,
+  script: (llm: MockLlmServer) => void = () => {},
+): Promise<{ core: CoreHarness; llm: MockLlmServer; close(): Promise<void> }> {
+  const llm = await startMockLlm();
+  script(llm);
+  const core = await createTestCore({ home, keystore, env: { KEPCUP_MOCK_LLM_URL: llm.url } });
+  return {
+    core,
+    llm,
+    async close() {
+      llm.releaseAll();
+      await core.close();
+      await llm.stop();
+    },
+  };
+}
+
 function waitRun(stack: TestStack, id: string, statuses: Run['status'][], label: string) {
   return waitFor(
     () => {
@@ -682,26 +702,6 @@ describe('D75 task layer (TaskHost)', () => {
 });
 
 describe('D75 task recovery (§3.2 修复, §7.4)', () => {
-  /** Restarts on `home` with a mock model scripted BEFORE boot (recovery runs at boot). */
-  async function boot(
-    home: string,
-    keystore: ReturnType<typeof createMemoryKeystore>,
-    script: (llm: MockLlmServer) => void = () => {},
-  ): Promise<{ core: CoreHarness; llm: MockLlmServer; close(): Promise<void> }> {
-    const llm = await startMockLlm();
-    script(llm);
-    const core = await createTestCore({ home, keystore, env: { KEPCUP_MOCK_LLM_URL: llm.url } });
-    return {
-      core,
-      llm,
-      async close() {
-        llm.releaseAll();
-        await core.close();
-        await llm.stop();
-      },
-    };
-  }
-
   function seedTask(
     core: CoreHarness,
     input: { botId: string; conversationId: string; title: string; status: Run['status'] },
@@ -914,6 +914,268 @@ describe('D115/D116 用户直注与每 Bot 任务列表（docs/design/56）', ()
     // 任务 id 不存在 → NOT_FOUND（对话轮身份 run_turn_1 只是伪 identity，无 runs 行）。
     expect(() => tasksOf(stack).injectById('run_missing', 'x')).toThrow(/找不到任务/);
     expect(() => tasksOf(stack).injectById('run_turn_1', 'x')).toThrow(/找不到任务/);
+  }, 30_000);
+
+  it('injectById 附件直注：运行中 steer 携附件元数据并 claim 到注入条目，模型收到 image blocks', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const bot = await makeBot(core, '小艾');
+    const conv = await openDirect(core, bot.id);
+    const att = (await core.rpc.call('attachments.upload', {
+      conversationId: conv.id,
+      fileName: 'photo.png',
+      mime: 'image/png',
+      bytesBase64: 'aGVsbG8=',
+    })) as { attachment: { id: string; size: number } };
+
+    const held = step().expect(isTaskRequest('TASK-INJECT-ATTACH')).hold().replyText('不会到达');
+    llm.script('mock-main', [held, step().replyText('收到附件')]);
+    const started = tasksOf(stack).start(turnIdentity(bot.id, conv.id), {
+      title: '附件直注',
+      instruction: 'TASK-INJECT-ATTACH',
+      sourceMessageIds: [],
+      writes: false,
+    });
+    await waitRun(stack, started.taskId, ['running'], 'task running');
+    await waitFor(() => (llm.requestsFor('mock-main').length >= 1 ? true : null), {
+      label: 'task request held',
+    });
+
+    const injected = tasksOf(stack).injectById(started.taskId, '顺便看看这张图', [
+      att.attachment.id,
+    ]);
+    expect(injected.delivery).toBe('delivered');
+
+    // steer 步骤携带附件元数据（任务时间线 chip 的数据源）。
+    const { steps } = (await core.rpc.call('runs.steps', { runId: started.taskId })) as {
+      steps: Array<{ type: string; payload: Record<string, unknown> }>;
+    };
+    const steer = steps.filter((s) => s.type === 'steer').at(-1);
+    expect(steer).toBeDefined();
+    expect(String(steer!.payload['text'])).toContain('顺便看看这张图');
+    expect(steer!.payload['attachments']).toEqual([
+      {
+        id: att.attachment.id,
+        fileName: 'photo.png',
+        mime: 'image/png',
+        size: att.attachment.size,
+      },
+    ]);
+
+    // 附件已 claim 到注入条目（status 'sent'），任务卡 injects 带附件元数据与模型 ref。
+    const status = (await core.rpc.call('attachments.status', {
+      conversationId: conv.id,
+      ids: [att.attachment.id],
+    })) as { statuses: Array<{ id: string; state: string }> };
+    expect(status.statuses[0]).toEqual({ id: att.attachment.id, state: 'sent' });
+    const view = tasksOf(stack).view(started.taskId);
+    expect(view?.injects[0]?.attachments).toEqual([
+      {
+        id: att.attachment.id,
+        fileName: 'photo.png',
+        mime: 'image/png',
+        size: att.attachment.size,
+      },
+    ]);
+    expect(view?.model).not.toBeNull();
+
+    // 放行后注入进入下一请求：image block 到达模型（mock-main 声明 input image）。
+    held.release();
+    await waitFor(() => (llm.requestsFor('mock-main').length >= 2 ? true : null), {
+      label: 'steered request',
+    });
+    const bodies = JSON.stringify(llm.requestsFor('mock-main').map((q) => q.body));
+    expect(bodies).toContain('aGVsbG8=');
+  }, 30_000);
+
+  it('injectById 附件直注：他人会话 / 已占用的附件 → INVALID_INPUT', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const bot = await makeBot(core, '小艾');
+    const other = await makeBot(core, '小丁');
+    const conv = await openDirect(core, bot.id);
+    const otherConv = await openDirect(core, other.id);
+    const foreign = (await core.rpc.call('attachments.upload', {
+      conversationId: otherConv.id,
+      fileName: 'x.png',
+      mime: 'image/png',
+      bytesBase64: 'aGVsbG8=',
+    })) as { attachment: { id: string } };
+    const mine = (await core.rpc.call('attachments.upload', {
+      conversationId: conv.id,
+      fileName: 'mine.png',
+      mime: 'image/png',
+      bytesBase64: 'aGVsbG8=',
+    })) as { attachment: { id: string } };
+
+    llm.script('mock-main', [
+      step().expect(isTaskRequest('TASK-INJECT-GUARD')).hold().replyText('不会到达'),
+    ]);
+    const started = tasksOf(stack).start(turnIdentity(bot.id, conv.id), {
+      title: '附件校验',
+      instruction: 'TASK-INJECT-GUARD',
+      sourceMessageIds: [],
+      writes: false,
+    });
+    await waitRun(stack, started.taskId, ['running'], 'task running');
+
+    await expect(
+      stack.core.rpc.call('tasks.inject', {
+        taskId: started.taskId,
+        text: '拿别人的附件',
+        attachmentIds: [foreign.attachment.id],
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+
+    // 先把 mine 占用掉（直发对话消息），再注入 → 已被占用。
+    await stack.core.rpc.call('messages.send', {
+      conversationId: conv.id,
+      text: '先占用',
+      attachmentIds: [mine.attachment.id],
+    });
+    await expect(
+      stack.core.rpc.call('tasks.inject', {
+        taskId: started.taskId,
+        text: '再次占用同一附件',
+        attachmentIds: [mine.attachment.id],
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    stack.llm.releaseAll();
+  }, 30_000);
+
+  it('未启动任务的附件直注：入简报 <later_instructions>（附件行），启动时图片进视觉通道', async () => {
+    const home = await mkdtemp(path.join(tmpdir(), 'kepcup-tasks-'));
+    const keystore = createMemoryKeystore();
+    try {
+      const first = await boot(home, keystore);
+      const bot = await makeBot(first.core, '小艾');
+      const conv = await openDirect(first.core, bot.id);
+      const att = (await first.core.rpc.call('attachments.upload', {
+        conversationId: conv.id,
+        fileName: 'photo.png',
+        mime: 'image/png',
+        bytesBase64: 'aGVsbG8=',
+      })) as { attachment: { id: string } };
+      const runs = domain(first).runs;
+      const task = runs.create({
+        botId: bot.id,
+        conversationId: conv.id,
+        loopType: 'task',
+        triggerReason: null,
+        triggerMessageIds: [],
+        taskTitle: 'TASK-INJECT-BRIEF',
+        taskWrites: false,
+        originRunId: 'run_turn_old',
+      });
+      domain(first).messages.appendTaskEvent({
+        conversationId: conv.id,
+        ownerBotId: bot.id,
+        taskId: task.id,
+        phase: 'brief',
+        text: 'TASK-INJECT-BRIEF',
+        title: 'TASK-INJECT-BRIEF',
+        writes: false,
+      });
+      const injected = tasksOf(first).injectById(task.id, '再补一张截图', [att.attachment.id]);
+      expect(injected.delivery).toBe('delivered');
+      await first.close();
+
+      const second = await boot(home, keystore, (llm) =>
+        llm.script('mock-main', [
+          step().expect(isTaskRequest('TASK-INJECT-BRIEF')).replyToolCall('skip_reply', { reason: 'x' }),
+        ]),
+      );
+      try {
+        await waitFor(
+          () => {
+            const run = second.core.services.domain!.runs.get(task.id);
+            return run !== null && run.status !== 'queued' && run.status !== 'running'
+              ? run
+              : null;
+          },
+          { label: 'brief-attachment task settled', timeoutMs: 15_000 },
+        );
+        // 简报的 later_instructions 带附件行；图片本体走视觉通道（image block）。
+        const seen = JSON.stringify(second.llm.requestsFor('mock-main').map((q) => q.body));
+        expect(seen).toContain('<later_instructions>');
+        expect(seen).toContain('再补一张截图');
+        expect(seen).toContain('photo.png [image/png]');
+        expect(seen).toContain('aGVsbG8=');
+      } finally {
+        await second.close();
+      }
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('injectById 附件直注：重复 id 去重不自毁；纯附件（text 空）可注入；>4 张只前 4 张进视觉通道', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const bot = await makeBot(core, '小艾');
+    const conv = await openDirect(core, bot.id);
+    const upload = async (name: string) =>
+      (await core.rpc.call('attachments.upload', {
+        conversationId: conv.id,
+        fileName: name,
+        mime: 'image/png',
+        bytesBase64: 'aGVsbG8=',
+      })) as { attachment: { id: string; size: number } };
+
+    const held = step().expect(isTaskRequest('TASK-INJECT-EDGE')).hold().replyText('不会到达');
+    llm.script('mock-main', [held, step().replyText('收到')]);
+    const started = tasksOf(stack).start(turnIdentity(bot.id, conv.id), {
+      title: '附件边界',
+      instruction: 'TASK-INJECT-EDGE',
+      sourceMessageIds: [],
+      writes: false,
+    });
+    await waitRun(stack, started.taskId, ['running'], 'task running');
+    await waitFor(() => (llm.requestsFor('mock-main').length >= 1 ? true : null), {
+      label: 'task request held',
+    });
+
+    // 重复 id：去重后同一附件只 claim 一次，不触发「已被占用」自毁。
+    const dup = await upload('dup.png');
+    const injected = tasksOf(stack).injectById(started.taskId, '同一张图说两遍', [
+      dup.attachment.id,
+      dup.attachment.id,
+    ]);
+    expect(injected.delivery).toBe('delivered');
+
+    // 纯附件（text 空）注入：steer 文本只有附件行。
+    const pure = await upload('pure.png');
+    const pureInject = tasksOf(stack).injectById(started.taskId, '', [pure.attachment.id]);
+    expect(pureInject.delivery).toBe('delivered');
+
+    // >4 张：视觉通道只取前 4 张（全部 6 张仍进文本行 / claim）。
+    const many = await Promise.all(
+      ['1', '2', '3', '4', '5', '6'].map((n) => upload(`many-${n}.png`)),
+    );
+    const manyInject = tasksOf(stack).injectById(started.taskId, '六张图', [
+      ...many.map((m) => m.attachment.id),
+    ]);
+    expect(manyInject.delivery).toBe('delivered');
+
+    held.release();
+    await waitFor(() => (llm.requestsFor('mock-main').length >= 2 ? true : null), {
+      label: 'steered requests',
+    });
+    // 放行后的请求体（可能多条，也可能把排队 steer 合并进一条）：视觉通道的
+    // image block 合计 = 重复 id 1 张 + 纯附件 1 张 + 六张里前 4 张。
+    const afterStart = llm.requestsFor('mock-main')
+      .slice(1)
+      .map((q) => JSON.stringify(q.body))
+      .join('');
+    expect(afterStart.split('aGVsbG8=').length - 1).toBe(6);
+    // 纯附件注入的 steer 文本只有附件行（无正文指令）。
+    const { steps } = (await core.rpc.call('runs.steps', { runId: started.taskId })) as {
+      steps: Array<{ type: string; payload: Record<string, unknown> }>;
+    };
+    const steers = steps.filter((s) => s.type === 'steer');
+    const pureSteerText = String(steers[1]!.payload['text']);
+    expect(pureSteerText).toContain('pure.png [image/png]');
+    expect(pureSteerText).not.toContain('<source_messages>');
   }, 30_000);
 
   it('listByBotViews：跨对话全集、按 created_at 倒序、不混入其它 Bot 的任务；limit 截断', async () => {

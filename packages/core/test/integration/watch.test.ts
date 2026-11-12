@@ -212,7 +212,9 @@ describe('W7 确定性监看（集成，可控时钟 + 假后台页）', () => {
     } finally {
       await stack.cleanup();
     }
-  });
+    // 用例含两次真实 jobs-runner 唤醒 + 一次 1.2s 负向等待；macOS CI
+    // 默认 5s 在较慢 runner 上不够（Ubuntu / Windows 同用例能过）。
+  }, 30_000);
 
   it('只有「3 分钟前」→「4 分钟前」不唤醒；真实变化唤醒一次；同一个 watch_alert 作业重跑不重复提醒', async () => {
     const { clock, browser, stack, bot, conv, watches } = await setup();

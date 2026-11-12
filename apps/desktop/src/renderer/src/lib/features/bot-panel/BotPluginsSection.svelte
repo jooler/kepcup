@@ -8,7 +8,12 @@
    */
   import { untrack } from 'svelte';
   import type { AppChoiceGroup } from './bot-apps';
-  import type { BotProfile, MailAccount, PluginSummary } from '@kepcup/shared';
+  import type {
+    BotProfile,
+    MailAccount,
+    PluginInstanceSummary,
+    PluginSummary,
+  } from '@kepcup/shared';
   import { ChevronDown, Plus, Search, X } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
   import { t, errorText } from '$lib/i18n';
@@ -101,6 +106,40 @@
   /** 这个 Bot 已添加的插件（只列这些；未添加的能力对它不可见）。 */
   const added = $derived(addedPlugins(plugins.plugins, profile.runtime.plugin_ids));
 
+  // --- mcp 实例（P4-M2）：已添加插件的工具服务实例，展开区逐个勾选授权 ---------
+  // 实例 server 的注入 = 插件启用 ∧ 本 Bot 勾选（`mcp_server_ids`），与 mail/im 的
+  // 账号绑定同语义；数据随已添加插件集与 plugins.changed 刷新。
+  let mcpInstances = $state<Record<string, PluginInstanceSummary[]>>({});
+  $effect(() => {
+    const pluginIds = added
+      .filter((plugin) => plugin.providesInstances.includes('mcp'))
+      .map((plugin) => plugin.id);
+    let cancelled = false;
+    const load = async (): Promise<void> => {
+      try {
+        const results = await Promise.all(
+          pluginIds.map(async (pluginId) => {
+            const result = (await core.call('plugins.instances.list', {
+              pluginId,
+            })) as { instances: PluginInstanceSummary[] };
+            return [pluginId, result.instances.filter((entry) => entry.kind === 'mcp')] as const;
+          }),
+        );
+        if (!cancelled) mcpInstances = Object.fromEntries(results);
+      } catch {
+        // 提示性数据：拉不到不阻塞区块（勾选列表留空，实例管理仍在插件卡）。
+      }
+    };
+    void load();
+    return core.onEvent('plugins.changed', () => {
+      void load();
+    });
+  });
+  /** 展开区的实例勾选项（按插件 id）；serverId 由 core 派生（summary 携带）。 */
+  function instancesOf(pluginId: string): PluginInstanceSummary[] {
+    return mcpInstances[pluginId] ?? [];
+  }
+
   // --- 添加弹框：已安装插件的卡片网格 + 全宽搜索 ----------------------------
   let addOpen = $state(false);
   let addQuery = $state('');
@@ -111,6 +150,9 @@
   function openAddDialog(): void {
     addQuery = '';
     addOpen = true;
+    // 打开即强拉一次清单：事件偶发丢失 / 跨弹窗时序下列表可能停在旧快照
+    //（刚装的插件不出现，要刷新窗口才回来），以打开动作为准兜底。
+    void plugins.load(true).catch(() => undefined);
   }
 
   async function addPlugin(plugin: PluginSummary): Promise<void> {
@@ -302,11 +344,15 @@
   }
 
   // --- 手动工具服务（现 bot-mcp 控件，仅手动 server） -------------------------
-  // 插件贡献的 server 随插件启用集自动可用（P2 §3.3）；这里只保留手动 / mcpb
-  // 独立安装的 server 的 `mcp_server_ids` 细选。
+  // 插件承载的 server 不在这里：固定投影（plugin 来源）随插件启用集自动可用
+  // （P2 §3.3）；实例来源（instance，P4-M2）在插件卡展开区逐个勾选授权。
   const mcpOptions = $derived(manualToolServers(settingsStore.settings?.mcpServers ?? []));
+  // 无人值守风险提示覆盖**所有**勾选的 server（手动 + 实例——实例勾选也在
+  // `mcp_server_ids` 里，风险语义相同）。
   const selectedMcpServers = $derived(
-    mcpOptions.filter((server) => profile.runtime.mcp_server_ids.includes(server.id)),
+    (settingsStore.settings?.mcpServers ?? []).filter(
+      (server) => server.enabled && profile.runtime.mcp_server_ids.includes(server.id),
+    ),
   );
   let mcpRiskyCount = $state<number | null>(null);
   let mcpRiskUnknown = $state(false);
@@ -444,6 +490,7 @@
           // `?? ''`：旧 core 进程（usage 字段引入前的构建）返回的清单没有该字段，别让它崩区块。
           (plugin.usage ?? '').length > 0 ||
           groupsOf(plugin).length > 0 ||
+          pluginProvides(plugin, 'mcp') ||
           pluginProvides(plugin, 'mail') ||
           pluginProvides(plugin, 'im')}
         <div
@@ -635,7 +682,37 @@
               {#if pluginProvides(plugin, 'im')}
                 <BotImBindings {botId} />
               {/if}
-              {#if plugin.counts.mcp > 0}
+              {#if plugin.providesInstances.includes('mcp')}
+                <!-- P4-M2：实例型插件 = 工具服务逐个勾选授权（写入 `mcp_server_ids`）；
+                     注入 = 插件启用 ∧ 本 Bot 勾选，与 mail/im 的账号绑定同语义。 -->
+                <div
+                  class="grid gap-1.5"
+                  data-testid={`bot-plugins-mcp-instances-${plugin.id}`}
+                >
+                  {#if instancesOf(plugin.id).length === 0}
+                    <p class="text-xs text-muted-foreground">
+                      {t('botPanel.plugins.instanceServersEmpty')}
+                    </p>
+                  {:else}
+                    {#each instancesOf(plugin.id) as instance (instance.id)}
+                      <label class="flex items-center gap-2 text-sm">
+                        <Checkbox
+                          checked={instance.serverId !== undefined &&
+                            profile.runtime.mcp_server_ids.includes(instance.serverId)}
+                          onCheckedChange={(checked) =>
+                            instance.serverId !== undefined &&
+                            toggleMcpServer(instance.serverId, checked === true)}
+                          data-testid={`bot-plugins-mcp-instance-${instance.serverId}`}
+                        />
+                        <span class="min-w-0 truncate">{instance.title}</span>
+                      </label>
+                    {/each}
+                    <p class="text-xs text-muted-foreground">
+                      {t('botPanel.plugins.instanceServersHint')}
+                    </p>
+                  {/if}
+                </div>
+              {:else if plugin.counts.mcp > 0}
                 <p
                   class="text-xs text-muted-foreground"
                   data-testid={`bot-plugins-auto-${plugin.id}`}
@@ -755,7 +832,7 @@
     </div>
   {/if}
 
-  <!-- 手动工具服务（现 bot-mcp 控件，仅手动 server；插件 server 随插件启用自动可用） -->
+  <!-- 手动工具服务（现 bot-mcp 控件，仅手动 server；插件承载的 server 在各插件卡里） -->
   {#if mcpOptions.length > 0}
     <div class="grid gap-1.5" data-testid="bot-mcp-servers">
       <Label>{t('botPanel.plugins.manualServers')}</Label>
@@ -775,23 +852,25 @@
         {/each}
       </div>
       <p class="text-xs text-muted-foreground">{t('botPanel.plugins.manualServersHint')}</p>
-      {#if mcpNotice.show}
-        <p
-          class={mcpNotice.warning
-            ? 'rounded bg-amber-500/15 px-2 py-1 text-xs font-medium text-amber-700 dark:text-amber-400'
-            : 'text-xs text-amber-700 dark:text-amber-400'}
-          data-testid="bot-mcp-unattended-notice"
-          data-warning={mcpNotice.warning}
-        >
-          {t('contacts.mcpUnattendedNotice')}
-          {#if mcpNotice.unknown}
-            {t('contacts.mcpUnattendedUnknown')}
-          {:else if mcpNotice.warning}
-            {t('contacts.mcpUnattendedActive', { count: mcpNotice.riskyCount })}
-          {/if}
-        </p>
-      {/if}
     </div>
+  {/if}
+
+  <!-- 无人值守风险提示：覆盖全部勾选的 server（手动 + 插件实例），独立于上面的区块 -->
+  {#if mcpNotice.show}
+    <p
+      class={mcpNotice.warning
+        ? 'rounded bg-amber-500/15 px-2 py-1 text-xs font-medium text-amber-700 dark:text-amber-400'
+        : 'text-xs text-amber-700 dark:text-amber-400'}
+      data-testid="bot-mcp-unattended-notice"
+      data-warning={mcpNotice.warning}
+    >
+      {t('contacts.mcpUnattendedNotice')}
+      {#if mcpNotice.unknown}
+        {t('contacts.mcpUnattendedUnknown')}
+      {:else if mcpNotice.warning}
+        {t('contacts.mcpUnattendedActive', { count: mcpNotice.riskyCount })}
+      {/if}
+    </p>
   {/if}
 
   {#if mailPlugins.length === 0 && legacyMailAccounts.length > 0}

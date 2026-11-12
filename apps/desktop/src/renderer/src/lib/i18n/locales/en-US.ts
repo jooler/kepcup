@@ -686,9 +686,18 @@ export const enUS = {
   'rightPanel.tabSkills': 'Skills',
   'rightPanel.tabWidgets': 'Widgets',
   'rightPanel.tabWiki': 'Wiki',
-  // --- D116 three tabs (docs/design/56 §2): detail / widgets / tasks ------------
+  // --- D116 tabs (docs/design/56 §2) + notes: detail / widgets / tasks / notes ----
   'rightPanel.tabDetail': 'Details',
   'rightPanel.tabTasks': 'Tasks',
+  'rightPanel.tabNotes': 'Notes',
+  'rightPanel.notesAdd': 'New note',
+  'rightPanel.notesPlaceholder': 'Write down something worth keeping…',
+  'rightPanel.notesDelete': 'Delete note',
+  'rightPanel.notesCollapse': 'Collapse',
+  'rightPanel.notesExpand': 'Expand',
+  'rightPanel.notesLoadFailed': 'Failed to load notes',
+  'rightPanel.notesSaveFailed': 'Failed to save note',
+  'rightPanel.notesDeleteFailed': 'Failed to delete note',
   'rightPanel.tasksHint': 'All tasks this bot has started (across conversations).',
   'rightPanel.tasksEmpty': 'This bot has not started any task yet.',
   'rightPanel.tasksActiveGroup': 'In progress ({count})',
@@ -742,6 +751,10 @@ export const enUS = {
   'botPanel.plugins.usage': 'Activation',
   'botPanel.plugins.serversAuto':
     "This plugin's tool services come with the plugin — no per-server checkbox needed.",
+  'botPanel.plugins.instanceServersEmpty':
+    'No tool services yet: add one under Extension Center → Installed → this plugin → Manage.',
+  'botPanel.plugins.instanceServersHint':
+    'When checked, this bot can use the corresponding tool services: read-only tools run directly, while write/destructive tools require approval for each call (unless auto-approve or per-tool settings are enabled).',
   'botPanel.plugins.localAccounts': 'Local connections',
   'botPanel.plugins.pluginDisabled': 'Plugin disabled',
   'botPanel.plugins.manualServers': 'Manually added tool services',
@@ -3211,6 +3224,8 @@ export const enUS = {
   'present.step.done': 'Done',
   'present.step.current': 'In progress',
   'present.step.todo': 'To do',
+  'present.expand': 'Expand',
+  'present.collapse': 'Collapse',
   'botWidget.check.passed': 'Self-check passed',
   'botWidget.check.issues': 'Known issues',
   'botWidget.check.unverified': 'Not verified by running',
@@ -3452,9 +3467,24 @@ export const enUS = {
   'mcp.ownerOf': 'From plugin: {plugin}',
   'mcp.instanceFormNote':
     'A tool service of "{plugin}". Fields are declared by the plugin; credentials stay on this device.',
-  'mcp.pluginMissing': 'The plugin does not exist or has been uninstalled — go back to the list and refresh.',
+  'mcp.pluginMissing':
+    'The plugin does not exist or has been uninstalled — go back to the list and refresh.',
   'mcp.pluginDisabled':
     'Plugin "{plugin}" is currently disabled; enable it before saving a new tool service.',
+  'mcpCard.pickPlugin': 'Pick a plugin',
+  'mcpCard.instance': 'Tool service',
+  'mcpCard.newInstance': 'New tool service',
+  'mcpCard.newInstanceHint': 'No tool services yet — fill in the form below to add one.',
+  'mcpCard.forBot': 'Authorize for this bot',
+  'mcpCard.forBotHint': 'Checked services are injected into this bot as MCP tools.',
+  'mcpCard.test': 'Test connection',
+  'mcpCard.testing': 'Testing…',
+  'mcpCard.testOk': 'Connected, {count} tools',
+  'mcpCard.testFail': 'Connection failed: {error}',
+  'mcpCard.testMissing': 'Missing credentials: {names}. Fill them in and save first.',
+  'mcpCard.testNoServer':
+    'This service is not active yet. Save it and check the authorization first.',
+  'mcpCard.done': 'Done',
   'mailCard.save': 'Save',
   'mailCard.plugin.saved': 'Mail plugin settings saved',
   'mailCard.plugin.enabledGlobally': 'Enabled plugin "{plugin}"',

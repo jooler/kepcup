@@ -392,6 +392,42 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     },
     store: { kind: 'settings', paths: ['mcpServers'] },
   }),
+  item({
+    id: 'mcp.instance',
+    group: 'mcp',
+    title: '插件的工具服务',
+    summary: '添加或修改某个插件（腾讯文档、飞书、语雀等）的工具服务：粘贴 token 等凭据',
+    enables: ['配置插件的工具服务', '填写插件凭据'],
+    keywords: [
+      '工具服务',
+      '实例',
+      'token',
+      '令牌',
+      '凭据',
+      '腾讯文档',
+      '飞书',
+      '语雀',
+      'MCP',
+      'instance',
+    ],
+    scope: 'bot',
+    // 表单本体（备注名 / 地址 / 凭据）按插件声明的实例字段由卡片动态构建（同 mail.account），
+    // 目录只登记「哪个插件、哪个实例」两个寻址字段。
+    fields: [
+      field('plugin', '插件', 'select', { options: 'mcp-instance-plugins' }),
+      field('instance', '工具服务', 'select', { options: 'mcp-instances' }),
+    ],
+    // 添加 / 改凭据 = 给应用接入外部服务（放宽），且凭据只能用户亲手填 → form 空白起填。
+    // 保存经渲染层组件的 plugins.instances.*（异步、凭据进 secrets），不进设置写锁。
+    write: write('form', { widensPermission: true }),
+    card: 'mcp-instance',
+    deepLink: {
+      surface: 'extension-center',
+      section: 'installed',
+      anchor: 'plugins-filter-mcp',
+    },
+    store: { kind: 'none' },
+  }),
 
   // --- 邮件 ---------------------------------------------------------------
   item({

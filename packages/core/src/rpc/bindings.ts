@@ -315,6 +315,14 @@ import {
   stickiesUpdateOutputSchema,
   stickiesDeleteInputSchema,
   stickiesDeleteOutputSchema,
+  notesListInputSchema,
+  notesListOutputSchema,
+  notesCreateInputSchema,
+  notesCreateOutputSchema,
+  notesUpdateInputSchema,
+  notesUpdateOutputSchema,
+  notesDeleteInputSchema,
+  notesDeleteOutputSchema,
   sidebarGetInputSchema,
   sidebarLayoutOutputSchema,
   sidebarSectionsCreateInputSchema,
@@ -790,8 +798,8 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       // P4-M2：实例 server 的凭据只能走实例表单（plugins.instances.update）——直写
       // secrets 会绕过厂商模版的锁定值与占位符契约。固定投影（plugin 来源）同样拒绝，
       // 与 settings.update 的 PLUGIN_MANAGED 口径一致。
-      const managed = services.domain!.settings
-        .get()
+      const managed = services
+        .domain!.settings.get()
         .mcpServers.find((server) => server.id === input.serverId);
       if (managed?.source?.kind === 'instance') {
         throw new AppError(
@@ -813,8 +821,8 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     }),
     'mcp.removeSecret': method(mcpRemoveSecretInputSchema, okOutputSchema, async (input) => {
       if (!services.mcp) throw new AppError('NOT_IMPLEMENTED', 'MCP 模块未就绪');
-      const managed = services.domain!.settings
-        .get()
+      const managed = services
+        .domain!.settings.get()
         .mcpServers.find((server) => server.id === input.serverId);
       if (managed?.source?.kind === 'instance') {
         throw new AppError(
@@ -1607,10 +1615,10 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       orchestrator.tasks.answerQuestion(input.messageId, input.answer, input.values);
       return { ok: true as const };
     }),
-    // D115 任务直注（任务详情页注入坞，docs/design/56 §1）：用户自由文本直达
-    // TaskHost.injectById，复用 inject_task 全部语义。
+    // D115 任务直注（任务详情页注入坞，docs/design/56 §1）：自由文本 + 直带
+    // 附件直达 TaskHost.injectById，复用 inject_task 全部语义。
     'tasks.inject': method(tasksInjectInputSchema, tasksInjectOutputSchema, async (input) =>
-      orchestrator.tasks.injectById(input.taskId, input.text),
+      orchestrator.tasks.injectById(input.taskId, input.text, input.attachmentIds),
     ),
     // D116 Bot 详情「任务」tab：该 Bot 拉起的任务全集（跨对话），最新在前。
     'tasks.listByBot': method(
@@ -2327,6 +2335,22 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         return { ok: true as const };
       },
     ),
+
+    // --- conversation notes（右栏 Bot 详情「便签」tab） ----------------------
+    'notes.list': method(notesListInputSchema, notesListOutputSchema, async (input) => ({
+      notes: domain.conversationNotes.list(input.conversationId),
+    })),
+    'notes.create': method(notesCreateInputSchema, notesCreateOutputSchema, async (input) => {
+      domain.conversations.getOrThrow(input.conversationId);
+      return { note: domain.conversationNotes.create(input) };
+    }),
+    'notes.update': method(notesUpdateInputSchema, notesUpdateOutputSchema, async (input) => ({
+      note: domain.conversationNotes.update(input.id, input.text),
+    })),
+    'notes.delete': method(notesDeleteInputSchema, notesDeleteOutputSchema, async (input) => {
+      domain.conversationNotes.remove(input.id);
+      return { ok: true as const };
+    }),
 
     // --- 左栏对话分组（main.db sidebar_sections / conversation_sidebar） ---
     'sidebar.get': method(sidebarGetInputSchema, sidebarLayoutOutputSchema, async () => ({

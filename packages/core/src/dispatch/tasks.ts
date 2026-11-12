@@ -28,10 +28,12 @@ import {
   TASK_START_MAX_PER_TURN,
   type Message,
   type MessageArtifact,
+  type Attachment,
   type Run,
   type RunStatus,
   type RunStep,
   type SetupRequirement,
+  type SteerAttachment,
   type TaskChanges,
   type TaskEventContent,
   type TaskView,
@@ -103,7 +105,11 @@ import type {
 
 /** A run handle as the task host needs it (steering = inject, abort = cancel). */
 export interface TaskRunHandle {
-  steer(text: string): boolean;
+  /** `opts` 携带注入直带的图片字节与附件元数据（D115 附件直注，引擎判定图像输入）。 */
+  steer(
+    text: string,
+    opts?: { images?: Array<{ mimeType: string; base64: string }>; attachments?: SteerAttachment[] },
+  ): boolean;
   abort(reason: string): void;
   /** D93: execution activity heartbeat for the no-progress watchdog. */
   onEvent(listener: (event: EngineEvent) => void): () => void;
@@ -120,7 +126,13 @@ export interface TaskBrief {
   /** The user's original messages (attachments included), in seq order. */
   sourceMessages: Message[];
   /** inject entries recorded before the task started (folded into the brief). */
-  injects: Array<{ text: string; sourceMessages: Message[]; at: number }>;
+  injects: Array<{
+    text: string;
+    sourceMessages: Message[];
+    /** D115 附件直注：注入直带的附件（文本行 + 启动时的视觉通道字节）。 */
+    attachments: Attachment[];
+    at: number;
+  }>;
   continuesTaskId: string | null;
 }
 
@@ -203,6 +215,12 @@ const BROWSER_TOOL_PREFIX = 'browser_';
 export const BROWSER_HANDBACK_TEXT = '用户已交还浏览器控制，先 browser_snapshot 再继续';
 
 /**
+ * D115 附件直注：注入直带图片进视觉通道的约束（与触发批 #triggerImages 同口径）。
+ */
+const INJECT_IMAGES_MAX_COUNT = 4;
+const INJECT_IMAGE_MAX_BYTES = 5_000_000;
+
+/**
  * Ledger rows that make retrying an interrupted task a reviewed decision (W3):
  * external calls that completed or whose outcome is unknown (`executing` left
  * behind by a dead process counts as unknown).
@@ -257,6 +275,15 @@ export interface TaskHostDeps {
   /** W2 外部副作用台账：失败摘要据此标「结果未知」；缺省（单测）不查。 */
   effects?: ToolEffectsStore;
   messages: MessagesService;
+  /**
+   * D115 附件直注：注入坞直带附件的存取（按 id 取行、claim 到注入条目、读字节）。
+   * 缺省 = 无（单测）：带 attachmentIds 的注入直接拒绝（INVALID_INPUT）。
+   */
+  attachments?: {
+    get(id: string): Attachment | null;
+    claimForMessage(ids: readonly string[], conversationId: string, messageId: string): void;
+    readBytes(attachment: Attachment): Buffer;
+  };
   conversations: ConversationsService;
   bots: BotsService;
   clock: Clock;
@@ -308,6 +335,12 @@ export interface TaskHostDeps {
    * fails before its engine starts still shows the right engine.
    */
   taskEngine?(botId: string): string | null;
+  /**
+   * D115 附件直注：任务执行器将用的模型 ref（Bot 的模型 → 默认主模型）。run 行
+   * 的 model 在引擎真正启动时才落库——排队中的任务视图据此回退，附件键的
+   * 图像输入预检不误报。
+   */
+  taskModelRef?(botId: string): string | null;
   /**
    * D91 (design 40 §4.1): the bot's current capability catalog, reduced to what `start_task`
    * validation needs (id + whether it is `ready`). Narrow on purpose — the host never depends on
@@ -535,6 +568,9 @@ function normalizeClaimPaths(paths: string[]): string[] {
 interface PendingInject {
   text: string;
   entryId: string;
+  /** D115 附件直注：随注入直带的图片字节与附件元数据（attach flush 时透传给引擎）。 */
+  images?: Array<{ mimeType: string; base64: string }>;
+  attachments?: SteerAttachment[];
   /** Runs when the inject turns out not to reach any engine run (审查 M5). */
   onNotDelivered?: () => void;
 }
@@ -670,7 +706,11 @@ export function buildTaskBriefSegment(
   if (brief.injects.length > 0) {
     lines.push('<later_instructions>');
     for (const inject of brief.injects) {
-      lines.push(inject.text, ...sourceLines(inject.sourceMessages, options));
+      lines.push(
+        inject.text,
+        ...inject.attachments.map(attachmentLine),
+        ...sourceLines(inject.sourceMessages, options),
+      );
     }
     lines.push('</later_instructions>');
   }
@@ -695,17 +735,31 @@ export function buildTaskBriefSegment(
   return lines.join('\n');
 }
 
+/**
+ * 注入直带附件的模型侧条目（D115 附件直注）：`att_… name.zip [mime] 大小KB`，
+ * 与 renderAttachmentEntry 的基础格式同口径。注入附件是用户上传（非分享 /
+ * 语音条目），不带 path 物化——执行器按 id 走 get_attachment / understand_image。
+ */
+function attachmentLine(attachment: Attachment): string {
+  return `${attachment.id} ${attachment.fileName} [${attachment.mime}] ${Math.max(
+    1,
+    Math.round(attachment.size / 1024),
+  )}KB`;
+}
+
 /** Steer text of an inject (§4.1 inject_task): the new instruction + originals. */
 export function buildTaskInjection(
   text: string,
   sourceMessages: Message[],
   options: RenderMessageOptions,
   note?: string,
+  attachments: Attachment[] = [],
 ): string {
   const sources = sourceLines(sourceMessages, options);
   return [
     '<task_inject>',
     text,
+    ...attachments.map(attachmentLine),
     ...(sources.length > 0 ? ['<source_messages>', ...sources, '</source_messages>'] : []),
     '</task_inject>',
     note ?? '对话中的你追加了新的指令：据此调整当前的工作。',
@@ -720,15 +774,16 @@ export function buildTaskAnswer(
   text: string,
   sourceMessages: Message[],
   options: RenderMessageOptions,
+  attachments: Attachment[] = [],
 ): string {
   const sources = sourceLines(sourceMessages, options);
-  if (sources.length === 0) return text;
+  if (sources.length === 0 && attachments.length === 0) return text;
   return [
     text,
-    '<source_messages>',
-    ...sources,
-    '</source_messages>',
-    '（以上是用户的原话；转交的回答与原话不一致时以原话为准）',
+    ...attachments.map(attachmentLine),
+    ...(sources.length > 0
+      ? ['<source_messages>', ...sources, '</source_messages>', '（以上是用户的原话；转交的回答与原话不一致时以原话为准）']
+      : ['（以上是用户的回答；附件按 att_ id 可用 get_attachment / understand_image 读取）']),
   ].join('\n');
 }
 
@@ -1048,40 +1103,58 @@ export class TaskHost implements TaskToolFacade {
       throw new AppError('RUN_ALREADY_FINISHED', `任务 ${task.id} 已结束（${task.status}）`);
     }
     const text = input.text.trim();
-    if (text.length === 0) throw new AppError('INVALID_INPUT', 'text 不能为空');
+    const { attachments: injectAttachments, ids: attachmentIds, meta } = this.#injectAttachments(
+      conversationId,
+      input.attachmentIds,
+    );
+    if (text.length === 0 && injectAttachments.length === 0) {
+      throw new AppError('INVALID_INPUT', 'text 与 attachmentIds 不能同时为空');
+    }
     const sources = this.#sourceMessages(conversationId, input.sourceMessageIds ?? []);
     const question = this.#questions.get(task.id);
     if (question !== undefined) {
       // The task is blocked on its question card (§2.4.6): the turn relays the
       // user's free-text answer — it is the answer, not a steer.
-      this.#deps.messages.appendTaskEvent({
-        conversationId,
-        ownerBotId: botId,
-        taskId: task.id,
-        phase: 'inject',
-        text,
-        sourceMessageIds: sources.map((message) => message.id),
-        delivery: 'delivered',
-      });
+      // 落库与 claim 同事务（审查 P1-1）：要么条目带附件转正，要么都不发生。
+      this.#deps.db.transaction(() => {
+        const { message } = this.#deps.messages.appendTaskEvent({
+          conversationId,
+          ownerBotId: botId,
+          taskId: task.id,
+          phase: 'inject',
+          text,
+          sourceMessageIds: sources.map((message) => message.id),
+          delivery: 'delivered',
+        });
+        // 直带附件绑定到注入条目（claim 重校验归属；附件随对话历史保留）。
+        if (injectAttachments.length > 0) {
+          this.#deps.attachments?.claimForMessage(attachmentIds, conversationId, message.id);
+        }
+        return message;
+      })();
       // The relayed answer carries the user's originals (attachments,
       // images as attachment lines) like any inject (审查 M5).
       this.#resolveQuestion(
         task.id,
         question,
         text,
-        buildTaskAnswer(text, sources, this.#deps.renderOptions(botId)),
+        buildTaskAnswer(text, sources, this.#deps.renderOptions(botId), injectAttachments),
       );
       return { delivery: 'delivered' };
     }
     const launched = this.#launched.get(task.id);
     const steerText = (): string =>
-      buildTaskInjection(text, sources, this.#deps.renderOptions(botId), input.note);
+      buildTaskInjection(text, sources, this.#deps.renderOptions(botId), input.note, injectAttachments);
     let delivery: 'delivered' | 'queued' = 'delivered';
     let buffer = false;
     let steered: string | null = null;
+    // 图片字节只给会真正送进引擎的两条路径（steer / buffered）读——入简报与
+    // queued 时丢弃，启动时由 #triggerImages 重读（审查 P2-2，避免双重预读）。
+    let images: Array<{ mimeType: string; base64: string }> = [];
     if (launched?.handle) {
       const text = steerText();
-      if (launched.handle.steer(text)) steered = text;
+      images = this.#injectImages(injectAttachments);
+      if (launched.handle.steer(text, { images, attachments: meta })) steered = text;
       else delivery = 'queued';
     } else if (launched !== undefined && (launched.closing || launched.settledAt !== null)) {
       // The engine run is over (the execution is settling): nothing will take
@@ -1089,31 +1162,124 @@ export class TaskHost implements TaskToolFacade {
       delivery = 'queued';
     } else if (launched?.briefBuilt) {
       buffer = true;
+      images = this.#injectImages(injectAttachments);
     }
     // Not launched / brief not built yet: the entry below is folded into the
     // brief when the task starts (TaskBrief.injects).
-    const { message: entry } = this.#deps.messages.appendTaskEvent({
-      conversationId,
-      ownerBotId: botId,
-      taskId: task.id,
-      phase: 'inject',
-      text,
-      sourceMessageIds: sources.map((message) => message.id),
-      delivery,
-    });
+    // 落库与 claim 同事务（审查 P1-1）：claim 竞态失败时条目与绑定一起回滚，
+    // RPC 以 INVALID_INPUT 失败，不会留下「条目已送达、附件成孤儿」的终态。
+    const { message: entry } = this.#deps.db.transaction(() => {
+      const { message } = this.#deps.messages.appendTaskEvent({
+        conversationId,
+        ownerBotId: botId,
+        taskId: task.id,
+        phase: 'inject',
+        text,
+        sourceMessageIds: sources.map((message) => message.id),
+        delivery,
+      });
+      // 直带附件绑定到注入条目（claim 重校验归属；附件随对话历史保留，简报
+      // 重建按条目回读）。
+      if (injectAttachments.length > 0) {
+        this.#deps.attachments?.claimForMessage(attachmentIds, conversationId, message.id);
+      }
+      return { message };
+    })();
     const fallback =
       options.onNotDelivered !== undefined ? { onNotDelivered: options.onNotDelivered } : {};
     // Steered at attach; a failure there downgrades the entry to queued.
     if (buffer && launched !== undefined) {
-      launched.buffered.push({ text: steerText(), entryId: entry.id, ...fallback });
+      launched.buffered.push({
+        text: steerText(),
+        entryId: entry.id,
+        ...(images.length > 0 ? { images } : {}),
+        ...(meta.length > 0 ? { attachments: meta } : {}),
+        ...fallback,
+      });
     }
     // An engine that refuses asynchronously (external agents) reports back by text.
     if (steered !== null && launched !== undefined) {
-      noteSteered(launched, { text: steered, entryId: entry.id, ...fallback });
+      noteSteered(launched, {
+        text: steered,
+        entryId: entry.id,
+        ...(images.length > 0 ? { images } : {}),
+        ...(meta.length > 0 ? { attachments: meta } : {}),
+        ...fallback,
+      });
     }
     if (task.awaitingInput) this.#deps.runs.update(task.id, { awaitingInput: false });
     this.publishUpdate(task.id);
     return { delivery };
+  }
+
+  /**
+   * D115 附件直注：解析注入直带的附件（归属本对话、未被占用），返回去重后的
+   * id 列表（claim 用同一份，重复 id 否则会在 claim 阶段必然命中「已被占用」，
+   * 审查 P1-2）。图片字节由 #injectImages 惰性读取。
+   */
+  #injectAttachments(conversationId: string, ids?: string[]): {
+    attachments: Attachment[];
+    ids: string[];
+    meta: SteerAttachment[];
+  } {
+    const wanted = [...new Set(ids ?? [])];
+    if (wanted.length === 0) return { attachments: [], ids: [], meta: [] };
+    const store = this.#deps.attachments;
+    if (store === undefined) throw new AppError('INVALID_INPUT', '附件直注未启用');
+    const attachments: Attachment[] = [];
+    for (const id of wanted) {
+      const attachment = store.get(id);
+      if (attachment === null || attachment.conversationId !== conversationId) {
+        throw new AppError('INVALID_INPUT', `附件 ${id} 不存在或不属于当前对话`);
+      }
+      if (attachment.messageId !== null) {
+        throw new AppError('INVALID_INPUT', `附件 ${id} 已被占用`);
+      }
+      attachments.push(attachment);
+    }
+    const meta: SteerAttachment[] = attachments.map((attachment) => ({
+      id: attachment.id,
+      fileName: attachment.fileName,
+      mime: attachment.mime,
+      size: attachment.size,
+    }));
+    return { attachments, ids: wanted, meta };
+  }
+
+  /**
+   * D115 附件直注：注入图片的视觉通道字节（与触发批 #triggerImages 同约束：
+   * image/*、非空、≤5MB、一批 ≤4）。同步读取（同步阻塞与触发批同口径）；
+   * 读失败只跳过该张，不阻断注入。
+   */
+  #injectImages(attachments: readonly Attachment[]): Array<{ mimeType: string; base64: string }> {
+    const store = this.#deps.attachments;
+    if (store === undefined) return [];
+    const images: Array<{ mimeType: string; base64: string }> = [];
+    for (const attachment of attachments) {
+      if (images.length >= INJECT_IMAGES_MAX_COUNT) break;
+      if (
+        !attachment.mime.startsWith('image/') ||
+        attachment.size === 0 ||
+        attachment.size > INJECT_IMAGE_MAX_BYTES
+      ) {
+        continue;
+      }
+      try {
+        images.push({
+          mimeType: attachment.mime,
+          base64: store.readBytes(attachment).toString('base64'),
+        });
+      } catch (error) {
+        this.#deps.logger.warn(
+          {
+            attachment: attachment.id,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          'inject image read failed; skipping',
+        );
+      }
+    }
+    return images;
   }
 
   /**
@@ -1522,7 +1688,7 @@ export class TaskHost implements TaskToolFacade {
    * 不经过对话轮；语义零改动地复用 `inject()`（等问即回答 / steer / 入简报 /
    * queued），注入条目照旧写 Bot 私有时间线。不产生对话消息。
    */
-  injectById(taskId: string, text: string): InjectTaskResult {
+  injectById(taskId: string, text: string, attachmentIds?: string[]): InjectTaskResult {
     const task = this.#deps.runs.get(taskId);
     if (task === null || task.loopType !== 'task') {
       throw new AppError('NOT_FOUND', `找不到任务 ${taskId}`);
@@ -1535,7 +1701,7 @@ export class TaskHost implements TaskToolFacade {
     }
     return this.inject(
       { runId: task.id, botId: task.botId, conversationId: task.conversationId, loopType: 'task' },
-      { taskId, text },
+      { taskId, text, attachmentIds },
     );
   }
 
@@ -1822,6 +1988,7 @@ export class TaskHost implements TaskToolFacade {
           text: content.text,
           delivery: content.delivery ?? 'delivered',
           at: event.createdAt,
+          ...this.#injectAttachmentMeta(event.id),
         });
       } else if (content.phase === 'cancel') {
         cancelReason ??= content.text;
@@ -1860,13 +2027,33 @@ export class TaskHost implements TaskToolFacade {
         : null;
     const summary = this.#summary(task);
     const claim = this.#deps.claims?.entryOf(task.id) ?? null;
+    // §3.7 执行归属映射：审批卡 / 提问卡的归属会话与卡片落点同一 resolver
+    // （委派任务 → 发起方 A 的私聊；普通任务 / 未接线 → 任务自己的会话），
+    // 详情页据此取审批条与提问条。
+    const userConversationId =
+      task.conversationId === null
+        ? null
+        : (this.#deps.userHomeOf?.({
+            runId: task.id,
+            botId: task.botId,
+            conversationId: task.conversationId,
+            loopType: 'task',
+          }) ?? task.conversationId);
     return {
       taskId: task.id,
       botId: task.botId,
       conversationId: task.conversationId,
+      userConversationId,
       title: task.taskTitle ?? '',
       state: taskState(task.status),
       status: task.status,
+      // 执行器模型 ref：run 行的 model（启动后落库）优先，排队中的任务回退
+      // Bot 当前模型 ref（taskModelRef）。外部 Agent bot 的 ref 形如
+      // `agent:{id}/…`（渲染层查不到已配置厂商，跳过预检）；bot 未配模型时
+      // 回退串是 ''，归一为 null（契约：null = 无法判定执行器模型）。
+      model:
+        (task.model ?? (task.botId !== null ? (this.#deps.taskModelRef?.(task.botId) ?? null) : null)) ||
+        null,
       writes: task.taskWrites === true,
       // D123: declared write domains + this task's runtime claim.
       writeDomains: task.taskWriteDomains,
@@ -1923,6 +2110,23 @@ export class TaskHost implements TaskToolFacade {
       else this.#publishedReasons.delete(taskId);
       publish(view);
     });
+  }
+
+  /**
+   * D115 附件直注：注入条目 claim 过的附件元数据（任务卡 / 详情页 chip）。
+   * 无附件返回空对象（TaskView.injects[].attachments 缺省）。
+   */
+  #injectAttachmentMeta(messageId: string): { attachments: SteerAttachment[] } | Record<string, never> {
+    const rows = this.#deps.messages.attachmentsFor(messageId);
+    if (rows.length === 0) return {};
+    return {
+      attachments: rows.map((attachment) => ({
+        id: attachment.id,
+        fileName: attachment.fileName,
+        mime: attachment.mime,
+        size: attachment.size,
+      })),
+    };
   }
 
   /** The task's visible card (§4.3): a shared card row bound to the task. */
@@ -2098,6 +2302,10 @@ export class TaskHost implements TaskToolFacade {
     }
     this.#cleanup(updated, launched !== undefined);
     this.#afterTerminal(updated, entry);
+    // 结算是可见变化：直接推 task.updated（含 result 报告）。start.ts
+    // 的 run.status 钩子也会再推一次，幂等；不依赖钩子重入是否把嵌套
+    // 的 task.updated 送到渲染端。
+    this.publishUpdate(taskId);
     this.#pump();
     return updated;
   }
@@ -3201,6 +3409,8 @@ export class TaskHost implements TaskToolFacade {
         brief.injects.push({
           text: content.text,
           sourceMessages: resolve(content.sourceMessageIds),
+          // D115 附件直注：注入条目 claim 过的附件随条目回读（文本行 + 启动视觉通道）。
+          attachments: this.#deps.messages.attachmentsFor(event.id),
           at: event.createdAt,
         });
       } else if (
@@ -3219,6 +3429,7 @@ export class TaskHost implements TaskToolFacade {
             options: this.#deps.renderOptions(task.botId ?? ''),
           }),
           sourceMessages: [],
+          attachments: [],
           at: event.createdAt,
         });
       }
@@ -3242,7 +3453,9 @@ export class TaskHost implements TaskToolFacade {
       launched.lastActivityAt = this.#deps.clock.now();
     });
     const refused = launched.buffered.splice(0).filter((item) => {
-      if (!handle.steer(item.text)) return true;
+      if (!handle.steer(item.text, { images: item.images, attachments: item.attachments })) {
+        return true;
+      }
       noteSteered(launched, item);
       return false;
     });

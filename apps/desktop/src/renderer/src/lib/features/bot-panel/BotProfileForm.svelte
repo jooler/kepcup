@@ -503,11 +503,11 @@
     </div>
     <div class="grid gap-1.5">
       <Label for="bot-tone">{t('contacts.tone')}</Label>
-      <Input id="bot-tone" bind:value={profile.persona.tone} />
+      <Textarea id="bot-tone" bind:value={profile.persona.tone} rows={2} />
     </div>
     <div class="grid gap-1.5">
       <Label for="bot-style">{t('contacts.style')}</Label>
-      <Input id="bot-style" bind:value={profile.persona.style} />
+      <Textarea id="bot-style" bind:value={profile.persona.style} rows={2} />
     </div>
     <div class="grid gap-1.5">
       <Label for="bot-values">{t('contacts.values')}</Label>
@@ -522,11 +522,11 @@
   {#if show('role')}
     <div class="grid gap-1.5">
       <Label for="bot-expertise">{t('contacts.expertise')}</Label>
-      <Input id="bot-expertise" bind:value={profile.role.expertise} />
+      <Textarea id="bot-expertise" bind:value={profile.role.expertise} rows={2} />
     </div>
     <div class="grid gap-1.5">
       <Label for="bot-responsibilities">{t('contacts.responsibilities')}</Label>
-      <Input id="bot-responsibilities" bind:value={profile.role.responsibilities} />
+      <Textarea id="bot-responsibilities" bind:value={profile.role.responsibilities} rows={2} />
     </div>
     <div class="grid gap-1.5">
       <Label for="bot-boundaries">{t('contacts.boundaries')}</Label>

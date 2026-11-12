@@ -91,7 +91,7 @@ export function pluginKindBadges(
  */
 export function pluginProvides(
   plugin: Pick<PluginSummary, 'counts' | 'providesInstances'>,
-  kind: 'connector' | 'mail' | 'im',
+  kind: 'connector' | 'mcp' | 'mail' | 'im',
 ): boolean {
   return kind === 'connector'
     ? plugin.counts.connectors > 0
@@ -99,12 +99,16 @@ export function pluginProvides(
 }
 
 /**
- * 展开细选里可勾选的工具服务（现 bot-mcp 控件，仅手动 server）：应用级已启用、
- * 且**不是**插件贡献的 server——插件 server 随插件启用集自动可用（P2 §3.3），
- * 历史勾选项读时忽略；手动 / mcpb 独立安装的维持 `mcp_server_ids` 勾选不变。
+ * 展开细选里可勾选的工具服务（现 bot-mcp 控件）：应用级已启用，且**不是**插件承载的
+ * server——固定投影（`plugin` 来源）随插件启用集自动可用（P2 §3.3，历史勾选读时忽略）；
+ * 实例来源（`instance`，P4-M2）移到插件卡展开区逐个勾选授权，同样不在这里；只剩手动 /
+ * mcpb 独立安装的 server 维持 `mcp_server_ids` 勾选。
  */
 export function manualToolServers(servers: readonly McpServer[]): McpServer[] {
   return servers.filter(
-    (server) => server.enabled && (server.source?.kind ?? 'manual') !== 'plugin',
+    (server) =>
+      server.enabled &&
+      (server.source?.kind ?? 'manual') !== 'plugin' &&
+      server.source?.kind !== 'instance',
   );
 }

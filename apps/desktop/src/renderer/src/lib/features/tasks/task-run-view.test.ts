@@ -8,11 +8,15 @@ import {
   formatElapsed,
   formatToolArgs,
   groupTaskRunEntries,
+  injectAttachmentLinesOf,
   latestPlan,
   peerMessageOf,
   pendingTaskQuestionOf,
   resultPreview,
+  steerAttachmentViewOf,
+  steerAttachmentsOf,
   steerDisplayText,
+  stripInjectAttachmentLines,
   taskElapsedMs,
   taskMetaChips,
   taskRunUsageParts,
@@ -147,6 +151,113 @@ describe('buildTaskRunTimeline', () => {
       step(1, 'system', { text: '模型重连' }),
     ]);
     expect(entries.map((entry) => entry.kind)).toEqual(['steer', 'system', 'progress']);
+  });
+
+  it('D115 附件直注：steer 步骤带附件元数据进条目；纯附件（无文本）也保留', () => {
+    const attachments = [
+      { id: 'att_1', fileName: 'photo.png', mime: 'image/png', size: 5 },
+    ];
+    const entries = buildTaskRunTimeline([
+      step(0, 'steer', { text: '顺便看看这张图', attachments }),
+      step(1, 'steer', { text: '<task_inject>\n\natt_2 doc.pdf [application/pdf] 2KB\n</task_inject>\n对话中的你追加了新的指令。', attachments: [attachments[0], { id: 'att_2', fileName: 'doc.pdf', mime: 'application/pdf', size: 2048 }] }),
+    ]);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({ kind: 'steer', text: '顺便看看这张图', attachments });
+    const pureAttachment = entries[1]!;
+    if (pureAttachment.kind === 'steer') {
+      expect(pureAttachment.text).toBe('');
+      expect(pureAttachment.attachments.map((a) => a.id)).toEqual(['att_1', 'att_2']);
+    } else {
+      expect.unreachable('steer entry expected');
+    }
+  });
+
+  it('D115 steerAttachmentsOf：形状不符的条目逐个丢弃（旧数据 / 脏 payload）', () => {
+    expect(steerAttachmentsOf(undefined)).toEqual([]);
+    expect(steerAttachmentsOf('x')).toEqual([]);
+    expect(
+      steerAttachmentsOf([
+        { id: 'att_1', fileName: 'a.png', mime: 'image/png', size: 3 },
+        { id: '', fileName: 'b.png', mime: 'image/png', size: 3 },
+        { id: 'att_3', fileName: 42, mime: 'image/png', size: 3 },
+        { id: 'att_4', fileName: 'c.pdf', mime: 'application/pdf', size: Number.NaN },
+      ]),
+    ).toEqual([{ id: 'att_1', fileName: 'a.png', mime: 'image/png', size: 3 }]);
+  });
+
+  it('D115 steerAttachmentViewOf：补全消息附件视图形状（渲染只读 id/mime/文件名/大小）', () => {
+    const view = steerAttachmentViewOf([
+      { id: 'att_1', fileName: 'photo.png', mime: 'image/png', size: 5 },
+    ]);
+    expect(view).toEqual([
+      {
+        id: 'att_1',
+        conversationId: '',
+        messageId: null,
+        fileName: 'photo.png',
+        mime: 'image/png',
+        size: 5,
+        sha256: '',
+        relPath: '',
+        createdAt: 0,
+      },
+    ]);
+  });
+
+  it('D115 stripInjectAttachmentLines：按附件 id 剥离模型侧附件行，正文其余保留', () => {
+    const attachments = [
+      { id: 'att_1', fileName: 'photo.png', mime: 'image/png', size: 5 },
+      { id: 'att_2', fileName: 'doc.pdf', mime: 'application/pdf', size: 2048 },
+    ];
+    const text = [
+      '顺便看看这张图',
+      'att_1 photo.png [image/png] 1KB',
+      'att_2 doc.pdf [application/pdf] 2KB',
+      '',
+      '然后更新 README',
+    ].join('\n');
+    expect(stripInjectAttachmentLines(text, attachments)).toBe(
+      '顺便看看这张图\n\n然后更新 README',
+    );
+    // 用户手打的相似文本（行首不是注入附件 id）不受影响；无附件原样返回。
+    expect(stripInjectAttachmentLines('att_9 ghost.png [image/png] 1KB', attachments)).toBe(
+      'att_9 ghost.png [image/png] 1KB',
+    );
+    expect(stripInjectAttachmentLines('att_1 photo.png', [])).toBe('att_1 photo.png');
+  });
+
+  it('D115 injectAttachmentLinesOf：外部 Agent steer 正文里的附件行解析为降级元数据', () => {
+    const text = [
+      '<task_inject>',
+      '顺便看看这张图',
+      'att_1 photo.png [image/png] 1KB',
+      'att_2 设计稿-final.pdf [application/pdf] 2048KB',
+      '</task_inject>',
+    ].join('\n');
+    expect(injectAttachmentLinesOf(text)).toEqual([
+      { id: 'att_1', fileName: 'photo.png', mime: 'image/png', size: 1024 },
+      { id: 'att_2', fileName: '设计稿-final.pdf', mime: 'application/pdf', size: 2048 * 1024 },
+    ]);
+    // 用户手打的相似文本（行首不是 att_ 前缀）不采信。
+    expect(injectAttachmentLinesOf('ghost.png [image/png] 1KB')).toEqual([]);
+  });
+
+  it('D115 外部 Agent 任务：steer 事件不带元数据时从正文行降级解析，chip 与剥离同拍生效', () => {
+    const raw = [
+      '<task_inject>',
+      '顺便看看这张图',
+      'att_1 photo.png [image/png] 1KB',
+      '</task_inject>',
+      '对话中的你追加了新的指令：据此调整当前的工作。',
+    ].join('\n');
+    const entries = buildTaskRunTimeline([step(0, 'steer', { text: raw })]);
+    expect(entries).toHaveLength(1);
+    const entry = entries[0]!;
+    if (entry.kind !== 'steer') expect.unreachable('steer entry expected');
+    expect(entry.text).toBe('顺便看看这张图');
+    expect(entry.attachments).toEqual([
+      { id: 'att_1', fileName: 'photo.png', mime: 'image/png', size: 1024 },
+    ]);
   });
 
   it('drops auto tool progress so consecutive tool calls share one group', () => {
@@ -457,6 +568,19 @@ describe('approvalConversationIdOf（详情页审批条的会话）', () => {
     expect(approvalConversationIdOf({ conversationId: null }, 'conv_current')).toBe('conv_current');
   });
 
+  it('卡片归属会话（userConversationId）最优先：委派任务的审批卡在发起方 A 的私聊', () => {
+    expect(
+      approvalConversationIdOf(
+        { conversationId: 'conv_exchange', userConversationId: 'conv_a' },
+        'conv_current',
+      ),
+    ).toBe('conv_a');
+    // 旧 core / 未接线（字段缺失或 null）回落任务自己的会话。
+    expect(
+      approvalConversationIdOf({ conversationId: 'conv_task', userConversationId: null }, null),
+    ).toBe('conv_task');
+  });
+
   it('两头都没有会话时为 null（不渲染审批条）', () => {
     expect(approvalConversationIdOf({ conversationId: null }, null)).toBeNull();
     expect(approvalConversationIdOf(null, undefined)).toBeNull();
@@ -548,9 +672,13 @@ describe('pendingTaskQuestionOf（详情页提问条）', () => {
       "import { getChatSession } from '$lib/features/chats/chat-session-context';",
     );
     expect(source).toContain("import TaskQuestionCard from './TaskQuestionCard.svelte';");
-    // D113：委派任务住在 B 的私聊——上下文会话不是任务归属会话时回退到后台
-    // homeSession（questionSession），不再直接读 chatSession.messages。
+    // §3.7 执行归属映射：委派任务的卡落发起方 A 的私聊（任务行住交换会话）
+    // ——上下文会话不是卡片归属会话时回退到后台 homeSession（questionSession），
+    // 不再直接读 chatSession.messages。
     expect(source).toContain('pendingTaskQuestionOf(questionSession?.messages ?? [], taskId)');
+    // 提问条与审批条同源：派生来源锁定 userConversationId 优先（防止回退成
+    // conversationId 而只锁住审批条一半）。
+    expect(source).toContain('task?.userConversationId ?? task?.conversationId');
     expect(source).toContain('{#if active && pendingQuestion !== null}');
     expect(source).toContain('data-testid="task-run-question"');
     expect(source).toContain('<TaskQuestionCard message={pendingQuestion} />');
@@ -562,14 +690,21 @@ describe('TaskInjectDock（D115 注入坞，docs/design/56 §1）', () => {
     const source = readFileSync(new URL('./TaskRunView.svelte', import.meta.url), 'utf8');
     expect(source).toContain("import TaskInjectDock from './TaskInjectDock.svelte';");
     expect(source).toContain('{#if task !== null && active}');
-    expect(source).toContain('<TaskInjectDock {taskId} awaitingInput={task.awaitingInput} />');
+    // conversationId / modelRef 供附件直注（D115）：上传归属会话与图像输入预检。
+    expect(source).toContain('conversationId={task.conversationId}');
+    expect(source).toContain('modelRef={task.model ?? null}');
     const dock = readFileSync(new URL('./TaskInjectDock.svelte', import.meta.url), 'utf8');
     // 用户要求「直接复用 Bot 对话组件中的输入组件」：坞里是 Composer 实例，
     // 注入目标显式传入，不再另写 textarea / 自建发送键。
     expect(dock).toContain("import Composer from '$lib/features/chats/Composer.svelte';");
-    expect(dock).toContain('<Composer injectTaskId={taskId}');
+    expect(dock).toContain('injectTaskId={taskId}');
+    expect(dock).toContain('injectConversationId={conversationId}');
+    expect(dock).toContain('injectModelRef={modelRef}');
     expect(dock).not.toContain('Textarea');
     expect(dock).not.toContain('tasks.inject(');
+    // D115 附件直注：预检未过在坞内弹「看图模型」配置卡（onDismiss 本地关闭）。
+    expect(dock).toContain('SetupRequiredCard');
+    expect(dock).toContain("capability: 'multimodal'");
     // 发送 / 上限 / Enter / 附件与语音键的语义在 Composer 的注入模式里（见
     // composer-inject.test.ts）；坞只负责提示行、占位文案与按任务重挂载。
     expect(dock).toContain('task.run.injectHintAwaiting');

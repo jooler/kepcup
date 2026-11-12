@@ -235,6 +235,7 @@ applies. Anchors below match each finding's `doc` field.
 - <a id="plugin-connector-icon"></a>`plugin.connector-icon` (error): the icon file is not next to `server.json`.
 - <a id="plugin-mcpb-package"></a>`plugin.mcpb-package` (error): an embedded `.mcpb` is not a valid archive, lacks `manifest.json`, uses an unsupported `manifest_version`, or its `server.entry_point` (non-`uv`) is not in the bundle. Full validation runs at install time.
 - <a id="plugin-mcp-http"></a>`plugin.mcp-http` (error): an `http` contribution URL is not a public https URL. Remote servers that need OAuth must be connector contributions.
+- <a id="plugin-mcp-header-scheme"></a>`plugin.mcp-header-scheme` (info): an `http` contribution header declares a credential `scheme` (currently only `bearer`). The host strips a user-pasted prefix before storing the secret and adds it when sending, so the plugin docs must say "paste the bare token". Unknown values are rejected by the manifest schema (`plugin.manifest-schema`).
 - <a id="plugin-mail-host"></a>`plugin.mail-host` (error): a mail template host is an IP literal, `localhost`, has no dot, or uses a private suffix.
 - <a id="plugin-im-api-base"></a>`plugin.im-api-base` (error, D107): an `im` contribution `apiBase` is not a public https URL.
 - <a id="plugin-im-transport"></a>`plugin.im-transport` (info, D107): the `im` contribution's transport / setup declaration (the host ships the protocol client; the package stays declarative).

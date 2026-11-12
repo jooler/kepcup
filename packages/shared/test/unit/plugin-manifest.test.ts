@@ -12,6 +12,7 @@ import {
   isReservedPluginNamespace,
   isSafePluginRelPath,
   mcpHeaderFieldKey,
+  mcpHeaderTemplateOf,
   parsePluginSkillSource,
   pluginCapabilitySummary,
   pluginCapabilitySummaryFromCategories,
@@ -552,6 +553,56 @@ describe('mcp http template (P4-M2)', () => {
     expect(entry.auth).toBe('headers');
     expect(entry.urlSensitive).toBeUndefined();
     expect(mcpHeaderFieldKey(entry.headers![0]!)).toBe('token');
+  });
+
+  it('header scheme: `scheme: bearer` 可选声明并保留；未知方案被拒', () => {
+    const manifest = parse({
+      ...base,
+      contributions: {
+        skills: [],
+        connectors: [],
+        mcp: [
+          {
+            kind: 'http',
+            id: 'docs',
+            url: 'https://docs.example.com/openapi/mcp',
+            auth: 'headers',
+            headers: [
+              { name: 'Authorization', key: 'token', scheme: 'bearer' },
+              { name: 'X-Api-Key', key: 'apiKey' },
+            ],
+          },
+        ],
+      },
+    });
+    const entry = manifest.contributions.mcp[0];
+    if (entry.kind !== 'http') throw new Error('expected http');
+    expect(entry.headers?.[0]?.scheme).toBe('bearer');
+    expect(entry.headers?.[1]?.scheme).toBeUndefined();
+    // 按名字查模板（大小写不敏感）——发送侧归一化就靠它定位声明。
+    expect(mcpHeaderTemplateOf(entry, 'authorization')?.scheme).toBe('bearer');
+    expect(mcpHeaderTemplateOf(entry, 'X-API-KEY')?.scheme).toBeUndefined();
+    expect(mcpHeaderTemplateOf(entry, 'X-Other')).toBeUndefined();
+    expect(mcpHeaderTemplateOf(undefined, 'Authorization')).toBeUndefined();
+
+    expect(
+      pluginManifestSchema.safeParse({
+        ...base,
+        contributions: {
+          skills: [],
+          connectors: [],
+          mcp: [
+            {
+              kind: 'http',
+              id: 'docs',
+              url: 'https://docs.example.com/openapi/mcp',
+              auth: 'headers',
+              headers: [{ name: 'Authorization', scheme: 'basic' }],
+            },
+          ],
+        },
+      }).success,
+    ).toBe(false);
   });
 
   it('generic template: empty url + urlSensitive parses; header key defaults to lower-cased name', () => {

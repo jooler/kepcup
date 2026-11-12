@@ -44,7 +44,18 @@
    * - confirm-plugin-install 同样不是设置目录条目（D104 P1-3）：Bot 提议安装官方插件的
    *   确认卡，body 自己 `plugins.inspect` 渲染同意面板，用户点 `plugins.install` / 不装了。
    */
-  let { requirement }: { requirement: SetupRequirement } = $props();
+  let {
+    requirement,
+    onProceed,
+  }: {
+    requirement: SetupRequirement;
+    /**
+     * 保存 / 继续的承接（任务详情页注入坞等无会话上下文的宿主）：缺省走当前
+     * 会话的 `continueAfterSetup`。宿主传入自己的承接——否则会摸到回落的主
+     * 聊会话，误触那里的失败续跑（D58）。
+     */
+    onProceed?: () => void;
+  } = $props();
   const session = getChatSession();
 
   /** 旧 kind 的兼容别名（capability-model / web-search / mail-account → setting）。 */
@@ -74,6 +85,10 @@
   function proceed(): void {
     if (continued) return;
     continued = true;
+    if (onProceed !== undefined) {
+      onProceed();
+      return;
+    }
     void session.continueAfterSetup();
   }
 

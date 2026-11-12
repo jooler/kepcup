@@ -50,6 +50,12 @@ export const SETTING_CARD_CONTRIBUTIONS: readonly SettingCardContribution[] = [
   },
   { key: 'tool-policy', componentName: 'AppConnectionDetail', embeddable: always },
   { key: 'mcp-servers', componentName: 'McpSection', embeddable: always },
+  {
+    key: 'mcp-instance',
+    componentName: 'McpInstanceCard',
+    // 要知道把工具服务授权给哪个 Bot。
+    embeddable: (_item, ctx) => ctx.botId !== null,
+  },
 
   // --- 智能体 / Bot --------------------------------------------------------
   {

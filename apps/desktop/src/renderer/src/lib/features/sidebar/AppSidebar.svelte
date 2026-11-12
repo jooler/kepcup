@@ -861,7 +861,7 @@
       accentColor={conversation.bot?.accentColor ?? null}
       mask={conversation.bot?.avatarMask ?? null}
       padding={conversation.bot?.avatarPadding ?? null}
-      class="size-11"
+      class="size-12"
       fallbackClass="text-base"
       testId="conversation-avatar"
     />
