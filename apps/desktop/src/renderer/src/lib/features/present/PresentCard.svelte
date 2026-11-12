@@ -2,6 +2,7 @@
   import { PRESENT_DATA_SCHEMAS, presentCardSchema, type PresentKind } from '@kepcup/shared';
   import { ChartColumn } from '@lucide/svelte';
   import { t } from '$lib/i18n';
+  import { Button } from '$lib/components/ui/button';
   import {
     barRects,
     categoryX,
@@ -20,6 +21,9 @@
    * 版摘要给读屏。
    */
   let { card: raw }: { card: unknown } = $props();
+
+  /** report 卡的分节正文默认收起（对话列表不被长文刷屏），点展开才显示。 */
+  let reportExpanded = $state(false);
 
   const card = $derived(presentCardSchema.safeParse(raw));
   const kind = $derived<PresentKind | null>(card.success ? card.data.kind : null);
@@ -357,6 +361,43 @@
           {/each}
         </tbody>
       </table>
+    </div>
+  {:else if kind === 'report'}
+    {@const d = data as {
+      summary: string;
+      sections: Array<{ heading: string; body: string }>;
+      conclusion?: string;
+    }}
+    <div class="space-y-2" data-testid="present-report">
+      <p class="whitespace-pre-line">{d.summary}</p>
+      {#if reportExpanded}
+        <div class="space-y-2" data-testid="present-report-sections">
+          {#each d.sections as section, i (i)}
+            <div>
+              <div class="text-xs font-medium">{section.heading}</div>
+              <p class="text-[13px] whitespace-pre-line text-muted-foreground">{section.body}</p>
+            </div>
+          {/each}
+        </div>
+      {/if}
+      {#if d.conclusion !== undefined}
+        <p class="rounded-md bg-muted/40 px-2 py-1.5 text-[13px] whitespace-pre-line">
+          {d.conclusion}
+        </p>
+      {/if}
+      {#if d.sections.length > 0}
+        <div class="flex justify-end">
+          <Button
+            size="sm"
+            variant="ghost"
+            class="h-7"
+            onclick={() => (reportExpanded = !reportExpanded)}
+            data-testid="present-report-toggle"
+          >
+            {reportExpanded ? t('present.collapse') : t('present.expand')}
+          </Button>
+        </div>
+      {/if}
     </div>
   {/if}
 </div>

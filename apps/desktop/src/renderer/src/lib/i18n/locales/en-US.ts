@@ -3224,6 +3224,8 @@ export const enUS = {
   'present.step.done': 'Done',
   'present.step.current': 'In progress',
   'present.step.todo': 'To do',
+  'present.expand': 'Expand',
+  'present.collapse': 'Collapse',
   'botWidget.check.passed': 'Self-check passed',
   'botWidget.check.issues': 'Known issues',
   'botWidget.check.unverified': 'Not verified by running',
@@ -3480,7 +3482,8 @@ export const enUS = {
   'mcpCard.testOk': 'Connected, {count} tools',
   'mcpCard.testFail': 'Connection failed: {error}',
   'mcpCard.testMissing': 'Missing credentials: {names}. Fill them in and save first.',
-  'mcpCard.testNoServer': 'This service is not active yet. Save it and check the authorization first.',
+  'mcpCard.testNoServer':
+    'This service is not active yet. Save it and check the authorization first.',
   'mcpCard.done': 'Done',
   'mailCard.save': 'Save',
   'mailCard.plugin.saved': 'Mail plugin settings saved',

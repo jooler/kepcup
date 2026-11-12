@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 /**
  * 声明式展示卡（D87 P4 L1，设计 32 §12.1）：Bot 只给数据（JSON），宿主用自己的组件渲染——表格、
- * 柱 / 折 / 饼图、指标卡、步骤、时间线、方案对比。展示类结果的大多数不需要 Bot 写代码：弱模型
+ * 柱 / 折 / 饼图、指标卡、步骤、时间线、方案对比、长报告。展示类结果的大多数不需要 Bot 写代码：弱模型
  * 基本零 bug，也不需要代码确认。
  *
  * 每种 kind 一个**自定的最小 schema**（不用 Vega-Lite：可选项越少，弱模型越不出错，渲染端也越小）。
@@ -33,6 +33,7 @@ export const presentKindSchema = z.enum([
   'steps',
   'timeline',
   'compare',
+  'report',
 ]);
 export type PresentKind = z.infer<typeof presentKindSchema>;
 
@@ -148,6 +149,22 @@ export const presentCompareSchema = z
     path: ['recommended'],
   });
 
+/**
+ * 长报告（汇报场景）：摘要 + 分节正文 + 可选结论。正文是纯文本（可含换行），不解析 markdown——
+ * 与其余 kind 同一个「只给数据」的纪律；折叠态只露出 summary 与 conclusion，分节正文收进展开区，
+ * 对话列表不被长文刷屏。
+ */
+export const presentReportSchema = z
+  .object({
+    summary: z.string().max(1_000),
+    sections: z
+      .array(z.object({ heading: label, body: z.string().max(2_000) }).strict())
+      .min(1)
+      .max(10),
+    conclusion: z.string().max(1_000).optional(),
+  })
+  .strict();
+
 export const PRESENT_DATA_SCHEMAS = {
   table: presentTableSchema,
   bar: presentBarSchema,
@@ -157,6 +174,7 @@ export const PRESENT_DATA_SCHEMAS = {
   steps: presentStepsSchema,
   timeline: presentTimelineSchema,
   compare: presentCompareSchema,
+  report: presentReportSchema,
 } as const satisfies Record<PresentKind, z.ZodType>;
 
 export type PresentData<K extends PresentKind = PresentKind> = z.infer<
@@ -278,6 +296,13 @@ export function presentContextText(card: {
         `方案：${data.options.join(' / ')}${data.recommended !== undefined ? `（推荐 ${data.recommended}）` : ''}`,
       );
       for (const c of data.criteria) lines.push(`${c.name}：${c.values.map(fmt).join(' / ')}`);
+      break;
+    }
+    case 'report': {
+      const data = parsed.data as z.infer<typeof presentReportSchema>;
+      lines.push(data.summary);
+      for (const section of data.sections) lines.push(`${section.heading}：${section.body}`);
+      if (data.conclusion !== undefined) lines.push(`结论：${data.conclusion}`);
       break;
     }
   }
