@@ -56,6 +56,7 @@
   import { browserPages } from '$lib/stores/browser-pages.svelte';
   import { deepEqual, isEngineOnlyChange, reconcileBotDraft } from './bot-draft';
   import { nextFrame, revealSettingsAnchor } from '$lib/features/settings/anchor-scroll';
+  import { loadPanelTab, savePanelTab, type PanelTab } from './panel-tab-persist';
 
   const conversation = $derived(chat.current?.conversation ?? null);
   const bot = $derived(chat.current?.conversation.bot ?? null);
@@ -94,9 +95,25 @@
    * 二级菜单）/ 组件（卡片直运行）/ 任务（每 Bot 任务列表）/ 便签（仅私聊）。
    * tab 条手写（不用 components/ui/tabs——bits-ui 输出 data-state 而样式变体
    * 在 data-active 上）。
+   *
+   * tab 按对话记忆：每个对话恢复自己上次停留的 tab（localStorage，见
+   * panel-tab-persist.ts）；应用重启 / 面板重新挂载 / 切回对话都走同一条恢复。
    */
-  type PanelTab = 'detail' | 'widgets' | 'tasks' | 'notes';
-  let tab = $state<PanelTab>('detail');
+  const conversationId = $derived(conversation?.id ?? null);
+  /** 该对话上次停留的 tab；没有记录或便签已不适用时回退详情。 */
+  function storedTab(id: string | null, type: string | null): PanelTab {
+    if (id === null) return 'detail';
+    const stored = loadPanelTab(globalThis.localStorage ?? null, id);
+    // 便签只在私聊提供：其它对话即使记住过便签也退回详情。
+    if (stored === 'notes' && type !== 'direct') return 'detail';
+    return stored ?? 'detail';
+  }
+  // 初始值只取一次（untrack）：挂载时的对话决定第一眼的 tab，之后的对话
+  // 切换由下面的 effect 接续。
+  const initialTab = untrack(() => storedTab(conversationId, conversation?.type ?? null));
+  let tab = $state<PanelTab>(initialTab);
+  /** 当前 tab 属于哪个对话；切对话时据此加载新对话的记录。 */
+  let tabConversationId = $state<string | null>(untrack(() => conversationId));
   /**
    * 详情 tab 的统一下钻状态：null = 菜单首页；否则为下钻的详情——配置条目
    * （BotProfileForm section 模式）或原各 tab 的内容。深链锚点按
@@ -147,6 +164,23 @@
   // 切到不支持便签的对话时，正在看的便签 tab 退回详情。
   $effect(() => {
     if (tab === 'notes' && conversation?.type !== 'direct') tab = 'detail';
+  });
+
+  // 每个对话记住自己上次打开的 tab：切对话先按新对话的记录恢复（应用重启 /
+  // 面板重挂载由上面的初始化 + 本 effect 覆盖），随后 tab 的任何变化都写回
+  // 当前对话。便签的适用性由 storedTab 兜底（非法类型退回详情）。
+  $effect(() => {
+    const id = conversationId;
+    const type = conversation?.type ?? null;
+    if (id === tabConversationId) return;
+    tabConversationId = id;
+    tab = storedTab(id, type);
+  });
+
+  $effect(() => {
+    const id = tabConversationId;
+    const value = tab;
+    if (id !== null) savePanelTab(globalThis.localStorage ?? null, id, value);
   });
 
   // D80（回执卡 / 提议卡的「全部定时任务」）与设置卡深链（'profile' / 'skills'）：
@@ -252,11 +286,9 @@
         serverProfile,
       });
       if (result.action === 'replace') {
-        // 换 Bot 时下钻详情与 tab 一并回到首页（详情 tab）。
-        if (draftBotId !== bot.id) {
-          detail = null;
-          tab = 'detail';
-        }
+        // 换 Bot 时下钻详情回到菜单首页；tab 归对话记忆，由上面的对话切换
+        // effect 按新对话恢复。
+        if (draftBotId !== bot.id) detail = null;
         draft = structuredClone(result.draft);
         savedProfile = bot.profile;
         draftBotId = bot.id;

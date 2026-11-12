@@ -2,7 +2,7 @@
 
 Bot 拉起的任务（D75）本质是一个 coding-agent session，但用户对它的掌控通道是间接的：自由文本只能发回对话、由 Bot 决定 `inject_task` 转交（不支持 steering 的外部 Agent 还会排队「未送达」），对任务列表也没有集中的视图。本篇补齐「掌控感」：用户在任务详情页直接插话；Bot 详情栏升级为三 tab（详情 / 组件 / 任务），任务 tab 集中列出该 Bot 拉起的所有任务并可直接打开；组件 tab 卡片化、点击直接运行组件本体。
 
-决策：D115（任务直注）、D116（Bot 详情三栏 + 任务列表）、D117（组件直接运行）。执行方案与实施记录见 [todo/task-steering-and-bot-tabs.md](../../todo/task-steering-and-bot-tabs.md)。**已实施**（2026-11-06）。**2026-11-12 修订**：Bot 详情新增第四个 tab「便签」（仅私聊），见 §2.1。
+决策：D115（任务直注）、D116（Bot 详情三栏 + 任务列表）、D117（组件直接运行）。执行方案与实施记录见 [todo/task-steering-and-bot-tabs.md](../../todo/task-steering-and-bot-tabs.md)。**已实施**（2026-11-06）。**2026-11-12 修订**：Bot 详情新增第四个 tab「便签」（仅私聊），见 §2.1；tab 选择按对话记忆并跨重启恢复，见 §2.2。
 
 相关：D75（任务机制，本文不改其任何语义，只加用户入口）、[30](30-supervisor-and-tasks.md) §4.1 / §6.3（用户直注入口修订；「Bot 详情栏进行中任务数」就此落实）、[42](42-task-run-view.md)（任务详情页新增注入坞）、[32](32-bot-widgets.md)（Bot 详情「组件」入口从菜单行升级为 tab 卡片直运行）、[12](12-ui-layout.md)（右栏结构）。
 
@@ -39,7 +39,7 @@ Bot 拉起的任务（D75）本质是一个 coding-agent session，但用户对�
 ## 2 Bot 详情三栏（D116）
 
 - tab 条在头部资料卡（头像 / 名称 / 简介，点按直编不变）之下，**横向居中**，每项带图标（详情 = Info、组件 = Blocks、任务 = ListTodo）；三个 tab 共用下钻状态机：**详情** tab 承载原 `PanelDetail`（去掉 `widget` kind，配置条目 / 记忆 / Skills / Wiki / 授权 / 定时 / 监看的下钻行为不变，含 `EgressSummary`）；**组件** tab 无下钻（2026-11-06 精简，见 §3.2）；**任务** tab 无下钻（点击任务开主区详情页，右栏不动）。
-- 深链兼容：`shell.rightPanelTabRequest`（'skills' / 'schedules'）与 `shell.botPanelAnchor`（设置卡锚点）一律归位**详情** tab 再下钻；换 Bot 时 tab 回默认。
+- 深链兼容：`shell.rightPanelTabRequest`（'skills' / 'schedules'）与 `shell.botPanelAnchor`（设置卡锚点）一律归位**详情** tab 再下钻；换对话时按该对话上次停留的 tab 恢复（§2.2），没有记录回默认详情。
 - 任务列表行：状态徽标（复用 `task.state.*` 文案与配色）、标题（空标题回退任务 id）、创建时间、写 / 只读标记；进行中的行内联 `queueReason` / 等输入提示。`task.updated` 事件按 `botId` 过滤续期，tab 激活时重拉。
 - 任务详情页的占位（D116 修订）：任务详情与委派详情视图同属**中间对话区视图**——只替换对话区（中间 pane），**右栏保持可见**；窄屏仍是全屏详情层（42 号「布局」同步修订）。
 
@@ -52,6 +52,15 @@ Bot 拉起的任务（D75）本质是一个 coding-agent session，但用户对�
 - **状态**：条目按对话重建（RightPanel `{#key conversation.id}`），列表不跨对话复用；新建时渲染层先生成 `note_` id 乐观上屏，`notes.create` 落库后同一 id 继续走 `notes.update`。
 - **契约**：`notes.list / create / update / delete`（core `ConversationNotesService`，schema 在 `packages/shared/src/rpc/methods.ts`）。
 - **设置目录**：便签是用户数据不是设置，登记在 `EXCLUDED_SETTING_LOCATIONS`（`bot-panel-tab: notes`）。
+
+### 2.2 tab 记忆（2026-11-12 修订）
+
+右栏当前 tab 按**对话**记忆，每个对话记住自己上次打开的 tab：
+
+- **持久化**：渲染层本机偏好，localStorage 单键 `kepcup.rightPanel.tabByConversation.v1`（对话 id → tab 的映射，最多 100 个对话，超出按最近访问淘汰；损坏 / 非法值丢弃）。不进 core 用户数据，与上次会话、侧栏宽度同层。
+- **恢复时机**：应用重启、右栏收起后重新展开（组件重挂载）、切回该对话都恢复上次停留的 tab；没有记录时默认**详情**。
+- **有效性**：便签只在私聊提供，非私聊对话即使记住过便签也退回**详情**。
+- **覆盖**：深链（§2 上一节）显式归位详情并写入该对话的记录；用户点亮任一 tab 即写入当前对话。
 
 ## 3 组件直接运行（D117）
 
@@ -71,5 +80,5 @@ Bot 拉起的任务（D75）本质是一个 coding-agent session，但用户对�
 
 - 契约：`packages/shared/src/rpc/methods.ts`（tasksInject / tasksListByBot / widgetsRunCard 三组 schema 与登记）+ `packages/shared/src/domain/conversation-notes.ts`（便签 schema 与正文上限）。
 - core：`packages/core/src/dispatch/tasks.ts`（injectById / listByBotViews）、`packages/core/src/domain/runs.ts`（listTasksByBotRecent）、`packages/core/src/widgets/service.ts`（runCard + 虚拟登记表）、`packages/core/src/domain/conversation-notes.ts`（便签读写）、`packages/core/migrations/main/0074_conversation_notes.sql`、`packages/core/src/rpc/bindings.ts` 与 `packages/core/src/rpc/widgets-ui-bindings.ts`。
-- 渲染层：`apps/desktop/src/renderer/src/lib/features/tasks/TaskRunView.svelte` + 新 `TaskInjectDock.svelte`、`lib/stores/tasks.svelte.ts`；`lib/features/right-panel/RightPanel.svelte`（tab 重构）、`BotMenu.svelte`（移除组件组）、新 `BotWidgetsTab.svelte`、新 `BotTasksPanel.svelte`、新 `NotesTab.svelte` / `NoteCard.svelte` / `note-model.ts`（便签 tab）。
+- 渲染层：`apps/desktop/src/renderer/src/lib/features/tasks/TaskRunView.svelte` + 新 `TaskInjectDock.svelte`、`lib/stores/tasks.svelte.ts`；`lib/features/right-panel/RightPanel.svelte`（tab 重构）、`BotMenu.svelte`（移除组件组）、新 `BotWidgetsTab.svelte`、新 `BotTasksPanel.svelte`、新 `NotesTab.svelte` / `NoteCard.svelte` / `note-model.ts`（便签 tab）、新 `panel-tab-persist.ts`（tab 按对话记忆，§2.2）。
 - 文案：`lib/i18n/locales/zh-CN.ts` 与 `en-US.ts`（`task.run.inject*`、`rightPanel.tab*` 与任务列表键、`widgetsTab` 卡片键、`rightPanel.notes*` 便签键）。
