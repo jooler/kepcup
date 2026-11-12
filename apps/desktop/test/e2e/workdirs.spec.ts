@@ -187,8 +187,8 @@ test('workdir selection, switching block while running; no changes card after wr
   }
 });
 
-// D75（DEV-015）：同一 workdir 的写任务在任务层排队（还没去申请写租约），
-// 状态行与任务卡显示「等写入租约（任务 … 持有）」；「强制收回」对这种排队
+// D75（DEV-015）/ D123：同一 workdir 的写任务在任务层排队（还没去申请写租约），
+// 状态行与任务卡显示「等写域（任务 … 持有 整目录）」；「强制收回」对这种排队
 // 不起作用——放行方式是取消（或等完）持有它的那条任务。
 test("a write task queued behind another conversation's write task shows the wait and runs once that task is cancelled", async () => {
   test.setTimeout(300_000);
@@ -256,10 +256,10 @@ test("a write task queued behind another conversation's write task shows the wai
     await page.locator('[data-testid="composer-input"]').press('ControlOrMeta+Enter');
 
     const status = page.locator('[data-testid="task-status-text"]').filter({ hasText: '也写一个' });
-    await expect(status).toContainText('等写入租约', { timeout: 60_000 });
+    await expect(status).toContainText('等写域', { timeout: 60_000 });
     const card = page.locator('[data-testid^="task-card-"]').filter({ hasText: '也写一个' });
     await expect(card).toHaveAttribute('data-task-state', 'submitted');
-    await expect(card.locator('[data-testid="task-queue-reason"]')).toContainText('等写入租约');
+    await expect(card.locator('[data-testid="task-queue-reason"]')).toContainText('等写域');
 
     // 回到甲的对话，在甲的任务卡上取消 → 乙的任务取得租约并完成写入。
     // D93：用户取消会唤醒甲；必须先备好取消 wake，否则会吃掉乙 viaTask 的 relay「写完了」。
