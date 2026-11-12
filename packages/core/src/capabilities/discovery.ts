@@ -57,8 +57,8 @@ export interface CapabilitySearchResult {
   hits: CapabilitySearchHit[];
   /** 传了 `capability` 但不在本 run 的索引范围内。 */
   unknownCapability?: { wanted: string; available: string[] };
-  /** 本次没能取到工具列表（连不上 / 超时 / 仍在冷却期）的能力。 */
-  unreachable: Array<{ id: string; name: string }>;
+  /** 本次没能取到工具列表（连不上 / 超时 / 仍在冷却期）的能力。`detail` = 失败原因摘要。 */
+  unreachable: Array<{ id: string; name: string; detail?: string }>;
   /** 等待期间被中止（run 取消）：其余字段为空，调用方按「已取消」处理。 */
   cancelled?: boolean;
   /** 授权失效 / 缺权限、需要用户（重新）连接的能力。 */
@@ -155,6 +155,8 @@ export function createCapabilityDiscovery(input: CapabilityDiscoveryInput): Capa
   const done = new Map<string, Slot>();
   /** 列工具失败的能力 → 冷却截止时刻（run 内；冷却期内不重连，直接报「暂时不可达」）。 */
   const cooldownUntil = new Map<string, number>();
+  /** 列工具失败的原因（R1）：冷却期内仍能告诉调用方「为什么没工具」。 */
+  const lastFailure = new Map<string, string>();
   const pending = new Map<string, Promise<void>>();
   const byName = new Map<string, Indexed>();
 
@@ -163,8 +165,9 @@ export function createCapabilityDiscovery(input: CapabilityDiscoveryInput): Capa
       let resolution: McpToolResolution;
       try {
         resolution = await input.resolve([capability.server]);
-      } catch {
+      } catch (error) {
         // 解析本身抛错（不该发生：resolveMcpToolEntries 吞掉单 server 的连接失败）：按不可达处理，冷却后重试。
+        lastFailure.set(capability.id, error instanceof Error ? error.message : String(error));
         cooldownUntil.set(capability.id, now() + cooldownMs);
         return;
       }
@@ -198,10 +201,14 @@ export function createCapabilityDiscovery(input: CapabilityDiscoveryInput): Capa
       // （对话轮的连接失败不计 McpService 的重连预算，否则永久不可达的服务器每次 search 都白等一轮连接）；
       // 冷却结束后下次 search 才重试。授权问题与成功结果缓存。
       if (failed) {
+        const detail = resolution.failureDetails[capability.server.id];
+        if (detail !== undefined && detail !== '') lastFailure.set(capability.id, detail);
+        else lastFailure.delete(capability.id);
         cooldownUntil.set(capability.id, now() + cooldownMs);
         return;
       }
       cooldownUntil.delete(capability.id);
+      lastFailure.delete(capability.id);
       for (const item of indexed) byName.set(item.entry.name, item);
       done.set(capability.id, { indexed, omitted, failed: false, ...(auth !== undefined ? { auth } : {}) });
       if (auth !== undefined) input.onAuthRequired?.(auth);
@@ -334,7 +341,12 @@ export function createCapabilityDiscovery(input: CapabilityDiscoveryInput): Capa
       for (const target of targets) {
         const slot = done.get(target.id);
         if (slot === undefined) {
-          unreachable.push({ id: target.id, name: target.name });
+          const detail = lastFailure.get(target.id);
+          unreachable.push({
+            id: target.id,
+            name: target.name,
+            ...(detail !== undefined && detail !== '' ? { detail } : {}),
+          });
           continue;
         }
         if (slot.auth !== undefined) {
@@ -428,7 +440,7 @@ export function formatCapabilitySearch(result: CapabilitySearchResult): string {
   }
   if (result.unreachable.length > 0) {
     parts.push(
-      `暂时不可达（没能取到工具列表，稍后再试）：${result.unreachable.map((item) => `${item.id}（${item.name}）`).join('、')}。`,
+      `暂时不可达（没能取到工具列表，稍后再试）：${result.unreachable.map((item) => `${item.id}（${item.name}）${item.detail !== undefined ? `：${item.detail}` : ''}`).join('、')}。`,
     );
   }
   return parts.join('\n');

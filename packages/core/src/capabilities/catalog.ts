@@ -231,3 +231,30 @@ export function markUnavailable(
     };
   });
 }
+
+/**
+ * R1：任务在解析工具时连不上（非授权问题）的 server：对应能力改标为 `unavailable`，
+ * `statusText` 直接写出失败原因（HTTP 状态码 / 错误体摘要 / 「缺少凭据」），不再算 ready。
+ * 模型从任务提示与 `capability_search` 都能看到「为什么没有工具」，而不是误以为能力不存在。
+ */
+export function markUnreachable(
+  entries: readonly CapabilityEntry[],
+  failed: readonly string[],
+  failureDetails: Readonly<Record<string, string>> = {},
+): CapabilityEntry[] {
+  if (failed.length === 0) return [...entries];
+  const ids = new Set(failed);
+  return entries.map((entry) => {
+    if (entry.server === undefined || !ids.has(entry.server.id)) return entry;
+    const detail = failureDetails[entry.server.id];
+    const { server: _server, ...rest } = entry;
+    return {
+      ...rest,
+      status: 'unavailable' as const,
+      statusText:
+        detail !== undefined && detail.trim() !== ''
+          ? `暂时不可达：${detail.trim().slice(0, 160)}`
+          : '暂时不可达，可稍后重试',
+    };
+  });
+}

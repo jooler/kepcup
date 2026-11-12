@@ -116,6 +116,7 @@ function harness(
         entries: servers.flatMap((s) => table[s.id] ?? []),
         unavailable: [],
         failed: [],
+        failureDetails: {},
         locked: [],
         ...custom,
       };
