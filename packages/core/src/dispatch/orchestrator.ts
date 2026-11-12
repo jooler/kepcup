@@ -179,6 +179,7 @@ import type { LocalConnectors } from '../apps/local-connectors.js';
 import {
   buildCapabilityCatalog,
   markUnavailable,
+  markUnreachable,
   readyCapabilities,
   type CapabilityCatalog,
   type CapabilityEntry,
@@ -2801,7 +2802,7 @@ export class Orchestrator {
   ): Promise<McpToolResolution> {
     const mcp = this.#deps.mcp;
     if (mcp == null || servers.length === 0) {
-      return { entries: [], unavailable: [], failed: [], locked: [] };
+      return { entries: [], unavailable: [], failed: [], failureDetails: {}, locked: [] };
     }
     const connectedApps = this.#deps.connectedApps ?? null;
     return resolveMcpToolEntries({
@@ -4142,7 +4143,11 @@ export class Orchestrator {
       // 不展示它用不到的（apps 包没选就不列目录连接，mcp 包没选就不列自定义 MCP）。
       const promptCapabilities: CapabilityEntry[] = (
         taskResolution !== null
-          ? markUnavailable(catalog.entries, taskResolution.unavailable)
+          ? markUnreachable(
+              markUnavailable(catalog.entries, taskResolution.unavailable),
+              taskResolution.failed,
+              taskResolution.failureDetails,
+            )
           : catalog.entries
       ).filter((entry) => externalKinds === null || externalKinds.has(entry.kind));
       const wrapMcp = (ident: RunIdentity, entries: McpToolEntry[]) =>

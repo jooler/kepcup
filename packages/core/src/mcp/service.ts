@@ -944,6 +944,12 @@ export class McpService {
       if (counted) this.#failures.set(server.id, attempts);
       const hint = this.#endpointHint(server, error);
       const detail = `${error instanceof Error ? error.message : String(error)}${hint !== '' ? `（${hint}）` : ''}`;
+      // R1：每次连接失败都落一条带 HTTP 状态码 / 错误体（来自 McpHttpError）的日志，便于排障。
+      // detail 只来自服务端响应与本地提示，不含请求头 / token。
+      this.#deps.logger.warn(
+        { serverId: server.id, serverName: server.name, detail, attempts: failures },
+        'mcp server connect failed',
+      );
       if (counted && attempts >= MCP_RECONNECT_MAX) {
         this.#deps.statusSink.emit({
           serverId: server.id,
