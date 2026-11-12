@@ -93,10 +93,11 @@ export function scanSettingsUi(featuresDir: string = FEATURES_DIR): SettingsUiSc
   const panel = readFileSync(join(featuresDir, 'right-panel', 'RightPanel.svelte'), 'utf8');
   // Bot 详情的顶层可深链位置（D116 起为两部分并集）：下钻详情的 kind（只认
   // PanelDetail 联合类型的成员行 `| { kind: '…'`，不误捕 `owner={{ kind: 'bot' }}`
-  // 之类）+ 三 tab 条的 `PANEL_TABS`（详情 / 组件 / 任务）。
-  const drillKinds = [
-    ...panel.matchAll(/^\s*\|\s*\{\s*kind:\s*['"]([a-z-]+)['"]/gm),
-  ].map((match) => match[1]!);
+  // 之类）+ tab 条的 `PANEL_TABS`（详情 / 组件 / 任务 / 便签——便签只在私聊显示，
+  // 由 EXCLUDED_SETTING_LOCATIONS 登记「不是设置」）。
+  const drillKinds = [...panel.matchAll(/^\s*\|\s*\{\s*kind:\s*['"]([a-z-]+)['"]/gm)].map(
+    (match) => match[1]!,
+  );
   const panelTabsMatch = /const PANEL_TABS[^=]*=\s*\[([^\]]*)\]/.exec(panel);
   const panelTabs = panelTabsMatch !== null ? quoted(panelTabsMatch[1]!) : [];
   const botPanelTabs = [...new Set([...drillKinds, ...panelTabs])];

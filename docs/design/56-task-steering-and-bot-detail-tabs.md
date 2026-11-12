@@ -2,7 +2,7 @@
 
 Bot 拉起的任务（D75）本质是一个 coding-agent session，但用户对它的掌控通道是间接的：自由文本只能发回对话、由 Bot 决定 `inject_task` 转交（不支持 steering 的外部 Agent 还会排队「未送达」），对任务列表也没有集中的视图。本篇补齐「掌控感」：用户在任务详情页直接插话；Bot 详情栏升级为三 tab（详情 / 组件 / 任务），任务 tab 集中列出该 Bot 拉起的所有任务并可直接打开；组件 tab 卡片化、点击直接运行组件本体。
 
-决策：D115（任务直注）、D116（Bot 详情三栏 + 任务列表）、D117（组件直接运行）。执行方案与实施记录见 [todo/task-steering-and-bot-tabs.md](../../todo/task-steering-and-bot-tabs.md)。**已实施**（2026-11-06）。
+决策：D115（任务直注）、D116（Bot 详情三栏 + 任务列表）、D117（组件直接运行）。执行方案与实施记录见 [todo/task-steering-and-bot-tabs.md](../../todo/task-steering-and-bot-tabs.md)。**已实施**（2026-11-06）。**2026-11-12 修订**：Bot 详情新增第四个 tab「便签」（仅私聊），见 §2.1。
 
 相关：D75（任务机制，本文不改其任何语义，只加用户入口）、[30](30-supervisor-and-tasks.md) §4.1 / §6.3（用户直注入口修订；「Bot 详情栏进行中任务数」就此落实）、[42](42-task-run-view.md)（任务详情页新增注入坞）、[32](32-bot-widgets.md)（Bot 详情「组件」入口从菜单行升级为 tab 卡片直运行）、[12](12-ui-layout.md)（右栏结构）。
 
@@ -43,6 +43,16 @@ Bot 拉起的任务（D75）本质是一个 coding-agent session，但用户对�
 - 任务列表行：状态徽标（复用 `task.state.*` 文案与配色）、标题（空标题回退任务 id）、创建时间、写 / 只读标记；进行中的行内联 `queueReason` / 等输入提示。`task.updated` 事件按 `botId` 过滤续期，tab 激活时重拉。
 - 任务详情页的占位（D116 修订）：任务详情与委派详情视图同属**中间对话区视图**——只替换对话区（中间 pane），**右栏保持可见**；窄屏仍是全屏详情层（42 号「布局」同步修订）。
 
+### 2.1 便签 tab（2026-11-12 修订）
+
+第四个 tab「便签」，**只在 Bot 与用户的私聊里出现**（项目组 / Bot 间交换会话 / 卡片会话不显示；切到不支持的对话时正在看的便签 tab 退回详情）。它是用户自己的速记板，不是 Bot 的数据：
+
+- **语义**：纯用户数据（启动命令、测试账号等），**不进入任何 Bot 的上下文、没有对应工具**。行在 main.db `conversation_notes`（[03-data-model](../../dev/03-data-model.md) / 迁移 0074），随所属对话删除经 FK 级联清理；Bot 删除不影响（纯粹挂在对话上）。
+- **交互**：右上按钮或列表空白处双击新建，卡片即文本框（无输入框外观，点按直接编辑）。输入防抖 500ms 落库、失焦立即保存；清空正文后失焦即删除（关面板 / 换对话 / 关窗时同样按失焦规则收尾）。正文超过 4 行出现折叠行，收起后压到 4 行并渐隐，聚焦即展开；上限 `CONVERSATION_NOTE_TEXT_MAX_CHARS`（2 万）由契约校验。
+- **状态**：条目按对话重建（RightPanel `{#key conversation.id}`），列表不跨对话复用；新建时渲染层先生成 `note_` id 乐观上屏，`notes.create` 落库后同一 id 继续走 `notes.update`。
+- **契约**：`notes.list / create / update / delete`（core `ConversationNotesService`，schema 在 `packages/shared/src/rpc/methods.ts`）。
+- **设置目录**：便签是用户数据不是设置，登记在 `EXCLUDED_SETTING_LOCATIONS`（`bot-panel-tab: notes`）。
+
 ## 3 组件直接运行（D117）
 
 ### 3.1 core：虚拟卡片登记表
@@ -59,7 +69,7 @@ Bot 拉起的任务（D75）本质是一个 coding-agent session，但用户对�
 
 ## 4 实现位置
 
-- 契约：`packages/shared/src/rpc/methods.ts`（tasksInject / tasksListByBot / widgetsRunCard 三组 schema 与登记）。
-- core：`packages/core/src/dispatch/tasks.ts`（injectById / listByBotViews）、`packages/core/src/domain/runs.ts`（listTasksByBotRecent）、`packages/core/src/widgets/service.ts`（runCard + 虚拟登记表）、`packages/core/src/rpc/bindings.ts` 与 `packages/core/src/rpc/widgets-ui-bindings.ts`。
-- 渲染层：`apps/desktop/src/renderer/src/lib/features/tasks/TaskRunView.svelte` + 新 `TaskInjectDock.svelte`、`lib/stores/tasks.svelte.ts`；`lib/features/right-panel/RightPanel.svelte`（tab 重构）、`BotMenu.svelte`（移除组件组）、新 `BotWidgetsTab.svelte`、新 `BotTasksPanel.svelte`。
-- 文案：`lib/i18n/locales/zh-CN.ts` 与 `en-US.ts`（`task.run.inject*`、`rightPanel.tab*` 与任务列表键、`widgetsTab` 卡片键）。
+- 契约：`packages/shared/src/rpc/methods.ts`（tasksInject / tasksListByBot / widgetsRunCard 三组 schema 与登记）+ `packages/shared/src/domain/conversation-notes.ts`（便签 schema 与正文上限）。
+- core：`packages/core/src/dispatch/tasks.ts`（injectById / listByBotViews）、`packages/core/src/domain/runs.ts`（listTasksByBotRecent）、`packages/core/src/widgets/service.ts`（runCard + 虚拟登记表）、`packages/core/src/domain/conversation-notes.ts`（便签读写）、`packages/core/migrations/main/0074_conversation_notes.sql`、`packages/core/src/rpc/bindings.ts` 与 `packages/core/src/rpc/widgets-ui-bindings.ts`。
+- 渲染层：`apps/desktop/src/renderer/src/lib/features/tasks/TaskRunView.svelte` + 新 `TaskInjectDock.svelte`、`lib/stores/tasks.svelte.ts`；`lib/features/right-panel/RightPanel.svelte`（tab 重构）、`BotMenu.svelte`（移除组件组）、新 `BotWidgetsTab.svelte`、新 `BotTasksPanel.svelte`、新 `NotesTab.svelte` / `NoteCard.svelte` / `note-model.ts`（便签 tab）。
+- 文案：`lib/i18n/locales/zh-CN.ts` 与 `en-US.ts`（`task.run.inject*`、`rightPanel.tab*` 与任务列表键、`widgetsTab` 卡片键、`rightPanel.notes*` 便签键）。
