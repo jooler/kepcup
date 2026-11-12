@@ -59,6 +59,7 @@ Bot 的文件工具以该工作目录为默认工作目录。
 > - 写只发生在**写任务**里：对话轮与只读任务由网关硬拒一切写路径（`RUN_READ_ONLY`），不申请租约。写任务在启动前取执行根（workdir 或 workspace）的租约并**整个任务持有**（`pin`，与外部智能体的 run 同一语义），等租约期间不占调度名额。钉住的租约不能换成别的租约目标：cwd 是 workspace 的写任务去写 workdir（文件工具自动申请或 `acquire_workdir_write`），得到 `PATH_OUT_OF_SCOPE`（「本次执行整体持有 … 的写入租约，不能再写入其他租约目标」），需要改 workdir 应另派 cwd 为 workdir 的写任务；cwd 是 workdir 的写任务调 `acquire_workdir_write` 直接返回已持有。写任务写自己的 workspace 不需要租约，写授权范围内的外部路径按授权放行（`ensureWriteLease` 只在网关判定 `needs_lease`——即写 workdir——时才被调用）。下文「写入类工具自动申请」「`acquire_workdir_write`」的描述只对不钉住租约的执行（宿主伪身份等）原样成立。
 > - **强制收回**让持有方写任务**失去写权限**（design 30 §5.1）：它的窗口当场收口（改动记录只含它自己的改动），之后它的一切写入（文件工具、命令的可写挂载、`acquire_workdir_write`、它的子代理）都以 `RUN_READ_ONLY`「写入租约已被用户收回」失败，不会再悄悄重新取得租约。一个 run 多次持有租约（非钉住的执行被收回后再写）时，改动记录跨窗口累积，整次回退撤销全部窗口；别人夹在两个窗口之间改过的文件按冲突处理（审查批 E，见 DEV-018）。
 > - 同一 workdir 的第二个写任务在**任务层**排队（停在 submitted，任务卡与状态行显示「等写入租约（任务 … 持有）」），不在租约上等；对它「强制收回」无效，放行方式是取消持有方任务。强制收回只对租约层的等待（被非任务持有者挡住）出现（见 DEV-015）。
+> - **D123 修订**：写任务的租约键升级为结构化写域键 `{root, patterns}`（`start_task.writes` 声明的 glob 集，`writes: true` = 整根即原语义）；冲突判定从「路径前缀重叠」细化为「根重叠 ∧ 写域（绝对化 glob 集）相交」，域不相交的写任务并行持有同一 workdir 的各自域租约。`LeaseService` 冲突谓词改为可注入（缺省仍为前缀规则，其余调用方零改动）；`waiting_lease` / FIFO / 让名额 / 强制收回语义不变。执行期按写域硬拒域外写入（`WRITE_OUT_OF_DOMAIN`）。详见 [59](59-parallel-tasks-and-coordination.md) §3。
 >
 > 见 [30 §5](30-supervisor-and-tasks.md#5-并发与写互斥)。
 

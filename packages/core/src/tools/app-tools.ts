@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import type { RunIdentity, ToolContext, ToolDefinition } from '../agent/types.js';
 import { TOOL_SETUP_REQUIRED } from './image-tools.js';
 

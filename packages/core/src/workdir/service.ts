@@ -8,11 +8,13 @@ import {
   newId,
   type LoopType as SharedLoopType,
   type Workdir,
+  type Run,
   type RunChangeFile,
 } from '@kepcup/shared';
 import { isInsidePath } from '../sandbox/sensitive-paths.js';
 import type { RunIdentity } from '../agent/types.js';
 import type { LeaseHolder, LeaseService } from './lease.js';
+import { encodeWriteDomainKey, absolutePatterns, formatWriteDomain, type AbsDomain } from './domains.js';
 import type { CheckpointService } from './checkpoints.js';
 import { buildWorkdirSection, WORKDIR_SECTION_BUDGET } from './context.js';
 import { gitCliAvailable, runGitRemote, type GitRemoteOperation } from './git-remote.js';
@@ -214,6 +216,75 @@ export class WorkdirRuntime {
     return this.#deps.leases.heldKey(identity.runId, [workdirPath]) !== null;
   }
 
+  /**
+   * D123 §3.6: null when the writing task's resolved path stays inside its
+   * declared write domain, else the refusal reason. Read-only identities and
+   * undeclared domains (`writes: true`) always pass. Fail-closed: a missing
+   * run row, an unresolved subagent parent, a missing cwd or an unparseable
+   * declaration denies the write.
+   */
+  writeOutOfDomain(identity: RunIdentity, resolvedPath: string): string | null {
+    const task = this.#writingTask(identity);
+    if (task === 'missing') return '无法确认写入任务的写域，已拒绝写入';
+    if (task === null || task.taskWrites !== true) return null;
+    if (task.taskWriteDomainsCorrupt === true) {
+      return '任务写域声明无法解析，已拒绝写入（需要越域请用 ask_user 说明缘由，由对话轮改派）';
+    }
+    const patterns = task.taskWriteDomains;
+    if (patterns === null || patterns === undefined) return null;
+    if (patterns.length === 0) return '任务写域为空，已拒绝写入';
+    if (patterns.length === 1 && patterns[0] === '**') return null;
+    if (task.taskCwd === null) return '任务写域缺少工作目录，已拒绝写入';
+    return pathMatchesPatterns(task.taskCwd, patterns, resolvedPath)
+      ? null
+      : `写域之外的路径：${resolvedPath}。本任务的写域：${formatWriteDomain(patterns)}` +
+          '。需要越域请用 ask_user 说明缘由，由对话轮改派或换域后重派';
+  }
+
+  /** D123: the task row that writes for `identity` (subagent → owning task). */
+  owningTask(identity: RunIdentity): Run | null {
+    const task = this.#writingTask(identity);
+    return task === 'missing' ? null : task;
+  }
+
+  /** D123 §3.6 sandbox input: the declared write domain, null when undeclared. */
+  writeDomain(identity: RunIdentity): AbsDomain | null {
+    const task = this.#writingTask(identity);
+    if (task === 'missing' || task === null || task.taskWrites !== true) return null;
+    // A declaration we cannot read must not widen the sandbox: empty patterns
+    // are expressible (nothing writable) and leave the task read-only.
+    if (task.taskWriteDomainsCorrupt === true) {
+      return { root: task.taskCwd ?? '/', patterns: [] };
+    }
+    const patterns = task.taskWriteDomains;
+    if (patterns === null || patterns === undefined) return null;
+    if (patterns.length === 0) return { root: task.taskCwd ?? '/', patterns: [] };
+    if (patterns.length === 1 && patterns[0] === '**') return null;
+    if (task.taskCwd === null) return null;
+    return { root: task.taskCwd, patterns };
+  }
+
+  /**
+   * The task row that writes for `identity` (subagent → owning task), or
+   * `'missing'` when the subagent chain cannot be resolved.
+   */
+  #writingTask(identity: RunIdentity): Run | null | 'missing' {
+    let loopType: RunIdentity['loopType'] | SharedLoopType = identity.loopType;
+    let runId = identity.runId;
+    for (let depth = 0; loopType === 'subagent'; depth += 1) {
+      const parentId =
+        depth < SUBAGENT_PARENT_MAX_DEPTH
+          ? (this.#deps.runs.get(runId)?.parentRunId ?? null)
+          : null;
+      const parent = parentId !== null ? this.#deps.runs.get(parentId) : null;
+      if (parent === null) return 'missing';
+      loopType = parent.loopType;
+      runId = parent.id;
+    }
+    if (loopType !== 'task') return null;
+    return this.#deps.runs.get(runId) ?? 'missing';
+  }
+
   /** Sandbox policy input for the executing identity (null = no workdir). */
   policyInfo(identity: RunIdentity): {
     path: string;
@@ -274,11 +345,17 @@ export class WorkdirRuntime {
       reason?: string;
       /** D72：整 run 持有、不可被替换（外部智能体 run，见 RunLeaseState.pinned）。 */
       pin?: boolean;
+      /**
+       * D123: declared write-domain globs of a pinned write task. Encoded into
+       * the lease key so two tasks on one root with disjoint domains coexist.
+       * Null / omitted = the whole root (`['**']`, today's behavior).
+       */
+      domains?: string[] | null;
     } = {},
   ): Promise<LeaseTarget> {
     const denial = this.writeDenial(identity);
     if (denial !== null) throw new AppError('RUN_READ_ONLY', denial);
-    const target = this.#leaseTarget(identity, resolvedPath);
+    const target = this.#leaseTarget(identity, resolvedPath, options.domains ?? null);
     if (target === null) {
       throw new AppError('INVALID_INPUT', '该路径不涉及 workdir 或 workspace，无需写入租约');
     }
@@ -292,6 +369,13 @@ export class WorkdirRuntime {
     }
     if (this.#deps.leases.heldKey(identity.runId, [target.key]) === target.key) {
       return target;
+    }
+    // A task pinned to a domain key already holds a conflicting lease on the
+    // same root. Asking for the bare root (acquire_workdir_write) must not
+    // widen or fail: the gateway still enforces the domain per path.
+    const held = this.#deps.leases.heldKey(identity.runId, [target.key]);
+    if (held !== null && options.domains == null) {
+      return { key: held, workdir: target.workdir };
     }
     const current = this.#runLeases.get(identity.runId);
     if (current?.pinned === true && current.key !== target.key) {
@@ -449,7 +533,7 @@ export class WorkdirRuntime {
   async revokeLease(conversationId: string): Promise<boolean> {
     const workdir = this.boundWorkdir(conversationId);
     if (workdir === null) return false;
-    const holder = this.#deps.leases.holderOf(workdir.path);
+    const holder = this.#deps.leases.conflictingHolder(workdir.path);
     if (holder === null) return false;
     // A pinned holder (a write task) loses its write permission for good
     // (design 30 §5.1): its next write fails instead of re-taking the lease
@@ -530,7 +614,7 @@ export class WorkdirRuntime {
       conversationId: change.conversationId,
       loopType: 'host',
     };
-    const holder = this.#deps.leases.holderOf(workdir.path);
+    const holder = this.#deps.leases.conflictingHolder(workdir.path);
     if (holder !== null) {
       throw new AppError('LEASE_HELD', 'Bot 正在修改该工作目录，请先取消或等待其完成');
     }
@@ -672,14 +756,20 @@ export class WorkdirRuntime {
 
   // --- internals -----------------------------------------------------------------
 
-  #leaseTarget(identity: RunIdentity, resolvedPath: string): LeaseTarget | null {
+  #leaseTarget(
+    identity: RunIdentity,
+    resolvedPath: string,
+    domains: string[] | null = null,
+  ): LeaseTarget | null {
+    const keyOf = (base: string): string =>
+      domains !== null ? encodeWriteDomainKey(base, domains) : base;
     const workdir = this.boundWorkdir(identity.conversationId);
     if (
       workdir !== null &&
       workdir.status === 'available' &&
       isInsidePath(resolvedPath, workdir.path)
     ) {
-      return { key: workdir.path, workdir };
+      return { key: keyOf(workdir.path), workdir };
     }
     // D75 §5.2: the identity's own workspace (realpath-normalized on both
     // sides; the data home is canonical already, the workspace may not exist).
@@ -688,7 +778,10 @@ export class WorkdirRuntime {
         workspacePathFor(this.#deps.paths, identity.botId, identity.conversationId),
       );
       if (isInsidePath(canonicalPath(resolvedPath), workspace)) {
-        return { key: workspaceLeaseKey(identity.botId, identity.conversationId), workdir: null };
+        return {
+          key: keyOf(workspaceLeaseKey(identity.botId, identity.conversationId)),
+          workdir: null,
+        };
       }
     }
     // Outside the workdir: the longest covering write grant defines the key.
@@ -697,7 +790,7 @@ export class WorkdirRuntime {
       .filter((g) => g.access === 'write' && isInsidePath(resolvedPath, g.path))
       .sort((a, b) => b.path.length - a.path.length);
     const grant = grants[0];
-    return grant !== undefined ? { key: grant.path, workdir: null } : null;
+    return grant !== undefined ? { key: keyOf(grant.path), workdir: null } : null;
   }
 
   #assertNoActiveRuns(conversationId: string): void {
@@ -805,4 +898,49 @@ function joinUnlessAborted<T>(promise: Promise<T>, signal: AbortSignal | undefin
     signal.addEventListener('abort', onAbort, { once: true });
     promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
   });
+}
+
+/**
+ * D123: case/separator normalization for write-domain path matching. Only
+ * Windows is folded unconditionally: on a case-sensitive macOS volume `src`
+ * and `SRC` are distinct directories, and folding would let a domain write
+ * escape into the other one (a denial on a case-insensitive volume is the
+ * conservative direction).
+ */
+function comparableDomainPath(value: string): string {
+  const normalized = value.replaceAll('\\', '/');
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+/**
+ * D123: true when `resolvedPath` matches one of the root-relative patterns.
+ * A fully literal pattern denotes that directory and its subtree (the sandbox
+ * policy mounts it the same way), and a glob's literal directory prefix
+ * (e.g. `<cwd>/docs` for `docs/**`) also matches so the write can create it.
+ */
+export function pathMatchesPatterns(
+  root: string,
+  patterns: string[],
+  resolvedPath: string,
+): boolean {
+  const target = comparableDomainPath(resolvedPath);
+  const clauses = absolutePatterns(root, patterns);
+  return clauses.some((absolute, index) => {
+    const pattern = comparableDomainPath(absolute);
+    if (globMatch(pattern, target)) return true;
+    const relative = patterns[index] ?? '';
+    if (!/[*?[\]]/.test(relative)) {
+      return target === pattern || target.startsWith(`${pattern}/`);
+    }
+    return literalDirPrefix(pattern) === target;
+  });
+}
+
+/** The directory part of a pattern before its first glob segment, if any. */
+function literalDirPrefix(pattern: string): string | null {
+  const segments = pattern.split('/');
+  const index = segments.findIndex((segment) => /[*?[]/.test(segment));
+  if (index < 0) return null;
+  const prefix = segments.slice(0, index).join('/');
+  return prefix.length > 0 ? prefix : null;
 }

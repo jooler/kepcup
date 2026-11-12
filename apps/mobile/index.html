@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- viewport-fit=cover + safe-area:刘海 / 手势条下内容不贴边(Capacitor WebView
+         默认不侵入系统栏,但 Android edge-to-edge 仍需要安全区意识)。 -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no"
+    />
+    <title>KepCup</title>
+    <!-- connect-src 放开 http/https/ws:wss:——首页的 no-cors 连通性预检是普通 fetch,
+         受 connect-src 约束;目标地址任意(局域网 IP / 自建域名)。 -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http: https: ws: wss:"
+    />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

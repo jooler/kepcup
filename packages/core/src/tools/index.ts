@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import {
   AppError,
   GET_RUN_STEPS_DEFAULT_LIMIT,
@@ -50,7 +50,13 @@ import { buildButlerTools, buildListBotsTool, type ButlerToolFacade } from './bu
 import { buildWorkbenchTools, type WorkbenchToolFacade } from './workbench-tools.js';
 import { buildHandoverTools, type HandoverToolFacade } from './handover-tools.js';
 import { buildDelegationTools, type DelegationToolFacade } from './delegation-tools.js';
-import { buildAskUserTool, buildTaskTools, type TaskToolFacade } from './task-tools.js';
+import {
+  buildAskUserTool,
+  buildClaimTools,
+  buildPeerTaskTools,
+  buildTaskTools,
+  type TaskToolFacade,
+} from './task-tools.js';
 import type { SubagentToolFacade } from '../agent/subagent.js';
 import type { McpToolFacade } from '../mcp/tools.js';
 import { buildAppTools, type AppToolFacade } from './app-tools.js';
@@ -620,7 +626,14 @@ export function buildResponseTools(input: {
         return {
           ok: false,
           content: `无法复制附件：${decision.reason}`,
-          errorCode: decision.readOnlyRun === true ? 'RUN_READ_ONLY' : 'PATH_OUT_OF_SCOPE',
+          errorCode:
+            decision.claimed === true
+              ? 'WRITE_CLAIMED'
+              : decision.outOfDomain === true
+                ? 'WRITE_OUT_OF_DOMAIN'
+                : decision.readOnlyRun === true
+                  ? 'RUN_READ_ONLY'
+                  : 'PATH_OUT_OF_SCOPE',
         };
       }
       const copy = ensureShareAttachmentCopy({
@@ -748,6 +761,31 @@ export function buildResponseTools(input: {
         }
         if (error instanceof AppError && error.code === 'PATH_OUT_OF_SCOPE') {
           return { ok: false, content: error.message, errorCode: 'PATH_OUT_OF_SCOPE' };
+        }
+        // D123 ④: the step-0 write refusals (write domain, another task's
+        // claim, a read-only run) are fail-closed before any grant — the
+        // gateway re-checks them on every path — so this tool could never grant
+        // them; say what does work instead of throwing at the model.
+        if (error instanceof AppError && error.code === 'WRITE_OUT_OF_DOMAIN') {
+          return {
+            ok: false,
+            content: `${error.message}。request_access 不能解除写域限制：请用 ask_user 说明缘由，由对话轮改派任务或换写域后重派。`,
+            errorCode: 'WRITE_OUT_OF_DOMAIN',
+          };
+        }
+        if (error instanceof AppError && error.code === 'WRITE_CLAIMED') {
+          return {
+            ok: false,
+            content: `${error.message}。request_access 不能解除其他任务的认领：等持有任务结束，或改用其他路径（需要改域请用 ask_user 说明缘由，由对话轮改派）。`,
+            errorCode: 'WRITE_CLAIMED',
+          };
+        }
+        if (error instanceof AppError && error.code === 'RUN_READ_ONLY') {
+          return {
+            ok: false,
+            content: `${error.message}。request_access 不能让只读任务写入：需要写入请用 ask_user 说明缘由，由对话轮派一个写任务。`,
+            errorCode: 'RUN_READ_ONLY',
+          };
         }
         throw error;
       }
@@ -1155,6 +1193,7 @@ export function buildResponseTools(input: {
           gateway,
           delivery: generatedMediaDelivery,
           recordFile: recordGenerated,
+          checkWritable: (target) => gateway.assertWritableArtifact(identity, target),
         })
       : [];
   const speechTools =
@@ -1167,6 +1206,7 @@ export function buildResponseTools(input: {
           gateway,
           delivery: generatedMediaDelivery,
           recordFile: recordGenerated,
+          checkWritable: (target) => gateway.assertWritableArtifact(identity, target),
         })
       : [];
 
@@ -1339,6 +1379,14 @@ export function buildResponseTools(input: {
     // §2.4.6: a task asks the user on a question card bound to it.
     ...(identity.loopType === 'task' && deps.tasks?.ask !== undefined
       ? [buildAskUserTool({ identity, ask: deps.tasks.ask.bind(deps.tasks) })]
+      : []),
+    // D123 §4: task-to-task coordination (never on the turn surface).
+    ...(identity.loopType === 'task' && deps.tasks !== undefined
+      ? buildPeerTaskTools({ identity, tasks: deps.tasks })
+      : []),
+    // D123 §5: runtime path claims (never on the turn surface).
+    ...(identity.loopType === 'task' && deps.tasks !== undefined
+      ? buildClaimTools({ identity, tasks: deps.tasks })
       : []),
     // Tasks keep list_bots (read-only cards); routing to other bots, the
     // butler's proposals and handovers (D88) are the turn's (design 30 §1.2).

@@ -387,7 +387,13 @@ describe('<tasks> segment (design 30 §4.2)', () => {
           createdAt: now,
           queueReason: '等写入租约（任务 run_t1 持有）',
         }),
-        summary({ taskId: 'run_t3', title: '部署', awaitingInput: true, createdAt: now - 90 * 60_000 }),
+        summary({
+          taskId: 'run_t3',
+          title: '部署',
+          awaitingInput: true,
+          writeDomains: ['apps/**'],
+          createdAt: now - 90 * 60_000,
+        }),
         summary({ taskId: 'run_t4', title: '已完成', state: 'completed', status: 'completed', injectable: false }),
       ],
       now,
@@ -395,9 +401,9 @@ describe('<tasks> segment (design 30 §4.2)', () => {
     expect(text.split('\n')).toEqual([
       '<tasks>',
       '（你在本对话中进行中与排队中的任务；已结束任务的交代与结果在对话记录里）',
-      '[run_t1] <untrusted>补全测试</untrusted>  running  写  派出 12 分钟前  可注入：是',
+      '[run_t1] <untrusted>补全测试</untrusted>  running  写（全域）  派出 12 分钟前  可注入：是',
       '[run_t2] <untrusted>检查 README</untrusted>  submitted  只读  派出 刚刚  排队中（等写入租约（任务 run_t1 持有））  可注入：是',
-      '[run_t3] <untrusted>部署</untrusted>  running  写  派出 1 小时 30 分钟前  等待用户输入（问题卡已发给用户）  可注入：是',
+      '[run_t3] <untrusted>部署</untrusted>  running  写域 apps/**  派出 1 小时 30 分钟前  等待用户输入（问题卡已发给用户）  可注入：是',
       '</tasks>',
     ]);
     expect(text).not.toContain('正在运行 pnpm test');

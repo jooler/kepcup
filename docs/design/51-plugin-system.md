@@ -492,9 +492,16 @@ P0 拆成两步：先用「第三方式」的插件把管线跑通，再动已�
 
 ### 15.7 后续路标（本迭代未做）
 
-custom-mcp 实例化（`instances: ['mcp']` 的 materializer、手动 MCP 收编 `app.kepcup/custom-mcp`、
-`mcpServerSourceSchema` 加 `instance` 分支、启动惰性迁移——P4 §4 全节为路标）；M2 邮件 OAuth
-子 schema；custom-connector 实例化；短信 / 电话 / 传感器能力类型（按 §15.1 菜谱）；
+**P4-M2 mcp 实例化已部分落地（2026-11-12，随在线文档平台插件批次）**：`instances: ['mcp']`
+的 materializer（`materializers/mcp.ts`，streamable-http 形态：厂商模版锁定端点 +
+headers 凭据走 secrets、通用模版 `url:''` 端点进表单并可用 `urlSensitive` 标记为敏感）、
+`mcpServerSourceSchema` 的 `instance` 分支、`serversForBot` 启用集注入、guards/removeServer
+的实例口径、启动对账 `reconcileMcpInstanceRows`、renderer 实例列表/表单
+（`ExtensionMcpInstances` / `McpInstanceForm`）均已就位；首批消费者是三个官方文档平台插件
+（`mcp-tencent-docs` 厂商模版 / `mcp-feishu` 通用模版 / `mcp-yuque` 内嵌 MCPB）。
+**仍顺延**：`app.kepcup/custom-mcp` 通用插件收编手动 MCP（含 stdio / MCPB 实例形态）、
+手动 server 惰性迁移、`DEV-075` 的 `McpSection` 手动管理区退役；M2 邮件 OAuth 子 schema；
+custom-connector 实例化；短信 / 电话 / 传感器能力类型（按 §15.1 菜谱）；
 插件依赖与合集；多市场并列；developer-portal 提交审核；`capabilitySummary` 多语言重建。
 迁移号已用到 0066（`0066_plugin_im.sql`），新迁移从 0067 起。
 

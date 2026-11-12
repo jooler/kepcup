@@ -125,3 +125,12 @@ cd infra/cloudflare/directory && npx wrangler deploy
   `generatedAt=2026-11-03T09:28:38.920Z`（严格递增、23 条、全部 `1.1.0`），Worker version
   `1482ed01-0ec3-4990-8889-7f8145c20d43`；线上索引与 23 个包拉回 `--verify` 通过。旧客户端
   现在会在索引层过滤掉 1.1.0，升级宿主后再更新。
+
+### 在线文档平台批次（3 个，2026-11-12 开发；待签名发布）
+
+- 工具 3：`mcp-tencent-docs`（腾讯文档，厂商模版：锁定官方 MCP 端点 + `Authorization`
+  token）/ `mcp-feishu`（飞书，通用模版：`url:''`，粘贴个人 MCP 服务地址，`urlSensitive`）/
+  `mcp-yuque`（语雀，内嵌官方 `yuque-mcp` 的 MCPB，token + host 走安装表单）。
+- 依赖 P4-M2 的 mcp 实例化（设计 51 §15.7 实施注），`engines.kepcup` 抬到 `>=0.5.11`；
+  未发布前用户可经「从文件夹安装」试用。语雀包先跑 `node plugins/mcp-yuque/build.mjs`
+  生成 `mcp/yuque.mcpb` 再 validate / pack。

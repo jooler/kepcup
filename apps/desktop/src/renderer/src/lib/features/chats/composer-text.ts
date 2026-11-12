@@ -1,8 +1,8 @@
 /**
  * Composer 文本纯函数（无 DOM，可单测）：@ 提及的名称注册表与分词。
  * 编辑器内的列表/提及行为由 TipTap 原生接管；这里的分词仍服务于两处
- * ——用户气泡（MessageBody）里 @ 部分的着色，以及草稿/手打名称的
- * 结构化 token 解析（composer-editor.mergeMentionTokens）。
+ * ——用户气泡（MessageBody / user-markdown）里把 `@名字` 识别成提及、
+ * 以及草稿/手打名称的结构化 token 解析（composer-editor.mergeMentionTokens）。
  */
 
 import type { Bot } from '@kepcup/shared';
@@ -166,13 +166,13 @@ export function buildMentionRegex(names: string[]): RegExp | null {
 
 export type ComposerSegment =
   | { kind: 'text'; text: string }
-  | { kind: 'mention'; text: string; target: MentionTarget }
-  | { kind: 'list-marker'; text: string };
+  | { kind: 'mention'; text: string; target: MentionTarget };
 
 /**
- * 把纯文本切成可分别着色的片段：@提及（按注册表精确匹配，手动输入的
- * 全名同样命中）、行首列表标记、其余纯文本。片段首尾相接还原原文。
- * 用于用户气泡（MessageBody）的提及着色——气泡是纯文本渲染。
+ * 把纯文本切成 @提及与其余纯文本片段（首尾相接还原原文）。用户气泡正文改
+ * markdown 渲染后，这里只负责把提及挑出来（user-markdown 把每段 mention
+ * 转成 markdown 链接、渲染回胶囊）；行首列表标记不再单独切分——列表由
+ * markdown 自己渲染。
  *
  * 本地文件/文件夹的正文是 `@绝对路径`：按 token 里的路径做**字面**匹配，
  * 不套用 Bot/项目组的边界规则（用户常写成「看@/tmp/a.md」，`@` 前是中文，
@@ -201,61 +201,21 @@ export function segmentComposerText(text: string, targets: MentionTarget[]): Com
   const sources = [...localPatterns, ...(nameRegex === null ? [] : [nameRegex.source])];
   const mentionRegex = sources.length > 0 ? new RegExp(sources.join('|'), 'gu') : null;
 
-  // 先按提及切开，再在纯文本片段里逐行标出列表标记。
-  const mentionPass: ComposerSegment[] = [];
-  if (mentionRegex === null) {
-    mentionPass.push({ kind: 'text', text });
-  } else {
-    let cursor = 0;
-    mentionRegex.lastIndex = 0;
-    for (let match = mentionRegex.exec(text); match !== null; match = mentionRegex.exec(text)) {
-      if (match.index > cursor) {
-        mentionPass.push({ kind: 'text', text: text.slice(cursor, match.index) });
-      }
-      const target =
-        match[1] !== undefined ? byName.get(match[1] ?? '') : localByText.get(match[0]);
-      mentionPass.push(
-        target ? { kind: 'mention', text: match[0], target } : { kind: 'text', text: match[0] },
-      );
-      cursor = match.index + match[0].length;
-    }
-    if (cursor < text.length) mentionPass.push({ kind: 'text', text: text.slice(cursor) });
-  }
-
   const segments: ComposerSegment[] = [];
-  let lineStart = true;
-  for (const segment of mentionPass) {
-    if (segment.kind !== 'text') {
-      lineStart = false;
-      segments.push(segment);
-      continue;
+  if (mentionRegex === null) return [{ kind: 'text', text }];
+  let cursor = 0;
+  mentionRegex.lastIndex = 0;
+  for (let match = mentionRegex.exec(text); match !== null; match = mentionRegex.exec(text)) {
+    if (match.index > cursor) {
+      segments.push({ kind: 'text', text: text.slice(cursor, match.index) });
     }
-    // 逐行扫描：行首的列表标记切成独立片段（仅着色，不改字形）。
-    let rest = segment.text;
-    while (rest.length > 0) {
-      if (lineStart) {
-        const marker = /^([ \t]*)(\d+\.|[-*+])(?=[ \t]|$)/.exec(rest);
-        if (marker) {
-          const indent = marker[1] ?? '';
-          const token = marker[2] ?? '';
-          if (indent.length > 0) segments.push({ kind: 'text', text: indent });
-          segments.push({ kind: 'list-marker', text: token });
-          rest = rest.slice(indent.length + token.length);
-          lineStart = false;
-          continue;
-        }
-      }
-      const newline = rest.indexOf('\n');
-      if (newline === -1) {
-        segments.push({ kind: 'text', text: rest });
-        rest = '';
-      } else {
-        segments.push({ kind: 'text', text: rest.slice(0, newline + 1) });
-        rest = rest.slice(newline + 1);
-        lineStart = true;
-      }
-    }
+    const target = match[1] !== undefined ? byName.get(match[1] ?? '') : localByText.get(match[0]);
+    segments.push(
+      target ? { kind: 'mention', text: match[0], target } : { kind: 'text', text: match[0] },
+    );
+    cursor = match.index + match[0].length;
   }
+  if (cursor < text.length) segments.push({ kind: 'text', text: text.slice(cursor) });
   return segments;
 }
 

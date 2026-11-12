@@ -43,6 +43,16 @@ export class LeaseService {
   readonly #queues = new Map<string, Waiter[]>();
   /** runId -> held key (one lease per run). */
   readonly #byRun = new Map<string, string>();
+  /**
+   * D123: keys may encode write domains (`{root}|domains:…`); the composed
+   * lease service injects the domain-aware predicate. The default keeps the
+   * historical prefix rule (plain-root keys, every other caller unchanged).
+   */
+  readonly #conflict: (a: string, b: string) => boolean;
+
+  constructor(conflict: (a: string, b: string) => boolean = leaseKeysConflict) {
+    this.#conflict = conflict;
+  }
 
   /**
    * Acquires the lease for `key`, blocking until it is held. The returned
@@ -60,7 +70,7 @@ export class LeaseService {
     }
 
     for (;;) {
-      const conflicting = [...this.#holders.entries()].find(([held]) => leaseKeysConflict(held, key));
+      const conflicting = [...this.#holders.entries()].find(([held]) => this.#conflict(held, key));
       if (conflicting === undefined) {
         // Conflicting waiters queued ahead of us keep FIFO fairness: only grant
         // when no earlier waiter for the same key is still pending.
@@ -154,11 +164,23 @@ export class LeaseService {
     return this.#holders.get(key) ?? null;
   }
 
+  /**
+   * The holder whose key conflicts with `key` under the injected predicate
+   * (a domain-scoped task holds `dir:…|domains:…`, not the bare root). Used by
+   * force revoke / revert, which ask for the workdir path.
+   */
+  conflictingHolder(key: string): LeaseHolder | null {
+    for (const [held, holder] of this.#holders) {
+      if (this.#conflict(held, key)) return holder;
+    }
+    return null;
+  }
+
   /** The key currently held by the run, when it is one of `keys`. */
   heldKey(runId: string, keys: string[]): string | null {
     const held = this.#byRun.get(runId);
     if (held === undefined) return null;
-    return keys.some((k) => leaseKeysConflict(held, k)) ? held : null;
+    return keys.some((k) => this.#conflict(held, k)) ? held : null;
   }
 
   // --- internals -------------------------------------------------------------
@@ -201,7 +223,7 @@ export class LeaseService {
   #promoteConflicting(freedKey: string): void {
     let best: { key: string; waiter: Waiter } | null = null;
     for (const [key, queue] of this.#queues) {
-      if (!leaseKeysConflict(key, freedKey)) continue;
+      if (!this.#conflict(key, freedKey)) continue;
       const waiter = queue[0];
       if (waiter === undefined) continue;
       if (best === null || waiter.identity.runId < best.waiter.identity.runId) {

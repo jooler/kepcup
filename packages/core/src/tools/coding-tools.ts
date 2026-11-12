@@ -86,8 +86,27 @@ async function existsChecked(
  * D75 read-only runs: refuse write / edit up front so the result carries
  * RUN_READ_ONLY (pi's edit tool re-wraps errors from its file operations as
  * plain Errors). The gateway still refuses the write itself either way.
+ * D123: a target outside the task's declared write domain is refused with
+ * WRITE_OUT_OF_DOMAIN at the same front gate.
  */
-function assertMayWrite(identity: ToolContext['identity'], gateway: ToolGateway): void {
+function assertMayWrite(
+  identity: ToolContext['identity'],
+  gateway: ToolGateway,
+  target?: string,
+): void {
+  if (target !== undefined) {
+    const decision = gateway.checkPath(identity, target, 'write');
+    if (decision.kind === 'forbidden' && decision.claimed === true) {
+      throw new AppError('WRITE_CLAIMED', decision.reason);
+    }
+    if (decision.kind === 'forbidden' && decision.outOfDomain === true) {
+      throw new AppError('WRITE_OUT_OF_DOMAIN', decision.reason);
+    }
+    if (decision.kind === 'forbidden' && decision.readOnlyRun === true) {
+      throw new AppError('RUN_READ_ONLY', decision.reason);
+    }
+    return;
+  }
   const denial = gateway.writeDenial(identity);
   if (denial !== null) throw new AppError('RUN_READ_ONLY', denial);
 }
@@ -306,6 +325,23 @@ export function extractViolationPaths(violations: Array<{ line: string }>): stri
   return extractViolationAccesses(violations).map((violation) => violation.path);
 }
 
+/**
+ * D123 ④: which hint a sandbox-blocked write path deserves. Only `grantable`
+ * (a plain access denial) can be lifted by request_access; the step-0 refusals
+ * of `gateway.checkPath` need ask_user / waiting instead.
+ */
+type BlockedWriteClass = 'domain' | 'claim' | 'readOnly' | 'grantable';
+
+function classifyBlockedWrite(
+  verdict: ReturnType<ToolGateway['checkPath']> | null,
+): BlockedWriteClass {
+  if (verdict === null || verdict.kind !== 'forbidden') return 'grantable';
+  if (verdict.outOfDomain === true) return 'domain';
+  if (verdict.claimed === true) return 'claim';
+  if (verdict.readOnlyRun === true) return 'readOnly';
+  return 'grantable';
+}
+
 /** read / write / edit / ls / find / grep / bash wired through the gateway. */
 export function buildCodingTools(
   identity: ToolContext['identity'],
@@ -416,13 +452,11 @@ export function buildCodingTools(
 
   const grep = createGrepToolDefinition(baseDir, {
     operations: {
+      // pi 1.5 起上下文行由 ripgrep 直读，readFile 回调已废弃不再触发；
+      // 搜索根的网关读检查保留在 isDirectory，匹配文件都在已检查的根内。
       isDirectory: async (p: string) => {
         const resolved = await checked(identity, gateway, p, 'read', 'grep');
         return statSync(resolved).isDirectory();
-      },
-      readFile: async (p: string) => {
-        const resolved = await checked(identity, gateway, p, 'read', 'grep');
-        return readFileSync(resolved, 'utf-8');
       },
     },
   });
@@ -464,10 +498,47 @@ export function buildCodingTools(
           ];
           const blocked = extractViolationAccesses(result.violations);
           if (blocked.length > 0) {
-            notes.push(
-              `[提示] 以下路径在可访问范围之外：${blocked.map((item) => item.path).join('、')}。` +
-                '可调用 request_access 工具申请对这些路径的访问授权，批准后重新执行命令。',
-            );
+            // D123 ④: the step-0 write refusals of `gateway.checkPath` (write
+            // domain, another task's claim, a read-only run) are fail-closed and
+            // request_access cannot lift any of them, so each gets the hint that
+            // actually works; only grantable paths keep the approval hint.
+            const buckets: Record<BlockedWriteClass, string[]> = {
+              domain: [],
+              claim: [],
+              readOnly: [],
+              grantable: [],
+            };
+            for (const item of blocked) {
+              const verdict =
+                item.mode === 'write' ? gateway.checkPath(identity, item.path, 'write') : null;
+              buckets[classifyBlockedWrite(verdict)].push(item.path);
+            }
+            const { domain, claim, readOnly, grantable } = buckets;
+            if (grantable.length > 0) {
+              notes.push(
+                `[提示] 以下路径在可访问范围之外：${grantable.join('、')}。` +
+                  '可调用 request_access 工具申请对这些路径的访问授权，批准后重新执行命令。',
+              );
+            }
+            if (domain.length > 0) {
+              notes.push(
+                `[提示] 以下路径在本任务写域之外：${domain.join('、')}。` +
+                  'request_access 不能解除写域限制：请用 ask_user 说明缘由，由对话轮改派任务或换写域后重派。',
+              );
+            }
+            if (claim.length > 0) {
+              notes.push(
+                `[提示] 以下路径已被其他任务认领：${claim.join('、')}。` +
+                  'request_access 不能解除认领：等持有任务结束，或改用其他路径' +
+                  '（需要改域请用 ask_user 说明缘由，由对话轮改派）。',
+              );
+            }
+            if (readOnly.length > 0) {
+              notes.push(
+                `[提示] 本次是只读任务，以下路径不能写入：${readOnly.join('、')}。` +
+                  'request_access 不能让只读任务写入：需要写入请用 ask_user 说明缘由，由对话轮派一个写任务。',
+              );
+            }
             // A task/subagent may ask the user right here: a sandbox denial is
             // otherwise just a hint the model can silently ignore. A turn only
             // gets the hint (a turn never holds its mailbox for a card).
@@ -525,16 +596,16 @@ export function buildCodingTools(
     wrapPiTool(read, baseDir, secrets, spillOption(deps.toolOutputSpill)),
     wrapPiTool(write, baseDir, secrets, {
       before: (params, ctx) => {
-        assertMayWrite(identity, gateway);
         const target = (params as { path?: string }).path;
+        assertMayWrite(identity, gateway, target);
         if (target !== undefined) ctx.progress(`正在写入 ${shortCommand(target)}`);
       },
       ...(deps.toolOutputSpill !== undefined ? { spill: deps.toolOutputSpill } : {}),
     }),
     wrapPiTool(edit, baseDir, secrets, {
       before: (params, ctx) => {
-        assertMayWrite(identity, gateway);
         const target = (params as { path?: string }).path;
+        assertMayWrite(identity, gateway, target);
         if (target !== undefined) ctx.progress(`正在编辑 ${shortCommand(target)}`);
       },
       ...(deps.toolOutputSpill !== undefined ? { spill: deps.toolOutputSpill } : {}),

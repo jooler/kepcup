@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -10,6 +10,7 @@ import { runMigrations } from '../../src/infra/migrate.js';
 import { migrationsUrl } from '../../src/start.js';
 import { RunsService } from '../../src/domain/runs.js';
 import type { Clock } from '../../src/infra/clock.js';
+import { runsVersionsAfter } from '../support/migration-versions.js';
 
 /** D75 W0：runs 任务字段读写与任务查询（docs/design/30 §3.4、§3.2）。 */
 
@@ -53,7 +54,7 @@ function createTask(
 
 describe('runs 任务字段', () => {
   it('create 写入任务字段（submitted = queued），读回映射正确并通过 runSchema', () => {
-    withRuns((runs) => {
+    withRuns((runs, db) => {
       const task = createTask(runs, { continuedFromRunIds: ['run_prev'] });
       expect(task).toMatchObject({
         loopType: 'task',
@@ -69,6 +70,24 @@ describe('runs 任务字段', () => {
       expect(runSchema.parse(task)).toEqual(task);
       const readOnly = createTask(runs, { taskWrites: false });
       expect(readOnly.taskWrites).toBe(false);
+      // D123: undeclared write domains read back as null (whole cwd via taskWrites).
+      expect(readOnly.taskWriteDomains).toBeNull();
+      const scoped = createTask(runs, {
+        taskWrites: true,
+        taskWriteDomains: ['apps/renderer/**', 'docs/**'],
+      });
+      expect(scoped.taskWriteDomains).toEqual(['apps/renderer/**', 'docs/**']);
+      expect(runSchema.parse(scoped).taskWriteDomains).toEqual(['apps/renderer/**', 'docs/**']);
+      // A corrupt declaration is not "undeclared": enforcement must fail closed.
+      db.prepare('update runs set task_write_domains = ? where id = ?').run('not-json', scoped.id);
+      const corrupt = runs.get(scoped.id)!;
+      expect(corrupt.taskWriteDomains).toBeNull();
+      expect(corrupt.taskWriteDomainsCorrupt).toBe(true);
+      db.prepare('update runs set task_write_domains = ? where id = ?').run(
+        '["apps/**",5]',
+        scoped.id,
+      );
+      expect(runs.get(scoped.id)!.taskWriteDomainsCorrupt).toBe(true);
     });
   });
 
@@ -85,6 +104,7 @@ describe('runs 任务字段', () => {
         taskTitle: null,
         taskWrites: null,
         taskCwd: null,
+        taskWriteDomains: null,
         originRunId: null,
         resultConsumedAt: null,
         awaitingInput: false,
@@ -314,6 +334,95 @@ describe('turnBotIdsTriggeredBy（D90：群里谁接了那条派发）', () => {
       turn(runs, { botId: 'bot_w', triggerMessageIds: ['msg_10'] });
       expect(runs.turnBotIdsTriggeredBy('conv_g', 'msg_1')).toEqual(['bot_a', 'bot_b', 'bot_c']);
       expect(runs.turnBotIdsTriggeredBy('conv_g', 'msg_404')).toEqual([]);
+    });
+  });
+});
+
+function migrationsUpTo(maxVersion: number): string {
+  const source = migrationsUrl('runs');
+  const target = mkdtempSync(path.join(dir, 'migrations-runs-'));
+  mkdirSync(target, { recursive: true });
+  for (const name of readdirSync(source)) {
+    if (!/^\d{4}_.*\.sql$/.test(name)) continue;
+    if (Number(name.slice(0, 4)) > maxVersion) continue;
+    copyFileSync(path.join(source, name), path.join(target, name));
+  }
+  return target;
+}
+
+describe('runs 0015 task_write_domains 迁移', () => {
+  it('0014 库升级：新增列取 NULL，既有行保留', () => {
+    const db = openDatabase({
+      path: path.join(dir, `runs-migration-${Math.random().toString(36).slice(2, 8)}.db`),
+      key: deriveKey(Buffer.alloc(32, 11), KEY_INFO.runsDb),
+    });
+    runMigrations(db, migrationsUpTo(14));
+    db.exec(
+      "insert into runs (id, bot_id, conversation_id, loop_type, status, task_title, task_writes, task_cwd, created_at) values ('run_scoped', 'bot_x', 'conv_a', 'task', 'completed', '写域任务', 1, '/proj/root', 1)",
+    );
+
+    const applied = runMigrations(db, migrationsUrl('runs'));
+    expect(applied.map((m) => m.version)).toEqual(runsVersionsAfter(14));
+    expect(db.prepare('select task_write_domains from runs where id = ?').get('run_scoped')).toEqual({
+      task_write_domains: null,
+    });
+
+    const columns = db.prepare('pragma table_info(runs)').all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toContain('task_write_domains');
+    closeDatabase(db);
+  });
+});
+
+describe('runs 0016 任务失败自动重试列', () => {
+  it('0015 库升级：新增两列取默认值，既有行保留', () => {
+    const db = openDatabase({
+      path: path.join(dir, `runs-retry-migration-${Math.random().toString(36).slice(2, 8)}.db`),
+      key: deriveKey(Buffer.alloc(32, 12), KEY_INFO.runsDb),
+    });
+    runMigrations(db, migrationsUpTo(15));
+    db.exec(
+      "insert into runs (id, bot_id, conversation_id, loop_type, status, task_title, task_writes, task_cwd, created_at) values ('run_retry_old', 'bot_x', 'conv_a', 'task', 'completed', '重试任务', 0, '/proj/root', 1)",
+    );
+
+    const applied = runMigrations(db, migrationsUrl('runs'));
+    expect(applied.map((m) => m.version)).toEqual(runsVersionsAfter(15));
+    expect(
+      db.prepare('select task_retry_attempts, task_retry_at from runs where id = ?').get('run_retry_old'),
+    ).toEqual({ task_retry_attempts: 0, task_retry_at: null });
+
+    const columns = db.prepare('pragma table_info(runs)').all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toContain('task_retry_attempts');
+    expect(columns.map((column) => column.name)).toContain('task_retry_at');
+    closeDatabase(db);
+  });
+
+  it('update 的 taskRetryAttempts / taskRetryAt 按「未提供即保留」合并，taskRetryAt 可写 null 清除', () => {
+    withRuns((runs) => {
+      const task = createTask(runs);
+      // 入账：写回 queued + 退避计划。
+      const requeued = runs.update(task.id, {
+        status: 'queued',
+        taskRetryAttempts: 1,
+        taskRetryAt: 1_999_000,
+        lastProgress: '第 1 次执行失败，约 1 分钟后自动重试',
+      });
+      expect(requeued.taskRetryAttempts).toBe(1);
+      expect(requeued.taskRetryAt).toBe(1_999_000);
+      // 与重试无关的 patch 不碰两列（即使值为 null 的字段也不会误清）。
+      const untouched = runs.update(task.id, {
+        lastProgress: '仍在执行',
+        resultConsumedAt: null,
+      });
+      expect(untouched.taskRetryAttempts).toBe(1);
+      expect(untouched.taskRetryAt).toBe(1_999_000);
+      // 状态流转（running）保留计数；重启前的行同样如此。
+      const running = runs.update(task.id, { status: 'running' });
+      expect(running.taskRetryAttempts).toBe(1);
+      expect(running.taskRetryAt).toBe(1_999_000);
+      // 显式 null 清除退避计时（重新启动 / 终态结算），计数保留。
+      const cleared = runs.update(task.id, { taskRetryAt: null });
+      expect(cleared.taskRetryAttempts).toBe(1);
+      expect(cleared.taskRetryAt).toBeNull();
     });
   });
 });

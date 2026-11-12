@@ -310,6 +310,9 @@ export interface AppendTaskEventInput {
   continuesTaskId?: string | undefined;
   /** D91: brief — the external capability ids the task declared. */
   capabilities?: string[] | undefined;
+  /** D123: peer_message — the sending task's id / title. */
+  fromTaskId?: string | undefined;
+  fromTitle?: string | undefined;
   /** Terminal entries: files the task created / modified. */
   artifacts?: MessageArtifact[] | undefined;
   /** Overrides the creation time (defaults to the clock). */
@@ -773,6 +776,8 @@ export class MessagesService {
       ...(input.capabilities !== undefined && input.capabilities.length > 0
         ? { capabilities: input.capabilities }
         : {}),
+      ...(input.fromTaskId !== undefined ? { fromTaskId: input.fromTaskId } : {}),
+      ...(input.fromTitle !== undefined ? { fromTitle: input.fromTitle } : {}),
       ...(input.artifacts !== undefined && input.artifacts.length > 0
         ? { artifacts: input.artifacts }
         : {}),

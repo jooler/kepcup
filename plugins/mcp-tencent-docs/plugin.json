@@ -1,0 +1,38 @@
+{
+  "format_version": 1,
+  "id": "app.kepcup/mcp-tencent-docs",
+  "name": "腾讯文档",
+  "icon": "icon.svg",
+  "version": "1.0.0",
+  "description": "让 Bot 读写你的腾讯文档空间：搜索文档、读取正文、按 Markdown 建档、写入表格与智能表。凭据只保存在本机。",
+  "usage": "启用后还需要添加工具服务：打开桌面版腾讯文档并进入目标空间，点右上角「≡ → 使用 MCP → 获取 MCP token」复制当前空间的 token（获取需要腾讯文档超级会员，token 按空间发放，多空间需添加多个工具服务），在扩展中心 → 已安装 → 腾讯文档 →「管理」粘贴保存，然后在 Bot 详情勾选启用本插件。token 有效期一年，可在同一页面重置。",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "homepage": "https://kepcup.com",
+  "engines": {
+    "kepcup": ">=0.5.11"
+  },
+  "instances": [
+    "mcp"
+  ],
+  "contributions": {
+    "mcp": [
+      {
+        "kind": "http",
+        "id": "docs",
+        "name": "腾讯文档",
+        "description": "腾讯文档官方 MCP：搜索与读取文档正文、按 Markdown 新建文档、批量写入在线表格与智能表。",
+        "url": "https://docs.qq.com/openapi/mcp",
+        "auth": "headers",
+        "headers": [
+          {
+            "name": "Authorization",
+            "key": "token"
+          }
+        ]
+      }
+    ]
+  }
+}

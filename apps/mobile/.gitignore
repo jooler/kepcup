@@ -1,0 +1,5 @@
+# 首页构建产物(cap sync 会把它拷进原生工程,原生侧各自 gitignore 已覆盖同步资产)
+dist/
+
+# 本地归档/导出产物(TestFlight 上传用)
+release/

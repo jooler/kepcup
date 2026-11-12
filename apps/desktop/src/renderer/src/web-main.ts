@@ -1,4 +1,7 @@
 import { installWebShim } from '$lib/features/web-shell/web-shim';
+// 纯叶子模块(不读 window.kepcup,只读 location.search):静态 import 不受「垫片
+// 必须先行」的顺序约束(见下)。
+import { NATIVE_SHELL } from '$lib/features/web-shell/shell';
 
 /**
  * web 构建入口（D96 WP5）：与 Electron 共用同一份 renderer（main.ts / App.svelte），
@@ -16,7 +19,8 @@ installWebShim(__KEPCUP_WEB_VERSION__);
 document.documentElement.lang = navigator.language.startsWith('zh') ? 'zh-CN' : 'en-US';
 
 // Service Worker：P0 只做静态壳缓存（sw.js），失败静默——PWA 是增强而非前提。
-if ('serviceWorker' in navigator) {
+// 原生壳里跳过（D122）：iOS WKWebView 没有 SW，Android WebView 里 PWA 缓存也无意义。
+if ('serviceWorker' in navigator && !NATIVE_SHELL) {
   window.addEventListener('load', () => {
     void navigator.serviceWorker.register('/sw.js').catch(() => {});
   });

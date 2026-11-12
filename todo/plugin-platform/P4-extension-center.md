@@ -81,6 +81,28 @@
 
 ## 4. M2 步骤（可独立顺延；顺延时本节移入后续路标）
 
+> **实施注（2026-11-12，随在线文档平台插件批次部分落地）**：本节 **1–3 的机制已落地**，
+> 但形态收敛为「厂商模版」而非完整自定义表单——
+>
+> - 首批消费者是三个文档平台插件（`mcp-tencent-docs` 厂商模版：锁定端点 +
+>   `Authorization` 头走 secrets 占位；`mcp-feishu` 通用模版：`url:''` 端点进表单且
+>   `urlSensitive`；`mcp-yuque` 内嵌 MCPB，非实例），**不含** `app.kepcup/custom-mcp`
+>   通用插件：实例字段集收敛为 `label`（+ 通用模版的 `url` + 模版声明的 header 值字段），
+>   仅 streamable-http 形态；stdio / MCPB 实例形态与「transport 按字段显隐」的完整
+>   自定义表单仍顺延。
+> - `mcpServerSourceSchema` 的 `instance` 分支、guards / `mcp.removeServer` 的
+>   `PLUGIN_MANAGED` 实例口径、`serversForBot` 启用集注入、启动对账
+>   `reconcileMcpInstanceRows`（替代第 4 步惰性迁移——手动 server 尚未收编，无需迁移）
+>   已落地；`McpProjector` 对 `instances:['mcp']` 清单里的 http 贡献只进同意视图
+>   （不落 settings），固定→模版降级在 update 时移除旧 server。
+> - 渲染层：`ExtensionMcpInstances` / `McpInstanceForm` 按 `providesInstances` 分流
+>   接管插件卡 mcp 内容视图；第 5 / 6 步（`McpSection` 退役、手动 server 勾选变实例
+>   细选）仍顺延（DEV-075 现状保持）。
+> - 已知顺延行为（与 mail 的实例语义一致，未单独建机制）：插件更新把
+>   `instances: ['mcp']` 声明移除后，既有 mcp 实例行与 server 原样保留——表单消失
+>   （`instanceFields` 为空）、`plugins.instances.update` 报错、仅实例删除 / 卸载可清理；
+>   表单侧对「插件缺失 / 已停用」给出明确提示（`mcp.pluginMissing` / `mcp.pluginDisabled`）。
+
 1. 官方插件 `plugins/custom-mcp/`：`instances: ['mcp']`、无贡献。
 2. mcp kind materializer：实例字段 = `name / transport(stdio|streamable-http|sse) /
    command / args / env / url / headers`（字段集按 transport 条件显隐）；`.mcpb` 文件作为特殊

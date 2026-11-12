@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { WIDGET_CRAFT_ACCEPTANCE_HINTS_MAX, WIDGET_CRAFT_BRIEF_MAX_CHARS } from '@kepcup/shared';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
 import type { WidgetCraftParams } from '../widgets/craft/service.js';

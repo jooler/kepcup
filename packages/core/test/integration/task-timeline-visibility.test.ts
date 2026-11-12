@@ -106,9 +106,9 @@ describe('私有时间线泄露契约（D75 §2.4.3）', () => {
       domain.messages.append({ conversationId: cid, senderType: 'user', kind: 'text', text });
     const privateEntry = (
       taskId: string,
-      phase: 'brief' | 'inject' | 'cancel' | 'question' | 'result' | 'failure',
+      phase: 'brief' | 'inject' | 'cancel' | 'question' | 'result' | 'failure' | 'peer_message',
       text: string,
-      extra: { status?: 'cancelled'; error?: string; title?: string } = {},
+      extra: { status?: 'cancelled'; error?: string; title?: string; fromTaskId?: string; fromTitle?: string } = {},
     ): Message =>
       domain.messages.appendTaskEvent({
         conversationId: cid,
@@ -131,6 +131,11 @@ describe('私有时间线泄露契约（D75 §2.4.3）', () => {
     });
     privateEntry(t1, 'inject', 'zebra leak_inject 顺便查习性');
     privateEntry(t1, 'question', 'zebra leak_question 要查哪个洲');
+    // D123: a peer message is the receiving task's private entry too.
+    privateEntry(t1, 'peer_message', 'zebra leak_peer 兄弟任务来讯', {
+      fromTaskId: 'run_peer',
+      fromTitle: '兄弟',
+    });
     const result = privateEntry(t1, 'result', 'zebra leak_result 斑马分布在非洲');
     privateEntry(t2, 'brief', 'zebra leak_brief_two 画分布图');
     privateEntry(t2, 'cancel', 'zebra leak_cancel 用户不要图了');

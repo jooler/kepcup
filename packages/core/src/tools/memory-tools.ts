@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { AppError, type MemoryKind, type Message, type ProfileCategory } from '@kepcup/shared';
 import type { RunIdentity, ToolDefinition } from '../agent/types.js';
 import type { RetrievedMemories } from '../memory/retrieve.js';

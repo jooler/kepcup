@@ -1,4 +1,4 @@
-import { type TSchema } from '@earendil-works/pi-ai';
+import type { TSchema } from 'typebox';
 import type { ZodType } from 'zod';
 import {
   AGENT_TRIAGE_TIMEOUT_MS,

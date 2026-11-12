@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { untrustedBlock } from '../infra/data-boundary.js';
 import path from 'node:path';
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { AppError, TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
 import { truncateToBudget } from '../agent/tokens.js';
 import type { MediaUsageContext } from '../media/service.js';
@@ -91,6 +91,8 @@ export function buildImageTools(input: {
   delivery?: GeneratedMediaDelivery | undefined;
   /** 记录落盘产物（对话里的文件卡片）；测试装配可缺省。 */
   recordFile?: ((target: string) => void) | undefined;
+  /** D123: front gate before saving a generated artifact (throws WRITE_OUT_OF_DOMAIN). */
+  checkWritable?: ((target: string) => void) | undefined;
 }): ToolDefinition[] {
   const { identity, media, workspacePath } = input;
 
@@ -155,6 +157,10 @@ export function buildImageTools(input: {
         };
       }
       const dir = path.join(workspacePath, '.generated');
+      // Gate before creating the directory: a domain-scoped task must not
+      // create `<workspace>/.generated` outside its domain (a pre-existing
+      // symlink there would otherwise be followed).
+      input.checkWritable?.(dir);
       mkdirSync(dir, { recursive: true });
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
       const base = sanitizeFileName(params.file_name?.trim() || `image-${stamp}`);
@@ -164,6 +170,7 @@ export function buildImageTools(input: {
         if (bytes === null) continue;
         const fileName = images.length > 1 ? `${base}-${index + 1}.png` : `${base}.png`;
         const target = path.join(dir, fileName);
+        input.checkWritable?.(target);
         writeFileSync(target, bytes);
         input.recordFile?.(target);
         saved.push(target);

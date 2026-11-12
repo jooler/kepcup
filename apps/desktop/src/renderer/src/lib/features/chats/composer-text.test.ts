@@ -110,16 +110,9 @@ describe('segmentComposerText', () => {
     expect(segments).toEqual([{ kind: 'text', text: '邮箱a@阿甲x 和 a@阿甲' }]);
   });
 
-  it('行首列表标记独立成片段，行中减号不标', () => {
-    const segments = segmentComposerText('- 项目一\n普通-文本\n2. 第二项', targets);
-    expect(segments).toEqual([
-      { kind: 'list-marker', text: '-' },
-      { kind: 'text', text: ' 项目一\n' },
-      { kind: 'text', text: '普通-文本\n' },
-      { kind: 'list-marker', text: '2.' },
-      { kind: 'text', text: ' 第二项' },
-    ]);
-    expect(segments.map((s) => s.text).join('')).toBe('- 项目一\n普通-文本\n2. 第二项');
+  it('没有提及的文本整段是纯文本（列表标记交给 markdown 渲染）', () => {
+    const text = '- 项目一\n普通-文本\n2. 第二项';
+    expect(segmentComposerText(text, targets)).toEqual([{ kind: 'text', text }]);
   });
 
   it('空注册表时整段为纯文本', () => {

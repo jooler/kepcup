@@ -39,6 +39,8 @@ function taskView(taskId: string, overrides: Partial<TaskView> = {}): TaskView {
     state: 'running',
     status: 'running',
     writes: false,
+    writeDomains: null,
+    claims: [],
     cwdKind: 'workspace',
     queueReason: null,
     awaitingInput: false,

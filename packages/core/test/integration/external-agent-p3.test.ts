@@ -726,7 +726,7 @@ describe('external agents in a workdir (P3: config confirmation, explicit lease,
       () =>
         tasks
           .list(builtinTurn)
-          .find((task) => task.state === 'submitted' && task.queueReason?.startsWith('等写入租约') === true,
+          .find((task) => task.state === 'submitted' && task.queueReason?.startsWith('等写域') === true,
           ) ?? null,
       { label: 'built-in task waiting for the lease', timeoutMs: 30_000 },
     );

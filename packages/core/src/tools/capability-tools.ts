@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import type { ToolDefinition } from '../agent/types.js';
 import { formatCapabilitySearch, type CapabilityDiscovery } from '../capabilities/discovery.js';
 

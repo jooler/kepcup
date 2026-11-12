@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { AppError, agentModelRef, type AgentCatalogEntry } from '@kepcup/shared';

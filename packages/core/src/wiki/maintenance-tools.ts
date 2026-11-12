@@ -8,7 +8,7 @@ import {
 } from 'node:fs';
 import { rmSync } from '../infra/fs-rm.js';
 import path from 'node:path';
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import {
   createLsToolDefinition,
   createReadToolDefinition,

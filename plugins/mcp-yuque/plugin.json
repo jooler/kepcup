@@ -1,0 +1,28 @@
+{
+  "format_version": 1,
+  "id": "app.kepcup/mcp-yuque",
+  "name": "语雀",
+  "icon": "icon.svg",
+  "version": "1.0.0",
+  "description": "让 Bot 读写你的语雀知识库：浏览知识库、按 Markdown 创建与更新文档、维护目录。凭据只保存在本机。",
+  "usage": "安装时需要填入语雀 API Token（在 www.yuque.com/settings/tokens 创建；个人令牌需要语雀超级会员，空间版用户改用团队 Token），空间版用户同时把 host 换成空间域名。保存后在 Bot 详情勾选启用本插件即可。",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "homepage": "https://kepcup.com",
+  "engines": {
+    "kepcup": ">=0.5.11"
+  },
+  "contributions": {
+    "mcp": [
+      {
+        "kind": "mcpb",
+        "id": "yuque",
+        "name": "语雀",
+        "description": "语雀官方 MCP server：知识库与文档的创建、更新、目录维护与小记。",
+        "file": "mcp/yuque.mcpb"
+      }
+    ]
+  }
+}

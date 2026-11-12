@@ -1076,25 +1076,43 @@ export async function validatePlugin(
         ) {
           await checkMcpb(root, contribution.file, contribution.id, permissions, checks);
         }
-      } else if (!isSafeDirectoryRemoteUrl(contribution.url)) {
-        checks.push(
-          makeCheck(
-            'plugin.mcp-http',
-            'error',
-            `http contribution URL must be a public https URL: ${contribution.url}`,
-            { subject: contribution.id },
-          ),
-        );
       } else {
-        permissions.hosts.add(new URL(contribution.url).host);
-        checks.push(
-          makeCheck(
-            'plugin.mcp-http',
-            'info',
-            'http contribution is a public https endpoint. Remote servers that need OAuth must be connector contributions.',
-            { subject: contribution.id },
-          ),
-        );
+        // P4-M2 template mode: with `instances: ['mcp']` an http contribution is a
+        // per-instance provisioning spec — a '' URL is the GENERIC template (the
+        // endpoint becomes a per-instance field, gated at instance time), while a
+        // locked URL is still checked like a fixed server.
+        const template = manifest.instances?.includes('mcp') === true;
+        if (template && contribution.url === '') {
+          checks.push(
+            makeCheck(
+              'plugin.mcp-http',
+              'info',
+              "http contribution is a generic instance template (url: '') — the endpoint is a required per-instance field.",
+              { subject: contribution.id },
+            ),
+          );
+        } else if (!isSafeDirectoryRemoteUrl(contribution.url)) {
+          checks.push(
+            makeCheck(
+              'plugin.mcp-http',
+              'error',
+              `http contribution URL must be a public https URL: ${contribution.url}`,
+              { subject: contribution.id },
+            ),
+          );
+        } else {
+          permissions.hosts.add(new URL(contribution.url).host);
+          checks.push(
+            makeCheck(
+              'plugin.mcp-http',
+              'info',
+              template
+                ? 'http template endpoint is a public https URL (locked). Remote servers that need OAuth must be connector contributions.'
+                : 'http contribution is a public https endpoint. Remote servers that need OAuth must be connector contributions.',
+              { subject: contribution.id },
+            ),
+          );
+        }
       }
     }
     for (const template of contributions.mail) {

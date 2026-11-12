@@ -229,6 +229,48 @@ describe('buildSandboxPolicy', () => {
   });
 });
 
+describe('D123 write-domain narrowing', () => {
+  const base = {
+    platform: process.platform,
+    paths,
+    workspacePath: workspace(),
+    network: { mode: 'open', allowDomains: [] } as SandboxNetworkPolicy,
+  };
+  const workdir = { path: '/tmp/kepcup-policy-test/proj', hasLease: true, denyReadGlobs: [] };
+
+  it('narrows a workspace-rooted domain to the declared dirs', () => {
+    const policy = buildSandboxPolicy({
+      ...base,
+      writeDomain: { root: workspace(), patterns: ['apps/**'] },
+    });
+    expect(policy.readWrite).toContain(path.join(workspace(), 'apps'));
+    expect(policy.readWrite).not.toContain(workspace());
+    expect(policy.readOnly).toContain(workspace());
+  });
+
+  it('makes the workspace read-only when the domain is rooted in the workdir', () => {
+    const policy = buildSandboxPolicy({
+      ...base,
+      workdir,
+      writeDomain: { root: workdir.path, patterns: ['apps/**'] },
+    });
+    expect(policy.readWrite).toContain(path.join(workdir.path, 'apps'));
+    expect(policy.readWrite).not.toContain(workdir.path);
+    expect(policy.readWrite).not.toContain(workspace());
+    expect(policy.readOnly).toContain(workspace());
+  });
+
+  it('keeps the whole roots when a pattern is not expressible as a directory', () => {
+    const policy = buildSandboxPolicy({
+      ...base,
+      workdir,
+      writeDomain: { root: workdir.path, patterns: ['*.md'] },
+    });
+    expect(policy.readWrite).toContain(workdir.path);
+    expect(policy.readWrite).toContain(workspace());
+  });
+});
+
 describe('macOS startup sysctls', () => {
   it('inserts kern.iosupportversion into a seatbelt sysctl allow list once', () => {
     const profile = `(allow sysctl-read\n  (sysctl-name "kern.osproductversion")\n)`;

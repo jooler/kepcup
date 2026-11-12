@@ -19,11 +19,7 @@ function untrusted(text: string): string {
 }
 
 function taskLine(task: TaskSummary, now: number): string {
-  const parts = [
-    `[${task.taskId}] ${untrusted(task.title)}`,
-    task.state,
-    task.writes ? '写' : '只读',
-  ];
+  const parts = [`[${task.taskId}] ${untrusted(task.title)}`, task.state, writeLabel(task)];
   parts.push(`派出 ${ago(now - task.createdAt)}`);
   if (task.state === 'submitted') parts.push(`排队中（${task.queueReason ?? '等待启动'}）`);
   if (task.awaitingInput) parts.push('等待用户输入（问题卡已发给用户）');
@@ -49,5 +45,71 @@ export function buildTasksSegment(tasks: TaskSummary[], now: number): string {
     '（你在本对话中进行中与排队中的任务；已结束任务的交代与结果在对话记录里）',
     ...inFlight.map((task) => taskLine(task, now)),
     '</tasks>',
+  ].join('\n');
+}
+
+/** Declared patterns are model-chosen: keep them from breaking the segment. */
+function segmentSafe(text: string): string {
+  return text.replace(/[<>\r\n]+/g, ' ');
+}
+
+/** D123: `写域 …` / `写（全域）` / `只读` for peer rows. */
+function writeLabel(task: TaskSummary): string {
+  if (!task.writes) return '只读';
+  const domains = task.writeDomains;
+  if (domains === null || domains === undefined || (domains.length === 1 && domains[0] === '**')) {
+    return '写（全域）';
+  }
+  return `写域 ${segmentSafe(domains.join(', '))}`;
+}
+
+function peerLine(task: TaskSummary): string {
+  const parts = [`[${task.taskId}] ${untrusted(task.title)}`, task.state, writeLabel(task)];
+  if (task.state === 'submitted') parts.push(`排队中（${task.queueReason ?? '等待启动'}）`);
+  if (task.awaitingInput) parts.push('等待用户输入');
+  return parts.join('  ');
+}
+
+/** D123 ③: `启动前排队 247s（等写域（任务 run_x 持有 a/**））`; '' when unknown. */
+function startupQueueLabel(task: TaskSummary): string {
+  const ms = task.startupQueueMs;
+  if (ms === undefined) return '';
+  // Round to tenths first, then pick the format: rounding a 9.96s queue up to
+  // whole seconds must not print `10.0s` when the ≥10s branch prints `10s`.
+  const tenths = Math.round(Math.max(0, ms) / 100);
+  const text = tenths < 100 ? `${(tenths / 10).toFixed(1)}s` : `${Math.round(tenths / 10)}s`;
+  const reason = task.startupQueueReason;
+  // An unknown reason is omitted, never guessed.
+  return `启动前排队 ${text}${reason !== null && reason !== undefined ? `（${segmentSafe(reason)}）` : ''}`;
+}
+
+/** D123 ③: the task's own row — same shape as a peer row, prefixed 本任务. */
+function selfLine(task: TaskSummary): string {
+  const parts = [`本任务 [${task.taskId}] ${untrusted(task.title)}`, task.state, writeLabel(task)];
+  const queue = startupQueueLabel(task);
+  if (queue.length > 0) parts.push(queue);
+  if (task.state === 'submitted') parts.push(`排队中（${task.queueReason ?? '等待启动'}）`);
+  if (task.awaitingInput) parts.push('等待用户输入');
+  return parts.join('  ');
+}
+
+/**
+ * D123: the task loop's `<peer_tasks>` segment (design 59 §4.1) — sibling
+ * tasks of the same (bot, conversation) plus one `本任务` row for itself: state,
+ * write domain, and how long it queued before starting plus why (③ — the task
+ * cannot call a model while queued, so this snapshot is its only trace).
+ * No result or progress text; titles stay `<untrusted>`. Deterministic, no
+ * model call under it.
+ */
+export function buildPeerTasksSegment(tasks: TaskSummary[], selfTaskId: string): string {
+  const self = tasks.find((task) => task.taskId === selfTaskId) ?? null;
+  const peers = tasks.filter((task) => task.taskId !== selfTaskId);
+  if (self === null && peers.length === 0) return '';
+  return [
+    '<peer_tasks>',
+    '（同一对话中与你并行/相邻的任务；`本任务` 一行是你自己（含启动前排队时长与原因），其余是 peers。都是状态，不含结果与进度）',
+    ...(self !== null ? [selfLine(self)] : []),
+    ...peers.map(peerLine),
+    '</peer_tasks>',
   ].join('\n');
 }

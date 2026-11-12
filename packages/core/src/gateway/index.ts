@@ -29,6 +29,7 @@ import type { AllowlistService } from '../permissions/allowlist.js';
 import type { UnattendedService } from '../permissions/unattended.js';
 import { gitRemoteGrantTarget, type GitRemoteGrants } from '../permissions/git-remote-grants.js';
 import type { WorkdirRuntime } from '../workdir/service.js';
+import type { TaskClaimRegistry } from '../workdir/claims.js';
 import type { McpToolDecision } from '../mcp/policy.js';
 import type { AppToolGrants } from '../apps/grants.js';
 import type { AppToolContext } from '../apps/exposure.js';
@@ -69,6 +70,8 @@ export interface GatewayDeps {
   permissionMode?: { isBypass(conversationId: string | null): boolean };
   /** Workdir runtime (P04): binding lookups, write leases, policy input. */
   workdirs: WorkdirRuntime;
+  /** D123 §5: task runtime claims (shared registry; absent = no claim checks). */
+  claims?: TaskClaimRegistry | undefined;
   /**
    * P06 installed toolchains: PATH prefix for sandbox + confirm mode, the
    * read-only toolchains root, and use tracking. Optional so the gateway
@@ -130,7 +133,16 @@ export type PathDecision =
   | { kind: 'needs_grant'; resolvedPath: string; reason: string; sensitive: boolean }
   | { kind: 'needs_lease'; resolvedPath: string; reason: string }
   /** `readOnlyRun`: refused because the run may not write at all (D75, RUN_READ_ONLY). */
-  | { kind: 'forbidden'; resolvedPath: string; reason: string; readOnlyRun?: true };
+  | {
+      kind: 'forbidden';
+      resolvedPath: string;
+      reason: string;
+      readOnlyRun?: true;
+      /** D123: refused because the path is outside the task's declared write domain. */
+      outOfDomain?: true;
+      /** D123: refused because another task claimed the path (WRITE_CLAIMED). */
+      claimed?: true;
+    };
 
 
 /**
@@ -352,8 +364,60 @@ export class ToolGateway {
   }
 
   /**
-   * Download directory of a read-only run's browser page (D75): a host-owned
-   * directory in the app cache — outside every workspace and never readable
+   * D123: throws WRITE_OUT_OF_DOMAIN when the writing task's declared domain
+   * excludes `inputPath`. Front-gate for tools that write without going
+   * through `ensurePathAccess` (media artifacts); read-only denials are left
+   * to the caller's existing check.
+   */
+  assertWriteDomain(identity: RunIdentity, inputPath: string): void {
+    const decision = this.checkPath(identity, inputPath, 'write');
+    if (decision.kind === 'forbidden' && decision.outOfDomain === true) {
+      throw new AppError('WRITE_OUT_OF_DOMAIN', `${decision.reason}：${inputPath}`);
+    }
+  }
+
+  /**
+   * D123: front gate for a host-saved artifact (generated media, attachment
+   * copies): the write-domain and claim verdicts apply before the host creates
+   * any directory or file. A read-only run keeps the D75 exemption for
+   * host-owned artifacts.
+   */
+  assertWritableArtifact(identity: RunIdentity, inputPath: string): void {
+    const decision = this.checkPath(identity, inputPath, 'write');
+    if (decision.kind !== 'forbidden') return;
+    if (decision.outOfDomain === true) {
+      throw new AppError('WRITE_OUT_OF_DOMAIN', `${decision.reason}：${inputPath}`);
+    }
+    if (decision.claimed === true) {
+      throw new AppError('WRITE_CLAIMED', `${decision.reason}：${inputPath}`);
+    }
+    // Read-only runs keep the D75 exemption for host-saved artifacts.
+  }
+
+  /**
+   * D123: the task's write-domain refusal for an already-resolved path, or
+   * null. External agents have no per-path enforcement — the permission
+   * bridge uses this only to annotate its 'ask' cards.
+   */
+  writeDomainDenial(identity: RunIdentity, resolvedPath: string): string | null {
+    return this.#deps.workdirs.writeOutOfDomain?.(identity, resolvedPath) ?? null;
+  }
+
+  /**
+   * D123 §5: the WRITE_CLAIMED reason when another task of the same (bot,
+   * conversation) claimed this resolved path, otherwise null. Claims held by
+   * the writing task itself (subagents included) never block it.
+   */
+  writeClaimDenial(identity: RunIdentity, resolvedPath: string): string | null {
+    const claims = this.#deps.claims;
+    if (claims === undefined) return null;
+    const task = this.#deps.workdirs.owningTask?.(identity) ?? null;
+    if (task === null || task.botId === null || task.conversationId === null) return null;
+    return claims.denial(task.id, task.botId, task.conversationId, resolvedPath);
+  }
+
+  /**
+   * Download directory of a read-only run's browser page (D75): a host-owned   * directory in the app cache — outside every workspace and never readable
    * by the model (the data home is off limits) — instead of the workspace's
    * `downloads/`, which a page click would otherwise write to behind the
    * gateway's back. The page is shared per bot + conversation; every browser
@@ -391,11 +455,21 @@ export class ToolGateway {
     const resolvedNorm = norm(resolved);
     const workspaceNorm = norm(workspace);
 
-    // 0. Read-only runs never write, wherever the path is (D75).
+    // 0. Read-only runs never write, wherever the path is (D75). D123: a write
+    //    task may only write inside its declared domain — checked before any
+    //    workspace / workdir / grant allowance, fail-closed.
     if (mode === 'write') {
       const denial = this.writeDenial(identity);
       if (denial !== null) {
         return { kind: 'forbidden', resolvedPath: resolved, reason: denial, readOnlyRun: true };
+      }
+      const outOfDomain = this.#deps.workdirs.writeOutOfDomain?.(identity, resolved) ?? null;
+      if (outOfDomain !== null) {
+        return { kind: 'forbidden', resolvedPath: resolved, reason: outOfDomain, outOfDomain: true };
+      }
+      const claimed = this.writeClaimDenial(identity, resolved);
+      if (claimed !== null) {
+        return { kind: 'forbidden', resolvedPath: resolved, reason: claimed, claimed: true };
       }
     }
 
@@ -455,6 +529,20 @@ export class ToolGateway {
       }
       if (mode === 'read') return { kind: 'allowed', resolvedPath: resolved };
       if (this.#deps.workdirs.holdsLease(identity, workdir.path)) {
+        // D123: a domain-scoped write must not reach an inode outside the
+        // domain through a hard link (realpath stays inside, so step 3 alone
+        // would allow it — same reason as the workspace check in step 1).
+        if (
+          mode === 'write' &&
+          this.#deps.workdirs.writeDomain?.(identity) != null &&
+          hasExternalHardlink(resolved, workdir.path)
+        ) {
+          return {
+            kind: 'forbidden',
+            resolvedPath: resolved,
+            reason: '目标文件存在工作目录写域之外的硬链接',
+          };
+        }
         // Lease first (a grant never replaces it), then the git control files.
         if (isGitControlPath(resolvedNorm)) return this.#gitControlDecision(identity, resolved);
         return { kind: 'allowed', resolvedPath: resolved };
@@ -553,7 +641,11 @@ export class ToolGateway {
    */
   checkHostCopyPath(identity: RunIdentity, inputPath: string, hostDir: string): PathDecision {
     const decision = this.checkPath(identity, inputPath, 'write');
-    if (decision.kind !== 'forbidden' || decision.readOnlyRun !== true) return decision;
+    // Only the D75 read-only rule is exempt: a declared write domain and a
+    // peer claim still apply to host-made copies (D123 §3.6 / §5).
+    if (decision.kind !== 'forbidden' || decision.readOnlyRun !== true) {
+      return decision;
+    }
     const workspace = this.workspacePath(identity);
     if (workspace === null) return decision;
     const norm = (p: string) => normalizeForCompare(p, this.#platform);
@@ -566,10 +658,9 @@ export class ToolGateway {
       return { kind: 'allowed', resolvedPath: decision.resolvedPath };
     }
     return {
+      ...decision,
       kind: 'forbidden',
-      resolvedPath: decision.resolvedPath,
       reason: `${decision.reason}（宿主只能把文件复制到 workspace 的 ${hostDir} 目录）`,
-      readOnlyRun: true,
     };
   }
 
@@ -595,7 +686,13 @@ export class ToolGateway {
     if (decision.kind === 'allowed') return decision.resolvedPath;
     if (decision.kind === 'forbidden') {
       throw new AppError(
-        decision.readOnlyRun === true ? 'RUN_READ_ONLY' : 'PATH_OUT_OF_SCOPE',
+        decision.claimed === true
+          ? 'WRITE_CLAIMED'
+          : decision.outOfDomain === true
+            ? 'WRITE_OUT_OF_DOMAIN'
+            : decision.readOnlyRun === true
+              ? 'RUN_READ_ONLY'
+              : 'PATH_OUT_OF_SCOPE',
         `${decision.reason}：${inputPath}`,
       );
     }
@@ -777,6 +874,8 @@ export class ToolGateway {
     }
     const availability = await backend.probe();
     const workdir = this.#deps.workdirs.policyInfo(identity);
+    // D123: declared write domain (null when undeclared / whole cwd).
+    const writeDomain = this.#deps.workdirs.writeDomain?.(identity) ?? null;
     // Bound conversation: commands default to the workdir directory and the
     // sandbox permits listening on / reaching localhost (dev servers).
     const cwd = workdir !== null ? workdir.path : workspace;
@@ -872,6 +971,7 @@ export class ToolGateway {
             ? this.#skillDirs(identity.botId, identity.conversationId)
             : [],
         ...(readOnlyReason !== null ? { readOnlyRun: true } : {}),
+        ...(writeDomain !== null ? { writeDomain } : {}),
       });
       const result = await backend.exec({
         command: req.command,

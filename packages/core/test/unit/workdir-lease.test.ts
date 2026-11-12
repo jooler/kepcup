@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { LeaseService, leaseKeysConflict } from '../../src/workdir/lease.js';
+import { encodeWriteDomainKey, writeDomainKeysConflict } from '../../src/workdir/domains.js';
 import type { RunIdentity } from '../../src/agent/types.js';
 
 const idA: RunIdentity = { runId: 'run_a', botId: 'bot_a', conversationId: 'conv_a', loopType: 'turn' };
@@ -109,5 +110,25 @@ describe('LeaseService', () => {
     expect(leases.heldKey(idA.runId, ['/proj'])).toBe('/proj');
     expect(leases.heldKey(idA.runId, ['/proj/nested/deep'])).toBe('/proj');
     expect(leases.heldKey(idA.runId, ['/elsewhere'])).toBeNull();
+  });
+});
+
+describe('domain-scoped holders (D123)', () => {
+  it('finds a domain-keyed holder by the bare workdir path (force revoke / revert)', async () => {
+    const leases = new LeaseService(writeDomainKeysConflict);
+    const key = encodeWriteDomainKey('/proj', ['apps/**']);
+    await leases.acquire(idA, key);
+    // The raw key is not the plain path anymore …
+    expect(leases.holderOf('/proj')).toBeNull();
+    // … but the domain-aware lookup still finds the holder.
+    expect(leases.conflictingHolder('/proj')?.runId).toBe('run_a');
+    expect(leases.conflictingHolder('/other')).toBeNull();
+  });
+
+  it('treats the run’s domain lease as covering a plain request on the same root', async () => {
+    const leases = new LeaseService(writeDomainKeysConflict);
+    const key = encodeWriteDomainKey('/proj', ['apps/**']);
+    await leases.acquire(idA, key);
+    expect(leases.heldKey(idA.runId, ['/proj'])).toBe(key);
   });
 });

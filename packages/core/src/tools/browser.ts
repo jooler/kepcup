@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import {

@@ -10,6 +10,7 @@
   import { plugins } from '../plugins/plugins.svelte';
   import ExtensionConnections from './ExtensionConnections.svelte';
   import ExtensionMcp from './ExtensionMcp.svelte';
+  import ExtensionMcpInstances from './ExtensionMcpInstances.svelte';
   import ExtensionMail from './ExtensionMail.svelte';
   import ExtensionIm from './ExtensionIm.svelte';
   import ExtensionLocalCollab from './ExtensionLocalCollab.svelte';
@@ -92,6 +93,13 @@
 
   const hasUpdates = $derived(plugins.plugins.some((plugin) => plugin.updateAvailable !== null));
 
+  /** 内容管理视图对应的插件摘要（mcp 分流实例视图 / McpSection 用）。 */
+  const contentPlugin = $derived.by(() => {
+    const view = contentView;
+    if (view === null) return null;
+    return plugins.plugins.find((plugin) => plugin.id === view.pluginId) ?? null;
+  });
+
   /** 内容筛选：状态在 shell store（旧分组深链 / 设置卡深链会带筛选直达）。 */
   const filter = $derived(shell.extensionCenterFilter);
 
@@ -150,16 +158,18 @@
 
   /**
    * 筛选命中口径（D105 P4）：贡献计数之外，`instanceCounts` 也算——纯实例插件
-   * （如邮件插件，贡献只是供给规范）加过账号后能被对应类别筛出。
+   * （如邮件插件，贡献只是供给规范）加过账号后能被对应类别筛出；P4-M2 起声明了
+   * 实例供给的插件（providesInstances）即使 0 实例也命中（否则模版插件装完在
+   * 类别筛选下不可见，无法进入「管理」添加第一个实例）。
    */
   function matchesKind(
     plugin: PluginSummary,
     countKey: 'skills' | 'connectors' | 'mcp' | 'mail' | 'im',
   ): boolean {
     if (plugin.counts[countKey] > 0) return true;
-    if (countKey === 'mail') return plugin.instanceCounts.mail > 0;
-    if (countKey === 'mcp') return plugin.instanceCounts.mcp > 0;
-    if (countKey === 'im') return plugin.instanceCounts.im > 0;
+    if (countKey === 'mail') return plugin.instanceCounts.mail > 0 || plugin.providesInstances.includes('mail');
+    if (countKey === 'mcp') return plugin.instanceCounts.mcp > 0 || plugin.providesInstances.includes('mcp');
+    if (countKey === 'im') return plugin.instanceCounts.im > 0 || plugin.providesInstances.includes('im');
     return false;
   }
 
@@ -200,9 +210,16 @@
   function manageKinds(
     plugin: PluginSummary,
   ): Array<{ kind: 'connector' | 'mcp' | 'mail' | 'im'; labelKey: Parameters<typeof t>[0] }> {
-    return MANAGE_KINDS.filter(({ countKey }) => plugin.counts[countKey] > 0).map(
-      ({ kind, labelKey }) => ({ kind, labelKey }),
-    );
+    // P4-M2：实例型插件（counts / instanceCounts 为 0 的模版插件）也要出「管理」
+    // 入口——添加第一个实例的唯一路径就是这张卡。
+    return MANAGE_KINDS.filter(({ countKey }) => {
+      if (countKey === 'connectors') return plugin.counts.connectors > 0;
+      return (
+        plugin.counts[countKey] > 0 ||
+        plugin.instanceCounts[countKey] > 0 ||
+        plugin.providesInstances.includes(countKey)
+      );
+    }).map(({ kind, labelKey }) => ({ kind, labelKey }));
   }
 
   function openManage(plugin: PluginSummary, kind: 'connector' | 'mcp' | 'mail' | 'im'): void {
@@ -854,7 +871,12 @@
         <ArrowLeft class="size-3.5" aria-hidden="true" />
         {t('plugins.backToList')}
       </Button>
-      <ExtensionMcp embedded pluginId={contentView.pluginId} />
+      {#if contentPlugin?.providesInstances.includes('mcp')}
+        <!-- P4-M2：实例型插件 = 实例列表 / 表单；固定投影贡献仍走 McpSection。 -->
+        <ExtensionMcpInstances embedded pluginId={contentView.pluginId} />
+      {:else}
+        <ExtensionMcp embedded pluginId={contentView.pluginId} />
+      {/if}
     </div>
   {:else if contentView.kind === 'im'}
     <div class="space-y-2" data-testid="plugins-content-im">

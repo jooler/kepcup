@@ -6,9 +6,11 @@ import type {
   PluginConsentMcp,
   PluginConsentSkill,
   PluginField,
+  PluginMcpContribution,
   PluginManifest,
 } from '@kepcup/shared';
 import {
+  mcpHeaderFieldKey,
   pluginConnectorContributionSchema,
   pluginImContributionSchema,
   pluginMailContributionSchema,
@@ -101,11 +103,11 @@ export const CAPABILITY_KINDS: readonly CapabilityKindAdapter[] = [
     kind: 'mcp',
     contributionSchema: pluginMcpContributionSchema,
     consentKey: 'mcp',
-    hasInstances: false,
-    instanceFields: () => [],
+    hasInstances: true,
+    instanceFields: mcpInstanceFields,
     hasContribution: (manifest) => manifest.contributions.mcp.length > 0,
     consentItems: (inspection) => inspection.items as ConsentItem[],
-    createProjector: (deps) => new McpProjector(deps.mcp),
+    createProjector: (d) => new McpProjector(d.mcp),
   }),
   defineCapabilityKind({
     kind: 'connector',
@@ -257,6 +259,59 @@ function imInstanceFields(manifest: PluginManifest): PluginField[] {
       type: 'string',
       title: 'Bot 凭据',
       description: '由 IM 服务商颁发的 Bot 访问凭据',
+      required: true,
+      sensitive: true,
+      multiple: false,
+    });
+  }
+  fields.push(...(contribution?.instanceFields ?? []));
+  return fields;
+}
+
+/**
+ * MCP instance form fields (P4-M2): built-ins come first — `label` (optional display
+ * name) plus the generic-template `url` (required, only when the http template declares
+ * `url: ''`); each locked header template contributes a required sensitive value field
+ * (header value never lives in the manifest); the manifest's `instanceFields` append
+ * last (dup / builtin-key clashes are rejected by the schema). A manifest without
+ * `instances: ['mcp']` has no instance form (fixed-projection contributions only).
+ * Titles are core-derived zh text — the same posture as every other core-derived
+ * user-facing string (P1 review disposition P1-6).
+ */
+function mcpInstanceFields(manifest: PluginManifest): PluginField[] {
+  if (manifest.instances?.includes('mcp') !== true) return [];
+  const contribution = manifest.contributions.mcp.find(
+    (entry): entry is Extract<PluginMcpContribution, { kind: 'http' }> => entry.kind === 'http',
+  );
+  const fields: PluginField[] = [
+    {
+      key: 'label',
+      type: 'string',
+      title: '备注名',
+      description: '选填，默认使用插件名',
+      required: false,
+      sensitive: false,
+      multiple: false,
+    },
+  ];
+  if (contribution === undefined || contribution.url === '') {
+    fields.push({
+      key: 'url',
+      type: 'string',
+      title: 'MCP 服务地址',
+      description: 'https:// 开头的公网 MCP 端点地址',
+      required: true,
+      // A URL can itself be the credential (vendor plugins set `urlSensitive`).
+      sensitive: contribution?.urlSensitive === true,
+      multiple: false,
+    });
+  }
+  for (const header of contribution?.headers ?? []) {
+    fields.push({
+      key: mcpHeaderFieldKey(header),
+      type: 'string',
+      title: header.name,
+      description: `${header.name} 请求头的值，按平台说明整值粘贴`,
       required: true,
       sensitive: true,
       multiple: false,

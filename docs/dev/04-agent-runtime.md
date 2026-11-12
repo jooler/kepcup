@@ -153,13 +153,13 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 实现位于 `core/src/agent/context/` 与 `dispatch/tasks.ts`。对话轮与任务共用执行骨架（orchestrator `#executeRun`），输入由三部分组成：
 
 1. **系统提示词**：每个 run 只构建一次（首个请求），run 内逐字节不变——prompt cache 按前缀匹配，`tools` / `system` / 最后一条消息都是断点，system 一变后面全部失效。动态状态（计划、steer、工具结果）只能以消息形式追加在尾部；对话轮与任务各有一版 `<platform_rules>`（见下）。
-2. **一条用户消息**，按顺序包含：对话上下文段、续接段（只有任务、只在 `continues_task_id` 时）、`<tasks>` 段（只有对话轮、有进行中任务时）、触发段（对话轮）或任务简报段（任务）。
+2. **一条用户消息**，按顺序包含：对话上下文段、续接段（只有任务、只在 `continues_task_id` 时）、`<tasks>` 段（只有对话轮、有进行中任务时）/ `<peer_tasks>` 段（只有任务、有兄弟任务时，D123）、触发段（对话轮）或任务简报段（任务）。
 3. 执行中的注入（steer）作为后续的用户消息——**只有任务会被注入**（`inject_task`），对话轮运行中到达的消息缓冲到下一轮。
 
 | | 对话轮（`loop: 'turn'`） | 任务（`loop: 'task'`） |
 |---|---|---|
 | 对话层读法 | `listForBot`：共享行 + 本 Bot 的私有任务条目 | `listShared`：只共享行 |
-| 续接 / 任务段 | `<tasks>` | `<continuation>`（`continues_task_id`） |
+| 续接 / 任务段 | `<tasks>` | `<continuation>`（`continues_task_id`）、`<peer_tasks>`（D123） |
 | 触发 | 每个来源批一个 `<trigger>` | `<task_brief>` |
 | 轮数 | 无步数上限（`TURN_MAX_TURNS=0`）；是否派任务由提示词里的工作量判断决定 | 无上限（`TASK_MAX_TURNS=0`） |
 | 引擎 / 模型 | 内置引擎，Bot 的内置主模型（`runtime.model` → 全局默认） | Bot 的任务引擎（外部智能体为伪 ref `agent:{id}/…`） |
@@ -255,7 +255,7 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 1. 联系人身份、像真人交流、回复语言跟随用户；最终回复自动作为聊天消息发出，保持聊天风格。
 2. 负责沟通与调度：先自行估计工作量。轻的（闲聊、依据对话记录 / 记忆 / 少量只读查询）直接答；重的（改文件、执行命令、浏览器、生成媒体、安装环境或技能、外部工具，或连续多步、通读大量材料、多步调研）用 `start_task` 派成后台任务。任务卡即时出现在对话里，回复里不复述「已派出」；只有排队原因、能力没挂上等卡片之外的情况才一句话带过。不设步数硬上限。
 3. 这一轮只读：只能查看消息、附件、执行记录与文件（read / ls / find / grep），写文件和执行命令只在任务里，不要尝试绕过。
-4. `start_task` 的 instruction 写清目标、结果与约束，`source_message_ids` 填用户原消息 id；改文件设 `writes=true`，只读调研设 `false`；独立的事可以并行多个任务。
+4. `start_task` 的 instruction 写清目标、结果与约束，`source_message_ids` 填用户原消息 id；改文件设 `writes=true`（整目录串行，安全默认），只读调研设 `false`；独立且能划清「各改哪一块」的事，把 `writes` 写成相对 cwd 的 glob 数组（如 `["apps/renderer/**","packages/core/**"]`）声明互不相交的写域以真正并行，边界不清就保持 `writes=true`；排队原因（可能是「等写域」）出现在 `<tasks>` 段（D123）。
 5. 媒体生成路由：用户要图片、图标、海报、配音、短视频等真实媒体文件时照常 `start_task`，instruction 写明用任务里的 `generate_image` / `generate_speech` / `generate_video` 产出真实文件；不以「我不能生成图片」为由拒绝、不用文字方案代替文件、不推荐 Midjourney / DALL·E 等外部第三方工具——缺模型配置时系统弹设置卡引导配置并自动续跑，只有任务结果表明应用确实提供不了才如实说明并给替代做法（与工具描述、`SETUP_REQUIRED` 内联设置同一取向：能力触发是确定性的，提示词只是兜底）。
 6. 媒体理解路由：看不了图片（非视觉模型、图在 workspace）派任务用 `understand_image`，听不了音频 / 语音附件派任务用 `transcribe_audio`，不要只回复「看不了 / 听不了」；缺配置同样引导设置（图片附件入模被丢弃时引擎另有就地提示指引同一路径）。
 7. `<tasks>` 段的用法：与进行中任务有关的新消息（补充、改主意、回答任务的问题）用 `inject_task`；冲突或不再需要用 `cancel_task`；换做法重做先 `cancel_task` 再 `start_task({continues_task_id})`；无关就另起或直接回答。
@@ -322,13 +322,28 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 ```text
 <tasks>
 （你在本对话中进行中与排队中的任务；已结束任务的交代与结果在对话记录里）
-[run_01J...] <untrusted>补全测试</untrusted>  running  写  派出 12 分钟前  最近：<untrusted>正在运行 pnpm test</untrusted>  可注入：是
+[run_01J...] <untrusted>补全测试</untrusted>  running  写（全域）  派出 12 分钟前  可注入：是
 [run_01K...] <untrusted>检查 README</untrusted>  submitted  只读  派出 刚刚  排队中（等并发额度（本对话 3/3））  可注入：是
-[run_01L...] <untrusted>部署预览环境</untrusted>  running  写  派出 1 小时前  等待用户输入（问题卡已发给用户）  可注入：是
+[run_01L...] <untrusted>部署预览环境</untrusted>  running  写域 apps/**, e2e/**  派出 1 小时前  等待用户输入（问题卡已发给用户）  可注入：是
 </tasks>
 ```
 
 D91：声明了外部能力的任务，行里在「错误」之后、「可注入」之前多一段 `能力：app:github、mcp:notes`（`TaskSummary.capabilities`，能力 id 不是模型产出的文字，不包 `<untrusted>`）。
+
+D123：写任务列显示写域——`writes: true` 为「写（全域）」，glob 声明为「写域 apps/**」；排队原因可能是「等写域（任务 … 持有 …）」。
+
+### `<peer_tasks>` 段（任务，D123）
+
+`agent/context/tasks-segment.ts` `buildPeerTasksSegment(tasks, selfTaskId)`：同一（Bot, 对话）的其他任务（**不含自己**），字段为 `[task_id]`、`<untrusted>标题</untrusted>`、状态、写域（或「只读」）、排队原因、是否等待用户输入；**不含结果与进度文本**。确定性生成、零模型调用。内置引擎的任务可用 `send_to_task` 协商、`wait_for_task` 等终态（这两个工具只注册在内置任务工具面；外部智能体任务不注入，段里也不承诺）：
+
+```text
+<peer_tasks>
+（同一对话中与你并行/相邻的任务；这是它们的状态，不含你自己）
+[run_01M...] <untrusted>后端改造</untrusted>  running  写域 packages/core/**
+[run_01N...] <untrusted>补测试</untrusted>  running  写域 test/**, e2e/**  等待用户输入
+[run_01P...] <untrusted>写文档</untrusted>  submitted  写域 docs/**  排队中（等写域（任务 run_01M... 持有 packages/core/**））
+</peer_tasks>
+```
 
 ### 续接段（任务，`continues_task_id`）
 
@@ -473,10 +488,14 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 | `delegate_to_bot` / `cancel_delegation` | conversation | T | D71 v2 / D113 | 跨 Bot 委派（异步）：每次委托新建 `bot_direct` 交换会话，A 的任务消息（bot 消息，`origin=delegation`）触发 B 的对话轮，参数 `bot_id`、`task`、`intent?`（`request` 默认 / `question` / `fyi`）；B 那一轮的最终回复（`request` / `question` 且该轮派了任务时改为跟随任务、取各任务结果拼接，v2.3a——「已派出」不算答复；`fyi` 不回贴）截断 ≤ `DELEGATION_RESULT_MAX_CHARS` 经 internal follow-up（`delegation_result`）交给 A、由 A 向用户转述（不贴结果卡；只转述最终结论与关键信息，不叙述委派往来与内部编号；双方用户对话各一枚药丸，v2.3 执行完全隔离：B 的任务与执行往返留在交换会话，审批卡 / 提问卡落发起方 A 的私聊），见 [design/27 §3.6 / §3.7](../design/27-butler-and-delegation.md#36-intent-与跟随任务)。免打扰时排队（`submitted`；mailbox 忙不排队——每委派独占交换会话与 run）；被委派 run 不注册且执行时按 run_id 拒绝（单跳）；项目组内降级 `@`；不能委派给管家 / 访谈中的 Bot |
 | `update_delegation` | host | T | D114 / v2.2 | 修改自己发起的在途委派（`delegation_id` + `message`）：全部待送达的补充统一路由——有存活任务直接注入任务 loop（`TaskHost.inject`，运行中 `steer()` 即时进引擎，滞留的旧补充一并折入、锚点推进不重复投递）；无任务暂存 pending、结算扣住、mailbox 空闲后投递更新轮（`awaiting_tasks` 行重入 `working`，更新轮派的新任务与此前的跟随任务合并等齐、没派则以更新轮回复为结果）；`submitted` 追加 task_text；终态拒绝（见 [design/27 §3.8](../design/27-butler-and-delegation.md#38-委派的追加与检索v21d1142026-11-04v22-审查修正)） |
 | `list_delegations` | conversation | T | D114 | 本 Bot 发出+收到的委派清单（`status?`: active / done / all、`bot_id?`，至多 20 条倒序）：id、方向、对方、状态、时间、任务与结果摘要；用于回答历史、拿 delegation_id 追加 / 取消、发起新委托 |
-| `start_task` | conversation | T | D75 | 派出任务：`title`（≤ `TASK_TITLE_MAX_CHARS`）、`instruction`（≤ `TASK_INSTRUCTION_MAX_CHARS`）、`source_message_ids`（≤ `TASK_SOURCE_MESSAGES_MAX`，本对话共享行）、`writes`、`cwd?`（`workspace` / `workdir`，缺省有可用 workdir 即 workdir）、`continues_task_id?`（须已结束）、`capabilities?`（D91：`<capabilities>` 里的能力 id，去重后 ≤ `TASK_CAPABILITIES_MAX`=8；宿主按该 Bot 当前目录校验，未知 id → `INVALID_INPUT` 并列出可用 id；非 ready 的允许声明但结果里提示不会挂上；落 `runs.task_capabilities`，brief 事件 / `TaskView` / `<tasks>` 行带出；接续取并集、`runs.retry` 沿用）；返回 `task_id` + `running` / `submitted`（排队原因）；本轮超 `TASK_START_MAX_PER_TURN` 报 `TASK_LIMIT_REACHED`；任务内调用 `NOT_SUPPORTED` |
+| `start_task` | conversation | T | D75 / D123 | 派出任务：`title`（≤ `TASK_TITLE_MAX_CHARS`）、`instruction`（≤ `TASK_INSTRUCTION_MAX_CHARS`）、`source_message_ids`（≤ `TASK_SOURCE_MESSAGES_MAX`，本对话共享行）、`writes`（D123：`boolean \| string[]`；`true` = 整目录（`['**']`，原语义），glob 数组 = 声明写域（非空、去重后 ≤ `TASK_WRITE_DOMAINS_MAX`=8、单条 ≤ `TASK_WRITE_DOMAIN_PATTERN_MAX`=200，禁绝对路径与 `..`，违规 `INVALID_INPUT` 不落行）、`false` / 省略 = 只读；接续省略时继承来源声明）、`cwd?`（`workspace` / `workdir`，缺省有可用 workdir 即 workdir）、`continues_task_id?`（须已结束）、`capabilities?`（D91：`<capabilities>` 里的能力 id，去重后 ≤ `TASK_CAPABILITIES_MAX`=8；宿主按该 Bot 当前目录校验，未知 id → `INVALID_INPUT` 并列出可用 id；非 ready 的允许声明但结果里提示不会挂上；落 `runs.task_capabilities`，brief 事件 / `TaskView` / `<tasks>` 行带出；接续取并集、`runs.retry` 沿用）；返回 `task_id` + `running` / `submitted`（排队原因）；本轮超 `TASK_START_MAX_PER_TURN` 报 `TASK_LIMIT_REACHED`；任务内调用 `NOT_SUPPORTED` |
 | `inject_task` | conversation | T | D75 | 把新指令（+ 原消息）转给未结束的任务：`delivered` / `queued`；任务正在 `ask_user` 时即为回答 |
 | `cancel_task` | conversation | T | D75 | 取消 submitted / running 的任务：写 `cancel` 条目、结算 `cancelled`、Bot 自己的取消不唤醒（D93：用户从任务卡取消会写 failure 条目并唤醒）；写任务的改动不自动撤销 |
 | `list_tasks` | conversation | T | D75 | 进行中 + `TASK_LIST_SETTLED_WINDOW_MS` 内已结算的任务（id、标题、状态、读写、排队原因、等待输入、错误、可否注入；进度不返回给模型） |
+| `send_to_task` | conversation | K | D123 | 给同一（Bot, 对话）的兄弟任务发消息：`task_id`、`text`（≤ `TASK_PEER_MESSAGE_MAX_CHARS`=4000）、`source_message_ids?`；每 run ≤ `TASK_PEER_SEND_MAX_PER_RUN`=10 条；目标终态 → `TASK_PEER_FINISHED`、找不到 → `TASK_PEER_NOT_FOUND`。复用注入管道（running → steer；attach 前 → 待注入缓冲；收尾中 → `queued`），**不回答 `ask_user` 问题**；接收方落 `peer_message` 私有条目（含 `fromTaskId` / `fromTitle`），发送方拿到 `delivered` / `queued` 回执；外部智能体任务不注入 |
+| `wait_for_task` | conversation | K | D123 | 等兄弟任务终态：`task_id`、`timeout_minutes?`（缺省 `TASK_PEER_WAIT_TTL_MS`=30 min，上限 `TASK_PEER_WAIT_TTL_MAX_MS`=120 min）；返回 `{status, resultDigest?}`（结果截断 `TASK_PEER_WAIT_RESULT_MAX_CHARS`=4000）或超时 `still_running` + 对方排队原因。等待让出调度名额、不计任务墙钟、写租约保留；等待图成环 → `TASK_WAIT_CYCLE`（列出环）；本任务结束自动清理注册；外部智能体任务不注入 |
+| `claim` | fs-write | K | D123 | 认领本任务写域内的路径子集：`paths`（相对 cwd 的 glob，去重后 ≤ `TASK_CLAIM_PATHS_MAX`=16，必须落在本任务写域内，否则 `INVALID_INPUT`）、`reason`（≤200 字）。其他任务写到这里 → `WRITE_CLAIMED`（含持有方 id / 标题 / 理由）；同任务重复认领幂等；纯内存，settle / cancel / interrupt 自动释放；外部智能体任务不注入 |
+| `release` | none | K | D123 | 释放认领：`paths?`（缺省释放全部）；无认领时返回空；外部智能体任务不注入 |
 | `ask_user` | conversation | K | D75 | 任务向用户提问：`question`、`options`（1～`ASK_USER_OPTIONS_MAX`=6 个，每个 ≤ `ASK_USER_OPTION_MAX_CHARS`）；私有 `question` 条目 + 问题卡 + `awaiting_input`，阻塞到用户点选（`tasks.answer`）或对话轮 `inject_task` 转交（带原消息）；等待期间让出调度名额、到拿回名额为止不计入任务墙钟（等待中被取消则不拿回名额直接收尾），`TASK_QUESTION_TTL_MS` 后按「用户未回答」返回；外部智能体任务没有（DEV-016）。D87 P4：`mode`（`single` 缺省 / `multi` / `form`）+ `fields`（表单字段 ≤8，text / number / date / select）；多选 / 表单的回答经 shared `checkAskUserAnswer` 校验后以 `<untrusted>` 包裹的 JSON 交回任务 |
 | `present` | conversation | T、K | D87 P4 | 声明式展示卡（[design/32 §12.1](../design/32-bot-widgets.md)）：`present{kind, title?, data}`，`kind ∈ table / bar / line / pie / kpi / steps / timeline / compare`，每种一个最小 zod schema（shared `present.ts`），`data` ≤ `PRESENT_DATA_MAX_BYTES`（64KB）；校验失败回「哪一字段、期望什么」且不发卡；成功发一条系统卡片消息（`cardType: 'present'`，记发卡的 Bot），每 run ≤`PRESENT_CARDS_PER_RUN_MAX`（8）张；上下文回放紧凑文字（≤`PRESENT_CONTEXT_MAX_CHARS`，标明发卡的 Bot、包 `<untrusted>`）。副作用 `local`。系统提示：展示类结果优先 `present`，要交互才 `widget_craft` |
 | `update_plan` | none | K（仅内置 pi） | D93 | 结构化计划：`{ explanation?, plan: [{ step, status: 'pending' \| 'in_progress' \| 'completed' }] }`，1–20 项、至多一个 `in_progress`；全量替换 run 内存计划，下一轮以 `<current_plan>` 追加到系统提示词；每次更新发 `progress` 落 `run_steps`（任务卡与续接 digest 可见）。外部智能体任务不注册（用原生 todo） |
@@ -551,6 +570,10 @@ D75 常量（`packages/shared/src/constants.ts`）：
 | `TASK_REDELIVER_AFTER_MS` | 10 min | 已投递未消费的结果多久后重投 |
 | `TASK_REDELIVER_MAX_ATTEMPTS` | 5 | 一个结果最多投递次数；超过即标记消费并发用户可见提示（审查批 E） |
 | `TASK_QUESTION_TTL_MS` | 24 h | `ask_user` 问题的等待时限；超时任务收到「用户未回答」并继续（等待不计入 `taskLoop.maxWallMinutes`） |
+| `TASK_WRITE_DOMAINS_MAX` / `TASK_WRITE_DOMAIN_PATTERN_MAX` | 8 / 200 | D123：`writes` 数组去重后的写域条数 / 单条模式字符上限 |
+| `TASK_PEER_MESSAGE_MAX_CHARS` / `TASK_PEER_SEND_MAX_PER_RUN` | 4000 / 10 | D123：`send_to_task` 单条文本上限 / 每 run 发送条数上限 |
+| `TASK_PEER_WAIT_TTL_MS` / `TASK_PEER_WAIT_TTL_MAX_MS` / `TASK_PEER_WAIT_RESULT_MAX_CHARS` | 30 min / 120 min / 4000 | D123：`wait_for_task` 缺省超时 / 上限 / 结果摘要截断 |
+| `TASK_CLAIM_PATHS_MAX` | 16 | D123：单次 `claim` 的路径模式数上限 |
 | `ASK_USER_OPTION_MAX_CHARS` | 200 | `ask_user` 每个候选答案的长度上限 |
 | `TASK_EVENT_CONTEXT_MAX_CHARS` / `TASK_TRIGGER_RESULT_MAX_CHARS` | 600 / 12,000 | 最近窗口里任务行的截断 / 触发段里结果全文的硬顶 |
 | `TASK_FAILURE_DIGEST_TOKEN_BUDGET` | 600 | 失败条目尾部的过程摘要预算 |
