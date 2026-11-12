@@ -151,6 +151,7 @@ import { MemoryService } from './memory/service.js';
 import { MediaService } from './media/service.js';
 import { SearchService } from './search/service.js';
 import { McpService } from './mcp/service.js';
+import { createManifestHeaderNormalizer } from './mcp/header-scheme.js';
 import { decideMcpTool, type McpToolDecision } from './mcp/policy.js';
 import type { Embedder } from './memory/embedder.js';
 import { SkillImporter } from './skills/library.js';
@@ -2613,6 +2614,13 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       audit,
     });
     pluginRegistryForSettings = plugins;
+    // 插件声明的 header 凭据方案（如腾讯文档的 `Authorization: scheme: 'bearer'`）：
+    // McpService 先于插件注册表构造，这里把「按清单归一化发送值」的钩子接上——只对声明了
+    // scheme 的 header 生效，通用 MCP / 其他 header 不经过任何改写。清单实时查，插件升级后
+    // 已存在的实例（旧记录里可能还带 `Bearer `）也能直接恢复正常。
+    mcp.attachHeaderNormalizer(
+      createManifestHeaderNormalizer({ manifestOf: (pluginId) => plugins.manifestOf(pluginId) }),
+    );
     // 每次采纳新索引后强制执行撤销名单（disable 自动停用）；失败只记日志。
     marketplace.onAdopted(() => {
       void plugins.applyRevocations().catch((error: unknown) => {

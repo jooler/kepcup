@@ -3,6 +3,7 @@ import {
   isSafeDirectoryRemoteUrl,
   mcpHeaderFieldKey,
   mcpServerSchema,
+  normalizeMcpHeaderValueForStorage,
   type McpServer,
   type PluginMcpContribution,
   type Settings,
@@ -97,10 +98,14 @@ export function createMcpMaterializer(deps: PluginMcpMaterializerDeps): Instance
       // Update flows: a new input wins; an absent value keeps the stored secret
       // (`validatePluginFieldValues` already exempts required sensitive fields with
       // a stored value from the required check).
-      const value = optionalString(ctx.values, key) ?? ctx.readStoredSecret(key) ?? undefined;
-      if (value === undefined) {
+      const input = optionalString(ctx.values, key) ?? ctx.readStoredSecret(key) ?? undefined;
+      if (input === undefined) {
         throw new AppError('INVALID_INPUT', `缺少 ${header.name} 的值`);
       }
+      // 清单声明了凭据方案（如 `scheme: 'bearer'`）时只存裸凭据：用户可能自己粘了
+      // `Bearer `，发送侧统一补前缀，避免出现 `Bearer Bearer x`。未声明的 header
+      // （API key 等）与以前完全一样，值原样写入。顺带把旧记录里的前缀在下次更新时归一。
+      const value = normalizeMcpHeaderValueForStorage(header.scheme, input);
       const secretName = headerSecretName(spec.serverId, header.name);
       return { secretName, value, previousValue: deps.secrets.getValue(secretName) };
     });

@@ -31,6 +31,7 @@ import type { Clock } from '../infra/clock.js';
 import type { SecretsService } from '../domain/secrets.js';
 import type { SettingsService } from '../domain/settings.js';
 import { classifyRiskDetailed, type ToolRiskDetail } from './risk.js';
+import type { McpHeaderValueNormalizer } from './header-scheme.js';
 import { AppAuthRequiredError, findAppAuthRequiredError } from '../apps/auth/errors.js';
 import {
   customConnectionId,
@@ -282,6 +283,11 @@ export class McpService {
   #connectionSource: McpConnectionSource | null = null;
   /** 本机连接：给这类 server 的 HTTP 传输换上带 SSRF 守卫的 fetch（见 {@link attachHttpFetch}）。 */
   #httpFetchFor: ((server: McpServer) => McpFetch | undefined) | null = null;
+  /**
+   * 发送侧 header 归一化（见 {@link attachHeaderNormalizer}）：只对插件清单声明了凭据方案的
+   * header 生效（例如腾讯文档的 `Authorization: scheme: 'bearer'`），缺省 = 不做任何改写。
+   */
+  #headerNormalizer: McpHeaderValueNormalizer | null = null;
   /** 最近见到的 server 名（连接行删除后 `closed` 事件仍能带上名字）。 */
   readonly #serverNames = new Map<string, string>();
 
@@ -327,6 +333,15 @@ export class McpService {
   /** D73 P1：接入目录连接来源（`start.ts`，在连接应用服务构造后）。 */
   attachConnections(source: McpConnectionSource): void {
     this.#connectionSource = source;
+  }
+
+  /**
+   * 插件声明的 header 凭据方案（`start.ts` 在插件注册表构造后接上，见
+   * `mcp/header-scheme.ts`）：链接前对每个 header 值过一遍，只有清单里声明了 `scheme` 的
+   * header 会被改写（例如自动补 `Bearer `），其余原样发送。
+   */
+  attachHeaderNormalizer(normalizer: McpHeaderValueNormalizer): void {
+    this.#headerNormalizer = normalizer;
   }
 
   /** `settings.mcpServers`（仅用户配置的自定义 server）。 */
@@ -491,7 +506,11 @@ export class McpService {
     if (!(error instanceof McpHttpError)) return '';
     if (error.status === 401) {
       if (server.auth === 'oauth') return '请在设置中连接该应用';
-      return '服务端要求认证：请在「请求头（密钥）」添加名称 Authorization，值为服务商要求的完整值——要 Bearer 前缀就连前缀一起写，如 `Bearer <token>`（腾讯文档、Notion 等多数服务商都要求前缀）';
+      if (server.source?.kind === 'instance') {
+        // 插件工具服务：凭据方案（如 Bearer 前缀）由插件负责，401 只可能是凭据本身不对。
+        return '服务端拒绝了凭据：请在工具服务里重新填写凭据（前缀由插件自动处理）；若仍然 401，通常是凭据已失效、已被重置或不属于该空间';
+      }
+      return '服务端要求认证：请在「请求头（密钥）」添加名称 Authorization，值为服务商要求的完整值——要 Bearer 前缀就连前缀一起写，如 `Bearer <token>`（Notion 等服务商要求前缀；插件工具服务由插件自动补）';
     }
     if (error.status !== 404 && error.status !== 405) return '';
     if (server.transport === 'http') {
@@ -1007,6 +1026,11 @@ export class McpService {
     secretValues?: McpSecretOverrides | undefined,
   ): Promise<void> {
     const guardedFetch = server.transport === 'http' ? this.#httpFetchFor?.(server) : undefined;
+    // 插件声明的 header 方案（如 Bearer 前缀）在组头时归一化；stdio 没有 header。
+    const headers =
+      server.transport === 'stdio'
+        ? undefined
+        : await this.#resolveHeaderSecrets(server, secretValues);
     const transport =
       server.transport === 'stdio'
         ? new StdioTransport({
@@ -1017,21 +1041,11 @@ export class McpService {
         : server.transport === 'sse'
           ? new SseTransport({
               url: server.url ?? '',
-              headers: this.#resolveRecordSecrets(
-                server.id,
-                server.headers,
-                'header',
-                secretValues,
-              ),
+              headers,
             })
           : new StreamableHttpTransport({
               url: server.url ?? '',
-              headers: this.#resolveRecordSecrets(
-                server.id,
-                server.headers,
-                'header',
-                secretValues,
-              ),
+              headers,
               // D73：OAuth 令牌由运行时提供者供给（只读 Vault + 主动刷新；从不自行授权）。
               ...(server.auth === 'oauth' ? { authProvider: this.#authProviderFor(server) } : {}),
               ...(guardedFetch !== undefined ? { fetch: guardedFetch } : {}),
@@ -1136,6 +1150,24 @@ export class McpService {
       resolved[key] = this.#resolveSecretValue(serverId, value, kind, secretValues);
     }
     return resolved;
+  }
+
+  /**
+   * http / sse 请求头：先解占位符，再按插件清单声明的方案归一化（`attachHeaderNormalizer`；
+   * 未接入或未声明时为恒等）。只有声明了 `scheme` 的 header 会变，其余值原样发送。
+   */
+  async #resolveHeaderSecrets(
+    server: McpServer,
+    secretValues?: McpSecretOverrides | undefined,
+  ): Promise<Record<string, string> | undefined> {
+    const resolved = this.#resolveRecordSecrets(server.id, server.headers, 'header', secretValues);
+    const normalize = this.#headerNormalizer;
+    if (resolved === undefined || normalize === null) return resolved;
+    const normalized: Record<string, string> = {};
+    for (const [name, value] of Object.entries(resolved)) {
+      normalized[name] = await normalize(server, name, value);
+    }
+    return normalized;
   }
 
   #resolveSecretValue(
