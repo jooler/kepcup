@@ -1,6 +1,6 @@
 import type { AskUserValues, Run, TaskView } from '@kepcup/shared';
 import { core } from '$lib/rpc/client.svelte';
-import { applyFetchedViews, pruneTaskViewsMany } from '$lib/features/tasks/task-view';
+import { applyFetchedViews, isActiveTask, pruneTaskViewsMany } from '$lib/features/tasks/task-view';
 
 /**
  * D75 任务（docs/design/30-supervisor-and-tasks.md §4.3 / §6.3）的渲染端缓存：
@@ -72,12 +72,30 @@ class TasksState {
     });
   }
 
-  /** 按 id 重拉一张任务视图（终态 run.status 的兜底）；有更新的 push 则不覆盖。 */
+  /**
+   * 按 id 重拉一张任务视图。详情页在仍显示「进行中」时也会轮询调用：
+   * `ensure` 对已缓存的视图是空操作，不能用来接结算后的报告。
+   */
+  reload(taskId: string): void {
+    if (taskId.length === 0) return;
+    this.start();
+    void this.#reload(taskId);
+  }
+
+  /** 终态 run.status / 详情页轮询的兜底重拉；有更新的 push 则不覆盖，除非拉到的是终态而缓存仍是进行中。 */
   async #reload(taskId: string): Promise<void> {
     const since = this.#pushes;
     try {
       const result = (await core.call('tasks.get', { taskId })) as { task: TaskView | null };
-      if (result.task !== null) this.#apply([result.task], since);
+      if (result.task === null) return;
+      const cached = this.byId[taskId];
+      // 结算后仍可能有在途的运行中 task.updated 把 completed 的 fetch 按
+      // newer-wins 丢掉，详情页会一直停在「进行中」、报告出不来（v0.5.12 e2e）。
+      if (cached !== undefined && isActiveTask(cached) && !isActiveTask(result.task)) {
+        this.byId = { ...this.byId, [taskId]: result.task };
+        return;
+      }
+      this.#apply([result.task], since);
     } catch {
       // The next task.updated push updates it.
     }
