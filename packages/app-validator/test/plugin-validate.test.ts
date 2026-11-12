@@ -97,6 +97,33 @@ describe('validatePlugin: a complete legal plugin', () => {
     expect(ids(report, 'info')).toContain('plugin.icon');
   });
 
+  it('reports declared header credential schemes and rejects unknown ones', async () => {
+    const dir = await legalDir();
+    const manifestPath = path.join(dir, 'plugin.json');
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+      contributions: { mcp: Array<Record<string, unknown>> };
+    };
+    const http = manifest.contributions.mcp.find((entry) => entry.kind === 'http');
+    expect(http).toBeDefined();
+    if (http === undefined) return;
+    http.auth = 'headers';
+    http.headers = [{ name: 'Authorization', key: 'token', scheme: 'bearer' }];
+    await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+
+    const report = await validatePlugin(dir);
+    expect(ids(report, 'error')).toEqual([]);
+    const schemeCheck = report.checks.find((check) => check.id === 'plugin.mcp-header-scheme');
+    expect(schemeCheck?.severity).toBe('info');
+    expect(schemeCheck?.details).toMatchObject({ header: 'Authorization', scheme: 'bearer' });
+
+    // 未知方案由 schema 拒绝，不进入归一化逻辑。
+    http.headers = [{ name: 'Authorization', key: 'token', scheme: 'basic' }];
+    await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+    const bad = await validatePlugin(dir);
+    expect(ids(bad, 'error')).toContain('plugin.manifest-schema');
+    expect(ids(bad)).not.toContain('plugin.mcp-header-scheme');
+  });
+
   it('requires the activation instructions (usage) for new plugins', async () => {
     const dir = await tmp();
     await buildPluginDir({
