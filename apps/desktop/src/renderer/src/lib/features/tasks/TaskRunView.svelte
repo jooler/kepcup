@@ -95,11 +95,14 @@
   const task = $derived(tasks.byId[taskId] ?? null);
   const metaChips = $derived(task === null ? null : taskMetaChips(task, listSeparator()));
   const usageParts = $derived(taskRunUsageParts(usage));
-  const reportText = $derived((task?.result?.text ?? '').trim());
   const entries = $derived(buildTaskRunTimeline(steps));
   const renderEntries = $derived(groupTaskRunEntries(entries));
   const plan = $derived(latestPlan(steps));
-  const active = $derived(task !== null && isActiveTask(task));
+  // 结算视图若没落到缓存，时间线已有终态原文、会话也已出现唤醒回复时，
+  // 用这份原文出报告卡并收起注入坞。
+  let transcriptReport = $state('');
+  const reportText = $derived((task?.result?.text ?? transcriptReport).trim());
+  const active = $derived(task !== null && isActiveTask(task) && reportText.length === 0);
   // 会话消息随打开详情页的对话而来（主页对话回退 chat.main，卡片弹层是自己的
   // session）：提问卡最终取自 questionSession（归属会话直连或下面的后台
   // session），message.created / updated 事件保持同源实时。
@@ -137,6 +140,35 @@
     return () => tasks.release(convId);
   });
   const pendingQuestion = $derived(pendingTaskQuestionOf(questionSession?.messages ?? [], taskId));
+
+  // 打开详情页时记下已有消息；之后同一会话里新出现的 Bot 文本视为唤醒回复
+  // （此时任务已在核心侧结算），若缓存仍是进行中则用时间线原文补报告。
+  let primedTranscript = false;
+  const knownMessageIds = new Set<string>();
+  $effect(() => {
+    const session = questionSession ?? chatSession;
+    const msgs = session?.messages ?? [];
+    if (!primedTranscript) {
+      if (task === null) return;
+      for (const message of msgs) knownMessageIds.add(message.id);
+      primedTranscript = true;
+      return;
+    }
+    const newcomers = msgs.filter((message) => !knownMessageIds.has(message.id));
+    for (const message of newcomers) knownMessageIds.add(message.id);
+    if (task === null || !isActiveTask(task) || reportText.length > 0) return;
+    const woke = newcomers.some(
+      (message) => message.senderType === 'bot' && message.kind === 'text',
+    );
+    if (!woke) return;
+    const lastAssistant = [...entries]
+      .reverse()
+      .find((entry) => entry.kind === 'assistant' && entry.text.trim().length > 0);
+    const textFromSteps = lastAssistant?.kind === 'assistant' ? lastAssistant.text.trim() : '';
+    if (textFromSteps.length === 0) return;
+    transcriptReport = textFromSteps;
+    tasks.noteTerminalFromTranscript(taskId, textFromSteps);
+  });
   const title = $derived(
     task?.title ?? (taskChecked ? t('task.run.taskId', { id: taskId }) : t('task.run.loading')),
   );

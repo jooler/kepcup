@@ -67,16 +67,25 @@ class TasksState {
       void this.#reload(run.id);
     });
     // 结算同栈里的 task.updated / run.status 可能到不了渲染端，但随后的
-    // 唤醒消息（message.created）能到——e2e 失败时侧栏已有「任务做完了」，
-    // 详情页却仍停在进行中。此时再拉一次，不依赖被节流的 setInterval。
-    core.onEvent('message.created', (payload) => {
-      const conversationId = (payload as { conversationId?: string }).conversationId;
+    // 唤醒回复会推 message.created / conversation.updated（侧栏已有
+    // 「任务做完了」）。此时再拉一次。
+    const reloadActiveIn = (conversationId: string | undefined): void => {
       if (typeof conversationId !== 'string') return;
       for (const [taskId, view] of Object.entries(this.byId)) {
-        if (view.conversationId === conversationId && isActiveTask(view)) {
+        if (
+          (view.conversationId === conversationId || view.userConversationId === conversationId) &&
+          isActiveTask(view)
+        ) {
           void this.#reload(taskId);
         }
       }
+    };
+    core.onEvent('message.created', (payload) => {
+      const data = payload as { conversationId?: string; message?: { conversationId?: string } };
+      reloadActiveIn(data.conversationId ?? data.message?.conversationId);
+    });
+    core.onEvent('conversation.updated', (payload) => {
+      reloadActiveIn((payload as { conversation?: { id?: string } }).conversation?.id);
     });
     // The core came back (restart / port rebind, 审查 L3): pushes sent while
     // disconnected are lost — reload the cached views.
@@ -95,6 +104,31 @@ class TasksState {
     if (taskId.length === 0) return;
     this.start();
     void this.#reload(taskId);
+  }
+
+  /**
+   * 详情页已看到唤醒回复、但 tasks.get 仍返回进行中时的兜底：用时间线上的
+   * 终态原文补一份结算视图，让报告卡出现、注入坞收起（v0.5.12 e2e）。
+   * 若正在进行中的任务随后真的结算，正常 push / reload 会覆盖。
+   */
+  noteTerminalFromTranscript(taskId: string, text: string): void {
+    const trimmed = text.trim();
+    if (taskId.length === 0 || trimmed.length === 0) return;
+    this.start();
+    void this.#reload(taskId).then(() => {
+      const current = this.byId[taskId];
+      if (current === undefined || !isActiveTask(current)) return;
+      this.byId = {
+        ...this.byId,
+        [taskId]: {
+          ...current,
+          state: 'completed',
+          status: 'completed',
+          result: { text: trimmed, status: 'completed' },
+          queueReason: null,
+        },
+      };
+    });
   }
 
   /** 终态 run.status / 详情页轮询的兜底重拉；有更新的 push 则不覆盖，除非拉到的是终态而缓存仍是进行中。 */
