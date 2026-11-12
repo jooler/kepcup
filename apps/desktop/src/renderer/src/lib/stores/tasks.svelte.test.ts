@@ -244,4 +244,23 @@ describe('终态 run.status 兜底刷新执行报告', () => {
       expect(tasks.byId['task_steer']?.result?.text).toBe('RESULT 直注完成');
     });
   });
+
+  it('会话里来了新消息时，若任务视图仍是进行中则补拉终态报告', async () => {
+    const running = taskView('task_steer');
+    tasks.byId = { task_steer: running };
+    getResult.task = running;
+    tasks.openDetail('task_steer');
+    const completed: TaskView = {
+      ...taskView('task_steer', 'completed'),
+      result: { text: 'RESULT 直注完成', status: 'completed' },
+    };
+    getResult.task = completed;
+    for (const handler of eventHandlers['message.created'] ?? []) {
+      handler({ conversationId: 'conv_1', message: { id: 'wake' } });
+    }
+    await vi.waitFor(() => {
+      expect(tasks.byId['task_steer']?.state).toBe('completed');
+      expect(tasks.byId['task_steer']?.result?.text).toBe('RESULT 直注完成');
+    });
+  });
 });
