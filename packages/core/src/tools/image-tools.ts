@@ -9,7 +9,11 @@ import type { ImageGenerationResult } from '../media/types.js';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
 import type { AttachmentsService } from '../domain/attachments.js';
 import type { ToolGateway } from '../gateway/index.js';
-import { mediaDeliveryResult, type GeneratedMediaDelivery } from './media-delivery.js';
+import {
+  mediaDeliveryResult,
+  recordUndeliveredFiles,
+  type GeneratedMediaDelivery,
+} from './media-delivery.js';
 import { resolveMediaSource } from './media-source.js';
 import { readOnlyRefusal } from './read-only.js';
 
@@ -172,7 +176,6 @@ export function buildImageTools(input: {
         const target = path.join(dir, fileName);
         input.checkWritable?.(target);
         writeFileSync(target, bytes);
-        input.recordFile?.(target);
         saved.push(target);
       }
       if (saved.length === 0) {
@@ -184,6 +187,8 @@ export function buildImageTools(input: {
         // 不依赖模型再调 send_message。全部送达才不回路径（模型只会向用户复述
         // 绝对路径）；有失败则把未送达的路径与原因交还模型补救。
         const outcome = input.delivery.send(saved, '');
+        // 已贴进对话的不登记文件卡（附件是持久副本，workspace 源文件是临时产物）。
+        recordUndeliveredFiles(saved, outcome, input.recordFile);
         return mediaDeliveryResult({
           generated: `${saved.length} 张图片`,
           saved,
@@ -191,6 +196,7 @@ export function buildImageTools(input: {
           successHint: '只需用一句话向用户确认生成结果。',
         });
       }
+      recordUndeliveredFiles(saved, null, input.recordFile);
       return {
         ok: true,
         content: `已生成 ${saved.length} 张图片并保存到 workspace：\n${paths}\n请用 send_message 的 attachment_paths 把这些文件发给用户。`,

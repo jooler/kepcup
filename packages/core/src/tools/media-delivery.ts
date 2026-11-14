@@ -154,6 +154,24 @@ export function createGeneratedMediaDelivery(
 }
 
 /**
+ * 生成产物的文件卡登记：**只登记未投递的文件**。已作为附件贴进对话的文件
+ * 有持久副本（attachments 存储，随消息走），workspace 里的源文件只是临时
+ * 产物——任务里常被模型自己清掉，登记了也只会留下「文件不存在或已被移动」
+ * 的死条目（点开即报错）。投递没有发生（outcomes 为 null）时全部登记。
+ */
+export function recordUndeliveredFiles(
+  saved: readonly string[],
+  outcome: MediaDeliveryOutcome | null,
+  recordFile: ((path: string) => void) | undefined,
+): void {
+  if (recordFile === undefined) return;
+  const delivered = outcome?.delivered ?? [];
+  for (const file of saved) {
+    if (!delivered.includes(file)) recordFile(file);
+  }
+}
+
+/**
  * 生成工具的投递后结果文案：全部成功 → 告诉模型「已显示」（不回路径，避免被复述）；
  * 否则 → 把未投递文件的路径与原因交还模型，让它用 send_message 补发或向用户说明。
  *
