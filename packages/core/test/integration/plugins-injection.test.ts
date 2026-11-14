@@ -6,11 +6,13 @@ import { connectorMetaOf, type McpServer, type PluginSummary } from '@kepcup/sha
 import {
   buildPluginFixture,
   createTestStack,
+  listRuns,
   makeBot,
   makeProject,
   openDirect,
   sendDrafts,
   step,
+  waitFor,
   waitForEvent,
   waitForRun,
   type MockLlmServer,
@@ -511,4 +513,93 @@ describe('plugin injection model (P2)', () => {
     const serverDefault = mcp.listSettingsServers().find((item) => item.id === pluginServer!.id);
     expect(serverDefault?.enabled).toBe(true);
   });
+
+  it(
+    'gateway 调用判定：插件 server 未勾 mcp_server_ids 也可调用（与注入侧同口径）；应用级停用后现读拒绝',
+    async () => {
+      // 内嵌 MCPB（testkit echo bundle，stdio server 真跑）：调用成功可全链路断言。
+      // 运行时走 testhooks 强制解析（plugins.test.ts 同款；测试进程自身即 node）。
+      const stack = await createTestStack({
+        mcpbRuntimes: { node: { command: process.execPath, version: '24.21.0' } },
+      });
+      stacks.push(stack);
+      const { core, llm } = stack;
+      const pluginId = await installPlugin(core, (dir) =>
+        buildPluginFixture({ dir, manifest: { id: MCP_PLUGIN }, mcpb: [{ id: 'docs' }] }),
+      );
+      expect(pluginId).toBe(MCP_PLUGIN);
+      const serverId = pluginServerId(MCP_PLUGIN, 'docs');
+      const toolName = `mcp_${serverId}_echo`;
+      const bot = await makeBot(core, '调用 Bot');
+      // 只做插件级启用，不勾 mcp_server_ids——回归（D105 反馈）：调用闸曾只认
+      // mcp_server_ids，插件 server 注入可见但每次调用都被 MCP_TOOL_NOT_FOUND 拒掉。
+      await core.rpc.call('plugins.setBotPlugins', { botId: bot.id, pluginIds: [MCP_PLUGIN] });
+
+      const settings = core.services.domain!.settings;
+      // 本地插件 server 是 developer 级，只读工具默认逐次确认；server 级免审批让本用例
+      // 聚焦「口径」本身（审批语义由 policy 层用例覆盖，不在本测试范围）。
+      settings.update({
+        mcpServers: settings
+          .get()
+          .mcpServers.map((s) => (s.id === serverId ? { ...s, autoApprove: true } : s)),
+      });
+
+      // 断言面用 mock LLM 的回传消息：直接验证「工具输出以 tool 消息回到了模型」——
+      // 成功是 echo 结果、被拒是网关的拒绝文案，比间接读 run 步骤更贴近被测语义。
+      // 只看 mock-main：反射 / 摘要等后台模型的请求不混入断言。
+      const lastRequestText = (): string => {
+        const requests = llm.requestsFor('mock-main');
+        const last = requests[requests.length - 1];
+        return JSON.stringify(last?.body.messages ?? []);
+      };
+
+      // 正向：启用插件 + 未勾 mcp_server_ids → 网关放行，echo 真的执行。
+      // turn 面的挂载流程：capability_search 建本次运行的索引 → capability_call 调用。
+      const conv = await openDirect(core, bot.id);
+      llm.script('mock-main', [
+        step().replyToolCall('capability_search', { query: 'echo' }),
+        step().replyToolCall('capability_call', {
+          name: toolName,
+          arguments: { text: 'attention' },
+        }),
+        step().replyText('完成'),
+      ]);
+      await sendDrafts(core, conv.id, [{ text: '查一下文献' }]);
+      const run = await waitForRun(core, conv.id, 'completed', { timeoutMs: 90_000 });
+      expect(lastRequestText()).toContain('echo:attention');
+
+      // 反向（W5 语义保持）：索引按启用态建好后（search 已回）、工具调用前把应用级开关
+      // 关掉——调用闸每次调用时现读，应拒（MCP_TOOL_NOT_FOUND），而非静默成功。
+      llm.script('mock-main', [
+        step().replyToolCall('capability_search', { query: 'echo' }),
+        step()
+          .expect(() => {
+            settings.update({
+              mcpServers: settings
+                .get()
+                .mcpServers.map((s) => (s.id === serverId ? { ...s, enabled: false } : s)),
+            });
+            return true;
+          })
+          .replyToolCall('capability_call', {
+            name: toolName,
+            arguments: { text: 'again' },
+          }),
+        step().replyText('完成'),
+      ]);
+      await sendDrafts(core, conv.id, [{ text: '再查一次' }]);
+      // 同对话的 turn run 会累积：只等「新」的那条 run 完成。
+      const denied = await waitFor(
+        async () =>
+          (await listRuns(core, conv.id)).find(
+            (r) => r.id !== run.id && r.loopType === 'turn' && r.status === 'completed',
+          ) ?? null,
+        { label: 'denial run completed', timeoutMs: 90_000 },
+      );
+      expect(denied.id).not.toBe(run.id);
+      // gateway/index.ts 的 MCP_TOOL_NOT_FOUND 文案（回传给模型的是 message，不带 code）。
+      expect(lastRequestText()).toContain('已被用户停用');
+    },
+    120_000,
+  );
 });
