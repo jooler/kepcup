@@ -904,7 +904,7 @@
         <ArrowLeft class="size-3.5" aria-hidden="true" />
         {t('plugins.backToList')}
       </Button>
-      <ExtensionMail embedded />
+      <ExtensionMail embedded pluginId={contentView.pluginId} />
     </div>
   {/if}
 </div>
