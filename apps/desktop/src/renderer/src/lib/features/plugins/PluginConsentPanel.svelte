@@ -218,9 +218,14 @@
           <Label class="text-xs">
             {t('plugins.consent.configTitle')} · {item.displayName}
           </Label>
+          <!-- 必须 bind:：PluginFieldForm 的 setValue 整体替换 values 对象，普通传值只在
+               子组件本地生效，父级 form 不更新 → 首次安装（必填敏感项无豁免）的必填校验
+               恒报缺项、确认按钮禁用；市场更新流对敏感字段有「留空保留」豁免，不受影响。
+               两个调用方（PluginInstallDialog / ConfirmPluginInstallBody）检视后都经
+               initialPluginForm 预建 form[item.id]，键必存在，可直接 bind。 -->
           <PluginFieldForm
             fields={item.userConfigFields}
-            values={form[item.id] ?? (form[item.id] = {})}
+            bind:values={form[item.id]!}
             idScope={`plugin-field-${item.id}`}
             testid={`${testid}-fields-${item.id}`}
           />
