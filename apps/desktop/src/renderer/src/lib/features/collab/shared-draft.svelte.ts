@@ -10,6 +10,7 @@ import {
 } from '@kepcup/shared';
 import { core } from '$lib/rpc/client.svelte';
 import { composerDrafts } from '$lib/features/chats/composer-drafts.svelte';
+import { EMPTY_COMPOSER_DOC } from '$lib/features/chats/composer-draft-persist';
 import { clientIdentity } from './client-identity';
 
 /**
@@ -47,7 +48,12 @@ interface DraftClaimResult {
 const PUSH_DEBOUNCE_MS = 200;
 const RETRY_MS = 250;
 const LEASE_RENEW_MS = 5_000;
-const EMPTY_DOC: JSONContent = { type: 'doc', content: [] };
+/**
+ * 空草稿快照。必须复用 TipTap 空编辑器的真实 getJSON 形状（带一个空段落）：
+ * Composer 的 revision 效果拿它和 `ed.getJSON()` 逐字节比较，`content:[]`
+ * 永远不等，会把每次无关的效果重跑都变成一次 setContent 清空。
+ */
+const EMPTY_DOC: JSONContent = EMPTY_COMPOSER_DOC;
 
 function codeOf(error: unknown): string | undefined {
   return (error as { code?: string } | undefined)?.code;
