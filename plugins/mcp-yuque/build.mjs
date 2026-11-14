@@ -8,8 +8,11 @@
  * 2. 拷入 `mcp/manifest.json`（MCPB v0.3 清单，user_config = token(sensitive) + host）；
  * 3. 用系统 `zip` 打包为 `mcp/yuque.mcpb`（相对路径、条目排序固定）。
  *
+ * 构建需 macOS / Linux（依赖系统 `zip` 命令与 POSIX shell；Windows 无系统 zip）。
  * 产物需要先于 `kepcup-app validate` / `pack` 存在；发布批次见 plugins/README.md。
  * 仓库不追踪构建中间目录（node_modules），只追踪最终的 .mcpb。
+ * ⚠️ 已入库的 .mcpb 不要随手重跑本脚本：依赖范围（^x）会拉到新版本、产物字节漂移，
+ * 内容寻址发布体系里等于换包。升依赖版本是独立的一次发布（重跑 → validate → pack → 签名）。
  */
 
 import { execFileSync } from 'node:child_process';
@@ -41,11 +44,17 @@ writeFileSync(
   JSON.stringify({ name: 'yuque-mcp-bundle', private: true, version: '1.0.0' }, null, 2),
 );
 
-// 1. 官方 server：固定主版本，仅运行时依赖。
-execFileSync('npm', ['install', '--omit=dev', '--no-audit', '--no-fund', 'yuque-mcp@^1.0.0'], {
-  cwd: buildDir,
-  stdio: 'inherit',
-});
+// 1. 官方 server：固定主版本，仅运行时依赖。失败（registry 不可达等）也要清掉临时目录，
+//    否则残留的 package.json / package-lock.json 会以 untracked 身份干扰下一次提交。
+try {
+  execFileSync('npm', ['install', '--omit=dev', '--no-audit', '--no-fund', 'yuque-mcp@^1.0.0'], {
+    cwd: buildDir,
+    stdio: 'inherit',
+  });
+} catch (error) {
+  rmSync(buildDir, { recursive: true, force: true });
+  throw error;
+}
 
 // 1b. 产物内容校验：npm 空装（registry 异常 / 包名变动）不该 zip 出"成功"的空包——
 // 入口与官方 server 的 env 契约（YUQUE_PERSONAL_TOKEN / YUQUE_BASE_URL，见 manifest.json）
