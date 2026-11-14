@@ -40,6 +40,12 @@ export interface PluginMcpDeps {
   disconnector: Pick<AppDisconnector, 'removeCustomServer'>;
   /** W3 revocation effect: bots using changed servers lose their running tasks. */
   revokeMcpServerChanges(previous: readonly McpServer[], next: readonly McpServer[]): void;
+  /**
+   * 首次安装落地后的自动启用（连接 → 列工具 → 批准全部，`AppConnectionsService.enableAllTools`）：
+   * `project()` 成功登记后 fire-and-forget 调用——注册表互斥锁内不得等待网络。仅安装触发；
+   * `update()` 引入的工具变化仍走锁定复核（D73 防 rug-pull）。失败由实现方记日志。
+   */
+  autoEnable?: ((serverId: string) => Promise<unknown>) | undefined;
   logger: Pick<CoreLogger, 'info' | 'warn' | 'error'>;
 }
 
@@ -92,6 +98,17 @@ export class McpProjector implements PluginProjector<PluginConsentMcp> {
 
   constructor(deps: PluginMcpDeps) {
     this.#deps = deps;
+  }
+
+  /** 安装落地后的自动启用（fire-and-forget：互斥锁内不等网络，失败不影响安装结果）。 */
+  #autoEnable(serverId: string): void {
+    if (this.#deps.autoEnable === undefined) return;
+    void this.#deps.autoEnable(serverId).catch((error: unknown) => {
+      this.#deps.logger.warn(
+        { serverId, error: error instanceof Error ? error.message : String(error) },
+        'plugin mcp install auto-enable failed (tools stay locked; manual review still available)',
+      );
+    });
   }
 
   async inspect(ctx: PluginProjectionContext): Promise<ProjectorInspection<PluginConsentMcp>> {
@@ -209,6 +226,9 @@ export class McpProjector implements PluginProjector<PluginConsentMcp> {
         const current = this.#deps.settings.get();
         this.#deps.settings.update({ mcpServers: [...current.mcpServers, server] });
       }
+      // 安装即配置完成：自动启用（连接 → 列工具 → 批准全部），fire-and-forget —— 注册表
+      // 互斥锁内不得等待网络。仅安装触发；update() 引入的工具变化仍走锁定复核（D73 防 rug-pull）。
+      this.#autoEnable(serverId);
     }
   }
 

@@ -58,6 +58,7 @@ function makeDeps() {
   let servers: McpServer[] = [];
   const secretStore = new Map<string, string>();
   const closed: string[] = [];
+  const autoEnabled: { serverId: string; trigger: string }[] = [];
   const deps = {
     settings: {
       get: (): Settings => ({ mcpServers: servers }) as unknown as Settings,
@@ -74,10 +75,12 @@ function makeDeps() {
     mcp: { closeServer: async (serverId: string) => void closed.push(serverId) },
     disconnector: { removeCustomServer: async () => undefined },
     revokeMcpServerChanges: () => undefined,
+    autoEnable: async (serverId: string, trigger: string) =>
+      void autoEnabled.push({ serverId, trigger }),
     tierOf: () => 'developer' as const,
     logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
   };
-  return { deps, servers: () => servers, secretStore, closed };
+  return { deps, servers: () => servers, secretStore, closed, autoEnabled };
 }
 
 function ctxOf(
@@ -172,6 +175,69 @@ describe('mcp materializer compensation & shape switches (P4-M2 review)', () => 
     reconcileMcpInstanceRows(instances, deps.settings, deps.logger);
     expect(deleted).toEqual(['pli_orphan']);
     expect(servers()).toHaveLength(1);
+  });
+});
+
+/**
+ * 配置完成后的自动启用（连接 → 列工具 → 批准全部）：create / update 成功落地后以
+ * 对应 trigger 触发一次；任何失败回滚（secret 还原 / NOT_FOUND）都不触发；autoEnable
+ * 自身抛错不影响保存结果（fire-and-forget）；remove 不触发。触发点接线的端到端行为
+ * （真批准、真可调用）见 plugins-instances.test.ts / app-tool-lock.test.ts。
+ */
+describe('mcp materializer auto-enable (config-complete → approve all)', () => {
+  it('create 成功触发 instance-create；冲突回滚不触发', async () => {
+    const { deps, autoEnabled } = makeDeps();
+    const materializer = createMcpMaterializer(deps);
+    const manifest = manifestOf(VENDOR_TEMPLATE);
+    await materializer.create(ctxOf(manifest, 'pli_auto1', { token: 'Bearer abc' }));
+    expect(autoEnabled).toEqual([{ serverId: serverIdOf('pli_auto1'), trigger: 'instance-create' }]);
+
+    await expect(
+      materializer.create(ctxOf(manifest, 'pli_auto1', { token: 'Bearer abc' })),
+    ).rejects.toMatchObject({ code: 'PLUGIN_CONFLICT' });
+    expect(autoEnabled).toHaveLength(1);
+  });
+
+  it('update 成功触发 instance-update；实例不存在（NOT_FOUND）不触发', async () => {
+    const { deps, autoEnabled } = makeDeps();
+    const materializer = createMcpMaterializer(deps);
+    const manifest = manifestOf(VENDOR_TEMPLATE);
+    await materializer.create(ctxOf(manifest, 'pli_auto2', { token: 'Bearer abc' }));
+    expect(autoEnabled).toHaveLength(1);
+
+    await materializer.update(ctxOf(manifest, 'pli_auto2', { token: 'Bearer xyz' }));
+    expect(autoEnabled).toEqual([
+      { serverId: serverIdOf('pli_auto2'), trigger: 'instance-create' },
+      { serverId: serverIdOf('pli_auto2'), trigger: 'instance-update' },
+    ]);
+
+    await expect(
+      materializer.update(ctxOf(manifest, 'pli_missing', { token: 'Bearer xyz' })),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(autoEnabled).toHaveLength(2);
+  });
+
+  it('autoEnable 抛错被吞掉（fire-and-forget），不影响 create / update 的结果', async () => {
+    const { deps, servers } = makeDeps();
+    deps.autoEnable = async () => {
+      throw new Error('connect failed');
+    };
+    const materializer = createMcpMaterializer(deps);
+    const manifest = manifestOf(VENDOR_TEMPLATE);
+    await materializer.create(ctxOf(manifest, 'pli_boom', { token: 'Bearer abc' }));
+    expect(servers()).toHaveLength(1);
+    await materializer.update(ctxOf(manifest, 'pli_boom', { token: 'Bearer xyz' }));
+    expect(servers()).toHaveLength(1);
+  });
+
+  it('remove 不触发自动启用', async () => {
+    const { deps, autoEnabled } = makeDeps();
+    const materializer = createMcpMaterializer(deps);
+    const manifest = manifestOf(VENDOR_TEMPLATE);
+    await materializer.create(ctxOf(manifest, 'pli_rm', { token: 'Bearer abc' }));
+    expect(autoEnabled).toHaveLength(1);
+    await materializer.remove(ctxOf(manifest, 'pli_rm', {}));
+    expect(autoEnabled).toHaveLength(1);
   });
 });
 

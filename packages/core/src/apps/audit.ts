@@ -33,11 +33,20 @@ export interface AppDisconnectAuditInput extends AppConnectAuditInput {
   removed: boolean;
 }
 
+/**
+ * 工具复核的触发来源（省略 = 用户在界面手动复核）。`instance-create` / `instance-update` /
+ * `plugin-install` 是插件 MCP 配置完成后的自动启用（连接 → 登记 → 批准全部，见
+ * {@link AppConnectionsService.enableAllTools}）。
+ */
+export type AppToolsReviewTrigger = 'instance-create' | 'instance-update' | 'plugin-install';
+
 export interface AppToolsReviewAuditInput {
   connectionId: string;
   connectorId: string;
   /** 本次批准的工具名。 */
   approved: string[];
+  /** 自动启用（插件配置完成）时的触发来源；缺省为用户手动复核。 */
+  trigger?: AppToolsReviewTrigger | undefined;
 }
 
 export interface LocalConnectorAuditInput {
@@ -80,12 +89,13 @@ export class AppAuditor {
     });
   }
 
-  /** 工具复核通过（首连确认 / 设置页复核 / 自定义 server 测试后保存）。 */
+  /** 工具复核通过（首连确认 / 设置页复核 / 自定义 server 测试后保存 / 插件配置完成后的自动启用）。 */
   auditAppToolsReview(input: AppToolsReviewAuditInput): void {
     this.#write(APP_AUDIT_ACTIONS.toolsReview, {
       connectionId: input.connectionId,
       connector: input.connectorId,
       approved: input.approved,
+      ...(input.trigger !== undefined ? { trigger: input.trigger } : {}),
     });
   }
 
