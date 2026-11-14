@@ -157,17 +157,17 @@ describe('mcp.instance adapter', () => {
   });
 
   it('prefers the plugin this Bot already has enabled', () => {
-    const other = mcpPlugin({ id: 'app.kepcup/mcp-yuque', name: '语雀' });
+    const other = mcpPlugin({ id: 'app.kepcup/mcp-feishu', name: '飞书' });
     const adapter = buildItemAdapters(
       deps({
         plugins: [mcpPlugin(), other],
-        instances: [instance({ pluginId: other.id, id: 'pli_yq' })],
+        instances: [instance({ pluginId: other.id, id: 'pli_fs' })],
         bots: [makeBot('bot_a', [other.id]), makeBot('bot_b')],
       }),
     )(item('mcp.instance'));
     expect(adapter.read(item('mcp.instance'), target).values).toEqual({
       plugin: other.id,
-      instance: 'pli_yq',
+      instance: 'pli_fs',
     });
   });
 

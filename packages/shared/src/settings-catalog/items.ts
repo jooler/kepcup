@@ -396,7 +396,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     id: 'mcp.instance',
     group: 'mcp',
     title: '插件的工具服务',
-    summary: '添加或修改某个插件（腾讯文档、飞书、语雀等）的工具服务：粘贴 token 等凭据',
+    summary: '添加或修改某个插件（腾讯文档、飞书等）的工具服务：粘贴 token 等凭据',
     enables: ['配置插件的工具服务', '填写插件凭据'],
     keywords: [
       '工具服务',
@@ -406,7 +406,6 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
       '凭据',
       '腾讯文档',
       '飞书',
-      '语雀',
       'MCP',
       'instance',
     ],

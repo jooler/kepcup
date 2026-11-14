@@ -3474,7 +3474,7 @@ export const enUS = {
   'mcp.delete': 'Delete tool service',
   'mcp.editHint': 'Click to edit',
   'mcp.noPlugin':
-    'No plugin can add tool services yet. Install one from the marketplace first (e.g. Tencent Docs, Feishu, Yuque).',
+    'No plugin can add tool services yet. Install one from the marketplace first (e.g. Tencent Docs, Feishu).',
   'mcp.openMarket': 'Open plugin marketplace',
   'mcp.instanceCount': '{count} services',
   'mcp.ownerOf': 'From plugin: {plugin}',
