@@ -90,7 +90,8 @@
           aria-hidden="true"
         />
         <div class="min-w-0 flex-1">
-          <p class="whitespace-pre-wrap">{offer.question}</p>
+          <!-- 提问是 Bot 文案，可能内嵌长 token：放不下时横向滚动，不撑破卡片 -->
+          <p class="overflow-x-auto whitespace-pre-wrap">{offer.question}</p>
           <p class="mt-0.5 text-xs text-muted-foreground">
             {offerWhen} · {offer.title}{#if isProject} · {chat.botName(offer.botId)}{/if}
           </p>
@@ -123,6 +124,6 @@
       {/if}
     {/if}
   {:else}
-    <p class="text-xs text-muted-foreground">{content.text ?? ''}</p>
+    <p class="overflow-x-auto text-xs text-muted-foreground">{content.text ?? ''}</p>
   {/if}
 </div>
