@@ -3420,6 +3420,8 @@ export const enUS = {
   'im.botSectionAfterCreate': 'IM accounts can be bound after the bot is created.',
   'im.botSectionEmpty':
     'No IM accounts yet — add one from the plugin card in the extension center.',
+  'im.pluginDisabled':
+    'Plugin disabled. Enable it to add IM accounts; existing accounts stay manageable.',
   'im.botSectionBound':
     '{count} account(s) bound; binding always allows inbound messages from WeChat.',
   'im.forwardToggle': 'Sync replies to this WeChat',
@@ -3435,11 +3437,14 @@ export const enUS = {
     'When checked, this Bot handles new mail from these mailboxes in its own private chat. This is different from the connected apps above.',
   'mail.botSectionAfterCreate':
     'After the Bot is created, you can assign mailboxes to it here or in the Extension Center.',
-  'mail.botSectionEmpty': 'No mailboxes yet. Add one on the Mail page in the Extension Center.',
+  'mail.botSectionEmpty':
+    'No mailboxes yet. Add one from the manage view of a mail plugin card in the Extension Center.',
   'mail.botSectionBound': 'Handling {count} mailboxes',
   'mail.openExtension': 'Open Mail in the Extension Center',
   'mail.noPlugin':
     'No mail plugin can add mailboxes yet. Install a mail plugin from the market first, or add accounts from its plugin card.',
+  'mail.pluginDisabled':
+    'Plugin disabled. Enable it to add mail accounts; existing accounts stay manageable.',
   'mail.openMarket': 'Open plugin market',
   'mail.pickPlugin': 'Choose a mail plugin',
   'mail.instanceCount': '{count} accounts',

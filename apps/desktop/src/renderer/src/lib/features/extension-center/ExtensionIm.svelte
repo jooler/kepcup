@@ -43,6 +43,11 @@
 
   const selected = $derived(accounts.find((account) => account.id === selectedId) ?? null);
 
+  // detail 态的选中账号在别处被删（卸载级联等外部动作）时归位回列表，避免内容区空白无返回。
+  $effect(() => {
+    if (view === 'detail' && selected === null) view = 'list';
+  });
+
   /** 提供 im 实例能力的已启用插件（添加入口的候选；按插件卡进入时只看该插件）。 */
   const imPlugins = $derived(
     plugins.plugins.filter(
@@ -51,6 +56,16 @@
         plugin.providesInstances.includes('im') &&
         (pluginId === undefined || plugin.id === pluginId),
     ),
+  );
+
+  /**
+   * 圈定时的属主插件已停用：给「插件已停用」专用提示，而不是「没有 IM 插件」
+   * 市场横幅（账号列表照常渲染，仍可管理已有账号）。插件不存在（已卸载的残留）
+   * 仍走「没有 IM 插件」分支。
+   */
+  const scopedDisabled = $derived(
+    pluginId !== undefined &&
+      plugins.plugins.some((plugin) => plugin.id === pluginId && !plugin.enabled),
   );
 
   /** 按归属插件分组的账号（按插件卡进入时只列该插件）。 */
@@ -65,6 +80,11 @@
     }
     return [...map.entries()];
   });
+
+  /** 空态判定用：圈定后只数该插件的账号（聚合视图与全集一致）。 */
+  const visibleAccounts = $derived(
+    pluginId === undefined ? accounts : accounts.filter((account) => account.pluginId === pluginId),
+  );
 
   function statusText(account: ImAccount): string {
     switch (account.status) {
@@ -272,7 +292,14 @@
         {t('im.add')}
       </Button>
     </div>
-    {#if imPlugins.length === 0}
+    {#if scopedDisabled}
+      <div
+        class="mb-3 rounded-xl border border-dashed px-4 py-3 text-center text-sm text-muted-foreground"
+        data-testid="im-plugin-disabled"
+      >
+        <p>{t('im.pluginDisabled')}</p>
+      </div>
+    {:else if imPlugins.length === 0}
       <div
         class="mb-3 rounded-xl border border-dashed px-4 py-3 text-center text-sm text-muted-foreground"
         data-testid="im-no-plugin"
@@ -289,7 +316,7 @@
         </Button>
       </div>
     {/if}
-    {#if accounts.length === 0}
+    {#if visibleAccounts.length === 0}
       <div
         class="rounded-xl border border-dashed px-4 py-8 text-center text-sm text-muted-foreground"
         data-testid="im-empty"
