@@ -3,8 +3,9 @@ import { AppError } from '@kepcup/shared';
 /**
  * 厂商 HTTP 基座：统一 Bearer 鉴权、超时与错误映射。适配器只关心
  * 各自的路径 / 载荷 / 响应形状，网络层错误在此归一为 AppError：
- * 401/403 → PROVIDER_AUTH_FAILED，429 → PROVIDER_RATE_LIMITED，
- * 网络失败 → PROVIDER_UNREACHABLE，其余非 2xx → PROVIDER_UNAVAILABLE。
+ * 401（以及非配额类 403）→ PROVIDER_AUTH_FAILED，配额 / 欠费 → PROVIDER_QUOTA，
+ * 429 → PROVIDER_RATE_LIMITED，网络失败 → PROVIDER_UNREACHABLE，
+ * 其余非 2xx → PROVIDER_UNAVAILABLE。
  */
 
 export interface VendorHttpResponse {
@@ -28,16 +29,60 @@ export class VendorHttpError extends AppError {
   constructor(
     public readonly status: number,
     message: string,
+    bodyText = '',
     details?: unknown,
   ) {
-    super(errorCodeForStatus(status), message, details);
+    super(errorCodeForStatus(status, bodyText), message, details);
     this.name = 'VendorHttpError';
   }
 }
 
-function errorCodeForStatus(status: number): string {
-  if (status === 401 || status === 403) return 'PROVIDER_AUTH_FAILED';
-  if (status === 429) return 'PROVIDER_RATE_LIMITED';
+/** 配额 / 欠费类拒绝的关键词（响应体小写匹配）：百炼 AllocationQuota / Arrearage、
+ * OpenAI insufficient_quota、OpenRouter 余额不足等常见形态。 */
+const QUOTA_MARKERS = [
+  'quota',
+  'arrears',
+  'arrearage',
+  '欠费',
+  '余额不足',
+  '额度不足',
+  '额度用尽',
+  'insufficient credit',
+  'free tier',
+] as const;
+
+/** 限流类关键词：`Throttling.RateQuota` 这类带 quota 字样的限流不是配额耗尽。 */
+const RATE_LIMIT_MARKERS = [
+  'rate limit',
+  'throttl',
+  'too many requests',
+  'requests per',
+  'qps',
+  'rpm',
+] as const;
+
+function bodyIncludesAny(bodyText: string, markers: readonly string[]): boolean {
+  const body = bodyText.toLowerCase();
+  return markers.some((marker) => body.includes(marker));
+}
+
+function errorCodeForStatus(status: number, bodyText: string): string {
+  if (status === 401) return 'PROVIDER_AUTH_FAILED';
+  // 402 = Payment Required（OpenRouter 等按余额计费的聚合商直接用它表示欠费）。
+  if (status === 402) return 'PROVIDER_QUOTA';
+  // 403 兼有两种含义：Key 有效但配额 / 欠费（如百炼免费额度用尽），与真权限 /
+  // 认证问题。按响应体区分——配额误归认证失败会让能力工具把它当「未配置」
+  // 引导用户重配，而配置明明是好的（docs/design/18-inline-setup.md 的引导
+  // 前提是「缺的是用户配置」）。
+  if (status === 403) {
+    return bodyIncludesAny(bodyText, QUOTA_MARKERS) ? 'PROVIDER_QUOTA' : 'PROVIDER_AUTH_FAILED';
+  }
+  if (status === 429) {
+    return bodyIncludesAny(bodyText, RATE_LIMIT_MARKERS) ||
+      !bodyIncludesAny(bodyText, QUOTA_MARKERS)
+      ? 'PROVIDER_RATE_LIMITED'
+      : 'PROVIDER_QUOTA';
+  }
   return 'PROVIDER_UNAVAILABLE';
 }
 
@@ -97,6 +142,7 @@ export async function vendorFetch(
     throw new VendorHttpError(
       response.status,
       vendorErrorMessage(bodyText) || `HTTP ${response.status}`,
+      bodyText,
       {
         url,
         status: response.status,

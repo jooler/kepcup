@@ -62,6 +62,7 @@ export const zhCN = {
   'chats.errorCode.NOT_FOUND': '对象不存在或已被删除',
   'chats.errorCode.INVALID_INPUT': '输入无效',
   'chats.errorCode.PROVIDER_AUTH_FAILED': '模型认证失败：请到设置中检查 API key',
+  'chats.errorCode.PROVIDER_QUOTA': '模型配额不足或账户欠费：请到厂商控制台充值或更换套餐',
   'chats.errorCode.PROVIDER_RATE_LIMITED': '模型请求被限流，请稍后重试',
   'chats.errorCode.PROVIDER_UNREACHABLE': '无法连接模型服务，请检查网络或接口地址',
   'chats.errorCode.PROVIDER_UNAVAILABLE': '模型服务暂不可用，请稍后重试',
@@ -500,7 +501,8 @@ export const zhCN = {
   'settings.mcpbRequiredMissing': '请填写必填项：{names}',
   'settings.mcpbConfirm': '确认并安装',
   'settings.mcpbInstalling': '安装中…',
-  'settings.mcpbInstalled': '已安装「{name}」。正在自动连接并启用它的全部工具；此后服务端新增或变更的工具，仍需在列表里复核批准。',
+  'settings.mcpbInstalled':
+    '已安装「{name}」。正在自动连接并启用它的全部工具；此后服务端新增或变更的工具，仍需在列表里复核批准。',
   'settings.mcpbInstallFailed': '安装失败：{reason}',
   'settings.mcpbCancel': '取消',
   // D73 P2 §6.6 MCP 调试（原始工具定义 / 授权流程日志 / 手动刷新），扩展中心 MCP 里始终可用

@@ -64,6 +64,8 @@ export const enUS = {
   'chats.errorCode.INVALID_INPUT': 'Invalid input',
   'chats.errorCode.PROVIDER_AUTH_FAILED':
     'Model authentication failed. Check your API key in Settings.',
+  'chats.errorCode.PROVIDER_QUOTA':
+    'Model quota exhausted or account in arrears. Top up or switch plans in the vendor console.',
   'chats.errorCode.PROVIDER_RATE_LIMITED': 'Model requests are rate-limited. Try again later.',
   'chats.errorCode.PROVIDER_UNREACHABLE':
     "Can't reach the model service. Check your network or endpoint URL.",
