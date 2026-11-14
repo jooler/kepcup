@@ -138,3 +138,24 @@ cd infra/cloudflare/directory && npx wrangler deploy
 - 依赖 P4-M2 的 mcp 实例化（设计 51 §15.7 实施注），`engines.kepcup` 抬到 `>=0.5.11`；
   未发布前用户可经「从文件夹安装」试用。语雀包先跑 `node plugins/mcp-yuque/build.mjs`
   生成 `mcp/yuque.mcpb` 再 validate / pack。
+
+### 学术检索批次（1 个，2026-11-13 开发；待签名发布）
+
+- 工具 1：`mcp-sciverse`（Sciverse 文献检索，内嵌官方 `sciverse-mcp-server` 的 MCPB，
+  token 走安装表单；`engines.kepcup >=0.5.11`）。包先跑
+  `node plugins/mcp-sciverse/build.mjs` 生成 `mcp/sciverse.mcpb` 再 validate / pack；
+  构建脚本含内容契约校验（入口在位 + `SCIVERSE_API_TOKEN` env 键未被上游更名）。
+
+### 邮件插件 1.2.0（2026-11-14 发布，随宿主 D144 邮箱内部写操作）
+
+- 邮件 4 全部升版 `1.2.0`、`engines.kepcup` 抬到 `>=0.5.12`：宿主 D144 给 Bot 补齐了
+  标记已读、标签、移动、硬删除、存草稿与文件夹管理（design 35 §6），插件描述同步加上
+  能力说明；插件清单本身没有新字段，抬 engines 是把「描述宣称的能力」与宿主版本配对，
+  旧宿主留在 1.1.0 不受影响，开发版（0.5.12）恰好满足、可从商店更新。
+- 流程照旧：23 个已上线插件全部重打包（未变的 19 个 sha256 与线上逐字节一致、R2 无需
+  重传），4 个邮件包为新对象（mail-126 `0a010380…` / mail-163 `18b1f7c1…` /
+  mail-generic `1b2a76db…` / mail-qq `d03096ad…`）。签名索引
+  `generatedAt=2026-11-14T05:47:32.779Z`（严格递增、23 条），生产密钥
+  `kepcup-plugins-2026-1`；R2 上传 4 包后 `wrangler deploy` 上线（Worker version
+  `34c3a046-9b99-4158-978f-25afe5989793`）。线上索引拉回 `--verify` 通过、与签名产物
+  逐字节一致，mail-126 从 `pkg.kepcup.com` 下载回本地 sha256 复核一致。
