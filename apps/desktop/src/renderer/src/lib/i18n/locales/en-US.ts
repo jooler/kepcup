@@ -1961,6 +1961,10 @@ export const enUS = {
   'plugins.pickFolderMessage': 'Choose the plugin folder (containing plugin.json)',
   'plugins.inspect': 'Inspect',
   'plugins.inspecting': 'Inspecting…',
+  'plugins.inspectingMarketplace': 'Downloading and inspecting the plugin package, please wait…',
+  'plugins.inspectingLocal': 'Inspecting the plugin package contents…',
+  'plugins.downloadProgress':
+    'Downloading plugin package {received} / {total} ({percent}%), {speed}/s',
   'plugins.inspectFailed': 'Inspection failed: {reason}',
   'plugins.confirm': 'Confirm and install',
   'plugins.installing': 'Installing…',

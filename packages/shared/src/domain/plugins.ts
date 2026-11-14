@@ -440,3 +440,16 @@ export const pluginsMarketplaceUpdatedPayloadSchema = z.object({
 export type PluginsMarketplaceUpdatedPayload = z.infer<
   typeof pluginsMarketplaceUpdatedPayloadSchema
 >;
+
+/**
+ * `plugins.package.progress`（P1-1）：市场包流式下载进度（内容寻址缓存未命中才发生，节流
+ * 推送）。`total` 是索引声明并逐字节强制的包体积，因此进度恒可算百分比。
+ */
+export const pluginsPackageProgressPayloadSchema = z.object({
+  id: pluginIdSchema,
+  version: z.string(),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  received: z.number().int().nonnegative(),
+  total: z.number().int().positive(),
+});
+export type PluginsPackageProgressPayload = z.infer<typeof pluginsPackageProgressPayloadSchema>;
