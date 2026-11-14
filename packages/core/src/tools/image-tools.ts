@@ -138,7 +138,7 @@ export function buildImageTools(input: {
       } catch (error) {
         if (error instanceof AppError) {
           if (error.code === 'CAPABILITY_NOT_CONFIGURED' || error.code === 'PROVIDER_AUTH_FAILED') {
-            return setupRequiredResult('图像生成模型未配置');
+            return setupRequiredResult('图像生成模型未配置或 API Key 无效');
           }
           return { ok: false, content: error.message, errorCode: error.code };
         }
@@ -268,7 +268,7 @@ export function buildImageTools(input: {
       } catch (error) {
         if (error instanceof AppError) {
           if (error.code === 'CAPABILITY_NOT_CONFIGURED' || error.code === 'PROVIDER_AUTH_FAILED') {
-            return setupRequiredResult('图片理解模型未配置');
+            return setupRequiredResult('图片理解模型未配置或 API Key 无效');
           }
           return { ok: false, content: error.message, errorCode: error.code };
         }

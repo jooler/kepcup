@@ -101,7 +101,7 @@ export function buildSpeechTools(input: {
       } catch (error) {
         if (error instanceof AppError) {
           if (error.code === 'CAPABILITY_NOT_CONFIGURED' || error.code === 'PROVIDER_AUTH_FAILED') {
-            return setupRequiredResult('语音合成模型未配置');
+            return setupRequiredResult('语音合成模型未配置或 API Key 无效');
           }
           return { ok: false, content: error.message, errorCode: error.code };
         }
@@ -169,7 +169,7 @@ export function buildSpeechTools(input: {
       } catch (error) {
         if (error instanceof AppError) {
           if (error.code === 'CAPABILITY_NOT_CONFIGURED' || error.code === 'PROVIDER_AUTH_FAILED') {
-            return setupRequiredResult('视频生成模型未配置');
+            return setupRequiredResult('视频生成模型未配置或 API Key 无效');
           }
           return { ok: false, content: error.message, errorCode: error.code };
         }
@@ -255,7 +255,13 @@ export function buildSpeechTools(input: {
               errorCode: 'PROVIDER_UNAVAILABLE',
             };
           }
-          const saved = saveGenerated(workspacePath, params.file_name ?? null, 'mp4', bytes, input.checkWritable);
+          const saved = saveGenerated(
+            workspacePath,
+            params.file_name ?? null,
+            'mp4',
+            bytes,
+            input.checkWritable,
+          );
           if (saved === null) {
             return { ok: false, content: '视频保存失败：内容为空', errorCode: 'INTERNAL' };
           }
@@ -344,7 +350,7 @@ export function buildSpeechTools(input: {
       } catch (error) {
         if (error instanceof AppError) {
           if (error.code === 'CAPABILITY_NOT_CONFIGURED' || error.code === 'PROVIDER_AUTH_FAILED') {
-            return setupRequiredResult('语音识别模型未配置');
+            return setupRequiredResult('语音识别模型未配置或 API Key 无效');
           }
           return { ok: false, content: error.message, errorCode: error.code };
         }

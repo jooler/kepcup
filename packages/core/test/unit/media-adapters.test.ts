@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { AppError } from '@kepcup/shared';
 import { dashscopeAdapter } from '../../src/media/adapters/dashscope.js';
 import { volcengineAdapter } from '../../src/media/adapters/volcengine.js';
-import { VendorHttpError } from '../../src/media/http.js';
+import { VendorHttpError, vendorFetch } from '../../src/media/http.js';
 import type { VendorCallContext } from '../../src/media/types.js';
 
 const LOGGER = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} } as never;
@@ -379,7 +379,16 @@ describe('适配器 rerank / understandImage（新增能力）', () => {
           image_url: { url: 'https://pic.example/a.png' },
         });
         return jsonResponse({
-          choices: [{ message: { content: [{ type: 'text', text: '一只' }, { type: 'text', text: '猫' }] } }],
+          choices: [
+            {
+              message: {
+                content: [
+                  { type: 'text', text: '一只' },
+                  { type: 'text', text: '猫' },
+                ],
+              },
+            },
+          ],
         });
       },
     ]);
@@ -392,9 +401,7 @@ describe('适配器 rerank / understandImage（新增能力）', () => {
   });
 
   it('rerank 空结果抛 PROVIDER_UNAVAILABLE', async () => {
-    const fetchImpl = scriptedFetch([
-      () => jsonResponse({ output: { results: [] } }),
-    ]);
+    const fetchImpl = scriptedFetch([() => jsonResponse({ output: { results: [] } })]);
     await expect(
       dashscopeAdapter.rerank!(
         ctx('https://dashscope.aliyuncs.com/compatible-mode/v1', fetchImpl),
@@ -511,10 +518,7 @@ describe('volcengine adapter（images/generations + contents/generations/tasks�
       'doubao-embedding-vision-251215',
       ['检索文本', '另一条'],
     );
-    expect(vectors).toEqual([
-      [0.5, 0.25],
-      [0.1],
-    ]);
+    expect(vectors).toEqual([[0.5, 0.25], [0.1]]);
   });
 });
 
@@ -563,5 +567,87 @@ describe('HTTP 错误映射', () => {
     const error = new VendorHttpError(500, 'InternalError');
     expect(error).toBeInstanceOf(AppError);
     expect(error.code).toBe('PROVIDER_UNAVAILABLE');
+  });
+});
+
+describe('vendorFetch 错误分类：配额 / 欠费与认证失败分家（PROVIDER_QUOTA）', () => {
+  /** 直连 vendorFetch 的响应桩：单次请求返回给定 status + JSON body。 */
+  function statusFetch(status: number, payload: unknown): typeof fetch {
+    return (async () => {
+      const body = JSON.stringify(payload);
+      return new Response(body, {
+        status,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+  }
+
+  const call = (status: number, payload: unknown) =>
+    vendorFetch('https://vendor.example/api', 'sk-test', {}, statusFetch(status, payload)).then(
+      () => {
+        throw new Error('expected the request to be rejected');
+      },
+      (error: AppError) => error.code,
+    );
+
+  it('403 免费额度用尽（百炼 AllocationQuota.FreeTierOnly）→ PROVIDER_QUOTA，不再误判为认证失败', async () => {
+    expect(
+      await call(403, {
+        code: 'AllocationQuota.FreeTierOnly',
+        message:
+          'Free quota exhausted. To continue accessing the model on a paid basis, please add funds or disable the "use free tier only" mode in the management console.',
+        request_id: 'x',
+      }),
+    ).toBe('PROVIDER_QUOTA');
+  });
+
+  it('403 权限拒绝（无配额字样）→ 仍是 PROVIDER_AUTH_FAILED', async () => {
+    expect(await call(403, { code: 'AccessDenied', message: 'no permission' })).toBe(
+      'PROVIDER_AUTH_FAILED',
+    );
+  });
+
+  it('401 恒为 PROVIDER_AUTH_FAILED（即使响应体带 quota 字样）', async () => {
+    expect(await call(401, { message: 'invalid api key (quota check failed)' })).toBe(
+      'PROVIDER_AUTH_FAILED',
+    );
+  });
+
+  it('402 Payment Required → PROVIDER_QUOTA', async () => {
+    expect(await call(402, { error: { message: 'Insufficient credits' } })).toBe('PROVIDER_QUOTA');
+  });
+
+  it('429 配额耗尽（OpenAI insufficient_quota）→ PROVIDER_QUOTA', async () => {
+    expect(
+      await call(429, {
+        error: {
+          code: 'insufficient_quota',
+          message: 'You exceeded your current quota, please check your plan and billing details.',
+        },
+      }),
+    ).toBe('PROVIDER_QUOTA');
+  });
+
+  it('429 限流 → PROVIDER_RATE_LIMITED（Throttling.RateQuota 带 quota 字样也算限流）', async () => {
+    expect(
+      await call(429, { code: 'Throttling.RateQuota', message: 'Requests rate limit exceeded' }),
+    ).toBe('PROVIDER_RATE_LIMITED');
+    expect(await call(429, { message: 'Too many requests' })).toBe('PROVIDER_RATE_LIMITED');
+  });
+
+  it('端到端：图片生成收到 403 免费额度用尽 → 工具拿到 PROVIDER_QUOTA（不进「未配置」引导）', async () => {
+    await expect(
+      dashscopeAdapter.generateImage(
+        ctx(
+          'https://dashscope.aliyuncs.com/compatible-mode/v1',
+          statusFetch(403, {
+            code: 'AllocationQuota.FreeTierOnly',
+            message: 'Free quota exhausted.',
+          }),
+        ),
+        'qwen-image',
+        { prompt: 'x' },
+      ),
+    ).rejects.toMatchObject({ code: 'PROVIDER_QUOTA' });
   });
 });

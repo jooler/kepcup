@@ -19,6 +19,8 @@ export const ERROR_CODES = [
   // model providers
   'PROVIDER_AUTH_FAILED',
   'PROVIDER_RATE_LIMITED',
+  /** 厂商配额 / 欠费（免费额度用尽、余额不足）：Key 有效但额度问题，不能归成认证失败——能力工具据此区分「未配置引导」与「生成失败」。 */
+  'PROVIDER_QUOTA',
   'PROVIDER_UNAVAILABLE',
   'PROVIDER_UNREACHABLE',
   // 模型能力未配置（inline setup 引导的机器可读信号，docs/design/18-inline-setup.md）
