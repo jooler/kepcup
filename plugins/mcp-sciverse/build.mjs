@@ -90,16 +90,32 @@ if (!distSource.includes('SCIVERSE_API_TOKEN')) {
     'sciverse-mcp-server 的 dist 产物不再读取 SCIVERSE_API_TOKEN——manifest.json 的 env 键名需要同步更新',
   );
 }
+// 取证：明确本次实际安装到的官方包版本（^x 范围会随上游发版漂移，版本变了就是独立升版发布）。
+const officialVersion = JSON.parse(
+  readFileSync(path.join(buildDir, 'node_modules/sciverse-mcp-server/package.json'), 'utf8'),
+).version;
+console.log(`sciverse-mcp-server 安装版本：${officialVersion}`);
 
 // 2. MCPB 清单在包根。
 cpSync(path.join(mcpDir, 'manifest.json'), path.join(buildDir, 'manifest.json'));
 
 // 3. zip（条目按路径排序；-X 去掉额外属性，-q 静默）。
+//    排除构建脚手架 package.json / package-lock.json：它们只是把 npm 限制在本目录用的
+//    临时文件，不该进发布产物——MCPB 根只有 manifest.json + node_modules/。
+const bundled = listFiles(buildDir).filter(
+  (f) => f !== 'package.json' && f !== 'package-lock.json',
+);
 rmSync(output, { force: true });
-execFileSync('zip', ['-r', '-X', '-q', output, ...listFiles(buildDir)], {
-  cwd: buildDir,
-  stdio: 'inherit',
-});
+try {
+  execFileSync('zip', ['-r', '-X', '-q', output, ...bundled], {
+    cwd: buildDir,
+    stdio: 'inherit',
+  });
+} catch (error) {
+  // 与 npm install 失败同口径：清掉临时目录再抛，别留 untracked 残骸干扰下一次提交。
+  rmSync(buildDir, { recursive: true, force: true });
+  throw error;
+}
 
 rmSync(buildDir, { recursive: true, force: true });
 const bytes = statSync(output).size;
