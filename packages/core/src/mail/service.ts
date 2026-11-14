@@ -36,7 +36,6 @@ import {
   mailSnippet,
   oneLineMailField,
   type FetchedMail,
-  type MailFlagOp,
   type MailFolderInfo,
   type MailImap,
   type MailImapOpener,
@@ -1279,7 +1278,7 @@ export class MailService {
     const path = cleanFolderPath(rawPath, label);
     const folders = await this.#withAccount(account, (client) => client.listFolders());
     const lower = path.toLowerCase();
-    let meta: MailFolderInfo | null = null;
+    let meta: MailFolderInfo | null;
     if (lower === 'inbox') {
       meta = folders.find((folder) => folder.path.toUpperCase() === 'INBOX') ?? null;
     } else {

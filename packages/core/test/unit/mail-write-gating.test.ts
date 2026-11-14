@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { buildMailTools } from '../../src/tools/mail-tools.js';
 import type { MailService } from '../../src/mail/service.js';
 import type { RunIdentity, ToolDefinition } from '../../src/agent/types.js';

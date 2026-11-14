@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createTestStack, makeBot, openDirect, waitFor, type TestStack } from '@kepcup/testkit';
 import type { AppNoticePayload } from '@kepcup/shared';
 import type { JobsService, EnqueueJobInput } from '../../src/domain/jobs.js';
-import { MailService, type MailServiceDeps } from '../../src/mail/service.js';
+import { MailService } from '../../src/mail/service.js';
 import {
   FakeImapServer,
   FakeSmtpServer,
@@ -405,7 +405,7 @@ describe('binding and taint (D144)', () => {
   it('refuses ops on an unbound account with MAIL_NOT_BOUND', async () => {
     const local = await setup();
     const bot = await makeBot(local.stack.core, '甲');
-    const direct = await openDirect(local.stack.core, bot.id);
+    await openDirect(local.stack.core, bot.id);
     await accountFor(local, bot.id);
     const other = await makeBot(local.stack.core, '乙');
     const otherDirect = await openDirect(local.stack.core, other.id);
