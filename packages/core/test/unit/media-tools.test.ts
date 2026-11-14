@@ -188,7 +188,9 @@ describe('生成产物的确定性投递（GeneratedMediaDelivery）', () => {
     expect(result.content).not.toContain('请用 send_message');
     // 不把绝对路径回给模型——它只会把路径复述给用户（噪声）。
     expect(result.content).not.toContain(workspace);
-    expect(readFileSync(path.join(workspace, '.generated', 'cat.png')).toString()).toBe('png-bytes');
+    expect(readFileSync(path.join(workspace, '.generated', 'cat.png')).toString()).toBe(
+      'png-bytes',
+    );
   });
 
   it('generate_speech：同样自动投递', async () => {
@@ -490,5 +492,98 @@ describe('understand_image', () => {
     const result = await tool.execute({ images: ['att_shot'], prompt: 'x' }, ctx());
     expect(result.ok).toBe(false);
     expect(result.errorCode).toBe(TOOL_SETUP_REQUIRED);
+  });
+});
+
+describe('文件卡登记：已投递的生成媒体不再列出（recordUndeliveredFiles）', () => {
+  it('generate_image 全部投递成功 → 不登记文件卡（附件是持久副本，源文件是临时产物）', async () => {
+    const workspace = path.join(root, 'ws-record-delivered');
+    const recorded: string[] = [];
+    const tools = buildImageTools({
+      identity,
+      media: facade({
+        generateImage: async () => ({
+          images: [{ b64: Buffer.from('png-bytes').toString('base64') }],
+        }),
+      }),
+      workspacePath: workspace,
+      attachments: attachmentsFake({}),
+      gateway: gatewayFake(root),
+      recordFile: (target) => recorded.push(target),
+      delivery: {
+        send: (files) => ({ delivered: files, failed: [] }),
+      },
+    });
+    const image = tools.find((tool) => tool.name === 'generate_image')!;
+    await image.execute({ prompt: '一只猫', file_name: 'cat' }, ctx());
+    expect(recorded).toEqual([]);
+  });
+
+  it('generate_image 部分投递失败 → 只登记未投递的文件', async () => {
+    const workspace = path.join(root, 'ws-record-partial');
+    const recorded: string[] = [];
+    const tools = buildImageTools({
+      identity,
+      media: facade({
+        generateImage: async () => ({
+          images: [
+            { b64: Buffer.from('a').toString('base64') },
+            { b64: Buffer.from('b').toString('base64') },
+          ],
+        }),
+      }),
+      workspacePath: workspace,
+      attachments: attachmentsFake({}),
+      gateway: gatewayFake(root),
+      recordFile: (target) => recorded.push(target),
+      delivery: {
+        send: (files) => ({
+          delivered: [files[0]!],
+          failed: [{ path: files[1]!, reason: '文件过大' }],
+        }),
+      },
+    });
+    const image = tools.find((tool) => tool.name === 'generate_image')!;
+    await image.execute({ prompt: 'x', file_name: 'p', n: 2 }, ctx());
+    expect(recorded).toEqual([path.join(workspace, '.generated', 'p-2.png')]);
+  });
+
+  it('generate_speech 投递全部失败 → 照常登记（用户还需要从文件卡找到它）', async () => {
+    const workspace = path.join(root, 'ws-record-failed');
+    const recorded: string[] = [];
+    const tools = buildSpeechTools({
+      identity,
+      media: facade(),
+      workspacePath: workspace,
+      attachments: attachmentsFake({}),
+      gateway: gatewayFake(root),
+      recordFile: (target) => recorded.push(target),
+      delivery: {
+        send: (files) => ({ delivered: [], failed: [{ path: files[0]!, reason: '没有读取权限' }] }),
+      },
+    });
+    const speech = tools.find((tool) => tool.name === 'generate_speech')!;
+    await speech.execute({ text: '你好', file_name: 'g' }, ctx());
+    expect(recorded).toEqual([path.join(workspace, '.generated', 'g.mp3')]);
+  });
+
+  it('没有 delivery（精简装配）→ 全部登记，行为不变', async () => {
+    const workspace = path.join(root, 'ws-record-no-delivery');
+    const recorded: string[] = [];
+    const tools = buildImageTools({
+      identity,
+      media: facade({
+        generateImage: async () => ({
+          images: [{ b64: Buffer.from('png-bytes').toString('base64') }],
+        }),
+      }),
+      workspacePath: workspace,
+      attachments: attachmentsFake({}),
+      gateway: gatewayFake(root),
+      recordFile: (target) => recorded.push(target),
+    });
+    const image = tools.find((tool) => tool.name === 'generate_image')!;
+    await image.execute({ prompt: '一只猫', file_name: 'cat' }, ctx());
+    expect(recorded).toEqual([path.join(workspace, '.generated', 'cat.png')]);
   });
 });

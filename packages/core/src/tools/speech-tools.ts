@@ -5,7 +5,11 @@ import { Type } from 'typebox';
 import { AppError, TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
 import { truncateToBudget } from '../agent/tokens.js';
 import { TOOL_SETUP_REQUIRED, type MediaToolFacade } from './image-tools.js';
-import { mediaDeliveryResult, type GeneratedMediaDelivery } from './media-delivery.js';
+import {
+  mediaDeliveryResult,
+  recordUndeliveredFiles,
+  type GeneratedMediaDelivery,
+} from './media-delivery.js';
 import { resolveMediaSource } from './media-source.js';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
 import type { AttachmentsService } from '../domain/attachments.js';
@@ -122,13 +126,15 @@ export function buildSpeechTools(input: {
       if (saved === null) {
         return { ok: false, content: '语音保存失败：内容为空', errorCode: 'PROVIDER_UNAVAILABLE' };
       }
-      input.recordFile?.(saved);
       if (input.delivery !== undefined) {
         // 确定性投递：音频立即作为消息附件发进对话（任务内为进度消息）。
         // 全部送达才不回路径；失败则交还路径与原因供模型补救。
         const outcome = input.delivery.send([saved], '');
+        // 已贴进对话的不登记文件卡（附件是持久副本，workspace 源文件是临时产物）。
+        recordUndeliveredFiles([saved], outcome, input.recordFile);
         return mediaDeliveryResult({ generated: '语音', saved: [saved], outcome });
       }
+      recordUndeliveredFiles([saved], null, input.recordFile);
       return {
         ok: true,
         content: `已生成语音并保存到 workspace：\n${saved}\n请用 send_message 的 attachment_paths 把这个文件发给用户。`,
@@ -265,13 +271,15 @@ export function buildSpeechTools(input: {
           if (saved === null) {
             return { ok: false, content: '视频保存失败：内容为空', errorCode: 'INTERNAL' };
           }
-          input.recordFile?.(saved);
           if (input.delivery !== undefined) {
             // 确定性投递：视频立即作为消息附件发进对话（任务内为进度消息）。
             // 全部送达才不回路径；失败（如超过附件上限）则交还路径与原因供模型补救。
             const outcome = input.delivery.send([saved], '');
+            // 已贴进对话的不登记文件卡（附件是持久副本，workspace 源文件是临时产物）。
+            recordUndeliveredFiles([saved], outcome, input.recordFile);
             return mediaDeliveryResult({ generated: '视频', saved: [saved], outcome });
           }
+          recordUndeliveredFiles([saved], null, input.recordFile);
           return {
             ok: true,
             content: `已生成视频并保存到 workspace：\n${saved}\n请用 send_message 的 attachment_paths 把这个文件发给用户。`,
