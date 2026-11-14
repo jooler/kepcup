@@ -45,8 +45,11 @@
 >
   <div class="flex items-start gap-2">
     <PauseCircle class="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
-    <div class="min-w-0 grid gap-1">
-      <p class="whitespace-pre-wrap">{'text' in message.content ? message.content.text : ''}</p>
+    <!-- minmax(0,1fr)：单列 auto 轨道会被长 token 的 min-content 撑开，先收死轨道 -->
+    <div class="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1">
+      <p class="overflow-x-auto whitespace-pre-wrap">
+        {'text' in message.content ? message.content.text : ''}
+      </p>
       {#if episode?.status === 'paused' && episode.pendingCount > 0}
         <p class="text-xs text-muted-foreground">
           {t('episode.pendingHint', { count: episode.pendingCount })}

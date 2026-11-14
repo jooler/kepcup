@@ -59,7 +59,10 @@
   data-testid="setup-path-card"
   data-answered={answeredText === null ? 'false' : 'true'}
 >
-  <div class="text-sm font-medium" data-testid="setup-path-question">{question}</div>
+  <!-- 访谈提问是确定性文案，仍兜底长 token：放不下时横向滚动，不撑破气泡 -->
+  <div class="overflow-x-auto text-sm font-medium" data-testid="setup-path-question">
+    {question}
+  </div>
   {#if answeredText !== null}
     <div
       class="flex items-center justify-between gap-2 rounded-lg border border-primary/20 bg-background px-3 py-2 text-sm"

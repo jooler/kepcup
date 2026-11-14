@@ -35,7 +35,11 @@
         {from || t('mail.card.unknownFrom')} · {subject || t('mail.card.noSubject')}
       </p>
       {#if summary && open}
-        <p class="mt-2 whitespace-pre-wrap text-xs text-muted-foreground">{summary}</p>
+        <!-- 摘要是外部邮件原文：长 URL 这类无断行机会的 token 不折行，由容器
+             横向滚动承接，不戳破卡片；正常文本照旧在空格 / 换行处折行 -->
+        <p class="mt-2 overflow-x-auto text-xs whitespace-pre-wrap text-muted-foreground">
+          {summary}
+        </p>
       {/if}
       {#if summary.length > 0}
         <div class="mt-2 flex gap-2">
