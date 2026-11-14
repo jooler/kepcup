@@ -10,6 +10,8 @@ export interface FetchedMail {
   date: string;
   text: string;
   attachments: MailAttachmentMeta[];
+  /** 当前 flags（\Seen 等 + 自定义关键字）；服务器不给时缺省。 */
+  flags?: string[];
 }
 
 export interface MailAttachmentMeta {
@@ -27,6 +29,8 @@ export interface MailSearchQuery {
   unseen?: boolean;
   /** 含本 UID。 */
   minUid?: number;
+  /** 命中该关键字（自定义标签 / keyword）的邮件。 */
+  keyword?: string;
 }
 
 /** SELECT INBOX 的结果。`unseen` 是未读邮件的数量（STATUS UNSEEN），不是 SELECT 里 [UNSEEN n] 的序号。 */
@@ -37,9 +41,38 @@ export interface MailboxState {
   unseen: number | null;
 }
 
+/** 一封信当前的 flags：系统旗标（\Seen 等）加自定义关键字（标签）。 */
+export interface MailFlagsEntry {
+  uid: number;
+  flags: string[];
+}
+
+/** LIST 出来的一个文件夹。specialUse 是 '\Drafts' 这类 special-use 旗标，识别不了为 null。 */
+export interface MailFolderInfo {
+  path: string;
+  name: string;
+  specialUse: string | null;
+  delimiter: string | null;
+  /** 服务器没标 \Noselect。 */
+  selectable: boolean;
+}
+
+/** MOVE / COPY 的结果：UIDPLUS 服务器给的新旧 UID 对照；没有就 null（Bot 只知道信过去了）。 */
+export interface MailMoveResult {
+  uidMap: Record<number, number> | null;
+}
+
+/** STORE 的操作方向。 */
+export type MailFlagOp = 'add' | 'remove' | 'set';
+
 export interface MailImap {
   readonly capabilities: readonly string[];
+  /** 读写 SELECT INBOX（收信主循环和写操作都挂在这条会话上）。 */
   selectInbox(): Promise<MailboxState>;
+  /** 读写 SELECT 任意文件夹（浏览 / 标记子文件夹用）。 */
+  select(path: string): Promise<MailboxState>;
+  /** 当前 SELECT 的文件夹路径；没选中为 null。 */
+  selectedPath(): string | null;
   /**
    * 订阅连接级错误（socket 断开、协议错误等库在空闲时 emit 的 `error`）。
    * 返回取消订阅函数；连接 close 后所有订阅自动清掉。
@@ -48,6 +81,28 @@ export interface MailImap {
   search(query: MailSearchQuery): Promise<number[]>;
   /** `withSource` 为 false 时只取信封，text 为空。 */
   fetch(uids: number[], withSource: boolean): Promise<FetchedMail[]>;
+  /** 批量取 flags（标签列表 / 状态核对）。 */
+  fetchFlags(uids: number[]): Promise<MailFlagsEntry[]>;
+  /**
+   * STORE flags。返回 false 表示服务器把全部目标旗标拒了（PERMANENTFLAGS 不含），
+   * 部分成功仍算 true——库层面只回一个布尔，逐旗标结果拿不到。
+   */
+  storeFlags(uids: number[], op: MailFlagOp, flags: string[]): Promise<boolean>;
+  /** MOVE（服务器没有 MOVE 能力时库自动 COPY + 删除回退）。 */
+  move(uids: number[], destination: string): Promise<MailMoveResult>;
+  /**
+   * \Deleted + EXPUNGE（硬删除）。没有 UIDPLUS 的服务器上是全箱 EXPUNGE，
+   * 会把别的客户端挂起的删除一起收掉——调用方必须先确认 capabilities 里有 UIDPLUS。
+   */
+  deleteMessages(uids: number[]): Promise<boolean>;
+  /** APPEND 原始 RFC822 到指定文件夹（存草稿）。返回新 uid；服务器不给为 null。 */
+  append(path: string, source: Buffer, flags: string[]): Promise<number | null>;
+  /** 列出全部文件夹（LIST + special-use 归类）。 */
+  listFolders(): Promise<MailFolderInfo[]>;
+  /** 已存在不算错（created=false）。 */
+  createFolder(path: string): Promise<{ created: boolean }>;
+  renameFolder(path: string, newPath: string): Promise<void>;
+  deleteFolder(path: string): Promise<void>;
   idle(signal: AbortSignal): Promise<'exists' | 'timeout' | 'close'>;
   noop(): Promise<void>;
   close(): Promise<void>;

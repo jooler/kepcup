@@ -167,6 +167,16 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   mail_request_setup: 'local',
   /** 发出去的信收不回来。 */
   mail_send: 'external',
+  /**
+   * D144 邮箱内部写操作：改的是用户自己邮箱在服务器上的状态（已读旗标、标签、
+   * 位置、文件夹）。可逆但确实改了外部状态，按 external 记台账。
+   */
+  mail_mark: 'external',
+  mail_tag: 'external',
+  mail_move: 'external',
+  mail_delete: 'external',
+  mail_draft: 'external',
+  mail_folders: 'external',
 
   // --- 联网读取与媒体（调用云端服务，但不改外部状态；重做只多花费用）---
   web_search: 'none',

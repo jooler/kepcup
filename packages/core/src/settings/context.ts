@@ -123,6 +123,13 @@ export const UNTRUSTED_TOOLS: ReadonlySet<string> = new Set([
   'mail_list',
   'mail_read',
   'mail_search',
+  // D144：写操作回执可能回显服务器错误文本与服务器侧文件夹名（外部内容），按不可信处理。
+  'mail_mark',
+  'mail_tag',
+  'mail_move',
+  'mail_delete',
+  'mail_draft',
+  'mail_folders',
   'get_attachment',
   'understand_image',
   'transcribe_audio',

@@ -17,13 +17,26 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 
 /**
- * D91 P2 (design 40 §2.3, §6): the five mailbox tools are gated on the bot's bound mailboxes
+ * D91 P2 (design 40 §2.3, §6): the mailbox tools are gated on the bot's bound mailboxes (D144: 11 read/write tools)
  * (`mail_request_setup` is always there — a bot can take on more mailboxes), and a custom MCP's
  * `description` reaches the `<capabilities>` section. Real core + mock model.
  */
 
 const stacks: TestStack[] = [];
-const MAIL_FIVE = ['mail_accounts', 'mail_list', 'mail_read', 'mail_search', 'mail_send'];
+// D144 起，绑定的 Bot 拿到全部 11 个读写工具（邮箱内部写操作随包）；未绑定 / 门控时一个都不该出现。
+const MAIL_TOOLS = [
+  'mail_accounts',
+  'mail_list',
+  'mail_read',
+  'mail_search',
+  'mail_mark',
+  'mail_tag',
+  'mail_move',
+  'mail_delete',
+  'mail_draft',
+  'mail_folders',
+  'mail_send',
+];
 
 afterEach(async () => {
   for (const stack of stacks.splice(0)) {
@@ -139,7 +152,7 @@ describe('D91 P2: mailbox gating (design 40 §6)', () => {
     };
   };
 
-  it('no bound mailbox → only mail_request_setup (with its rule); after binding → the five tools AND mail_request_setup, the rule stays', async () => {
+  it('no bound mailbox → only mail_request_setup (with its rule); after binding → the read/write tools AND mail_request_setup, the rule stays', async () => {
     const env = await imapSmtp();
     const stack = await createTestStack();
     stacks.push(stack);
@@ -150,14 +163,14 @@ describe('D91 P2: mailbox gating (design 40 §6)', () => {
       const unbound = await turn(stack, conv.id, '你好');
       const unboundTools = toolNamesOf(unbound);
       expect(unboundTools).toContain('mail_request_setup');
-      for (const name of MAIL_FIVE) expect(unboundTools).not.toContain(name);
+      for (const name of MAIL_TOOLS) expect(unboundTools).not.toContain(name);
       expect(systemOf(unbound)).toContain('mail_request_setup');
 
       // Binding finishes while the owning plugin is NOT enabled for this bot:
-      // the gated account stays invisible — no five tools, no <mail_accounts> (P2 §3.5).
+      // the gated account stays invisible — no mailbox tools, no <mail_accounts> (P2 §3.5).
       await env.createAccount(stack.core, 'bot@example.com', bot.id);
       const gated = await turn(stack, conv.id, '再看看');
-      for (const name of MAIL_FIVE) expect(toolNamesOf(gated)).not.toContain(name);
+      for (const name of MAIL_TOOLS) expect(toolNamesOf(gated)).not.toContain(name);
       expect(systemOf(gated)).not.toContain('bot@example.com');
 
       // Enabling the plugin for the bot (the setup card's quick-enable; the Bot panel
@@ -168,7 +181,7 @@ describe('D91 P2: mailbox gating (design 40 §6)', () => {
       });
       const bound = await turn(stack, conv.id, '再看看');
       const boundTools = toolNamesOf(bound);
-      for (const name of MAIL_FIVE) expect(boundTools).toContain(name);
+      for (const name of MAIL_TOOLS) expect(boundTools).toContain(name);
       expect(boundTools).toContain('mail_request_setup');
       expect(systemOf(bound)).toContain('mail_request_setup');
       expect(systemOf(bound)).toContain('添加（更多）邮箱');

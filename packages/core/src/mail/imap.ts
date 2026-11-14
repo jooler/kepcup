@@ -11,20 +11,25 @@ import {
   parseMailSource,
   safeIsoDate,
   type FetchedMail,
+  type MailFlagOp,
+  type MailFolderInfo,
+  type MailFlagsEntry,
   type MailImap,
+  type MailMoveResult,
   type MailboxState,
   type MailImapOpenInput,
   type MailSearchQuery,
 } from './message.js';
 
 /**
- * imapflow 适配（D84）。
+ * imapflow 适配（D84；写操作见 D144）。
  *
  * - 连接前 resolveMailHost 钉死 IP，TLS SNI 仍用原主机名，避免 DNS 重绑定。
  * - `starttls` 设 doSTARTTLS=true，服务器不升级就失败，绝不落明文。
  * - IMAP ID（RFC 2971，`name=KepCup`）：库对广告了 ID 的服务器自己会发；网易系不广告却要求，这里补发。
  * - 连接级 `error` 事件在 open 时就接住，转给会话层；绝不让它变成未处理异常。
  * - list/search 用 UID 窗口，不跑 SEARCH ALL。
+ * - SELECT 一律读写（EXAMINE 只读的会话里 STORE 会被静默丢旗标）；写命令全部 `{uid: true}`。
  */
 
 const SOURCE_MAX_BYTES = 512 * 1024;
@@ -161,10 +166,14 @@ class ImapflowMail implements MailImap {
   }
 
   async selectInbox(): Promise<MailboxState> {
-    const mailbox = await this.client.mailboxOpen('INBOX', { readOnly: true });
+    return await this.select('INBOX');
+  }
+
+  async select(path: string): Promise<MailboxState> {
+    const mailbox = await this.client.mailboxOpen(path);
     // mailbox.unseen 是 SELECT 的 [UNSEEN n]——第一封未读的序号，不是数量；数量要用 STATUS。
     const unseen = await this.client
-      .status('INBOX', { unseen: true })
+      .status(path, { unseen: true })
       .then((status) => (status && typeof status.unseen === 'number' ? status.unseen : null))
       // 个别服务器不允许对已选中的邮箱 STATUS：未读数未知，不影响收信。
       .catch(() => null);
@@ -174,6 +183,11 @@ class ImapflowMail implements MailImap {
       uidValidity: validity !== null && Number.isSafeInteger(validity) && validity > 0 ? validity : null,
       unseen,
     };
+  }
+
+  selectedPath(): string | null {
+    const mailbox = this.client.mailbox;
+    return typeof mailbox === 'object' && mailbox !== null ? mailbox.path : null;
   }
 
   async search(query: MailSearchQuery): Promise<number[]> {
@@ -187,6 +201,7 @@ class ImapflowMail implements MailImap {
       uid: `${lower}:*`,
     };
     if (query.unseen === true) criteria.seen = false;
+    if (query.keyword) criteria.keyword = query.keyword;
     if (query.from) criteria.from = query.from;
     if (query.to) criteria.to = query.to;
     if (query.subject) criteria.subject = query.subject;
@@ -201,6 +216,7 @@ class ImapflowMail implements MailImap {
     const query = {
       uid: true,
       envelope: true,
+      flags: true,
       internalDate: true,
       ...(withSource ? { source: { start: 0, maxLength: SOURCE_MAX_BYTES } } : {}),
     };
@@ -214,6 +230,73 @@ class ImapflowMail implements MailImap {
       }
     }
     return out;
+  }
+
+  async fetchFlags(uids: number[]): Promise<MailFlagsEntry[]> {
+    if (uids.length === 0) return [];
+    const out: MailFlagsEntry[] = [];
+    for await (const message of this.client.fetch(uids, { uid: true, flags: true }, { uid: true })) {
+      out.push({ uid: message.uid, flags: message.flags ? [...message.flags] : [] });
+    }
+    return out;
+  }
+
+  async storeFlags(uids: number[], op: MailFlagOp, flags: string[]): Promise<boolean> {
+    if (uids.length === 0) return true;
+    const options = { uid: true };
+    if (op === 'add') return await this.client.messageFlagsAdd(uids, flags, options);
+    if (op === 'remove') return await this.client.messageFlagsRemove(uids, flags, options);
+    return await this.client.messageFlagsSet(uids, flags, options);
+  }
+
+  async move(uids: number[], destination: string): Promise<MailMoveResult> {
+    if (uids.length === 0) return { uidMap: null };
+    const result = await this.client.messageMove(uids, destination, { uid: true });
+    if (result === false) return { uidMap: null };
+    const map: Record<number, number> = {};
+    if (result.uidMap instanceof Map) {
+      for (const [source, target] of result.uidMap) map[source] = target;
+    }
+    return { uidMap: Object.keys(map).length > 0 ? map : null };
+  }
+
+  async append(path: string, source: Buffer, flags: string[]): Promise<number | null> {
+    const result = await this.client.append(path, source, flags);
+    if (result === false || typeof result.uid !== 'number') return null;
+    return result.uid;
+  }
+
+  async deleteMessages(uids: number[]): Promise<boolean> {
+    if (uids.length === 0) return true;
+    // 库的 messageDelete = STORE \Deleted + UID EXPUNGE（UIDPLUS）/ 普通 EXPUNGE（否则，
+    // 全箱范围——调用方必须已经确认 UIDPLUS）。返回 false = \Deleted 都被服务器拒了。
+    return await this.client.messageDelete(uids, { uid: true });
+  }
+
+  async listFolders(): Promise<MailFolderInfo[]> {
+    const listed = await this.client.list();
+    return listed
+      .filter((entry) => typeof entry.path === 'string')
+      .map((entry) => ({
+        path: entry.path,
+        name: entry.name ?? entry.path,
+        specialUse: entry.specialUse ?? null,
+        delimiter: entry.delimiter ?? null,
+        selectable: !entry.flags.has('\\Noselect'),
+      }));
+  }
+
+  async createFolder(path: string): Promise<{ created: boolean }> {
+    const result = await this.client.mailboxCreate(path);
+    return { created: result.created === true };
+  }
+
+  async renameFolder(path: string, newPath: string): Promise<void> {
+    await this.client.mailboxRename(path, newPath);
+  }
+
+  async deleteFolder(path: string): Promise<void> {
+    await this.client.mailboxDelete(path);
   }
 
   async idle(signal: AbortSignal): Promise<'exists' | 'timeout' | 'close'> {
@@ -299,6 +382,7 @@ async function toFetchedMail(message: FetchedMessage, withSource: boolean): Prom
     date: safeIsoDate(envelope?.date) || safeIsoDate(message.internalDate) || parsed?.date || '',
     text: parsed?.text ?? '',
     attachments: parsed?.attachments ?? [],
+    ...(message.flags !== undefined ? { flags: [...message.flags] } : {}),
   };
 }
 
