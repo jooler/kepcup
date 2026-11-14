@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AppConnectionStatusPayload, McpServer } from '@kepcup/shared';
 import {
+  buildPluginFixture,
   createTestStack,
   listRuns,
   makeBot,
@@ -339,4 +340,70 @@ describe('stored-server baseline across an upgrade restart', () => {
     const again = await start({ home, keystore, toolLockTrustFirstList: false });
     expect(again.services.apps!.store.isBaselinePending(customConnectionId('srv2'))).toBe(false);
   }, 120_000);
+});
+
+/**
+ * 插件 MCP 配置完成后的自动启用（连接 → 列工具 → 批准全部）：安装（projector）触发
+ * `enableAllTools`，无需任何手动复核，工具即暴露给启用集里的 Bot。真实拉起 mcpb 的
+ * stdio server（trustFirstList 显式关闭，批准只能来自自动启用）。手动链路不变，见上方用例。
+ */
+describe('plugin install auto-enables its tools (config-complete → approve all)', () => {
+  it.skipIf(process.platform === 'win32')(
+    'mcpb 插件安装后全部工具已批准、可被启用该插件的 Bot 解析',
+    async () => {
+      const stack = await start({
+        toolLockTrustFirstList: false,
+        mcpbRuntimes: { node: { command: process.execPath, version: '24.21.0' } },
+      });
+      const dir = await mkdtemp(path.join(tmpdir(), 'tool-lock-plugin-'));
+      tempDirs.push(dir);
+      const built = await buildPluginFixture({ dir, mcpb: [{ id: 'tools' }] });
+      const { plugin } = (await stack.core.rpc.call('plugins.install', {
+        source: { kind: 'file', path: built.path },
+        sha256: built.sha256,
+        userConfig: {},
+      })) as { plugin: { id: string } };
+
+      // server 已落地（projector），自动启用随后把连接推到 connected。
+      const serverId = await waitFor(async () => {
+        const settings = (await stack.core.rpc.call('settings.get')) as {
+          mcpServers: Array<{ id: string; source?: { kind: string; pluginId?: string } }>;
+        };
+        return (
+          settings.mcpServers.find(
+            (entry) => entry.source?.kind === 'plugin' && entry.source.pluginId === plugin.id,
+          )?.id ?? null
+        );
+      }, { label: 'plugin server landed' });
+      const connId = customConnectionId(serverId);
+      await waitFor(
+        () => (stack.services.apps!.store.get(connId)?.status === 'connected' ? true : null),
+        { label: 'auto-enable finished (connected)', timeoutMs: 30_000 },
+      );
+
+      // 全部工具已批准：echo / read_env / argv（trustFirstList 关闭，批准只能来自自动启用）。
+      expect(
+        stack.lock.list(connId).map((row) => [row.toolName, row.state]).sort(),
+      ).toEqual([
+        ['argv', 'approved'],
+        ['echo', 'approved'],
+        ['read_env', 'approved'],
+      ]);
+
+      // Bot 面：启用集含该插件即可解析出全部工具（无 locked）。
+      const resolution = await resolveMcpToolEntries({
+        servers: stack.mcp.serversForBot([], new Set([plugin.id])),
+        mcp: stack.mcp,
+        logger,
+        toolFilter: stack.mcp.toolFilter,
+      });
+      expect(resolution.locked).toEqual([]);
+      expect(resolution.entries.map((entry) => entry.name).sort()).toEqual([
+        `mcp_${serverId}_argv`,
+        `mcp_${serverId}_echo`,
+        `mcp_${serverId}_read_env`,
+      ]);
+    },
+    90_000,
+  );
 });

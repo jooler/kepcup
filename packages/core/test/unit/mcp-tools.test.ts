@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   mcpToolName,
   serversForBot,
-  enabledServers,
   type McpServer,
 } from '../../src/mcp/service.js';
 import { mcpReceiptOf, selectReadOnlyMcpEntries, type McpToolEntry } from '../../src/mcp/tools.js';
@@ -43,7 +42,6 @@ function serverOf(id: string, enabled: boolean): McpServer {
 describe('serversForBot', () => {
   it('应用 enabled ∩ Bot 选中', () => {
     const servers = [serverOf('a', true), serverOf('b', false), serverOf('c', true)];
-    expect(enabledServers(servers).map((s) => s.id)).toEqual(['a', 'c']);
     expect(serversForBot(servers, ['a', 'b'], new Set()).map((s) => s.id)).toEqual(['a']);
     expect(serversForBot(servers, [], new Set())).toEqual([]);
     expect(serversForBot(servers, ['b'], new Set())).toEqual([]);

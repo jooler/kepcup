@@ -22,7 +22,7 @@ import type { SettingsService } from '../domain/settings.js';
 import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
 import type { McpConnectionSource, McpService } from '../mcp/service.js';
-import type { AppAuditor } from './audit.js';
+import type { AppAuditor, AppToolsReviewTrigger } from './audit.js';
 import type {
   AccountHint,
   CatalogFlowBegin,
@@ -771,6 +771,38 @@ export class AppConnectionsService {
     const approved = toolLock.approveByHash(connectionId, input.toolHashes);
     if (approved.length > 0) {
       auditor.auditAppToolsReview({ connectionId, connectorId: connectionId, approved });
+    }
+    return { approved, pending: toolLock.pendingSummary(connectionId) };
+  }
+
+  /**
+   * 插件 MCP 配置完成后的自动启用（实例 create/update、mcpb 首次安装；触发点在
+   * materializer / projector，fire-and-forget）：连接并列出工具、登记锁定后批准**全部待复核**
+   * 工具 —— 与设置页「测试 → 保存」同语义，只是无需用户逐步点击，Bot 分配后立即可用。
+   * 此后服务端新增 / 变更的工具仍走锁定复核（防 rug-pull 不变）；调用面审批（审批卡 /
+   * autoApprove / 逐工具 policy）不受影响。配置已被删除时静默返回（自动启用晚于删除是合法竞态）。
+   */
+  async enableAllTools(input: {
+    serverId: string;
+    trigger: AppToolsReviewTrigger;
+  }): Promise<{ approved: string[]; pending: { added: number; changed: number } }> {
+    const { settings, mcp, toolLock, auditor } = this.#deps;
+    const server = settings.get().mcpServers.find((entry) => entry.id === input.serverId);
+    if (server === undefined || !server.enabled || server.auth === 'oauth') {
+      // 已删除（竞态）/ 被停用（本就不可用）/ OAuth（首连复核归授权流程管）：
+      // 不需要自动启用，也不算错误。
+      return { approved: [], pending: { added: 0, changed: 0 } };
+    }
+    const connectionId = customConnectionId(server.id);
+    await mcp.listTools(server, { countFailure: false, refresh: true });
+    const approved = toolLock.approve(connectionId, 'all');
+    if (approved.length > 0) {
+      auditor.auditAppToolsReview({
+        connectionId,
+        connectorId: connectionId,
+        approved,
+        trigger: input.trigger,
+      });
     }
     return { approved, pending: toolLock.pendingSummary(connectionId) };
   }

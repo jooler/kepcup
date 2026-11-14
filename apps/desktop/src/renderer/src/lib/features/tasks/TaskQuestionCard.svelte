@@ -113,7 +113,8 @@
         : t('task.questionFromBot', { name: ownerName })}</span
     >
   </div>
-  <div class="font-medium whitespace-pre-wrap" data-testid="task-question-text">
+  <!-- 提问是 Bot 文案，可能内嵌长 URL：放不下时横向滚动，不撑破卡片 -->
+  <div class="overflow-x-auto font-medium whitespace-pre-wrap" data-testid="task-question-text">
     {content.text ?? ''}
   </div>
   {#if answer !== null}

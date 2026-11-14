@@ -111,9 +111,11 @@
       </div>
     </div>
     {#if watchEvent === 'alert' && watchSummary}
+      <!-- 提醒摘要含外部网页内容，长 URL 由容器横向滚动承接（展开态）；
+           折叠态 line-clamp 自带 overflow:hidden，两者不叠加 -->
       <p
         class="mt-2 rounded-md bg-muted/60 px-2 py-1 text-xs whitespace-pre-wrap {expanded
-          ? ''
+          ? 'overflow-x-auto'
           : 'line-clamp-6'}"
         data-testid="watch-card-summary"
       >

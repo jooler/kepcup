@@ -211,4 +211,21 @@ describe('plugin install form helpers', () => {
       null,
     );
   });
+
+  it('treats instance-source servers (plugin tool services) as plugin-managed', () => {
+    // P4-M2 实例落地：腾讯文档这类工具服务的 server（http 模板 + Authorization），
+    // 与固定投影一样受管——结构化字段由 core 守卫看护，渲染层同口径隐藏编辑入口。
+    const instance: McpServer = {
+      id: 'plg_d79c1488bbcd',
+      name: '腾讯文档',
+      transport: 'http',
+      url: 'https://docs.qq.com/openapi/mcp',
+      enabled: true,
+      auth: 'headers',
+      headers: { Authorization: 'secret:header:Authorization' },
+      oauth: null,
+      source: { kind: 'instance', pluginId: 'app.kepcup/mcp-tencent-docs', instanceId: 'docs' },
+    } as unknown as McpServer;
+    expect(managedServerPluginId(instance)).toBe('app.kepcup/mcp-tencent-docs');
+  });
 });

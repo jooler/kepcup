@@ -213,6 +213,9 @@ html.platform-mac main {
     scrollbar-color: color-mix(in oklch, var(--muted-foreground) 35%, transparent) transparent;
   }
 }
+button {
+  @apply cursor-pointer;
+}
 
 /*
  * 无原生标题栏（macOS hiddenInset）：红绿灯叠在内容左上角，窗口拖拽由

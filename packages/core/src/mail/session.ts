@@ -133,6 +133,10 @@ export class MailSessionHub {
   /**
    * 在该账号的连接上执行一条命令。没有活连接时（暂停、尚未连上）另开短连接。
    * 出口钉死在 openImapflow 内完成，这里不再单独 assert（避免二次解析窗口）。
+   *
+   * 工具命令可能 SELECT 过别的文件夹（浏览、标记子文件夹）：回主循环前必须重选 INBOX，
+   * 否则下一轮 poll 的 UID 搜索会落在错的文件夹上。重选失败就关连接，让主循环按退避重连
+   * ——宁可断线也不能拿着一个选错邮箱的连接继续收信。
    */
   async use<T>(account: MailAccountRecord, fn: (client: MailImap) => Promise<T>): Promise<T> {
     const state = this.#loops.get(account.id);
@@ -146,6 +150,7 @@ export class MailSessionHub {
           return await fn(live);
         } finally {
           state.waiting -= 1;
+          await this.#reselectInbox(account.id, state, live);
         }
       });
     }
@@ -164,6 +169,24 @@ export class MailSessionHub {
       await client.selectInbox();
       return await fn(client);
     } finally {
+      await client.close().catch(() => undefined);
+    }
+  }
+
+  /** 工具命令换过文件夹就重选 INBOX；重选失败关连接（主循环退避重连），错误不再往外抛。 */
+  async #reselectInbox(accountId: string, state: LoopState, client: MailImap): Promise<void> {
+    const current = client.selectedPath();
+    if (current === null || current.toUpperCase() === 'INBOX') return;
+    try {
+      await client.selectInbox();
+    } catch (error) {
+      // 只摘自己这代连接：fn 执行期间主循环可能已重连换代，别把新连接从 state 上摘掉
+      // （与 #connect finally 的守卫同一模式）。后果只是这条旧连接被关闭。
+      if (state.client === client) state.client = null;
+      this.#deps.logger.info(
+        { accountId, error: error instanceof Error ? error.message : String(error) },
+        'mail reselect inbox failed; closing client',
+      );
       await client.close().catch(() => undefined);
     }
   }

@@ -10,6 +10,7 @@ import {
 } from '@kepcup/shared';
 import type { CoreLogger } from '../../infra/logger.js';
 import type { AppDisconnector } from '../../apps/disconnect.js';
+import type { AppToolsReviewTrigger } from '../../apps/audit.js';
 import type { McpService } from '../../mcp/service.js';
 import { mcpDescriptionFor, mcpTierFor } from '../projectors/mcp.js';
 import { pluginServerId } from '../ids.js';
@@ -36,6 +37,14 @@ export interface PluginMcpMaterializerDeps {
   disconnector: Pick<AppDisconnector, 'removeCustomServer'>;
   /** W3 revocation effect: bots using changed servers lose their running tasks. */
   revokeMcpServerChanges(previous: readonly McpServer[], next: readonly McpServer[]): void;
+  /**
+   * 配置完成后的自动启用（连接 → 列工具 → 批准全部，`AppConnectionsService.enableAllTools`）：
+   * create/update 成功落地后 fire-and-forget 调用——注册表互斥锁内不得等待网络。失败由实现方
+   * 记日志即可（工具保持锁定，手动「测试 → 批准」仍然可用）。
+   */
+  autoEnable?:
+    | ((serverId: string, trigger: Extract<AppToolsReviewTrigger, 'instance-create' | 'instance-update'>) => Promise<unknown>)
+    | undefined;
   /** Registry row tier; null (unknown / mid-uninstall) fails closed to `developer`. */
   tierOf(pluginId: string): 'verified' | 'community' | 'developer' | null;
   logger: Pick<CoreLogger, 'info' | 'warn' | 'error'>;
@@ -85,6 +94,20 @@ function resolveUrl(spec: McpTemplateSpec, ctx: InstanceMaterializerContext, fal
 
 export function createMcpMaterializer(deps: PluginMcpMaterializerDeps): InstanceMaterializer {
   const tierOf = (ctx: InstanceMaterializerContext) => deps.tierOf(ctx.pluginId) ?? 'developer';
+
+  /** 配置落地成功后的自动启用（fire-and-forget：互斥锁内不等网络，失败不影响保存结果）。 */
+  const autoEnable = (
+    serverId: string,
+    trigger: Extract<AppToolsReviewTrigger, 'instance-create' | 'instance-update'>,
+  ): void => {
+    if (deps.autoEnable === undefined) return;
+    void deps.autoEnable(serverId, trigger).catch((error: unknown) => {
+      deps.logger.warn(
+        { serverId, trigger, error: error instanceof Error ? error.message : String(error) },
+        'mcp instance auto-enable failed (tools stay locked; manual review still available)',
+      );
+    });
+  };
 
   /** Collects the header secret writes (new values + the values they overwrite). */
   const headerWritesOf = (
@@ -201,6 +224,8 @@ export function createMcpMaterializer(deps: PluginMcpMaterializerDeps): Instance
         revertHeaderWrites(writes);
         throw error;
       }
+      // 配置完成即自动启用（连接 → 列工具 → 批准全部）：Bot 分配后立即可用，无需手动复核。
+      autoEnable(spec.serverId, 'instance-create');
       return { title: optionalString(ctx.values, 'label') ?? ctx.manifest.name };
     },
 
@@ -241,6 +266,9 @@ export function createMcpMaterializer(deps: PluginMcpMaterializerDeps): Instance
       // Network side effect outside the section: drop the cached connection so the
       // next call reconnects with the new endpoint / credentials.
       await deps.mcp.closeServer(spec.serverId);
+      // 凭据 / 端点刚换过：重连测试并重新批准全部待复核工具（含定义已变的），保持「配置
+      // 完成即完整可用」。失败只记日志——工具保持锁定，手动复核仍然可用。
+      autoEnable(spec.serverId, 'instance-update');
       return { title: optionalString(ctx.values, 'label') ?? ctx.manifest.name };
     },
 

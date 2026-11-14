@@ -278,11 +278,26 @@ export const HOST_CAPABILITIES: readonly HostCapabilityDescriptor[] = [
     sharedTools: CAPABILITY_DISCOVERY_TOOLS,
   }),
   // 邮件通道（D84）：IMAP/SMTP，不是 MCP。工具只作用于该 Bot 已绑定的邮箱。
+  // D144：邮箱内部写操作（标记 / 标签 / 移动 / 删除 / 草稿 / 文件夹）随包注入；
+  // mail_send 的审批卡在 MailService 内触发，外部代理同样受它约束。
   pack({
     id: 'mail',
     category: 'host',
     default: 'inject',
-    tools: ['mail_list', 'mail_read', 'mail_search', 'mail_send', 'mail_accounts', 'mail_request_setup'],
+    tools: [
+      'mail_list',
+      'mail_read',
+      'mail_search',
+      'mail_mark',
+      'mail_tag',
+      'mail_move',
+      'mail_delete',
+      'mail_draft',
+      'mail_folders',
+      'mail_send',
+      'mail_accounts',
+      'mail_request_setup',
+    ],
   }),
   // 对话内应用设置（todo/conversational-app-setup.md §5.3 第 7 条，已定）：默认只注入
   // settings_search / settings_read；settings_change 按 Bot 在能力包选项里单独开启

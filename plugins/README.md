@@ -130,11 +130,72 @@ cd infra/cloudflare/directory && npx wrangler deploy
   `1482ed01-0ec3-4990-8889-7f8145c20d43`；线上索引与 23 个包拉回 `--verify` 通过。旧客户端
   现在会在索引层过滤掉 1.1.0，升级宿主后再更新。
 
-### 在线文档平台批次（3 个，2026-11-12 开发；待签名发布）
+### 在线文档平台批次（2 个，2026-11-12 开发；mcp-tencent-docs 已上架，其余待签名发布）
 
-- 工具 3：`mcp-tencent-docs`（腾讯文档，厂商模版：锁定官方 MCP 端点 + `Authorization`
-  token）/ `mcp-feishu`（飞书，通用模版：`url:''`，粘贴个人 MCP 服务地址，`urlSensitive`）/
-  `mcp-yuque`（语雀，内嵌官方 `yuque-mcp` 的 MCPB，token + host 走安装表单）。
+- 工具 2：`mcp-tencent-docs`（腾讯文档，厂商模版：锁定官方 MCP 端点 + `Authorization`
+  token）/ `mcp-feishu`（飞书，通用模版：`url:''`，粘贴个人 MCP 服务地址，`urlSensitive`）。
 - 依赖 P4-M2 的 mcp 实例化（设计 51 §15.7 实施注），`engines.kepcup` 抬到 `>=0.5.11`；
-  未发布前用户可经「从文件夹安装」试用。语雀包先跑 `node plugins/mcp-yuque/build.mjs`
-  生成 `mcp/yuque.mcpb` 再 validate / pack。
+  未发布前用户可经「从文件夹安装」试用。腾讯文档已于 2026-11-14 上架（见下）。
+
+### 学术检索批次（1 个，2026-11-13 开发；2026-11-14 发布）
+
+- 工具 1：`mcp-sciverse`（Sciverse 文献检索，内嵌官方 `sciverse-mcp-server` 的 MCPB，
+  token 走安装表单；`engines.kepcup >=0.5.11`）。包先跑
+  `node plugins/mcp-sciverse/build.mjs` 生成 `mcp/sciverse.mcpb` 再 validate / pack；
+  构建脚本含内容契约校验（入口在位 + `SCIVERSE_API_TOKEN` env 键未被上游更名）。
+- **2026-11-14 上架前修正**：独立审查发现构建脚本把隔离 npm 用的临时 `package.json` /
+  `package-lock.json` 全量打进了发布产物（MCPB 根只应有 `manifest.json` + `node_modules/`）；
+  一并补了 zip 失败清理临时目录与安装版本取证，重建 mcpb（官方包仍解析 1.0.1，无依赖漂移）。
+- 上架流程照旧：26 个插件重打包（既有 25 个对象 sha256 与线上逐字节一致、R2 无需重传），
+  新对象仅 mcp-sciverse（`4cdd2e3b…`，4.4 MiB）。签名索引
+  `generatedAt=2026-11-14T15:15:03.588Z`（严格递增、26 条），生产密钥
+  `kepcup-plugins-2026-1`；R2 上传 1 包后 `wrangler deploy` 上线（Worker version
+  `f119360e-8e74-4d8d-94f0-9ef5407472ea`）。线上索引拉回 `--verify` 通过、26 个包从
+  `pkg.kepcup.com` 全量拉回逐一 sha256 复核通过，索引 / sig / sciverse 包与签名产物
+  逐字节一致。索引 26 条：mcp-feishu 仍属待发布批次，未纳入。
+
+### 邮件插件 1.2.0（2026-11-14 发布，随宿主 D144 邮箱内部写操作）
+
+- 邮件 4 全部升版 `1.2.0`、`engines.kepcup` 抬到 `>=0.5.12`：宿主 D144 给 Bot 补齐了
+  标记已读、标签、移动、硬删除、存草稿与文件夹管理（design 35 §6），插件描述同步加上
+  能力说明；插件清单本身没有新字段，抬 engines 是把「描述宣称的能力」与宿主版本配对，
+  旧宿主留在 1.1.0 不受影响，开发版（0.5.12）恰好满足、可从商店更新。
+- 流程照旧：23 个已上线插件全部重打包（未变的 19 个 sha256 与线上逐字节一致、R2 无需
+  重传），4 个邮件包为新对象（mail-126 `0a010380…` / mail-163 `18b1f7c1…` /
+  mail-generic `1b2a76db…` / mail-qq `d03096ad…`）。签名索引
+  `generatedAt=2026-11-14T05:47:32.779Z`（严格递增、23 条），生产密钥
+  `kepcup-plugins-2026-1`；R2 上传 4 包后 `wrangler deploy` 上线（Worker version
+  `34c3a046-9b99-4158-978f-25afe5989793`）。线上索引拉回 `--verify` 通过、与签名产物
+  逐字节一致，mail-126 从 `pkg.kepcup.com` 下载回本地 sha256 复核一致。
+
+### 阿里企业邮批次（1 个，2026-11-14 发布）
+
+- 新增 `mail-aliyun`（阿里企业邮，阿里云企业邮箱）1.2.0、`engines.kepcup >=0.5.12`（
+  开发版 0.5.12 恰好满足、可从商店安装）：仿照 mail-qq 锁定标准版端点
+  `imap.qiye.aliyun.com:993/ssl` + `smtp.qiye.aliyun.com:465/ssl`，登录用「三方客户端
+  安全密码」（非网页登录密码，管理员需放行三方客户端）；收信模式 `auto`（IDLE 优先、
+  自动回落轮询），`defaultPollSec 300 / minPollSec 120` 对齐 QQ 预设。信创 / 香港 /
+  旧版（mxhichina）地址不锁，走通用邮箱插件。经独立子代理对照官方文档审查后发布。
+- 流程照旧：24 个插件重打包（线上 23 个对象 sha256 逐字节不变、R2 无需重传），新对象仅
+  mail-aliyun（`16cb7f70…`）。签名索引 `generatedAt=2026-11-14T08:59:45.346Z`（严格
+  递增、24 条），生产密钥 `kepcup-plugins-2026-1`；R2 上传 1 包后 `wrangler deploy`
+  上线（Worker version `acbae228-89ff-4292-b62a-7f3fd3635d1b`）。线上索引拉回
+  `--verify` 通过、24 个包从 `pkg.kepcup.com` 全量拉回逐一 sha256 复核通过，索引 / sig /
+  mail-aliyun 包与签名产物逐字节一致。索引 24 条：三个 MCP 工具（mcp-feishu /
+  mcp-tencent-docs / mcp-sciverse）仍属待发布批次，未纳入。
+
+### 腾讯文档上架（1 个，2026-11-14 发布）
+
+- `mcp-tencent-docs` 1.0.3、`engines.kepcup >=0.5.11`（开发版 0.5.12 满足、可从商店
+  安装）发布到官方市场。插件包自 1.0.3（cc2613d7）后无内容改动，本次上架配套的是
+  宿主侧 bcc5d48d：实例工具插件的管理视图补齐「MCP 服务器」区——测试连接（secrets
+  解出 + Bearer 归一化，与真实调用同路径）/ 启停 / 免审批 / 逐工具策略与固定投影插件
+  同一套界面（`managedServerPluginId` 认入 instance 来源）；Bot 侧授权链路实测通过。
+- 流程照旧：25 个插件重打包（既有 24 个对象 sha256 与线上逐字节一致、R2 无需重传），
+  新对象仅 mcp-tencent-docs（`94373930…`，2.5 KiB）。签名索引
+  `generatedAt=2026-11-14T14:57:07.000Z`（严格递增、25 条），生产密钥
+  `kepcup-plugins-2026-1`；R2 上传 1 包后 `wrangler deploy` 上线（Worker version
+  `70398229-ea2f-495f-86be-25079e93af7c`）。线上索引拉回 `--verify` 通过、25 个包从
+  `pkg.kepcup.com` 全量拉回逐一 sha256 复核通过，索引 / sig / 腾讯文档包与签名产物
+  逐字节一致。索引 25 条：mcp-feishu / mcp-sciverse 仍属待发布批次，
+  未纳入。

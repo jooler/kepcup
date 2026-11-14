@@ -40,5 +40,6 @@
     {...userMessage ? USER_OPTIONS : {}}
   />
 {:else}
-  <div class="whitespace-pre-wrap">{fallback}</div>
+  <!-- 管线未就绪的纯文本兜底：与 streamdown 一致，放不下的长 token 横向滚动 -->
+  <div class="overflow-x-auto whitespace-pre-wrap">{fallback}</div>
 {/if}

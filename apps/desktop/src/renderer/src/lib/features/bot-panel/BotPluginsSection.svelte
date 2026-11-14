@@ -677,10 +677,10 @@
                 <p class="text-xs text-muted-foreground">{t('contacts.appsHint')}</p>
               {/if}
               {#if pluginProvides(plugin, 'mail')}
-                <BotMailBindings {botId} />
+                <BotMailBindings {botId} pluginId={plugin.id} />
               {/if}
               {#if pluginProvides(plugin, 'im')}
-                <BotImBindings {botId} />
+                <BotImBindings {botId} pluginId={plugin.id} />
               {/if}
               {#if plugin.providesInstances.includes('mcp')}
                 <!-- P4-M2：实例型插件 = 工具服务逐个勾选授权（写入 `mcp_server_ids`）；
@@ -873,8 +873,10 @@
     </p>
   {/if}
 
-  {#if mailPlugins.length === 0 && legacyMailAccounts.length > 0}
-    <!-- 还没有邮件插件：存量系统账号按系统账号放行（P2 §3.5），勾选控件保持可用。 -->
+  {#if plugins.loaded && mailPlugins.length === 0 && legacyMailAccounts.length > 0}
+    <!-- 还没有邮件插件：存量系统账号按系统账号放行（P2 §3.5），勾选控件保持可用。
+         等 plugins store 加载完再判「无邮件插件」——否则账号先到、插件清单未到时，
+         这块会用未圈定的全量列表短暂带出插件归属账号（瞬态泄漏）。 -->
     <BotMailBindings {botId} />
   {/if}
 

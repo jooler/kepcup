@@ -93,7 +93,7 @@ describe('mail_request_setup', () => {
     expect(names).toEqual([]);
   });
 
-  it('D91: unbound → only mail_request_setup; bound → the five tools plus mail_request_setup', () => {
+  it('D91: unbound → only mail_request_setup; bound → the read/write tools plus mail_request_setup', () => {
     const unbound = toolsWith({ requestSetup: vi.fn() }, []).map((tool) => tool.name);
     expect(unbound).toEqual([MAIL_REQUEST_SETUP_TOOL]);
     const bound = toolsWith({ requestSetup: vi.fn() }, [
@@ -104,6 +104,13 @@ describe('mail_request_setup', () => {
       'mail_list',
       'mail_read',
       'mail_search',
+      // D144：邮箱内部写操作随绑定一起注册。
+      'mail_mark',
+      'mail_tag',
+      'mail_move',
+      'mail_delete',
+      'mail_draft',
+      'mail_folders',
       'mail_send',
       MAIL_REQUEST_SETUP_TOOL,
     ]);

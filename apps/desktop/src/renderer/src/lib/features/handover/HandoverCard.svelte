@@ -236,7 +236,9 @@
           {@render statusIcon(blocked !== undefined ? 'notSelected' : state)}
         </span>
       {/if}
-      <span class="grid min-w-0 gap-0.5">
+      <!-- minmax(0,1fr)：单列 auto 轨道会被长 token 的 min-content 撑开，先收死轨道；
+           条目明细 / 错误原因可能内嵌路径或 URL，放不下时由各自容器横向滚动 -->
+      <span class="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-0.5">
         <span class="break-all"
           >{title}{#each marks as mark (mark)}<span
               class="ml-1.5 inline-block rounded px-1 py-px align-middle text-[10px] {mark ===
@@ -246,15 +248,18 @@
               data-testid={`handover-mark-${mark}`}>{t(`handover.mark.${mark}` as MessageKey)}</span
             >{/each}</span
         >
-        {#if detail.length > 0}<span class="text-xs whitespace-pre-wrap text-muted-foreground"
+        {#if detail.length > 0}
+          <span class="overflow-x-auto text-xs whitespace-pre-wrap text-muted-foreground"
             >{detail}</span
-          >{/if}
+          >
+        {/if}
         {#each extra as line, index (index)}
-          <span class="text-xs text-amber-700 dark:text-amber-400">{line}</span>
+          <span class="overflow-x-auto text-xs text-amber-700 dark:text-amber-400">{line}</span>
         {/each}
         {#if blocked !== undefined}
-          <span class="text-xs text-muted-foreground" data-testid="handover-item-blocked"
-            >{t('handover.blocked', { reason: blocked })}</span
+          <span
+            class="overflow-x-auto text-xs text-muted-foreground"
+            data-testid="handover-item-blocked">{t('handover.blocked', { reason: blocked })}</span
           >
         {:else if !pending && state === 'pending' && isBackground(key) && status === 'applying'}
           <span class="text-xs text-muted-foreground" data-testid="handover-item-background"
@@ -262,7 +267,9 @@
           >
         {:else if !pending && state !== null && state !== 'done' && state !== 'pending'}
           <span
-            class="text-xs {state === 'failed' ? 'text-destructive' : 'text-muted-foreground'}"
+            class="overflow-x-auto text-xs {state === 'failed'
+              ? 'text-destructive'
+              : 'text-muted-foreground'}"
             data-testid="handover-item-error"
             >{state === 'notSelected'
               ? t('handover.item.notSelected')

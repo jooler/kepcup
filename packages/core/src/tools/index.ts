@@ -157,7 +157,7 @@ export interface ResponseToolDeps {
   mail?: MailService | undefined;
   /**
    * D91：Bot 是否已有绑定邮箱（orchestrator run 开头判定一次）。
-   * 假 → 只注册 mail_request_setup；真 → 注册五个读写工具，mail_request_setup 照样注册（可继续添加邮箱）。
+   * 假 → 只注册 mail_request_setup；真 → 注册全部读写工具（D144 起含邮箱内部写操作），mail_request_setup 照样注册（可继续添加邮箱）。
    * 缺省时按 `mail.accountsForBot` 现算（单测可省略；真实装配恒由 orchestrator 传入）。
    */
   mailBound?: boolean | undefined;

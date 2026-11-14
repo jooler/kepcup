@@ -84,9 +84,9 @@
 > **实施注（2026-11-12，随在线文档平台插件批次部分落地）**：本节 **1–3 的机制已落地**，
 > 但形态收敛为「厂商模版」而非完整自定义表单——
 >
-> - 首批消费者是三个文档平台插件（`mcp-tencent-docs` 厂商模版：锁定端点 +
+> - 首批消费者是两个文档平台插件（`mcp-tencent-docs` 厂商模版：锁定端点 +
 >   `Authorization` 头走 secrets 占位；`mcp-feishu` 通用模版：`url:''` 端点进表单且
->   `urlSensitive`；`mcp-yuque` 内嵌 MCPB，非实例），**不含** `app.kepcup/custom-mcp`
+>   `urlSensitive`），**不含** `app.kepcup/custom-mcp`
 >   通用插件：实例字段集收敛为 `label`（+ 通用模版的 `url` + 模版声明的 header 值字段），
 >   仅 streamable-http 形态；stdio / MCPB 实例形态与「transport 按字段显隐」的完整
 >   自定义表单仍顺延。
@@ -102,6 +102,13 @@
 >   `instances: ['mcp']` 声明移除后，既有 mcp 实例行与 server 原样保留——表单消失
 >   （`instanceFields` 为空）、`plugins.instances.update` 报错、仅实例删除 / 卸载可清理；
 >   表单侧对「插件缺失 / 已停用」给出明确提示（`mcp.pluginMissing` / `mcp.pluginDisabled`）。
+> - **配置完成即自动启用工具（2026-11-15，设计 51 §15.9）**：实例 create/update 与 mcpb
+>   首次安装落地后，core 自动「连接 → 列工具 → 批准全部」（`AppConnectionsService.enableAllTools`，
+>   materializer / projector 经 `autoEnable` 依赖 fire-and-forget 触发），用户填完 token 等
+>   授权数据后无需手动「测试 → 批准」，Bot 分配即可用。仅解锁工具定义锁定；调用面审批与
+>   `autoApprove`（保持 false）不变；插件**更新**引入的工具变化仍走锁定复核（D73 防 rug-pull），
+>   手动「测试 → 批准」链路原样保留。安装 / 保存提示文案同步（`settings.mcpbInstalled` /
+>   `extensionCenter.mcp.hintScoped*` / `mcp.added|updated`）。
 
 1. 官方插件 `plugins/custom-mcp/`：`instances: ['mcp']`、无贡献。
 2. mcp kind materializer：实例字段 = `name / transport(stdio|streamable-http|sse) /

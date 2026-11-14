@@ -987,15 +987,28 @@
   $effect(() => {
     const revision = sharedDraft.revision;
     const ed = editor;
-    const conversationId = chatSession.view?.conversation.id ?? null;
     // 任务直注不接会话草稿：服务端快照变化一律不动本编辑器。
-    if (injectMode || ed === null || conversationId === null || revision === 0) return;
+    if (injectMode || ed === null || revision === 0) return;
+    // 会话 id 只取当前值、不进依赖：Bot 消息到达会经 markRead /
+    // conversation.updated 整体替换 view.conversation，追踪它会让本效果随
+    // 每条新消息重跑（把正在键入的草稿清掉）。会话切换由 enter() 重置
+    // loaded/doc 与后续 revision 推进驱动，这里不需要自己盯着会话。
+    const conversationId = untrack(() => chatSession.view?.conversation.id ?? null);
+    if (conversationId === null) return;
     // 只有“本会话的服务端快照已加载”才动编辑器；enter() 的未加载重置（doc=null）
     // 不能清掉用户正在输入的内容。
     if (!sharedDraft.loaded || sharedDraft.docConversationId !== conversationId) return;
     const doc = sharedDraft.doc;
     if (doc === null) return;
-    if (JSON.stringify(ed.getJSON()) === JSON.stringify(doc)) return;
+    // 逐字节比较之外补空文档等价：两端空（含 content:[] 与空段落两种形状）
+    // 时不动编辑器，避免服务端清空快照反复 setContent。
+    const current = ed.getJSON();
+    if (
+      JSON.stringify(current) === JSON.stringify(doc) ||
+      (isComposerDocEmpty(current) && isComposerDocEmpty(doc))
+    ) {
+      return;
+    }
     untrack(() => {
       applyingRemote = true;
       try {
