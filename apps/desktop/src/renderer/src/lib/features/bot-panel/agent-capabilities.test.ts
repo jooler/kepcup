@@ -65,9 +65,9 @@ describe('agent capability packs (Bot runtime form)', () => {
   });
 });
 
-describe('邮件包预估（D91 邮箱门控）', () => {
-  it('mail_request_setup 始终注册、五个读写工具在有绑定时再加，预估按登记的 6 个计', () => {
-    expect(toolCountOf('mail')).toBe(6);
+describe('邮件包预估（D91 邮箱门控 / D144 写操作）', () => {
+  it('mail_request_setup 始终注册、读写工具（含 D144 六个邮箱内部写工具）在有绑定时再加，预估按登记的 12 个计', () => {
+    expect(toolCountOf('mail')).toBe(12);
   });
 });
 

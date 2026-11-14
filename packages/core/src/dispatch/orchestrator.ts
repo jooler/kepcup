@@ -5017,7 +5017,7 @@ export class Orchestrator {
             ...(skillsSection.length > 0 ? { skills: skillsSection } : {}),
             ...(capabilitiesSection.length > 0 ? { capabilities: capabilitiesSection } : {}),
             ...(availableAppsSection.length > 0 ? { availableApps: availableAppsSection } : {}),
-            // D91：mail_request_setup 有 mail 就注册（有无绑定都一样，与工具注册同源）；五个读写工具另按绑定门控。
+            // D91：mail_request_setup 有 mail 就注册（有无绑定都一样，与工具注册同源）；其余读写工具另按绑定门控（D144 起含邮箱内部写操作）。
             ...(this.#deps.mail !== undefined ? { hasMailSetup: true } : {}),
             // D91: the app_request_connection rule only with the tool (appFacade is what registers it).
             ...(appFacade !== undefined ? { hasAppRequestTool: true } : {}),

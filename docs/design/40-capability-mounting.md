@@ -16,7 +16,7 @@
   3. **对话轮的只读快速通道 = 稳定两件套**：`capability_search` / `capability_call`，取代 `app_search_tools` / `app_call_tool`，覆盖连接应用与自定义 MCP。对话轮的索引只含「只读且有效审批为 auto」的工具；工具列表在调用 `capability_search` 时才懒解析（不在 run 开头），工具数恒为 2，不随接入数增长。
   4. **任务声明能力**：`start_task` 新增可选参数 `capabilities: string[]`（取 `<capabilities>` 里的 id）。宿主校验后落库；任务启动时**只解析、只挂这些能力的工具**（全部已启用工具，审批照旧）。未声明的能力仍可经任务面的 `capability_search` / `capability_call` 取用（索引覆盖其余能力的全部已启用工具，懒解析）——Bot 漏声明不会让任务失能，只是多一步。
   5. **工具列表在 run 内固定**（沿用 29 §7 的约束：PiEngine 与宿主桥都在 run 开始时定工具列表）：不做 run 中途挂载；需要的能力在 `start_task` 时声明，`capability_*` 两件套是 run 内唯一的扩展口。
-  6. **邮箱**：工具不进能力目录，`<mail_accounts>` 段不变。有 `deps.mail` 时 `mail_request_setup` **始终注册**（有无绑定都一样，用户随时可以让 Bot 添加更多邮箱）；Bot **没有任何绑定邮箱**时只有它（不挂 `mail_accounts` / `mail_list` / `mail_read` / `mail_search` / `mail_send`），**有绑定**时额外挂这五个。（2026-10-16 后续修订：原方案是「有绑定就不再挂 `mail_request_setup`」，会让已有邮箱的 Bot 无法在对话里再加账号，见 §6。）
+  6. **邮箱**：工具不进能力目录，`<mail_accounts>` 段不变。有 `deps.mail` 时 `mail_request_setup` **始终注册**（有无绑定都一样，用户随时可以让 Bot 添加更多邮箱）；Bot **没有任何绑定邮箱**时只有它（不挂 `mail_accounts` / `mail_list` 等读写工具），**有绑定**时额外挂全部读写工具（D144 起 11 个，含邮箱内部写操作 `mail_mark` / `mail_tag` / `mail_move` / `mail_delete` / `mail_draft` / `mail_folders`；本文写作时为五个）。（2026-10-16 后续修订：原方案是「有绑定就不再挂 `mail_request_setup`」，会让已有邮箱的 Bot 无法在对话里再加账号，见 §6。）
   7. **安全语义不变**：两件套转调的是与直接暴露时完全相同的包装工具（`wrapMcpTool`），网关风险解析、逐工具策略、审批卡、工具锁定、step-up / 重连、污点、效果台账、`<untrusted>` 包裹全部原样生效；对话轮的只读纪律仍由网关执行期硬拒（`RUN_READ_ONLY`）保证，索引筛选只是少给模型无用条目。
 
 ## 1 现状（2026-10-16 读代码）
@@ -30,7 +30,7 @@
 | `start_task` | title / instruction / source_message_ids / writes / cwd / continues_task_id | 派任务时无法表达要用哪些能力 |
 | 子代理 | `buildSubagentResearchTools`：只读文件 + web + 对话轮同款只读 MCP 子集 | 跟着对话轮的解析结果走 |
 | 提示词 | `<connected_apps>`（目录连接状态行 + 规则）、`<available_apps>`、`turnMcpNote`、`<mail_accounts>` | 三套写法，自定义 MCP 只有一句话 |
-| 邮箱 | `deps.mail` 存在即挂五个读写工具 + `mail_request_setup` | 没绑邮箱的 Bot 也背着五个必然失败的工具 |
+| 邮箱 | `deps.mail` 存在即挂读写工具（D144 起 11 个）+ `mail_request_setup` | 没绑邮箱的 Bot 也背着必然失败的工具 |
 | 外部智能体 | 任务的宿主工具 = `buildResponseTools` 结果按能力包（`HOST_CAPABILITIES`）过滤；`mcp_` 归 `mcp` 包、`app_` 归 `apps` 包 | 新两件套需要归包 |
 
 ## 2 能力目录
@@ -141,7 +141,7 @@ interface CapabilityEntry {
 
 - 注册条件（2026-10-16 后续修订，替换最初的「有绑定就不挂 `mail_request_setup`」）：
   - 有 `deps.mail` 时，`mail_request_setup` **始终注册**，有无绑定都一样；
-  - run 开头按 `mail.accountsForBot(botId)` 判定一次：≥1 个绑定时**额外**注册 `mail_accounts` / `mail_list` / `mail_read` / `mail_search` / `mail_send` 五个；0 个绑定时只有 `mail_request_setup`。
+  - run 开头按 `mail.accountsForBot(botId)` 判定一次：≥1 个绑定时**额外**注册全部读写工具（D144 起 11 个，含 `mail_send` 与六个邮箱内部写工具）；0 个绑定时只有 `mail_request_setup`。
 - `decideMailSetupRequest` 不再因为已有绑定而拒绝：已有绑定时照常产出 `mail-account` 需求，返回消息里列出现有邮箱并说明这次会**新增**一个、原有的保持不变；若用户其实是要把另一个 Bot 已有的邮箱转过来，提示改用 `propose_handover`。
 - 提示词：`mailRequestSetupRule` 随 `mail_request_setup` 出现，也就是只要有 mail 就出现（`hasMailSetup` 与工具注册同源）。措辞为「用户要你接管 / 添加（更多）邮箱时立刻调用」，不再有「已有绑定不要调用 / 再加账号去扩展中心」；保留「不要索要授权码」与 `propose_handover` 的指引。`<mail_accounts>` 段不变。
 - 链路：对话里的添加卡（设置卡 `mail.account` → `MailAccountAddForm`）→ `mail.accounts.create({ …, botIds: [当前 Bot] })`——创建一个**新账号**并只为它写绑定，是**追加**，不动该 Bot 的其他绑定（不使用 `mail.bots.setAccounts` / `setAccountsForBot` 这类整体覆盖接口）→ `runs.retry` 重新构建工具与 `<mail_accounts>`（列出全部邮箱）。设置卡没有「已有邮箱则不出卡」的门禁（只有「没有当前 Bot 时不嵌入表单」）。
@@ -178,7 +178,7 @@ interface CapabilityEntry {
 - 声明能力工具数 > 40 → 不内联，全部经两件套。
 - `continues_task_id` 继承能力；Bot 取消勾选后排队中的任务不再挂该能力。
 - 子代理只拿只读 + auto 子集。
-- 邮箱：0 绑定 → 只有 `mail_request_setup`；1 绑定 → 五个工具 + `mail_request_setup`；已有绑定时调用 `mail_request_setup` 得到 `mail-account` 需求（不是拒绝），保存第二个账号后绑定数为 2、原绑定还在。
+- 邮箱：0 绑定 → 只有 `mail_request_setup`；1 绑定 → 全部读写工具（D144 起 11 个）+ `mail_request_setup`；已有绑定时调用 `mail_request_setup` 得到 `mail-account` 需求（不是拒绝），保存第二个账号后绑定数为 2、原绑定还在。
 - 外部智能体：只选 `mcp` 包时两件套索引不含目录连接工具。
 - 授权失效的能力：目录行标「需重新连接」并带 connection_id；任务里调用其工具 → 既有 SETUP_REQUIRED → 连接卡 → 续跑链路不变。
 
