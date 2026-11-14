@@ -159,3 +159,19 @@ cd infra/cloudflare/directory && npx wrangler deploy
   `kepcup-plugins-2026-1`；R2 上传 4 包后 `wrangler deploy` 上线（Worker version
   `34c3a046-9b99-4158-978f-25afe5989793`）。线上索引拉回 `--verify` 通过、与签名产物
   逐字节一致，mail-126 从 `pkg.kepcup.com` 下载回本地 sha256 复核一致。
+
+### 阿里企业邮批次（1 个，2026-11-14 发布）
+
+- 新增 `mail-aliyun`（阿里企业邮，阿里云企业邮箱）1.2.0、`engines.kepcup >=0.5.12`（
+  开发版 0.5.12 恰好满足、可从商店安装）：仿照 mail-qq 锁定标准版端点
+  `imap.qiye.aliyun.com:993/ssl` + `smtp.qiye.aliyun.com:465/ssl`，登录用「三方客户端
+  安全密码」（非网页登录密码，管理员需放行三方客户端）；收信模式 `auto`（IDLE 优先、
+  自动回落轮询），`defaultPollSec 300 / minPollSec 120` 对齐 QQ 预设。信创 / 香港 /
+  旧版（mxhichina）地址不锁，走通用邮箱插件。经独立子代理对照官方文档审查后发布。
+- 流程照旧：24 个插件重打包（线上 23 个对象 sha256 逐字节不变、R2 无需重传），新对象仅
+  mail-aliyun（`16cb7f70…`）。签名索引 `generatedAt=2026-11-14T08:59:45.346Z`（严格
+  递增、24 条），生产密钥 `kepcup-plugins-2026-1`；R2 上传 1 包后 `wrangler deploy`
+  上线（Worker version `acbae228-89ff-4292-b62a-7f3fd3635d1b`）。线上索引拉回
+  `--verify` 通过、24 个包从 `pkg.kepcup.com` 全量拉回逐一 sha256 复核通过，索引 / sig /
+  mail-aliyun 包与签名产物逐字节一致。索引 24 条：四个 MCP 工具（mcp-feishu /
+  mcp-tencent-docs / mcp-yuque / mcp-sciverse）仍属待发布批次，未纳入。
