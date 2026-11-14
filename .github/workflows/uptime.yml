@@ -1,6 +1,6 @@
 name: Uptime (kepcup.com)
 
-# 线上可用性监控（D73 U1）：每 20 分钟检查 CIMD 文档、签名目录索引、子注册表。
+# 线上可用性监控（D73 U1）：每 20 分钟检查 CIMD 文档、插件市场签名索引、子注册表。
 # 失败时 GitHub 会给最后修改本定时任务的人发邮件。定时任务只在默认分支上触发；
 # 仓库 60 天无活动时 GitHub 会自动暂停它（push 一次或手动触发即可恢复）。
 on:
@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   check:
-    name: CIMD / directory / registry
+    name: CIMD / plugin index / registry
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -27,14 +27,14 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-      # 目录验签需要 @kepcup/shared 里编进应用的公钥列表；只装并构建它，不装整个仓库。
+      # 插件市场索引验签需要 @kepcup/shared 里编进应用的公钥列表；只装并构建它，不装整个仓库。
       - run: pnpm install --frozen-lockfile --filter @kepcup/shared...
       - run: pnpm --filter @kepcup/shared build
 
       - name: CIMD 文档（200 / application/json / 无重定向 / ≤5 KB / client_id 一致 / 与仓库一致）
         run: node infra/cloudflare/oauth-cimd/verify.mjs
 
-      - name: 签名目录索引（可达 / 验签 / 密钥有效）
+      - name: 插件市场签名索引（可达 / 验签 / 密钥有效）
         run: node infra/cloudflare/directory/verify.mjs
 
       - name: 子注册表（GET 200、JSON 结构正确、已同步到数据）

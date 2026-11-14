@@ -31,6 +31,14 @@ shared 的 `PLUGIN_INDEX_PUBLIC_KEYS`）；包本体走 R2 内容寻址（`{sha2
 cd infra/cloudflare/directory && npx wrangler deploy
 ```
 
+线上复核（uptime 工作流同一条命令）：
+
+```bash
+pnpm --filter @kepcup/shared build
+node infra/cloudflare/directory/verify.mjs
+```
+
+
 ⚠️ `public/plugins/v1/` 的签名产物不入库。**从本机检出重新部署前**必须确保
 `plugins/v1/index.json` / `index.json.sig` 在位（从线上拉回或刚签名产出），
 否则部署会把线上市场索引顶成 404。
