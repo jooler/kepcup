@@ -130,14 +130,14 @@ cd infra/cloudflare/directory && npx wrangler deploy
   `1482ed01-0ec3-4990-8889-7f8145c20d43`；线上索引与 23 个包拉回 `--verify` 通过。旧客户端
   现在会在索引层过滤掉 1.1.0，升级宿主后再更新。
 
-### 在线文档平台批次（3 个，2026-11-12 开发；待签名发布）
+### 在线文档平台批次（3 个，2026-11-12 开发；mcp-tencent-docs 已上架，其余待签名发布）
 
 - 工具 3：`mcp-tencent-docs`（腾讯文档，厂商模版：锁定官方 MCP 端点 + `Authorization`
   token）/ `mcp-feishu`（飞书，通用模版：`url:''`，粘贴个人 MCP 服务地址，`urlSensitive`）/
   `mcp-yuque`（语雀，内嵌官方 `yuque-mcp` 的 MCPB，token + host 走安装表单）。
 - 依赖 P4-M2 的 mcp 实例化（设计 51 §15.7 实施注），`engines.kepcup` 抬到 `>=0.5.11`；
   未发布前用户可经「从文件夹安装」试用。语雀包先跑 `node plugins/mcp-yuque/build.mjs`
-  生成 `mcp/yuque.mcpb` 再 validate / pack。
+  生成 `mcp/yuque.mcpb` 再 validate / pack。腾讯文档已于 2026-11-14 上架（见下）。
 
 ### 学术检索批次（1 个，2026-11-13 开发；待签名发布）
 
@@ -175,3 +175,19 @@ cd infra/cloudflare/directory && npx wrangler deploy
   `--verify` 通过、24 个包从 `pkg.kepcup.com` 全量拉回逐一 sha256 复核通过，索引 / sig /
   mail-aliyun 包与签名产物逐字节一致。索引 24 条：四个 MCP 工具（mcp-feishu /
   mcp-tencent-docs / mcp-yuque / mcp-sciverse）仍属待发布批次，未纳入。
+
+### 腾讯文档上架（1 个，2026-11-14 发布）
+
+- `mcp-tencent-docs` 1.0.3、`engines.kepcup >=0.5.11`（开发版 0.5.12 满足、可从商店
+  安装）发布到官方市场。插件包自 1.0.3（cc2613d7）后无内容改动，本次上架配套的是
+  宿主侧 bcc5d48d：实例工具插件的管理视图补齐「MCP 服务器」区——测试连接（secrets
+  解出 + Bearer 归一化，与真实调用同路径）/ 启停 / 免审批 / 逐工具策略与固定投影插件
+  同一套界面（`managedServerPluginId` 认入 instance 来源）；Bot 侧授权链路实测通过。
+- 流程照旧：25 个插件重打包（既有 24 个对象 sha256 与线上逐字节一致、R2 无需重传），
+  新对象仅 mcp-tencent-docs（`94373930…`，2.5 KiB）。签名索引
+  `generatedAt=2026-11-14T14:57:07.000Z`（严格递增、25 条），生产密钥
+  `kepcup-plugins-2026-1`；R2 上传 1 包后 `wrangler deploy` 上线（Worker version
+  `70398229-ea2f-495f-86be-25079e93af7c`）。线上索引拉回 `--verify` 通过、25 个包从
+  `pkg.kepcup.com` 全量拉回逐一 sha256 复核通过，索引 / sig / 腾讯文档包与签名产物
+  逐字节一致。索引 25 条：mcp-feishu / mcp-yuque / mcp-sciverse 仍属待发布批次，
+  未纳入。
