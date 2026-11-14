@@ -100,6 +100,11 @@ export interface GatewayDeps {
   mcpToolDecision?:
     | ((input: {
         botId: string | null;
+        /**
+         * P2 注入模型：run 所在会话 id——项目会话的插件叠加授权按 run 身份现读
+         * （start.ts 的 effectivePluginSetFor），与注入侧（能力目录 / <skills>）同源。
+         */
+        conversationId: string | null;
         serverId: string;
         toolName: string;
         signal?: AbortSignal | undefined;
@@ -1352,6 +1357,7 @@ export class ToolGateway {
     const appUi = options.origin === 'app_ui';
     let decision: McpToolDecision = (await this.#deps.mcpToolDecision?.({
       botId: identity.botId,
+      conversationId: identity.conversationId,
       serverId: server.id,
       toolName,
       signal: options.signal,
