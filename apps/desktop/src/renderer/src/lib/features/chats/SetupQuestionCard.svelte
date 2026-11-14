@@ -108,7 +108,10 @@
   data-testid="setup-question-card"
   data-answered={answeredText === null ? 'false' : 'true'}
 >
-  <div class="text-sm font-medium" data-testid="setup-question-text">{question}</div>
+  <!-- 访谈提问是 Bot 文案，可能内嵌长 token：放不下时横向滚动，不撑破气泡 -->
+  <div class="overflow-x-auto text-sm font-medium" data-testid="setup-question-text">
+    {question}
+  </div>
   {#if answeredText !== null}
     <!-- 已答态：答案列表与输入框收起，只留最终回答这一条 -->
     <div

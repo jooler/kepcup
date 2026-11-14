@@ -167,14 +167,15 @@
           onDownload: () => void downloadAttachment(attachment),
         })}
       {:else}
+        <!-- 文件名可能是无断行长 token：chip 收在容器内并截断，与 fileChip 同规 -->
         <button
           type="button"
-          class="flex items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent"
+          class="flex max-w-full min-w-0 items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent"
           onclick={() => ensureLoaded(attachment)}
           data-testid="attachment-audio-placeholder"
         >
-          <AudioLines class="size-3.5" />
-          {attachment.fileName} · {sizeLabel(attachment.size)}
+          <AudioLines class="size-3.5 shrink-0" />
+          <span class="min-w-0 truncate">{attachment.fileName} · {sizeLabel(attachment.size)}</span>
         </button>
       {/if}
     {:else}

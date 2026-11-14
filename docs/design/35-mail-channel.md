@@ -189,20 +189,32 @@ CREATE TABLE mail_bot_cursors (
 
 | 工具 | 对话轮 | 任务 | 说明 |
 |---|---|---|---|
-| `mail_list` | ✓ | ✓ | 列信封（账号、文件夹默认 INBOX、limit、未读过滤）；输出 `<untrusted>` |
-| `mail_read` | ✓ | ✓ | 按 UID 读正文（纯文本优先，HTML 转可读文本）；附件只列元数据，P0 不自动下载到 workspace |
-| `mail_search` | ✓ | ✓ | IMAP SEARCH 条件子集（from/to/subject/since/unseen） |
+| `mail_list` | ✓ | ✓ | 列信封（账号、文件夹默认 INBOX、limit、未读过滤）；行尾带已读 / 星标 / 标签注记；输出 `<untrusted>` |
+| `mail_read` | ✓ | ✓ | 按 UID 读正文（纯文本优先，HTML 转可读文本）；附件只列元数据，P0 不自动下载到 workspace；**不自动置已读**（用户决策 D144） |
+| `mail_search` | ✓ | ✓ | IMAP SEARCH 条件子集（from/to/subject/since/unseen/keyword） |
+| `mail_mark` | ✓ | ✓ | 置/取 `\Seen`、`\Flagged`（已读未读、星标）；**写 / 邮箱内部**（见下节） |
+| `mail_tag` | ✓ | ✓ | 加/删自定义标签（IMAP keyword，ASCII atom）；省略 uids 列已知标签；**写 / 邮箱内部** |
+| `mail_move` | ✓ | ✓ | 移动到别的文件夹（服务器缺 MOVE 且缺 UIDPLUS 时拒绝）；清理邮件优先移废纸篓；**写 / 邮箱内部** |
+| `mail_delete` | ✓ | ✓ | 硬删除（`\Deleted` + UID EXPUNGE）；无 UIDPLUS 拒绝（避免全箱 EXPUNGE 误删）；**写 / 邮箱内部** |
+| `mail_draft` | ✓ | ✓ | 撰写并 APPEND `\Draft` 到草稿箱（nodemailer 离线构建 RFC822，与发信同源）；找不到草稿箱自动创建 `Drafts`；不出审批卡（不出你的邮箱）；**写 / 邮箱内部** |
+| `mail_folders` | ✓ | ✓ | 文件夹管理：list / create / rename / delete；INBOX 与 special-use 系统文件夹拒删改名；**写 / 邮箱内部** |
 | `mail_send` | ✗ | ✓ | SMTP 发送；**写 / 外发**；审批卡展示完整 to/cc/bcc 与正文（复用 recipients 逻辑） |
 | `mail_accounts` | ✓ | ✓ | 列出本 Bot 已绑定账号与状态（无密钥） |
 | `mail_request_setup` | ✓ | ✓ | 请用户在对话里添加邮箱并绑定当前 Bot（`setup.kind=mail-account`，见 18-inline-setup）；**已有绑定则拒绝且不写 setup**（防续跑再弹卡）；与移交已有绑定（`propose_handover`）不同 |
 
-> **D91 修订（注册条件，2026-10-16 后续修订后的现行版本）**：`mail_request_setup` 有 mail 就**始终注册**（有无绑定都一样）；其余五个工具不再一律注册——run 开头按 `mail.accountsForBot(botId)` 判定一次：**0 个绑定**只有 `mail_request_setup`；**≥1 个绑定**另外注册 `mail_accounts` / `mail_list` / `mail_read` / `mail_search` / `mail_send` 五个。（最初的 D91 方案是「有绑定就不再注册 `mail_request_setup`」，已被取代：它让已有邮箱的 Bot 无法在对话里再加账号。）`decideMailSetupRequest` 已有绑定时不再拒绝，消息里列出现有邮箱并说明会新增一个，要转移另一个 Bot 的邮箱提示 `propose_handover`；提示词里的 `mailRequestSetupRule` 随 `mail_request_setup` 出现（`hasMail` 改为 `hasMailSetup`，有 mail 即为真），措辞改为「用户要你接管 / 添加（更多）邮箱时调用」，保留「不要索要授权码」与 `propose_handover` 指引，`<mail_accounts>` 段不变。添加卡保存走 `mail.accounts.create({ botIds: [当前 Bot] })`，是**追加**绑定，不覆盖该 Bot 已有的绑定；同一地址已绑给该 Bot 时报 `INVALID_INPUT`。绑定完成后的 `runs.retry` 重新构建工具，自然拿到五个工具。外部智能体 `mail` 包按登记的 6 个工具注入。见 [40](40-capability-mounting.md) §6。
+> **D91 修订（注册条件，2026-10-16 后续修订后的现行版本）**：`mail_request_setup` 有 mail 就**始终注册**（有无绑定都一样）；其余五个工具不再一律注册——run 开头按 `mail.accountsForBot(botId)` 判定一次：**0 个绑定**只有 `mail_request_setup`；**≥1 个绑定**另外注册 `mail_accounts` / `mail_list` / `mail_read` / `mail_search` / `mail_send` 五个。（最初的 D91 方案是「有绑定就不再注册 `mail_request_setup`」，已被取代：它让已有邮箱的 Bot 无法在对话里再加账号。）`decideMailSetupRequest` 已有绑定时不再拒绝，消息里列出现有邮箱并说明会新增一个，要转移另一个 Bot 的邮箱提示 `propose_handover`；提示词里的 `mailRequestSetupRule` 随 `mail_request_setup` 出现（`hasMail` 改为 `hasMailSetup`，有 mail 即为真），措辞改为「用户要你接管 / 添加（更多）邮箱时调用」，保留「不要索要授权码」与 `propose_handover` 指引，`<mail_accounts>` 段不变。添加卡保存走 `mail.accounts.create({ botIds: [当前 Bot] })`，是**追加**绑定，不覆盖该 Bot 已有的绑定；同一地址已绑给该 Bot 时报 `INVALID_INPUT`。绑定完成后的 `runs.retry` 重新构建工具，自然拿到全部工具（D144 起为 11 个读写工具 + `mail_request_setup`）。外部智能体 `mail` 包按登记的 12 个工具注入。见 [40](40-capability-mounting.md) §6。
 
 > **对话内邮件设置卡（2026-11-02，设置目录三项）**：`mail.account`（经 `mail_request_setup`）只负责**新增**邮箱；已有邮箱的归属 / 暂停走设置目录的 `mail.mailbox`（`MailMailboxCard`：选邮箱、勾选交给哪些 Bot、暂停收信），邮件插件本身的配置与「交给这个 Bot」走 `mail.plugin`（`MailPluginCard`：选插件、插件 config 字段、启用插件 / 合并启用集）。两张卡都由 Bot 经 `settings_search` → `settings_change` 出 form 卡（`widensPermission`，不会 direct），保存沿用扩展中心同一批 RPC（`plugins.config.set` / `plugins.setEnabled` / `plugins.enableForBots` / `plugins.setBotPlugins` / `mail.accounts.setBots` / `pause` / `resume`），完成后由 `settings.cards.complete` 核对并唤醒 Bot。`mail_request_setup` 的提示词与工具描述明确「只用于新增」，避免把已有邮箱的调整误出成添加卡。
 
-- 风险：`mail_list` / `mail_read` / `mail_search` / `mail_accounts` = read；`mail_send` = write（外发）。P1 若加 `mail_set_flag` / `mail_move` 按写处理。
+> **邮箱内部写操作（D144，2026-11-14）**：补齐 IMAP 协议在 Bot 侧的全部写能力——标记（`\Seen` / `\Flagged`）、自定义标签（keyword）、移动、硬删除、存草稿（APPEND）、文件夹管理，以及 `mail_list` / `mail_read` / `mail_search` 的 `folder` 参数（浏览任意文件夹）。两项**用户拍板**的门控决策：
+> 1. **对话轮放行，不设审批卡**。邮箱内部操作只动用户自己的邮箱、可逆、不外发；绑定邮箱本身就是授权（「是否赋予 Bot 能力」是用户的权力）。实现为 `mailboxWriteRefusal`（tools/mail-tools.ts）：`loopType === 'turn'` 直接放行，其余走 `readOnlyRefusal`——只读任务 / 只读父链子代理仍拒绝，写任务放行。`mail_send`（外发不可撤回）保持「任务 + 审批卡 + `NEVER_AUTO_DECIDED`」不变。
+> 2. **`mail_read` 不自动置已读**；Bot 需要时显式 `mail_mark`。
+>
+> 实现约束：SELECT 从只读（EXAMINE）改为读写（只读会话里 STORE 会被静默丢旗标）；SessionHub 在工具命令换过文件夹后、回主循环前重选 INBOX（重选失败关连接走退避重连——宁可断线不能拿选错文件夹的连接收信）；`mail_move` 在服务器缺 MOVE 又缺 UIDPLUS 时拒绝（回退 COPY + 全箱 EXPUNGE 会误删其他客户端的待删邮件）；自定义标签限 RFC 9051 ASCII atom（imapflow 客户端即拒非 ASCII，提前拦成 `INVALID_INPUT` 并说明协议限制）；效果台账按 `external` 记（改服务器侧邮箱状态）；六个新工具登记进 `UNTRUSTED_TOOLS`（回执可能回显服务器文本）与 `HOST_CAPABILITIES.mail` 包（外部代理同权）。回执措辞、文件夹名等可能含服务器侧内容，输出一律 `<untrusted>`。
+
+- 风险：`mail_list` / `mail_read` / `mail_search` / `mail_accounts` = read；`mail_send` = write（外发）；`mail_mark` / `mail_tag` / `mail_move` / `mail_delete` / `mail_draft` / `mail_folders` = write（邮箱内部，可逆、低风险，见上节）。
 - 账号范围：工具参数 `account_id` 必须属于当前 Bot 绑定，否则 `MAIL_NOT_BOUND`。
-- 对话轮只读：`mail_send` 在对话轮执行期 `RUN_READ_ONLY`。
+- 对话轮只读：`mail_send` 在对话轮执行期 `RUN_READ_ONLY`；邮箱内部写操作（D144）对话轮放行。
 - 污点：任一返回邮件内容的工具（`mail_read`，以及返回发件人 / 主题的 `mail_list` / `mail_search`，空结果除外）或新信唤醒进入对话后，该（Bot, 对话）打污点（与 D73 应用读同类），持续 24 小时；期间 `mail_send`、`web_fetch`、写 MCP 等外发即使「总是允许」也每次确认。
 
 ## 7 新信唤醒
@@ -230,7 +242,7 @@ CREATE TABLE mail_bot_cursors (
 | 阶段 | 范围 | 门禁 |
 |---|---|---|
 | **P0** | 扩展中心「邮件」页签；账号 CRUD + 测连；secrets；QQ / 163 / 126 / Gmail（应用专用密码）预设 + 自定义；SessionHub（IDLE + poll）；多 Bot 绑定；新信 → 各 Bot DM；`mail_list` / `mail_read` / `mail_search` / `mail_send` / `mail_accounts`；审批与污点；失败退避与状态提示；定向单测 + 至少一条假 IMAP 服务器 e2e | QQ 实测 IDLE 收信；163 实测 ID + 轮询收信；SMTP 发信审批卡字段完整 |
-| **P1** | Gmail / Outlook XOAUTH2（可复用系统浏览器 + loopback 经验，令牌仍本机）；附件下载到 workspace；已读旗标；文件夹切换（发件箱只读浏览）；右栏「邮箱」状态条 | OAuth 测连通过 |
+| **P1（D144 邮箱内部写操作已于 2026-11-14 落地）** | ~~已读旗标~~ ✓（`mail_mark`）；~~文件夹切换~~ ✓（`folder` 参数 + `mail_folders`）；超出原 spec 一并落地：自定义标签（`mail_tag`）、移动（`mail_move`）、硬删除（`mail_delete`）、存草稿（`mail_draft`）。剩余：Gmail / Outlook XOAUTH2（可复用系统浏览器 + loopback 经验，令牌仍本机）；附件下载到 workspace；右栏「邮箱」状态条 | OAuth 测连通过 |
 | **P2** | 与 D73 Gmail MCP 的互斥提示；可选短周期正文缓存；邮件过滤规则（寄件人 / 标题 → 只唤醒某 Bot）；IDLE 指标进诊断 | — |
 
 Outlook 个人邮：P0 预设可展示但标记「需要 OAuth，请等后续」或仅自定义高级；避免宣称密码可用。

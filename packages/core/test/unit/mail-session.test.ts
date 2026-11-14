@@ -460,3 +460,33 @@ describe('AppError passthrough', () => {
     expect(h.failures[0]?.info.fatal).toBe(true);
   });
 });
+
+describe('mailbox switching (D144)', () => {
+  it('re-selects INBOX after a tool command left the live connection on another folder', async () => {
+    const h = harness();
+    h.hub.start(h.record.id);
+    await until(() => h.ready.length >= 1, 'ready');
+    const client = h.clients[0]!;
+    await h.hub.use(h.record, async (live) => {
+      expect(live).toBe(client);
+      await live.select('Archive');
+      expect(live.selectedPath()).toBe('Archive');
+    });
+    // 回主循环前必须回到 INBOX，否则下一轮 poll 的 UID 搜索落在别的文件夹上。
+    expect(client.selectedPath()).toBe('INBOX');
+  });
+
+  it('closes the connection when re-selecting INBOX fails, so the loop reconnects instead of polling the wrong folder', async () => {
+    const h = harness();
+    h.hub.start(h.record.id);
+    await until(() => h.ready.length >= 1, 'ready');
+    const client = h.clients[0]!;
+    client.selectInbox = async () => {
+      throw new Error('reselect failed');
+    };
+    await h.hub.use(h.record, async (live) => {
+      await live.select('Archive');
+    });
+    expect(client.closed).toBe(true);
+  });
+});

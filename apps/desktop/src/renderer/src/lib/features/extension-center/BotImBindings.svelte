@@ -11,14 +11,24 @@
    * 勾选 = 绑定（绑定即入站：微信永远能发消息唤醒 Bot）；行内开关 = 出站转发
    * （Bot 回复自动同步到微信，Bot 无感）。开关关闭时收到微信消息会自动补勾
    * + 一次性提示；永不自动取消——回电脑后由用户手动关闭。
+   *
+   * `pluginId`：嵌在某个 IM 插件的卡里时只勾选该插件的账号（数据归属圈定，
+   * 多个 IM 插件并存时不串台）；缺省 = 全部账号。
    */
-  let { botId }: { botId?: string | undefined } = $props();
+  let {
+    botId,
+    pluginId,
+  }: { botId?: string | undefined; pluginId?: string | undefined } = $props();
 
   let accounts = $state<ImAccount[]>([]);
   let error = $state('');
 
+  const visible = $derived(
+    pluginId === undefined ? accounts : accounts.filter((account) => account.pluginId === pluginId),
+  );
+
   const bound = $derived(
-    botId === undefined ? [] : accounts.filter((account) => account.botIds.includes(botId)),
+    botId === undefined ? [] : visible.filter((account) => account.botIds.includes(botId)),
   );
 
   async function reload(): Promise<void> {
@@ -66,11 +76,11 @@
   <p class="text-xs text-muted-foreground">{t('im.botSectionHint')}</p>
   {#if botId === undefined}
     <p class="text-xs text-muted-foreground">{t('im.botSectionAfterCreate')}</p>
-  {:else if accounts.length === 0}
+  {:else if visible.length === 0}
     <p class="text-xs text-muted-foreground">{t('im.botSectionEmpty')}</p>
   {:else}
     <div class="space-y-1">
-      {#each accounts as account (account.id)}
+      {#each visible as account (account.id)}
         <div class="flex items-center gap-2 text-sm" data-testid={`bot-im-${account.id}`}>
           <label class="flex min-w-0 items-center gap-2">
             <input

@@ -527,7 +527,7 @@ export const enUS = {
   'settings.mcpbConfirm': 'Confirm and install',
   'settings.mcpbInstalling': 'Installing…',
   'settings.mcpbInstalled':
-    'Installed "{name}". Click Test in the list to view and approve its tools.',
+    'Installed "{name}". Connecting and enabling all of its tools automatically; tools added or changed by the server later still need review in the list.',
   'settings.mcpbInstallFailed': 'Installation failed: {reason}',
   'settings.mcpbCancel': 'Cancel',
   'settings.devModeToolsTitle': 'Raw tool definitions',
@@ -1882,7 +1882,9 @@ export const enUS = {
   'extensionCenter.mcp.empty':
     'No MCP servers installed yet. Create one below (stdio / HTTP / SSE) or install a .mcpb local package; for everyday apps, add them in the Connections tab.',
   'extensionCenter.mcp.hintScoped':
-    'Tool servers provided by this plugin: enable, test connections and tune per-tool policies here. Enable the plugin in Bot settings and its tools become available; each call requires approval by default.',
+    'Tool servers provided by this plugin: enable, test connections and tune per-tool policies here. Tools are connected and fully enabled automatically after install; only tools added or changed by the server later require review here. Enable the plugin in Bot settings and its tools become available; each call requires approval by default.',
+  'extensionCenter.mcp.hintScopedInstances':
+    'Tool servers provided by this plugin: enable, test connections and tune per-tool policies here. Tools are connected and fully enabled automatically once credentials are saved; only tools added or changed by the server later require review here. Enable the plugin in Bot settings, then tick the tool services on its card to authorize them for a Bot; each call requires approval by default.',
   'extensionCenter.mcp.emptyScoped': 'This plugin provides no tool servers yet.',
   'plugins.title': 'Installed plugins',
   'plugins.hint':
@@ -1947,6 +1949,8 @@ export const enUS = {
   'plugins.badge': 'Plugin · {name}',
   'plugins.managedBy': 'Managed by plugin "{name}"',
   'plugins.managedHint': 'To remove it, uninstall the plugin under Installed.',
+  'plugins.managedInstanceHint':
+    'To update credentials or remove it, manage the tool service under this plugin in the Extension Center.',
   'plugins.installTitle': 'Install plugin',
   'plugins.installHint':
     'Review what the package contains and asks for. Nothing is installed until you confirm.',
@@ -1957,6 +1961,10 @@ export const enUS = {
   'plugins.pickFolderMessage': 'Choose the plugin folder (containing plugin.json)',
   'plugins.inspect': 'Inspect',
   'plugins.inspecting': 'Inspecting…',
+  'plugins.inspectingMarketplace': 'Downloading and inspecting the plugin package, please wait…',
+  'plugins.inspectingLocal': 'Inspecting the plugin package contents…',
+  'plugins.downloadProgress':
+    'Downloading plugin package {received} / {total} ({percent}%), {speed}/s',
   'plugins.inspectFailed': 'Inspection failed: {reason}',
   'plugins.confirm': 'Confirm and install',
   'plugins.installing': 'Installing…',
@@ -3420,6 +3428,8 @@ export const enUS = {
   'im.botSectionAfterCreate': 'IM accounts can be bound after the bot is created.',
   'im.botSectionEmpty':
     'No IM accounts yet — add one from the plugin card in the extension center.',
+  'im.pluginDisabled':
+    'Plugin disabled. Enable it to add IM accounts; existing accounts stay manageable.',
   'im.botSectionBound':
     '{count} account(s) bound; binding always allows inbound messages from WeChat.',
   'im.forwardToggle': 'Sync replies to this WeChat',
@@ -3435,11 +3445,14 @@ export const enUS = {
     'When checked, this Bot handles new mail from these mailboxes in its own private chat. This is different from the connected apps above.',
   'mail.botSectionAfterCreate':
     'After the Bot is created, you can assign mailboxes to it here or in the Extension Center.',
-  'mail.botSectionEmpty': 'No mailboxes yet. Add one on the Mail page in the Extension Center.',
+  'mail.botSectionEmpty':
+    'No mailboxes yet. Add one from the manage view of a mail plugin card in the Extension Center.',
   'mail.botSectionBound': 'Handling {count} mailboxes',
   'mail.openExtension': 'Open Mail in the Extension Center',
   'mail.noPlugin':
     'No mail plugin can add mailboxes yet. Install a mail plugin from the market first, or add accounts from its plugin card.',
+  'mail.pluginDisabled':
+    'Plugin disabled. Enable it to add mail accounts; existing accounts stay manageable.',
   'mail.openMarket': 'Open plugin market',
   'mail.pickPlugin': 'Choose a mail plugin',
   'mail.instanceCount': '{count} accounts',
@@ -3456,12 +3469,12 @@ export const enUS = {
   'mcp.back': 'Back',
   'mcp.saving': 'Saving…',
   'mcp.save': 'Save',
-  'mcp.added': 'Tool service added',
-  'mcp.updated': 'Tool service updated',
+  'mcp.added': 'Tool service added: connecting and enabling all tools automatically…',
+  'mcp.updated': 'Tool service updated: reconnecting and enabling all tools automatically…',
   'mcp.delete': 'Delete tool service',
   'mcp.editHint': 'Click to edit',
   'mcp.noPlugin':
-    'No plugin can add tool services yet. Install one from the marketplace first (e.g. Tencent Docs, Feishu, Yuque).',
+    'No plugin can add tool services yet. Install one from the marketplace first (e.g. Tencent Docs, Feishu).',
   'mcp.openMarket': 'Open plugin marketplace',
   'mcp.instanceCount': '{count} services',
   'mcp.ownerOf': 'From plugin: {plugin}',

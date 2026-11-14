@@ -126,9 +126,11 @@
         </div>
       </div>
     {:else}
+      <!-- 失败原因可能内嵌长 URL / 路径：展开态由容器横向滚动承接（折叠态
+           line-clamp 自带 overflow:hidden，两者不叠加） -->
       <p
         class="mt-1.5 text-xs whitespace-pre-wrap text-muted-foreground {expanded
-          ? ''
+          ? 'overflow-x-auto'
           : 'line-clamp-6'}"
         data-testid="delegation-error-text"
       >

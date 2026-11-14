@@ -150,7 +150,7 @@ import type { CatalogEntry } from './env/catalog.js';
 import { MemoryService } from './memory/service.js';
 import { MediaService } from './media/service.js';
 import { SearchService } from './search/service.js';
-import { McpService } from './mcp/service.js';
+import { McpService, serverForBot } from './mcp/service.js';
 import { createManifestHeaderNormalizer } from './mcp/header-scheme.js';
 import { decideMcpTool, type McpToolDecision } from './mcp/policy.js';
 import type { Embedder } from './memory/embedder.js';
@@ -1865,10 +1865,14 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       appGrants: appToolGrants,
       gitRemoteGrants,
       taint,
-      mcpToolDecision: async ({ botId, serverId, toolName, signal }) => {
+      mcpToolDecision: async ({ botId, conversationId, serverId, toolName, signal }) => {
         // D73 P1: a catalog connection's tool (server id = connection id). Same gates as a
         // custom server — the bot must have the connection selected, the connection must be
         // in a usable state — plus the tool lock and the catalog risk overlay.
+        // 纵深防御注记：插件贡献连接器在注入侧（ConnectedApps.forBot）按属主插件 ∈ 启用集
+        // 过滤，这里未复核属主——当前不可达（工具不在本轮索引里就无从发起；插件停用时
+        // connectors projector 会把连接行置 disabled，isExposableStatus 同拒），若未来
+        // 出现绕过注入面的调用入口需补同一判定。
         const appView = connectedApps.view(serverId);
         if (appView !== null) {
           const appServer = mcp.serverFor(serverId) ?? null;
@@ -1900,10 +1904,19 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
             : { ...appDecision, enabled: false };
         }
         const server = settings.get().mcpServers.find((entry) => entry.id === serverId);
-        const selected =
-          botId !== null &&
-          (bots.get(botId)?.profile.runtime.mcp_server_ids.includes(serverId) ?? false);
-        if (server === undefined || !server.enabled || !selected) {
+        // P2 注入模型口径收口：调用侧与注入侧（McpService.serversForBot）共用 serverForBot
+        // 判定——插件贡献 server 按「应用级 enabled ∧ 插件 ∈ 有效启用集」放行（插件是唯一
+        // 注入单位，Bot 详情添加即授权，不读 mcp_server_ids）；实例 server 在插件启用之上
+        // 仍要求 mcp_server_ids 勾选；手动 / 独立 MCPB 维持勾选。启用集按 run 身份现读
+        // （含项目叠加），与 <skills> / 沙箱目录过滤同源——两侧口径永不分叉。
+        const selectedIds =
+          botId !== null && botId !== undefined
+            ? (bots.get(botId)?.profile.runtime.mcp_server_ids ?? [])
+            : [];
+        if (
+          server === undefined ||
+          !serverForBot(server, selectedIds, effectivePluginSetFor(botId, conversationId))
+        ) {
           return {
             risk: 'destructive',
             riskSource: 'default',
@@ -2490,6 +2503,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         disconnector: appRuntime.disconnector,
         revokeMcpServerChanges: (previous, next) =>
           settingsPermissionEffects.revokeMcpServerChanges(previous, next),
+        // 安装即配置完成：mcpb / 固定投影落地后自动连接并批准全部工具（fire-and-forget，
+        // 见 `AppConnectionsService.enableAllTools`）；更新引入的工具变化仍走锁定复核。
+        autoEnable: (serverId) =>
+          appConnections.enableAllTools({ serverId, trigger: 'plugin-install' }),
         logger,
       },
       connectors: {
@@ -2661,6 +2678,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         disconnector: appRuntime.disconnector,
         revokeMcpServerChanges: (previous, next) =>
           settingsPermissionEffects.revokeMcpServerChanges(previous, next),
+        // 配置完成即自动启用（连接 → 列工具 → 批准全部，fire-and-forget）：用户填完
+        // token 等授权数据后无需手动复核，Bot 分配后立即可用。手动「测试 → 批准」保留。
+        autoEnable: (serverId, trigger) => appConnections.enableAllTools({ serverId, trigger }),
         tierOf: (pluginId) => pluginStore.get(pluginId)?.tier ?? null,
         logger,
       }),

@@ -32,8 +32,9 @@
 
 <div class="flex w-full flex-col items-end" data-testid={`im-card-arrived-${accountId}`}>
   {#if summary.length > 0}
+    <!-- 正文是宿主截取的入站原文，长 URL 由容器横向滚动承接，不戳破气泡 -->
     <div
-      class="my-2 max-w-[85%] rounded-[18px] px-3 py-2 text-sm whitespace-pre-wrap
+      class="my-2 max-w-[85%] overflow-x-auto rounded-[18px] px-3 py-2 text-sm whitespace-pre-wrap
         {userBubbleAccent ? '' : 'bg-primary text-primary-foreground'}"
       style:background={userBubbleAccent?.hex}
       style:color={userBubbleAccent ? avatarOnFillForeground(userBubbleAccent) : undefined}

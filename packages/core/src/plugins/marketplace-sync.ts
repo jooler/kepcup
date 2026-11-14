@@ -19,6 +19,7 @@ import {
   type PluginIndex,
   type PluginMarketStatus,
   type IndexPublicKey,
+  type PluginsPackageProgressPayload,
 } from '@kepcup/shared';
 import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
@@ -50,10 +51,13 @@ export type DirectoryFetch = IndexFetch;
 const PACKAGE_SUFFIX = '.kepcup';
 const DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 const CLEANUP_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+/** 下载进度事件的节流间隔（首块与收尾块必发，中间按时钟间隔发）。 */
+const PROGRESS_EMIT_INTERVAL_MS = 150;
 
 export interface MarketplaceSyncEvents {
   emit(name: 'plugins.marketplace.updated', payload: { generatedAt: number | null }): void;
   emit(name: 'plugins.changed', payload: { ids: string[] }): void;
+  emit(name: 'plugins.package.progress', payload: PluginsPackageProgressPayload): void;
 }
 
 export interface MarketplaceSyncDeps {
@@ -451,6 +455,20 @@ export class MarketplaceSync {
     }
     const hash = createHash('sha256');
     let size = 0;
+    let lastProgressAt = 0;
+    // 首块必发（让界面立刻切到下载态），中间按 PROGRESS_EMIT_INTERVAL_MS 节流，收尾必发。
+    const emitProgress = (): void => {
+      const now = this.#deps.clock.now();
+      if (size < entry.size && now - lastProgressAt < PROGRESS_EMIT_INTERVAL_MS) return;
+      lastProgressAt = now;
+      this.#deps.events.emit('plugins.package.progress', {
+        id: entry.id,
+        version: entry.version,
+        sha256: entry.sha256,
+        received: size,
+        total: entry.size,
+      });
+    };
     const out = await open(tmp, 'wx', 0o600);
     try {
       const reader = response.body.getReader();
@@ -464,6 +482,7 @@ export class MarketplaceSync {
         }
         hash.update(value);
         await out.write(value);
+        emitProgress();
       }
     } catch (error) {
       await out.close();

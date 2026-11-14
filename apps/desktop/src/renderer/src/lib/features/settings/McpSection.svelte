@@ -62,6 +62,8 @@
     onConflict,
     /** D105 P4：插件卡圈定——只显示该插件投影的 server，并隐藏新建 / .mcpb 等全局入口。 */
     pluginId = undefined,
+    /** 圈定视图顶部提示的 i18n 键：固定投影「启用即用」与实例型「还要勾选授权」路径不同。 */
+    scopedHintKey = 'extensionCenter.mcp.hintScoped',
   }: {
     embedded?: boolean;
     /** 出卡时的当前值（读适配器快照）：`server`、`enabled`；也是 CAS 的 `expected`。 */
@@ -74,6 +76,7 @@
     /** 出卡之后这个服务的启用状态在别处变过（CAS 冲突）。 */
     onConflict?: (current: SettingValues | null) => void;
     pluginId?: string | undefined;
+    scopedHintKey?: Parameters<typeof t>[0];
   } = $props();
 
   type Draft = McpServer & { secretDrafts: Record<string, string> };
@@ -581,7 +584,7 @@
   <section class="space-y-3" data-testid="mcp-section">
     <h3 class="text-sm font-medium">{t('settings.mcpTitle')}</h3>
     <p class="text-xs text-muted-foreground">
-      {pluginId === undefined ? t('extensionCenter.mcp.hint') : t('extensionCenter.mcp.hintScoped')}
+      {pluginId === undefined ? t('extensionCenter.mcp.hint') : t(scopedHintKey)}
     </p>
 
     {#if servers.length === 0 && draft === null}
@@ -689,7 +692,11 @@
             {:else}
               <span class="text-xs text-muted-foreground" data-testid={`mcp-managed-${server.id}`}>
                 {t('plugins.managedBy', { name: plugins.nameOf(managedServerPluginId(server)!) })}
-                · {t('plugins.managedHint')}
+                · {t(
+                  server.source?.kind === 'instance'
+                    ? 'plugins.managedInstanceHint'
+                    : 'plugins.managedHint',
+                )}
               </span>
             {/if}
           </div>

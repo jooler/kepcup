@@ -174,6 +174,153 @@ describe('unparseable Date headers (review #3)', () => {
   });
 });
 
+describe('mailbox write ops (D144)', () => {
+  it('selects folders read-write and reports the selected path', async () => {
+    const server = await startServer({ advertiseIdle: false });
+    server.addFolder('Archive');
+    const client = await open(server);
+    expect(client.selectedPath()).toBeNull();
+    await client.selectInbox();
+    expect(client.selectedPath()).toBe('INBOX');
+    await client.select('Archive');
+    expect(client.selectedPath()).toBe('Archive');
+    expect((await client.select('Archive')).uidNext).toBe(1);
+  });
+
+  it('stores flags on INBOX and subfolder messages, and fetches them back', async () => {
+    const server = await startServer({ advertiseIdle: false });
+    const uid = server.addMessage(sampleMessage('a', 'x'));
+    const client = await open(server);
+    await client.selectInbox();
+    await expect(client.storeFlags([uid], 'add', ['\\Seen', 'bill'])).resolves.toBe(true);
+    expect(server.inbox.messages[0]?.flags).toEqual(['\\Seen', 'bill']);
+    await expect(client.fetchFlags([uid])).resolves.toEqual([{ uid, flags: ['\\Seen', 'bill'] }]);
+    await expect(client.storeFlags([uid], 'remove', ['\\Seen'])).resolves.toBe(true);
+    expect(server.inbox.messages[0]?.flags).toEqual(['bill']);
+    // 标签状态会体现在 mail_list 的信封里。
+    const [envelope] = await client.fetch([uid], false);
+    expect(envelope?.flags).toEqual(['bill']);
+  });
+
+  it('reports false when the server only permits a subset of flags', async () => {
+    const server = await startServer({ advertiseIdle: false, permanentFlags: '\\Seen' });
+    const uid = server.addMessage(sampleMessage('a', 'x'));
+    const client = await open(server);
+    await client.selectInbox();
+    await expect(client.storeFlags([uid], 'add', ['\\Flagged'])).resolves.toBe(false);
+    expect(server.inbox.messages[0]?.flags).toEqual([]);
+    await expect(client.storeFlags([uid], 'add', ['\\Seen'])).resolves.toBe(true);
+    expect(server.inbox.messages[0]?.seen).toBe(true);
+  });
+
+  it('searches by keyword', async () => {
+    const server = await startServer({ advertiseIdle: false });
+    const tagged = server.addMessage(sampleMessage('tagged', 'x'));
+    server.addMessage(sampleMessage('plain', 'x'));
+    const client = await open(server);
+    await client.selectInbox();
+    await client.storeFlags([tagged], 'add', ['bill']);
+    await expect(client.search({ keyword: 'bill' })).resolves.toEqual([tagged]);
+    await expect(client.search({ keyword: 'missing-tag' })).resolves.toEqual([]);
+  });
+
+  it('moves messages to another folder and reports the uid map', async () => {
+    const server = await startServer({ advertiseIdle: false });
+    const uid = server.addMessage(sampleMessage('movable', 'x'));
+    server.addMessage(sampleMessage('stays', 'x'));
+    const client = await open(server);
+    await client.selectInbox();
+    await client.createFolder('Archive');
+    const result = await client.move([uid], 'Archive');
+    expect(result.uidMap).toEqual({ [uid]: 1 });
+    expect(server.inbox.messages.map((message) => message.raw)).toHaveLength(1);
+    expect(server.folders.get('Archive')?.messages).toHaveLength(1);
+    expect(server.folders.get('Archive')?.messages[0]?.raw).toContain('Subject: movable');
+  });
+
+  it('falls back to COPY + targeted delete when MOVE is not advertised but UIDPLUS is', async () => {
+    // imapflow 的回退：COPY → UID EXPUNGE（UIDPLUS 精确删除）。这条路径若误用全箱
+    // EXPUNGE，会把别的客户端挂起的 \Deleted 一起收掉——守卫回归就靠这条测试。
+    const server = await startServer({ advertiseIdle: false, advertiseMove: false });
+    const uid = server.addMessage(sampleMessage('fallback move', 'x'));
+    const deletedByOther = server.addMessage(sampleMessage('pending delete', 'x'), { flags: ['\\Deleted'] });
+    const stays = server.addMessage(sampleMessage('stays', 'x'));
+    const client = await open(server);
+    await client.selectInbox();
+    await client.createFolder('Archive');
+    const result = await client.move([uid], 'Archive');
+    expect(result.uidMap).toEqual({ [uid]: 1 });
+    expect(server.folders.get('Archive')?.messages[0]?.raw).toContain('Subject: fallback move');
+    // 别的客户端挂起的 \Deleted 不被牵连。
+    expect(server.inbox.messages.map((message) => message.uid).sort()).toEqual([deletedByOther, stays].sort());
+  });
+
+  it('appends a draft to a folder and returns its uid', async () => {
+    const server = await startServer({ advertiseIdle: false });
+    server.addFolder('Drafts');
+    const client = await open(server);
+    await client.selectInbox();
+    const source = Buffer.from(sampleMessage('draft subject', 'draft body'), 'utf8');
+    const uid = await client.append('Drafts', source, ['\\Draft']);
+    expect(uid).toBe(1);
+    const stored = server.folders.get('Drafts')?.messages[0];
+    expect(stored?.flags).toEqual(['\\Draft']);
+    expect(stored?.raw).toBe(source.toString('utf8'));
+  });
+
+  it('appends multibyte UTF-8 content byte-exactly (literals are counted in bytes)', async () => {
+    const server = await startServer({ advertiseIdle: false });
+    server.addFolder('Drafts');
+    const client = await open(server);
+    await client.selectInbox();
+    // 中文正文：literal 长度按字节计，不能按字符截断。
+    const source = Buffer.from(sampleMessage('中文草稿', '正文第一行\r\n正文第二行'), 'utf8');
+    const uid = await client.append('Drafts', source, ['\\Draft']);
+    expect(uid).toBe(1);
+    const stored = server.folders.get('Drafts')?.messages[0];
+    expect(Buffer.byteLength(stored?.raw ?? '', 'utf8')).toBe(source.length);
+    expect(stored?.raw).toBe(source.toString('utf8'));
+  });
+
+  it('creates, renames, deletes folders and reports existence via created:false', async () => {
+    const server = await startServer({ advertiseIdle: false });
+    const client = await open(server);
+    await client.selectInbox();
+    await expect(client.createFolder('Work')).resolves.toEqual({ created: true });
+    await expect(client.createFolder('Work')).resolves.toEqual({ created: false });
+    await client.renameFolder('Work', 'Project');
+    expect(server.folders.has('Work')).toBe(false);
+    expect(server.folders.has('Project')).toBe(true);
+    await client.deleteFolder('Project');
+    expect(server.folders.has('Project')).toBe(false);
+    await expect(client.deleteFolder('Missing')).rejects.toThrow();
+    await expect(client.deleteFolder('INBOX')).rejects.toThrow();
+  });
+
+  it('lists folders with special-use annotations', async () => {
+    const server = await startServer({ advertiseIdle: false });
+    server.addFolder('Drafts', { specialUse: '\\Drafts' });
+    server.addFolder('Trash', { specialUse: '\\Trash' });
+    const client = await open(server);
+    await client.selectInbox();
+    const folders = await client.listFolders();
+    const byPath = new Map(folders.map((folder) => [folder.path, folder]));
+    expect(byPath.get('INBOX')?.selectable).toBe(true);
+    expect(byPath.get('Drafts')?.specialUse).toBe('\\Drafts');
+    expect(byPath.get('Trash')?.specialUse).toBe('\\Trash');
+  });
+
+  it('hard-deletes messages via UID EXPUNGE (UIDPLUS)', async () => {
+    const server = await startServer({ advertiseIdle: false });
+    const gone = server.addMessage(sampleMessage('delete me', 'x'));
+    const stays = server.addMessage(sampleMessage('keep me', 'x'));
+    const client = await open(server);
+    await client.selectInbox();
+    await expect(client.deleteMessages([gone])).resolves.toBe(true);
+    expect(server.inbox.messages.map((message) => message.uid)).toEqual([stays]);
+  });
+});
+
 async function waitUntil(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
   const start = Date.now();
   while (!predicate()) {

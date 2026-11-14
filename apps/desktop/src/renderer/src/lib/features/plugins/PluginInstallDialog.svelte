@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { PluginInspectOutput } from '@kepcup/shared';
+  import { pluginsPackageProgressPayloadSchema } from '@kepcup/shared';
+  import { Loader2 } from '@lucide/svelte';
   import { t, errorText } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { core } from '$lib/rpc/client.svelte';
@@ -22,6 +24,7 @@
     missingPluginConfig,
     type PluginForm,
   } from './plugin-install';
+  import { formatBytes } from '../settings/mcpb-install';
   import PluginConsentPanel from './PluginConsentPanel.svelte';
   import PluginInstallHintDialog from './PluginInstallHintDialog.svelte';
 
@@ -71,6 +74,41 @@
   const missing = $derived(info === null ? [] : missingPluginConfig(info, form));
   const installable = $derived(info !== null && canInstallPlugin(info, missing, ackDiff));
 
+  /**
+   * 市场包下载进度（`plugins.package.progress`）：received / total 来自 core 节流推送，
+   * 速度在渲染端按相邻事件差值算即时速率再 EMA 平滑。只在市场模式跟踪当前目标，
+   * 关闭 / 重新检视时清零。
+   */
+  let progress = $state<{ received: number; total: number; bps: number } | null>(null);
+  let lastSample: { received: number; at: number } | null = null;
+  let speed = 0;
+
+  function handlePackageProgress(raw: unknown): void {
+    // onEvent 边界是 unknown：先按契约解析，坏载荷直接丢弃（事件是尽力而为的进度流）。
+    const parsed = pluginsPackageProgressPayloadSchema.safeParse(raw);
+    if (!parsed.success) return;
+    const payload = parsed.data;
+    if (mode !== 'marketplace') return;
+    const targetId = marketplace?.id ?? info?.id;
+    if (targetId !== undefined && payload.id !== targetId) return;
+    const now = performance.now();
+    if (lastSample !== null && payload.received > lastSample.received) {
+      const dt = (now - lastSample.at) / 1000;
+      if (dt > 0) {
+        const instant = (payload.received - lastSample.received) / dt;
+        speed = speed === 0 ? instant : speed * 0.6 + instant * 0.4;
+      }
+    }
+    lastSample = { received: payload.received, at: now };
+    progress = { received: payload.received, total: payload.total, bps: speed };
+  }
+
+  // 订阅只随 open 建撤；handler 在事件到达时才读 mode / marketplace / info。
+  $effect(() => {
+    if (!open) return;
+    return core.onEvent('plugins.package.progress', handlePackageProgress);
+  });
+
   function codeOf(caught: unknown): string | undefined {
     return (caught as { code?: string } | undefined)?.code;
   }
@@ -88,6 +126,9 @@
     error = null;
     form = {};
     ackDiff = false;
+    progress = null;
+    lastSample = null;
+    speed = 0;
   }
 
   /**
@@ -262,6 +303,48 @@
 
     {#if info !== null}
       <PluginConsentPanel bind:form bind:ackDiff {info} {missing} />
+    {/if}
+
+    <!-- 检视（市场模式要拉索引/验签/下载，可能数秒）与安装期间给出行内等待提示，避免
+        弹窗只剩标题和取消，被误以为失败。检视提示只在面板/错误都还没有时展示；
+        有下载进度（市场包缓存未命中）时升级为进度条 + 速度。 -->
+    {#if (inspecting && info === null && error === null) || installing}
+      {#if progress !== null}
+        {@const percent = Math.min(100, Math.floor((progress.received / progress.total) * 100))}
+        <div class="grid gap-1.5" data-testid="plugins-install-status">
+          <div class="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 class="size-4 animate-spin" aria-hidden="true" />
+            <span>
+              {t('plugins.downloadProgress', {
+                received: formatBytes(progress.received),
+                total: formatBytes(progress.total),
+                percent,
+                speed: formatBytes(Math.round(progress.bps)),
+              })}
+            </span>
+          </div>
+          <div class="h-1 overflow-hidden rounded-full bg-muted">
+            <div
+              class="h-full bg-primary transition-[width] duration-150"
+              style={`width: ${percent}%`}
+            ></div>
+          </div>
+        </div>
+      {:else}
+        <div
+          class="flex items-center gap-2 text-sm text-muted-foreground"
+          data-testid="plugins-install-status"
+        >
+          <Loader2 class="size-4 animate-spin" aria-hidden="true" />
+          <span>
+            {installing
+              ? t('plugins.installing')
+              : mode === 'marketplace'
+                ? t('plugins.inspectingMarketplace')
+                : t('plugins.inspectingLocal')}
+          </span>
+        </div>
+      {/if}
     {/if}
 
     <div class="flex items-center gap-2">

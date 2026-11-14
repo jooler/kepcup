@@ -58,7 +58,8 @@
 >
   <div class="flex items-start gap-2">
     <Compass class="mt-0.5 size-4 shrink-0 text-violet-600" aria-hidden="true" />
-    <p class="whitespace-pre-wrap">{content.text ?? ''}</p>
+    <!-- 路由说明是 Bot 文案，可能内嵌长 token：放不下时横向滚动，不撑破卡片 -->
+    <p class="overflow-x-auto whitespace-pre-wrap">{content.text ?? ''}</p>
   </div>
   {#if route !== null}
     <div class="mt-2 flex flex-wrap justify-end gap-2">

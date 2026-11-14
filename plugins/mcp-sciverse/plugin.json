@@ -1,0 +1,28 @@
+{
+  "format_version": 1,
+  "id": "app.kepcup/mcp-sciverse",
+  "name": "Sciverse 文献检索",
+  "icon": "icon.svg",
+  "version": "1.0.0",
+  "description": "让 Bot 检索学术文献：自然语言语义检索、结构化元数据查询、全文分段阅读、引用关系与图表获取。凭据只保存在本机。",
+  "usage": "安装时需要填入 Sciverse API Token（在 sciverse.space/tokens 创建）。保存后在 Bot 详情添加本插件即可使用。",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "homepage": "https://sciverse.space",
+  "engines": {
+    "kepcup": ">=0.5.11"
+  },
+  "contributions": {
+    "mcp": [
+      {
+        "kind": "mcpb",
+        "id": "sciverse",
+        "name": "Sciverse 文献检索",
+        "description": "Sciverse 官方检索服务：语义检索、元数据查询、全文阅读、引用关系与图表获取。",
+        "file": "mcp/sciverse.mcpb"
+      }
+    ]
+  }
+}

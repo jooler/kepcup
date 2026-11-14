@@ -1,4 +1,12 @@
-import type { FetchedMail, MailImap, MailSearchQuery, MailboxState } from '../../src/mail/message.js';
+import type {
+  FetchedMail,
+  MailFolderInfo,
+  MailFlagsEntry,
+  MailImap,
+  MailMoveResult,
+  MailSearchQuery,
+  MailboxState,
+} from '../../src/mail/message.js';
 
 export interface Deferred<T> {
   promise: Promise<T>;
@@ -32,10 +40,64 @@ export class MockImap implements MailImap {
   noopImpl: (() => Promise<void>) | null = null;
 
   mailbox: MailboxState = { uidNext: 6, uidValidity: 1, unseen: 0 };
+  /** 当前 SELECT 的路径（select 记录；D144 会话重选 INBOX 的用例用）。 */
+  #currentPath: string | null = 'INBOX';
 
   async selectInbox(): Promise<MailboxState> {
     if (this.selectBarrier !== null) await this.selectBarrier;
+    this.#currentPath = 'INBOX';
     return this.mailbox;
+  }
+
+  async select(path: string): Promise<MailboxState> {
+    if (this.selectBarrier !== null) await this.selectBarrier;
+    this.#currentPath = path;
+    return this.mailbox;
+  }
+
+  selectedPath(): string | null {
+    return this.#currentPath;
+  }
+
+  /**
+   * 写操作没有脚本化实现：会话主循环不会调它们；需要断言写调用的测试用
+   * FakeImapServer 的集成路径（mail-write-ops.test.ts），这里显式抛错而不是
+   * 静默给个假成功。
+   */
+  async storeFlags(): Promise<boolean> {
+    throw new Error('MockImap 未实现 storeFlags');
+  }
+
+  async move(): Promise<MailMoveResult> {
+    throw new Error('MockImap 未实现 move');
+  }
+
+  async deleteMessages(): Promise<boolean> {
+    throw new Error('MockImap 未实现 deleteMessages');
+  }
+
+  async append(): Promise<number | null> {
+    throw new Error('MockImap 未实现 append');
+  }
+
+  async fetchFlags(): Promise<MailFlagsEntry[]> {
+    throw new Error('MockImap 未实现 fetchFlags');
+  }
+
+  async listFolders(): Promise<MailFolderInfo[]> {
+    throw new Error('MockImap 未实现 listFolders');
+  }
+
+  async createFolder(): Promise<{ created: boolean }> {
+    throw new Error('MockImap 未实现 createFolder');
+  }
+
+  async renameFolder(): Promise<void> {
+    throw new Error('MockImap 未实现 renameFolder');
+  }
+
+  async deleteFolder(): Promise<void> {
+    throw new Error('MockImap 未实现 deleteFolder');
   }
 
   onError(listener: (error: Error) => void): () => void {

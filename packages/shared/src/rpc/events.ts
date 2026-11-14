@@ -45,6 +45,7 @@ import {
 import {
   pluginsChangedPayloadSchema,
   pluginsMarketplaceUpdatedPayloadSchema,
+  pluginsPackageProgressPayloadSchema,
 } from '../domain/plugins.js';
 
 export const coreStatusSchema = z.enum(['starting', 'ready', 'locked', 'error']);
@@ -497,6 +498,8 @@ export const rpcEventSchemas = {
   'plugins.changed': pluginsChangedPayloadSchema,
   /** 插件市场（D104 P1-1）：索引采纳或端点切换后刷新市场视图（generatedAt null = 清空）。 */
   'plugins.marketplace.updated': pluginsMarketplaceUpdatedPayloadSchema,
+  /** 插件市场包下载进度（D104 P1-1）：检视 / 安装拉取包时节流推送（received / total 字节）。 */
+  'plugins.package.progress': pluginsPackageProgressPayloadSchema,
 } as const;
 
 export type RpcEventName = keyof typeof rpcEventSchemas;

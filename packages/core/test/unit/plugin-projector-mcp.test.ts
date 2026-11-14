@@ -117,6 +117,7 @@ interface Rig {
   closed: string[];
   removed: string[];
   revocations: Array<{ previous: McpServer[]; next: McpServer[] }>;
+  autoEnabled: string[];
   projector: McpProjector;
   ledger: MemLedger;
 }
@@ -130,6 +131,7 @@ async function makeRig(
   const closed: string[] = [];
   const removed: string[] = [];
   const revocations: Array<{ previous: McpServer[]; next: McpServer[] }> = [];
+  const autoEnabled: string[] = [];
   const settings = {
     // A copy per read, like the real SettingsService: callers may hold a previous
     // snapshot across a mutation (the uninstall chain relies on that).
@@ -161,6 +163,7 @@ async function makeRig(
     revokeMcpServerChanges: (previous, next) => {
       revocations.push({ previous: [...previous], next: [...next] });
     },
+    autoEnable: async (serverId) => void autoEnabled.push(serverId),
     logger: noopLogger,
   });
   return {
@@ -171,6 +174,7 @@ async function makeRig(
     closed,
     removed,
     revocations,
+    autoEnabled,
     projector,
     ledger: new MemLedger(),
   };
@@ -414,6 +418,81 @@ describe('McpProjector.project', () => {
     await expect(rig.projector.project(ctx)).rejects.toThrow();
     expect(rig.ledger.list('mcp')).toHaveLength(2); // both registered before the failure
     expect(rig.servers).toHaveLength(1); // only the http server was written
+  });
+});
+
+/**
+ * 安装即配置完成的自动启用（连接 → 列工具 → 批准全部）：仅 `project()`（安装路径）对每个
+ * 成功落地的 server 触发一次；`update()`（插件版本更新引入的工具变化是供应链事件）与
+ * `unproject()` / `setEnabled()` 不触发。autoEnable 自身抛错被吞掉（fire-and-forget），
+ * 不影响安装结果。
+ */
+describe('McpProjector auto-enable on install', () => {
+  it('project 对每个落地的 server（mcpb + http）各触发一次', async () => {
+    const rig = await makeRig();
+    const { dir, manifestFile } = await contentDir(
+      [{ id: 'dbtools' }],
+      [{ id: 'docs', url: 'https://mcp.example.com/mcp' }],
+    );
+    const ctx = ctxOf(rig, identity(), dir, manifestFile);
+    ctx.userConfig = { dbtools: { api_key: 'sk-auto' } };
+    await rig.projector.project(ctx);
+    expect(rig.servers).toHaveLength(2);
+    expect(rig.autoEnabled.sort()).toEqual(rig.servers.map((server) => server.id).sort());
+  });
+
+  it('update / unproject / setEnabled 不触发', async () => {
+    const rig = await makeRig();
+    const v1 = await contentDir([{ id: 'dbtools' }]);
+    const oldCtx = ctxOf(rig, identity(), v1.dir, v1.manifestFile);
+    oldCtx.userConfig = { dbtools: { api_key: 'sk-a' } };
+    await rig.projector.project(oldCtx);
+    expect(rig.autoEnabled).toHaveLength(1);
+    const serverId = rig.servers[0]!.id;
+
+    const v2 = await contentDir(
+      [{ id: 'dbtools', manifest: { ...mcpbManifest, name: 'echo-bundle', version: '2.0.0' } }],
+    );
+    const newCtx = ctxOf(rig, { ...identity(), version: '2.0.0' }, v2.dir, v2.manifestFile, {
+      ...emptyOwned(),
+      mcp: new Set([serverId]),
+    });
+    newCtx.userConfig = { dbtools: { api_key: 'sk-b' } };
+    await rig.projector.update({ ...oldCtx, owned: { ...emptyOwned(), mcp: new Set([serverId]) } }, newCtx);
+    expect(rig.autoEnabled).toHaveLength(1); // update 不触发
+
+    await rig.projector.unproject(identity(), [serverId], rig.ledger);
+    expect(rig.autoEnabled).toHaveLength(1); // unproject 不触发
+  });
+
+  it('autoEnable 抛错被吞掉（fire-and-forget），安装照常成功', async () => {
+    const rig = await makeRig();
+    // 换一个 reject 的 autoEnable：#autoEnable 必须 catch，project 仍正常完成。
+    const throwing = new McpProjector({
+      settings: {
+        get: () => ({ mcpServers: [...rig.servers] }) as unknown as Settings,
+        update: (patch: Partial<Settings>) => {
+          if (patch.mcpServers !== undefined) {
+            rig.servers.splice(0, rig.servers.length, ...patch.mcpServers);
+          }
+          return { mcpServers: [...rig.servers] } as unknown as Settings;
+        },
+      },
+      mcpb: rig.installer,
+      mcp: { closeServer: async () => {} },
+      disconnector: { removeCustomServer: async () => {} },
+      revokeMcpServerChanges: () => {},
+      autoEnable: async () => {
+        throw new Error('enable exploded');
+      },
+      logger: noopLogger,
+    });
+    const { dir, manifestFile } = await contentDir(
+      [],
+      [{ id: 'docs', url: 'https://mcp.example.com/mcp' }],
+    );
+    await expect(throwing.project(ctxOf(rig, identity(), dir, manifestFile))).resolves.toBeUndefined();
+    expect(rig.servers).toHaveLength(1);
   });
 });
 

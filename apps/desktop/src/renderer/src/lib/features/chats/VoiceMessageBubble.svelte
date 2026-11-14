@@ -125,8 +125,9 @@
     </span>
   </button>
   {#if caption.length > 0}
+    <!-- 转写原文可能含长 token：放不下时横向滚动，不撑破消息列 -->
     <p
-      class="mt-1 max-w-full px-1 text-[13px] leading-relaxed whitespace-pre-wrap text-muted-foreground select-text"
+      class="mt-1 max-w-full overflow-x-auto px-1 text-[13px] leading-relaxed whitespace-pre-wrap text-muted-foreground select-text"
       data-testid="voice-message-caption"
     >
       {caption}

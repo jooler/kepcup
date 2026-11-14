@@ -214,37 +214,46 @@ export interface McpTestResult {
   message?: string;
 }
 
-/** 应用级 enabled 的 server（Bot 侧再取交集，见 serversForBot）。 */
-export function enabledServers(servers: McpServer[]): McpServer[] {
-  return servers.filter((server) => server.enabled);
+/**
+ * 「这个 server 对这个 Bot 是否放行」的**单一事实来源**（应用级 enabled ∧ Bot 侧口径）：
+ * 注入侧（`serversForBot` → 能力目录 / 工具面）与调用侧（start.ts 网关 `mcpToolDecision`）
+ * 必须共用本判定，任何一侧单独改口径都是两侧分叉。
+ *
+ * P2 注入模型（`extraPluginIds` = 有效启用集 = bot.plugin_ids ∪ 项目叠加）：
+ * - `source.kind === 'plugin'`（插件贡献的 MCPB / 固定 http）：插件 ∈ 启用集即放行——
+ *   **不要求** `selectedIds`（mcp_server_ids）：插件是唯一注入单位，Bot 详情「插件」区块
+ *   添加即授权，插件 server 的历史勾选读时忽略；
+ * - `source.kind === 'instance'`（P4-M2 实例模版落地的 server）：插件 ∈ 启用集之上
+ *   **还要求** `selectedIds` 勾选——实例是插件卡里逐个「授权给本 Bot」的细选单位
+ *   （勾选写入 `mcp_server_ids`），与 mail/im 的账号绑定同语义；
+ * - 其他 server（手动 / MCPB 独立安装）：`selectedIds` 子集勾选。
+ */
+export function serverForBot(
+  server: McpServer,
+  selectedIds: readonly string[],
+  extraPluginIds: ReadonlySet<string>,
+): boolean {
+  if (!server.enabled) return false;
+  const selected = new Set(selectedIds);
+  if (server.source?.kind === 'plugin') {
+    return extraPluginIds.has(server.source.pluginId);
+  }
+  if (server.source?.kind === 'instance') {
+    return extraPluginIds.has(server.source.pluginId) && selected.has(server.id);
+  }
+  return selected.has(server.id);
 }
 
 /**
- * 「应用级 enabled ∩ Bot 选中」——Bot 未勾选的 server 不暴露。
- *
- * P2 注入模型（`extraPluginIds` = 有效启用集，**必传**——P4 收口去掉 undefined=不过滤
- * 的旧口径）：`source.kind === 'plugin'` 的 server 按「应用级 enabled ∧ 其 `pluginId` ∈
- * 启用集」判定——不要求出现在 `selectedIds`（插件 server 的历史勾选读时忽略）；
- * P4-M2 的 `source.kind === 'instance'`（实例模版落地的 server）在插件启用集之上
- * **还要求** `selectedIds` 勾选——实例是插件卡里逐个「授权给本 Bot」的细选单位
- * （Bot 详情插件卡展开区的勾选，写入 `mcp_server_ids`），与 mail/im 的账号绑定同语义；
- * 其他 server（手动 / MCPB 独立安装）维持 `selectedIds` 子集勾选不变。
+ * 「应用级 enabled ∩ Bot 选中」——Bot 未勾选的 server 不暴露。判定口径见
+ * {@link serverForBot}（注入与调用共用的单一事实来源）。
  */
 export function serversForBot(
   servers: McpServer[],
   selectedIds: string[],
   extraPluginIds: ReadonlySet<string>,
 ): McpServer[] {
-  const selected = new Set(selectedIds);
-  return enabledServers(servers).filter((server) => {
-    if (server.source?.kind === 'plugin') {
-      return extraPluginIds.has(server.source.pluginId);
-    }
-    if (server.source?.kind === 'instance') {
-      return extraPluginIds.has(server.source.pluginId) && selected.has(server.id);
-    }
-    return selected.has(server.id);
-  });
+  return servers.filter((server) => serverForBot(server, selectedIds, extraPluginIds));
 }
 
 /**

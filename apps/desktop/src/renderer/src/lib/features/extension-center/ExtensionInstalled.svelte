@@ -167,9 +167,12 @@
     countKey: 'skills' | 'connectors' | 'mcp' | 'mail' | 'im',
   ): boolean {
     if (plugin.counts[countKey] > 0) return true;
-    if (countKey === 'mail') return plugin.instanceCounts.mail > 0 || plugin.providesInstances.includes('mail');
-    if (countKey === 'mcp') return plugin.instanceCounts.mcp > 0 || plugin.providesInstances.includes('mcp');
-    if (countKey === 'im') return plugin.instanceCounts.im > 0 || plugin.providesInstances.includes('im');
+    if (countKey === 'mail')
+      return plugin.instanceCounts.mail > 0 || plugin.providesInstances.includes('mail');
+    if (countKey === 'mcp')
+      return plugin.instanceCounts.mcp > 0 || plugin.providesInstances.includes('mcp');
+    if (countKey === 'im')
+      return plugin.instanceCounts.im > 0 || plugin.providesInstances.includes('im');
     return false;
   }
 
@@ -872,8 +875,18 @@
         {t('plugins.backToList')}
       </Button>
       {#if contentPlugin?.providesInstances.includes('mcp')}
-        <!-- P4-M2：实例型插件 = 实例列表 / 表单；固定投影贡献仍走 McpSection。 -->
+        <!-- P4-M2：实例型插件 = 实例列表 / 表单（凭据在这里增删改）；其下追加以插件圈定的
+             MCP 服务器管理区（managedServerPluginId 已认实例来源）——启停、连接测试与逐工具
+             策略与固定投影插件（MCPB）同一套界面。 -->
         <ExtensionMcpInstances embedded pluginId={contentView.pluginId} />
+        <div class="mt-3 border-t pt-2" data-testid="plugin-mcp-servers-section">
+          <!-- 实例型插件：注入 = 插件启用 ∧ 逐实例勾选授权，顶部提示换成对应口径。 -->
+          <ExtensionMcp
+            embedded
+            pluginId={contentView.pluginId}
+            hintKey="extensionCenter.mcp.hintScopedInstances"
+          />
+        </div>
       {:else}
         <ExtensionMcp embedded pluginId={contentView.pluginId} />
       {/if}
@@ -904,7 +917,7 @@
         <ArrowLeft class="size-3.5" aria-hidden="true" />
         {t('plugins.backToList')}
       </Button>
-      <ExtensionMail embedded />
+      <ExtensionMail embedded pluginId={contentView.pluginId} />
     </div>
   {/if}
 </div>

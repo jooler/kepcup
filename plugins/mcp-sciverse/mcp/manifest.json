@@ -1,0 +1,36 @@
+{
+  "manifest_version": "0.3",
+  "name": "sciverse-mcp",
+  "display_name": "Sciverse 文献检索",
+  "version": "1.0.0",
+  "description": "Sciverse 官方检索 server（github.com/opendatalab/Sciverse-Agent-Tools）：语义检索、元数据查询、全文阅读、引用关系与图表获取。",
+  "author": {
+    "name": "OpenDataLab"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "node_modules/sciverse-mcp-server/dist/cli.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/node_modules/sciverse-mcp-server/dist/cli.js"],
+      "env": {
+        "SCIVERSE_API_TOKEN": "${user_config.token}"
+      }
+    }
+  },
+  "user_config": {
+    "token": {
+      "type": "string",
+      "title": "Sciverse API Token",
+      "description": "在 sciverse.space/tokens 创建（sv- 开头），粘贴到这里即可。",
+      "required": true,
+      "sensitive": true
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}

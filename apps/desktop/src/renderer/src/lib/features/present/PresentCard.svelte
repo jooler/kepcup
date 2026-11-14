@@ -302,10 +302,13 @@
             >{step.status === 'done' ? '✓' : i + 1}</span
           >
           <div class="min-w-0">
-            <div class={step.status === 'current' ? 'font-medium' : ''}>{step.title}</div>
-            {#if step.detail !== undefined}<div class="text-xs text-muted-foreground">
-                {step.detail}
-              </div>{/if}
+            <!-- 步骤 / 时间线文案来自 Bot，可能内嵌长 token：放不下时横向滚动 -->
+            <div class="overflow-x-auto {step.status === 'current' ? 'font-medium' : ''}">
+              {step.title}
+            </div>
+            {#if step.detail !== undefined}
+              <div class="overflow-x-auto text-xs text-muted-foreground">{step.detail}</div>
+            {/if}
           </div>
         </li>
       {/each}
@@ -317,10 +320,10 @@
         <li class="relative">
           <span class="absolute top-1.5 -left-[17px] size-2 rounded-full bg-primary"></span>
           <div class="text-xs text-muted-foreground">{event.time}</div>
-          <div>{event.title}</div>
-          {#if event.detail !== undefined}<div class="text-xs text-muted-foreground">
-              {event.detail}
-            </div>{/if}
+          <div class="overflow-x-auto">{event.title}</div>
+          {#if event.detail !== undefined}
+            <div class="overflow-x-auto text-xs text-muted-foreground">{event.detail}</div>
+          {/if}
         </li>
       {/each}
     </ol>

@@ -11,14 +11,24 @@
   /**
    * Bot 档案里的邮箱勾选（D84）。和「连接应用」分开：这里写的是绑定表，不是 MCP。
    * 新建 Bot 还没有 id，先提示到扩展中心。
+   *
+   * `pluginId`：嵌在某个邮件插件的卡里时只勾选该插件的账号（数据归属圈定，
+   * 多个邮件插件并存时不串台）；缺省 = 全部账号（插件卡外的遗留系统账号区）。
    */
-  let { botId }: { botId?: string | undefined } = $props();
+  let {
+    botId,
+    pluginId,
+  }: { botId?: string | undefined; pluginId?: string | undefined } = $props();
 
   let accounts = $state<MailAccount[]>([]);
   let error = $state('');
 
+  const visible = $derived(
+    pluginId === undefined ? accounts : accounts.filter((account) => account.pluginId === pluginId),
+  );
+
   const bound = $derived(
-    botId === undefined ? [] : accounts.filter((account) => account.botIds.includes(botId)),
+    botId === undefined ? [] : visible.filter((account) => account.botIds.includes(botId)),
   );
 
   async function reload(): Promise<void> {
@@ -55,11 +65,11 @@
   <p class="text-xs text-muted-foreground">{t('mail.botSectionHint')}</p>
   {#if botId === undefined}
     <p class="text-xs text-muted-foreground">{t('mail.botSectionAfterCreate')}</p>
-  {:else if accounts.length === 0}
+  {:else if visible.length === 0}
     <p class="text-xs text-muted-foreground">{t('mail.botSectionEmpty')}</p>
   {:else}
     <div class="space-y-1">
-      {#each accounts as account (account.id)}
+      {#each visible as account (account.id)}
         <label class="flex items-center gap-2 text-sm">
           <input
             type="checkbox"

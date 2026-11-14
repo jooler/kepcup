@@ -13,7 +13,7 @@
   import MailAccountAddForm from '$lib/features/mail/MailAccountAddForm.svelte';
 
   /**
-   * 扩展中心「邮件」（D84；P3 语义）：已建账号的聚合视图——按归属插件分组，每行
+   * 扩展中心「邮件」（D84；P3 语义）：已建账号的管理视图——按归属插件分组，每行
    * 显示所属插件；遗留无主账号标「未关联插件」。添加入口在邮件插件卡（本视图的
    * 「添加」引导过去：`installed?filter=mail` 深链）；没有任何邮件插件时给市场深链。
    * 账号 / 授权码 / 收信模式 / Bot 绑定的管理动作保留。授权码只在填写时出现。
@@ -26,22 +26,42 @@
   let addPluginId = $state<string | null>(null);
   let selectedId = $state<string | null>(null);
 
+  /**
+   * `embedded`：嵌进「已安装」的插件内容管理视图，去掉自带的滚动容器。
+   * `pluginId`：从某个插件的「管理」入口进来时只管理该插件的邮箱账号
+   * （多个邮件插件并存时避免串台；遗留无主账号不进任何插件卡）；
+   * 缺省 = 全部账号的聚合视图。
+   */
+  let { embedded = false, pluginId }: { embedded?: boolean; pluginId?: string | undefined } =
+    $props();
+
   let newPassword = $state('');
   let passwordBusy = $state(false);
 
   const selected = $derived(accounts.find((account) => account.id === selectedId) ?? null);
 
-  /** 提供邮件实例能力的已启用插件（添加入口的候选）。 */
+  // detail 态的选中账号在别处被删（卸载级联等外部动作）时归位回列表，避免内容区空白无返回。
+  $effect(() => {
+    if (view === 'detail' && selected === null) view = 'list';
+  });
+
+  /** 提供邮件实例能力的已启用插件（添加入口的候选；按插件卡进入时只看该插件）。 */
   const mailPlugins = $derived(
-    plugins.plugins.filter((plugin) => plugin.enabled && plugin.providesInstances.includes('mail')),
+    plugins.plugins.filter(
+      (plugin) =>
+        plugin.enabled &&
+        plugin.providesInstances.includes('mail') &&
+        (pluginId === undefined || plugin.id === pluginId),
+    ),
   );
 
-  /** 按归属插件分组的账号（无主账号归 `null` 组）。 */
+  /** 按归属插件分组的账号（无主账号归 `null` 组；按插件卡进入时只列该插件）。 */
   const groups = $derived.by(() => {
     // Plain Map: group accounts for one render pass, not reactive UI state.
     // eslint-disable-next-line svelte/prefer-svelte-reactivity
     const map = new Map<string | null, MailAccount[]>();
     for (const account of accounts) {
+      if (pluginId !== undefined && account.pluginId !== pluginId) continue;
       const key = account.instanceId === null ? null : (account.pluginId ?? null);
       const list = map.get(key) ?? [];
       list.push(account);
@@ -49,6 +69,21 @@
     }
     return [...map.entries()];
   });
+
+  /** 空态判定用：圈定后只数该插件的账号（聚合视图与全集一致）。 */
+  const visibleAccounts = $derived(
+    pluginId === undefined ? accounts : accounts.filter((account) => account.pluginId === pluginId),
+  );
+
+  /**
+   * 圈定时的属主插件已停用：给「插件已停用」专用提示，而不是「没有邮件插件」
+   * 市场横幅（账号列表照常渲染，仍可管理已有账号）。插件不存在（已卸载的残留）
+   * 仍走「没有邮件插件」分支。
+   */
+  const scopedDisabled = $derived(
+    pluginId !== undefined &&
+      plugins.plugins.some((plugin) => plugin.id === pluginId && !plugin.enabled),
+  );
 
   /** 无任何邮件插件且有账号时的分组名回退（归属插件已卸载的残留实例账号）。 */
   function groupName(pluginId: string | null): string {
@@ -171,8 +206,6 @@
       toast.error(explain(error));
     }
   }
-  /** embedded：嵌进「已安装」的邮件筛选视图（不再是独立页签），去掉自带的滚动容器。 */
-  let { embedded = false }: { embedded?: boolean } = $props();
 </script>
 
 <div
@@ -194,7 +227,14 @@
         {t('mail.add')}
       </Button>
     </div>
-    {#if mailPlugins.length === 0}
+    {#if scopedDisabled}
+      <div
+        class="mb-3 rounded-xl border border-dashed px-4 py-3 text-center text-sm text-muted-foreground"
+        data-testid="mail-plugin-disabled"
+      >
+        <p>{t('mail.pluginDisabled')}</p>
+      </div>
+    {:else if mailPlugins.length === 0}
       <div
         class="mb-3 rounded-xl border border-dashed px-4 py-3 text-center text-sm text-muted-foreground"
         data-testid="mail-no-plugin"
@@ -211,7 +251,7 @@
         </Button>
       </div>
     {/if}
-    {#if accounts.length === 0}
+    {#if visibleAccounts.length === 0}
       <div
         class="rounded-xl border border-dashed px-4 py-8 text-center text-sm text-muted-foreground"
         data-testid="mail-empty"
