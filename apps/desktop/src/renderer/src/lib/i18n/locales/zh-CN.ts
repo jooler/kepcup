@@ -500,7 +500,7 @@ export const zhCN = {
   'settings.mcpbRequiredMissing': '请填写必填项：{names}',
   'settings.mcpbConfirm': '确认并安装',
   'settings.mcpbInstalling': '安装中…',
-  'settings.mcpbInstalled': '已安装「{name}」。请在列表里点「测试」查看并批准它的工具。',
+  'settings.mcpbInstalled': '已安装「{name}」。正在自动连接并启用它的全部工具；此后服务端新增或变更的工具，仍需在列表里复核批准。',
   'settings.mcpbInstallFailed': '安装失败：{reason}',
   'settings.mcpbCancel': '取消',
   // D73 P2 §6.6 MCP 调试（原始工具定义 / 授权流程日志 / 手动刷新），扩展中心 MCP 里始终可用
@@ -1817,9 +1817,9 @@ export const zhCN = {
   'extensionCenter.mcp.empty':
     '还没有安装 MCP 服务器。可在下方新建（stdio / HTTP / SSE），或安装 .mcpb 本地包；常用应用请到「连接」分组添加。',
   'extensionCenter.mcp.hintScoped':
-    '该插件提供的工具服务器：启停、连接测试与逐工具策略在这里管理。在 Bot 编辑里启用该插件后，Bot 即可使用这些工具；每次调用默认需要批准。',
+    '该插件提供的工具服务器：启停、连接测试与逐工具策略在这里管理。安装后工具会自动连接并全部启用，此后服务端新增或变更的工具才需要在这里复核批准。在 Bot 编辑里启用该插件后，Bot 即可使用这些工具；每次调用默认需要批准。',
   'extensionCenter.mcp.hintScopedInstances':
-    '该插件提供的工具服务器：启停、连接测试与逐工具策略在这里管理。在 Bot 编辑里启用该插件后，还需展开插件卡勾选授权对应的工具服务，Bot 才能使用；每次调用默认需要批准。',
+    '该插件提供的工具服务器：启停、连接测试与逐工具策略在这里管理。填完授权信息保存后会自动连接并全部启用，此后服务端新增或变更的工具才需要在这里复核批准。在 Bot 编辑里启用该插件后，还需展开插件卡勾选授权对应的工具服务，Bot 才能使用；每次调用默认需要批准。',
   'extensionCenter.mcp.emptyScoped': '该插件还没有提供工具服务器。',
   'plugins.title': '已安装的插件',
   'plugins.hint': '插件把技能、工具、连接应用打包成一份可分发的扩展。',
@@ -3300,8 +3300,8 @@ export const zhCN = {
   'mcp.back': '返回',
   'mcp.saving': '正在保存…',
   'mcp.save': '保存',
-  'mcp.added': '工具服务已添加',
-  'mcp.updated': '工具服务已更新',
+  'mcp.added': '工具服务已添加：正在自动连接并启用全部工具…',
+  'mcp.updated': '工具服务已更新：正在重新连接并启用全部工具…',
   'mcp.delete': '删除工具服务',
   'mcp.editHint': '点击编辑',
   'mcp.noPlugin': '还没有可添加工具服务的插件。先到市场安装一个（如腾讯文档、飞书）。',

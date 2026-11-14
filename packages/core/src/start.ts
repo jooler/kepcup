@@ -2503,6 +2503,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         disconnector: appRuntime.disconnector,
         revokeMcpServerChanges: (previous, next) =>
           settingsPermissionEffects.revokeMcpServerChanges(previous, next),
+        // 安装即配置完成：mcpb / 固定投影落地后自动连接并批准全部工具（fire-and-forget，
+        // 见 `AppConnectionsService.enableAllTools`）；更新引入的工具变化仍走锁定复核。
+        autoEnable: (serverId) =>
+          appConnections.enableAllTools({ serverId, trigger: 'plugin-install' }),
         logger,
       },
       connectors: {
@@ -2674,6 +2678,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         disconnector: appRuntime.disconnector,
         revokeMcpServerChanges: (previous, next) =>
           settingsPermissionEffects.revokeMcpServerChanges(previous, next),
+        // 配置完成即自动启用（连接 → 列工具 → 批准全部，fire-and-forget）：用户填完
+        // token 等授权数据后无需手动复核，Bot 分配后立即可用。手动「测试 → 批准」保留。
+        autoEnable: (serverId, trigger) => appConnections.enableAllTools({ serverId, trigger }),
         tierOf: (pluginId) => pluginStore.get(pluginId)?.tier ?? null,
         logger,
       }),

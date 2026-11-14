@@ -102,6 +102,13 @@
 >   `instances: ['mcp']` 声明移除后，既有 mcp 实例行与 server 原样保留——表单消失
 >   （`instanceFields` 为空）、`plugins.instances.update` 报错、仅实例删除 / 卸载可清理；
 >   表单侧对「插件缺失 / 已停用」给出明确提示（`mcp.pluginMissing` / `mcp.pluginDisabled`）。
+> - **配置完成即自动启用工具（2026-11-15，设计 51 §15.9）**：实例 create/update 与 mcpb
+>   首次安装落地后，core 自动「连接 → 列工具 → 批准全部」（`AppConnectionsService.enableAllTools`，
+>   materializer / projector 经 `autoEnable` 依赖 fire-and-forget 触发），用户填完 token 等
+>   授权数据后无需手动「测试 → 批准」，Bot 分配即可用。仅解锁工具定义锁定；调用面审批与
+>   `autoApprove`（保持 false）不变；插件**更新**引入的工具变化仍走锁定复核（D73 防 rug-pull），
+>   手动「测试 → 批准」链路原样保留。安装 / 保存提示文案同步（`settings.mcpbInstalled` /
+>   `extensionCenter.mcp.hintScoped*` / `mcp.added|updated`）。
 
 1. 官方插件 `plugins/custom-mcp/`：`instances: ['mcp']`、无贡献。
 2. mcp kind materializer：实例字段 = `name / transport(stdio|streamable-http|sse) /

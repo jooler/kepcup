@@ -557,6 +557,35 @@ schema 对缺失值回落空串（保守读取），**必填由边界强制**：
 筛选条文案用 `plugins.filter.im`，类别徽标沿用 `plugins.kind.im`）。本次是纯清单 / 宿主
 行为变更，**无数据库迁移、无 catalog 结构变更**。
 
+### 15.9 配置完成即自动启用工具（2026-11-15）
+
+问题：插件 MCP 的授权信息填完（实例 create/update、mcpb 安装表单）后，工具仍不可用——
+D73 工具定义锁定要等首次 tools/list 登记，再经人工「测试 → 批准」才暴露给 Bot，普通用户
+要多走两步手工操作。
+
+**语义**：`AppConnectionsService.enableAllTools({ serverId, trigger })`
+（`apps/connections.ts`，与 `approveAfterTest` 同构）——连接（`mcp.listTools`，
+`countFailure: false + refresh: true`，不烧重连预算）→ `toolLock.approve(conn, 'all')`
+批准**全部待复核**工具 → `auditAppToolsReview` 落审计（新增 `trigger` 字段：
+`'instance-create' | 'instance-update' | 'plugin-install'`，缺省 = 手动复核）。
+
+**触发点**（全部 fire-and-forget：注册表互斥锁内不得等待网络；失败只记 warn，工具保持
+锁定，手动「测试 → 批准」仍然可用）：
+
+- 实例 materializer（`materializers/mcp.ts`，`autoEnable` 依赖）：create 成功落地后
+  （`instance-create`）、update 在 `closeServer` 之后（`instance-update`，用新凭据重连并
+  重新批准——含定义已变的工具）。
+- mcp 投影器（`projectors/mcp.ts`，`PluginMcpDeps.autoEnable`）：仅 `project()`（安装路径）
+  每个成功落地的 server 触发（`plugin-install`）。**`update()` 与启动 `activate()` 不触发**：
+  插件版本更新引入的工具变化是供应链事件，正是 D73 要防的 rug-pull 场景，保留手动复核。
+- 接线在 `start.ts`（materializer / projector deps 均指向 `appConnections.enableAllTools`）。
+
+**边界**：只解锁「工具定义锁定」；调用面审批（审批卡 / `autoApprove`（保持 false）/
+逐工具 policy / `tier: 'developer'` 全 ask）一字不改。server 已删除（竞态）、`enabled: false`
+或 `auth: 'oauth'`（首连复核归授权流程）时静默跳过。UI 无新逻辑：批准后 `#syncStatus` 发
+`apps.connection_status`（connected）→ `appDetailStore` 重拉工具清单 → 待复核徽标自动消失；
+失败可见性 = 管理区现有「N 个待复核」徽标 + 手动链路。
+
 
 
 

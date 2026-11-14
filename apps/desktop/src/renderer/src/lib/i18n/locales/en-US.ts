@@ -527,7 +527,7 @@ export const enUS = {
   'settings.mcpbConfirm': 'Confirm and install',
   'settings.mcpbInstalling': 'Installing…',
   'settings.mcpbInstalled':
-    'Installed "{name}". Click Test in the list to view and approve its tools.',
+    'Installed "{name}". Connecting and enabling all of its tools automatically; tools added or changed by the server later still need review in the list.',
   'settings.mcpbInstallFailed': 'Installation failed: {reason}',
   'settings.mcpbCancel': 'Cancel',
   'settings.devModeToolsTitle': 'Raw tool definitions',
@@ -1882,9 +1882,9 @@ export const enUS = {
   'extensionCenter.mcp.empty':
     'No MCP servers installed yet. Create one below (stdio / HTTP / SSE) or install a .mcpb local package; for everyday apps, add them in the Connections tab.',
   'extensionCenter.mcp.hintScoped':
-    'Tool servers provided by this plugin: enable, test connections and tune per-tool policies here. Enable the plugin in Bot settings and its tools become available; each call requires approval by default.',
+    'Tool servers provided by this plugin: enable, test connections and tune per-tool policies here. Tools are connected and fully enabled automatically after install; only tools added or changed by the server later require review here. Enable the plugin in Bot settings and its tools become available; each call requires approval by default.',
   'extensionCenter.mcp.hintScopedInstances':
-    'Tool servers provided by this plugin: enable, test connections and tune per-tool policies here. Enable the plugin in Bot settings, then tick the tool services on its card to authorize them for a Bot; each call requires approval by default.',
+    'Tool servers provided by this plugin: enable, test connections and tune per-tool policies here. Tools are connected and fully enabled automatically once credentials are saved; only tools added or changed by the server later require review here. Enable the plugin in Bot settings, then tick the tool services on its card to authorize them for a Bot; each call requires approval by default.',
   'extensionCenter.mcp.emptyScoped': 'This plugin provides no tool servers yet.',
   'plugins.title': 'Installed plugins',
   'plugins.hint':
@@ -3469,8 +3469,8 @@ export const enUS = {
   'mcp.back': 'Back',
   'mcp.saving': 'Saving…',
   'mcp.save': 'Save',
-  'mcp.added': 'Tool service added',
-  'mcp.updated': 'Tool service updated',
+  'mcp.added': 'Tool service added: connecting and enabling all tools automatically…',
+  'mcp.updated': 'Tool service updated: reconnecting and enabling all tools automatically…',
   'mcp.delete': 'Delete tool service',
   'mcp.editHint': 'Click to edit',
   'mcp.noPlugin':
