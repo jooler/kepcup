@@ -94,7 +94,14 @@ export function managingPluginOfSkill(
   return !installed.loaded || installed.has(pluginId) ? pluginId : null;
 }
 
-/** 受插件管理的 MCP server → 插件 id；其他 server 返回 null。 */
+/**
+ * 受插件管理的 MCP server → 插件 id；其他 server 返回 null。
+ * 固定投影（`source.kind === 'plugin'`）与实例落地（`source.kind === 'instance'`，
+ * 即腾讯文档这类工具服务的 server）都算受管——结构化字段由 core 的 PLUGIN_MANAGED
+ * 守卫看护，渲染层按同一口径隐藏编辑 / 删除入口。
+ */
 export function managedServerPluginId(server: McpServer): string | null {
-  return server.source?.kind === 'plugin' ? server.source.pluginId : null;
+  return server.source?.kind === 'plugin' || server.source?.kind === 'instance'
+    ? server.source.pluginId
+    : null;
 }

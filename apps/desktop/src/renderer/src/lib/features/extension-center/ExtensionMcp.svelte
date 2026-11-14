@@ -1,5 +1,6 @@
 <script lang="ts">
   import McpSection from '$lib/features/settings/McpSection.svelte';
+  import type { t } from '$lib/i18n';
 
   /**
    * 扩展中心 →「工具」内容视图：MCP 的完整管理（新建 stdio / HTTP / SSE、启停、
@@ -7,11 +8,17 @@
    * （MCP 精选清单空壳已随 D104 删除；预置 MCP 的发现与分发由插件市场承担。）
    * D105 P4：从插件卡「管理 · 工具」进入时带 `pluginId`——列表只显示该插件投影的
    * server，新建 / .mcpb 安装等全局入口隐藏（那是无圈定时的全局能力）。
+   * 实例型插件（腾讯文档这类工具服务）经 `hintKey` 换成「还要勾选授权」的提示。
    */
   let {
     embedded = false,
     pluginId = undefined,
-  }: { embedded?: boolean; pluginId?: string | undefined } = $props();
+    hintKey = undefined,
+  }: {
+    embedded?: boolean;
+    pluginId?: string | undefined;
+    hintKey?: Parameters<typeof t>[0] | undefined;
+  } = $props();
 </script>
 
 <div
@@ -20,5 +27,5 @@
 >
   <!-- McpSection 不收 embedded：它的 embedded 是设置卡片段形态（只改一个开关），
        扩展中心内容视图要的是完整管理区（pluginId 圈定）。 -->
-  <McpSection {pluginId} />
+  <McpSection {pluginId} {...hintKey !== undefined ? { scopedHintKey: hintKey } : {}} />
 </div>

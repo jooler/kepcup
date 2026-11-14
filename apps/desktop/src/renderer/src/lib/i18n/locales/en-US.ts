@@ -1883,6 +1883,8 @@ export const enUS = {
     'No MCP servers installed yet. Create one below (stdio / HTTP / SSE) or install a .mcpb local package; for everyday apps, add them in the Connections tab.',
   'extensionCenter.mcp.hintScoped':
     'Tool servers provided by this plugin: enable, test connections and tune per-tool policies here. Enable the plugin in Bot settings and its tools become available; each call requires approval by default.',
+  'extensionCenter.mcp.hintScopedInstances':
+    'Tool servers provided by this plugin: enable, test connections and tune per-tool policies here. Enable the plugin in Bot settings, then tick the tool services on its card to authorize them for a Bot; each call requires approval by default.',
   'extensionCenter.mcp.emptyScoped': 'This plugin provides no tool servers yet.',
   'plugins.title': 'Installed plugins',
   'plugins.hint':
@@ -1947,6 +1949,8 @@ export const enUS = {
   'plugins.badge': 'Plugin · {name}',
   'plugins.managedBy': 'Managed by plugin "{name}"',
   'plugins.managedHint': 'To remove it, uninstall the plugin under Installed.',
+  'plugins.managedInstanceHint':
+    'To update credentials or remove it, manage the tool service under this plugin in the Extension Center.',
   'plugins.installTitle': 'Install plugin',
   'plugins.installHint':
     'Review what the package contains and asks for. Nothing is installed until you confirm.',

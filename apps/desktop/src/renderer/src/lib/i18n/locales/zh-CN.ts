@@ -1818,6 +1818,8 @@ export const zhCN = {
     '还没有安装 MCP 服务器。可在下方新建（stdio / HTTP / SSE），或安装 .mcpb 本地包；常用应用请到「连接」分组添加。',
   'extensionCenter.mcp.hintScoped':
     '该插件提供的工具服务器：启停、连接测试与逐工具策略在这里管理。在 Bot 编辑里启用该插件后，Bot 即可使用这些工具；每次调用默认需要批准。',
+  'extensionCenter.mcp.hintScopedInstances':
+    '该插件提供的工具服务器：启停、连接测试与逐工具策略在这里管理。在 Bot 编辑里启用该插件后，还需展开插件卡勾选授权对应的工具服务，Bot 才能使用；每次调用默认需要批准。',
   'extensionCenter.mcp.emptyScoped': '该插件还没有提供工具服务器。',
   'plugins.title': '已安装的插件',
   'plugins.hint': '插件把技能、工具、连接应用打包成一份可分发的扩展。',
@@ -1881,6 +1883,7 @@ export const zhCN = {
   'plugins.badge': '插件 · {name}',
   'plugins.managedBy': '由插件「{name}」管理',
   'plugins.managedHint': '要移除它，请在「已安装」里卸载该插件。',
+  'plugins.managedInstanceHint': '要更新凭据或移除，请在扩展中心该插件的「工具服务」里管理。',
   'plugins.installTitle': '安装插件',
   'plugins.installHint': '先检视包的内容与权限，确认后才会安装。',
   'plugins.pathLabel': '插件包（.kepcup）或文件夹路径',
