@@ -139,12 +139,22 @@ cd infra/cloudflare/directory && npx wrangler deploy
   未发布前用户可经「从文件夹安装」试用。语雀包先跑 `node plugins/mcp-yuque/build.mjs`
   生成 `mcp/yuque.mcpb` 再 validate / pack。腾讯文档已于 2026-11-14 上架（见下）。
 
-### 学术检索批次（1 个，2026-11-13 开发；待签名发布）
+### 学术检索批次（1 个，2026-11-13 开发；2026-11-14 发布）
 
 - 工具 1：`mcp-sciverse`（Sciverse 文献检索，内嵌官方 `sciverse-mcp-server` 的 MCPB，
   token 走安装表单；`engines.kepcup >=0.5.11`）。包先跑
   `node plugins/mcp-sciverse/build.mjs` 生成 `mcp/sciverse.mcpb` 再 validate / pack；
   构建脚本含内容契约校验（入口在位 + `SCIVERSE_API_TOKEN` env 键未被上游更名）。
+- **2026-11-14 上架前修正**：独立审查发现构建脚本把隔离 npm 用的临时 `package.json` /
+  `package-lock.json` 全量打进了发布产物（MCPB 根只应有 `manifest.json` + `node_modules/`）；
+  一并补了 zip 失败清理临时目录与安装版本取证，重建 mcpb（官方包仍解析 1.0.1，无依赖漂移）。
+- 上架流程照旧：26 个插件重打包（既有 25 个对象 sha256 与线上逐字节一致、R2 无需重传），
+  新对象仅 mcp-sciverse（`4cdd2e3b…`，4.4 MiB）。签名索引
+  `generatedAt=2026-11-14T15:15:03.588Z`（严格递增、26 条），生产密钥
+  `kepcup-plugins-2026-1`；R2 上传 1 包后 `wrangler deploy` 上线（Worker version
+  `f119360e-8e74-4d8d-94f0-9ef5407472ea`）。线上索引拉回 `--verify` 通过、26 个包从
+  `pkg.kepcup.com` 全量拉回逐一 sha256 复核通过，索引 / sig / sciverse 包与签名产物
+  逐字节一致。索引 26 条：mcp-feishu 仍属待发布批次，未纳入。
 
 ### 邮件插件 1.2.0（2026-11-14 发布，随宿主 D144 邮箱内部写操作）
 
