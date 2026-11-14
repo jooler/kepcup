@@ -6,6 +6,7 @@
   import { t, errorText } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { shell } from '$lib/stores/shell.svelte';
+  import { settingsStore } from '$lib/stores/settings.svelte';
   import { plugins } from '$lib/features/plugins/plugins.svelte';
   import { Button } from '$lib/components/ui/button';
   import McpInstanceForm from '$lib/features/plugins/McpInstanceForm.svelte';
@@ -18,8 +19,10 @@
    */
 
   /** 插件卡「管理」传入的插件 id：添加时默认选中；未传时聚合全部 mcp 实例插件。 */
-  let { embedded = false, pluginId = undefined }: { embedded?: boolean; pluginId?: string | undefined } =
-    $props();
+  let {
+    embedded = false,
+    pluginId = undefined,
+  }: { embedded?: boolean; pluginId?: string | undefined } = $props();
 
   let instances = $state<PluginInstanceSummary[]>([]);
   let view = $state<'list' | 'add' | 'edit'>('list');
@@ -32,9 +35,7 @@
   );
 
   const scopedPlugins = $derived(
-    pluginId === undefined
-      ? mcpPlugins
-      : mcpPlugins.filter((plugin) => plugin.id === pluginId),
+    pluginId === undefined ? mcpPlugins : mcpPlugins.filter((plugin) => plugin.id === pluginId),
   );
 
   const visible = $derived(
@@ -66,18 +67,23 @@
     const candidates = scopedPlugins.map((plugin) => plugin.id);
     if (candidates.length === 0) {
       instances = [];
-      return;
+    } else {
+      const results = await Promise.all(
+        candidates.map(
+          (id) =>
+            core.call('plugins.instances.list', { pluginId: id }) as Promise<{
+              instances: PluginInstanceSummary[];
+            }>,
+        ),
+      );
+      instances = results.flatMap((result) =>
+        result.instances.filter((instance) => instance.kind === 'mcp'),
+      );
     }
-    const results = await Promise.all(
-      candidates.map((id) =>
-        core.call('plugins.instances.list', { pluginId: id }) as Promise<{
-          instances: PluginInstanceSummary[];
-        }>,
-      ),
-    );
-    instances = results.flatMap((result) =>
-      result.instances.filter((instance) => instance.kind === 'mcp'),
-    );
+    // 实例落地 / 删除会改写 `settings.mcpServers`，但实例 RPC 只广播 `plugins.changed`
+    // （domain 的 settings.update 只写库）——下方同屏的 MCP 服务器管理区读的是
+    // settingsStore，必须在这里显式对齐，否则添加首个实例后服务器区仍空、删除后残留旧行。
+    await settingsStore.refresh();
   }
 
   onMount(() => {
