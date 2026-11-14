@@ -519,7 +519,7 @@ class ImapSession {
       return;
     }
     const keyword = /\bKEYWORD\s+(\S+)/i.exec(rest)?.[1];
-    let messages = selected.messages.filter((message) => {
+    const messages = selected.messages.filter((message) => {
       if (/\bUNSEEN\b/i.test(rest) && message.flags.includes('\\Seen')) return false;
       if (keyword !== undefined) {
         const hit = message.flags.some((flag) => flag.toLowerCase() === keyword.toLowerCase());
