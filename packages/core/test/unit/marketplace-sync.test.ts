@@ -398,6 +398,100 @@ describe('download', () => {
     expect(h.server.requests.filter((url) => url === entry.downloadUrl)).toHaveLength(1);
   });
 
+  it('emits throttled progress events (first / spaced / final) with payload from the entry', async () => {
+    const h = await harness();
+    const { entry } = await registerPackage(h);
+    h.publish([entry], NOW);
+    const sync = h.make();
+    await sync.sync();
+
+    // 三段流式响应，块之间把测试时钟推过节流间隔：首块 / 中间块 / 收尾块各发一次。
+    const bytes = h.packages[`${entry.id}`].bytes;
+    const third = Math.max(1, Math.floor(bytes.length / 3));
+    const chunks = [
+      bytes.subarray(0, third),
+      bytes.subarray(third, third * 2),
+      bytes.subarray(third * 2),
+    ];
+    const chunkedFetch = async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            const chunk = chunks.shift();
+            if (chunk === undefined) {
+              controller.close();
+              return;
+            }
+            h.clock.t += 200;
+            controller.enqueue(new Uint8Array(chunk));
+          },
+        }),
+        { status: 200 },
+      );
+    const sync2 = h.make({ downloadFetch: chunkedFetch as never });
+    const progressOf = () =>
+      h.events.calls.filter((call) => call.name === 'plugins.package.progress');
+    await sync2.download(entry);
+    const progress = progressOf();
+    expect(progress).toHaveLength(3);
+    expect(progress.map((call) => (call.payload as { received: number }).received)).toEqual([
+      third,
+      third * 2,
+      entry.size,
+    ]);
+    for (const call of progress) {
+      expect(call.payload).toMatchObject({
+        id: entry.id,
+        version: entry.version,
+        sha256: entry.sha256,
+        total: entry.size,
+      });
+    }
+
+    // 缓存命中不触发下载，也不发进度事件。
+    h.events.calls.length = 0;
+    await sync2.download(entry);
+    expect(progressOf()).toHaveLength(0);
+  });
+
+  it('suppresses middle-chunk progress inside the throttle window but always sends the final one', async () => {
+    const h = await harness();
+    const { entry } = await registerPackage(h);
+    h.publish([entry], NOW);
+    const sync = h.make();
+    await sync.sync();
+
+    // 时钟不动：中间块全部被节流掉，只剩首块和必发的收尾块。
+    const bytes = h.packages[`${entry.id}`].bytes;
+    const third = Math.max(1, Math.floor(bytes.length / 3));
+    const chunks = [
+      bytes.subarray(0, third),
+      bytes.subarray(third, third * 2),
+      bytes.subarray(third * 2),
+    ];
+    const chunkedFetch = async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            const chunk = chunks.shift();
+            if (chunk === undefined) {
+              controller.close();
+              return;
+            }
+            controller.enqueue(new Uint8Array(chunk));
+          },
+        }),
+        { status: 200 },
+      );
+    const sync2 = h.make({ downloadFetch: chunkedFetch as never });
+    await sync2.download(entry);
+    const progress = h.events.calls.filter((call) => call.name === 'plugins.package.progress');
+    expect(progress.map((call) => (call.payload as { received: number }).received)).toEqual([
+      third,
+      entry.size,
+    ]);
+  });
+
   it('cleans up package cache files older than seven days at start()', async () => {
     const h = await harness();
     const stale = path.join(h.packagesDir, `${'a'.repeat(64)}.kepcup`);
