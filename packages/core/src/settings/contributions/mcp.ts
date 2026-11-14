@@ -21,7 +21,7 @@ function str(value: unknown): string | undefined {
   return typeof value === 'string' ? value.trim() : undefined;
 }
 
-/** 已安装且声明了 mcp 实例能力的插件（腾讯文档 / 飞书 / 语雀这类工具插件）。 */
+/** 已安装且声明了 mcp 实例能力的插件（腾讯文档 / 飞书这类工具插件）。 */
 function instancePlugins(deps: AdapterDeps): PluginSummary[] {
   return (deps.plugins?.list() ?? []).filter((plugin) => plugin.providesInstances.includes('mcp'));
 }

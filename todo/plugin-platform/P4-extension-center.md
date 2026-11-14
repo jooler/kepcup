@@ -84,9 +84,9 @@
 > **实施注（2026-11-12，随在线文档平台插件批次部分落地）**：本节 **1–3 的机制已落地**，
 > 但形态收敛为「厂商模版」而非完整自定义表单——
 >
-> - 首批消费者是三个文档平台插件（`mcp-tencent-docs` 厂商模版：锁定端点 +
+> - 首批消费者是两个文档平台插件（`mcp-tencent-docs` 厂商模版：锁定端点 +
 >   `Authorization` 头走 secrets 占位；`mcp-feishu` 通用模版：`url:''` 端点进表单且
->   `urlSensitive`；`mcp-yuque` 内嵌 MCPB，非实例），**不含** `app.kepcup/custom-mcp`
+>   `urlSensitive`），**不含** `app.kepcup/custom-mcp`
 >   通用插件：实例字段集收敛为 `label`（+ 通用模版的 `url` + 模版声明的 header 值字段），
 >   仅 streamable-http 形态；stdio / MCPB 实例形态与「transport 按字段显隐」的完整
 >   自定义表单仍顺延。

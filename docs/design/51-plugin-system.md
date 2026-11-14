@@ -497,8 +497,8 @@ P0 拆成两步：先用「第三方式」的插件把管线跑通，再动已�
 headers 凭据走 secrets、通用模版 `url:''` 端点进表单并可用 `urlSensitive` 标记为敏感）、
 `mcpServerSourceSchema` 的 `instance` 分支、`serversForBot` 启用集注入、guards/removeServer
 的实例口径、启动对账 `reconcileMcpInstanceRows`、renderer 实例列表/表单
-（`ExtensionMcpInstances` / `McpInstanceForm`）均已就位；首批消费者是三个官方文档平台插件
-（`mcp-tencent-docs` 厂商模版 / `mcp-feishu` 通用模版 / `mcp-yuque` 内嵌 MCPB）。
+（`ExtensionMcpInstances` / `McpInstanceForm`）均已就位；首批消费者是官方文档平台插件
+（`mcp-tencent-docs` 厂商模版 / `mcp-feishu` 通用模版）。
 **仍顺延**：`app.kepcup/custom-mcp` 通用插件收编手动 MCP（含 stdio / MCPB 实例形态）、
 手动 server 惰性迁移、`DEV-075` 的 `McpSection` 手动管理区退役；M2 邮件 OAuth 子 schema；
 custom-connector 实例化；短信 / 电话 / 传感器能力类型（按 §15.1 菜谱）；

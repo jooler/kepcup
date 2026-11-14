@@ -3304,7 +3304,7 @@ export const zhCN = {
   'mcp.updated': '工具服务已更新',
   'mcp.delete': '删除工具服务',
   'mcp.editHint': '点击编辑',
-  'mcp.noPlugin': '还没有可添加工具服务的插件。先到市场安装一个（如腾讯文档、飞书、语雀）。',
+  'mcp.noPlugin': '还没有可添加工具服务的插件。先到市场安装一个（如腾讯文档、飞书）。',
   'mcp.openMarket': '打开插件市场',
   'mcp.instanceCount': '{count} 个服务',
   'mcp.ownerOf': '来自插件：{plugin}',
