@@ -240,6 +240,10 @@ export const ERROR_CODES = [
   'PLUGIN_MANAGED',
   /** 清单含当前版本不认识的字段 / 能力类型（D105：提示升级 KepCup，不静默忽略）。 */
   'PLUGIN_UPGRADE_REQUIRED',
+  /** 能力模型条目绑定的引擎未注册（D124 安装期校验；MEDIA_ENGINES 无此 id）。 */
+  'PLUGIN_ENGINE_UNKNOWN',
+  /** 能力模型条目指向的插件有多个实例且条目未指定 instance（D124 运行期）。 */
+  'INSTANCE_AMBIGUOUS',
   // 微应用运行时（D112，设计 55）
   /** 微应用清单 micro-app.json 校验失败（字段 / 闭合枚举外的能力 / 未实现的能力）。 */
   'MICRO_APP_MANIFEST_INVALID',

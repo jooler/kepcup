@@ -14,21 +14,26 @@ import {
   pluginsInstancesListOutputSchema,
   pluginsInstancesUpdateInputSchema,
   pluginsInstancesUpdateOutputSchema,
+  pluginsListCapabilityEntriesOutputSchema,
   pluginsListOutputSchema,
   pluginsMarketplaceListOutputSchema,
   pluginsMarketplaceRefreshOutputSchema,
+  pluginsSetBotCapabilityEntriesInputSchema,
   pluginsSetBotPluginsInputSchema,
   pluginsEnableForBotsInputSchema,
   pluginsSetEnabledInputSchema,
   pluginsSetEnabledOutputSchema,
+  pluginsTestCapabilityEntryInputSchema,
   pluginsUninstallInputSchema,
   pluginsUpdateInputSchema,
   pluginsUpdateOutputSchema,
   pluginsInspectInputSchema,
   pluginInspectOutputSchema,
+  type PluginCapabilityEntryGroup,
   type PluginInstanceKind,
   type PluginSource,
 } from '@kepcup/shared';
+import { MEDIA_ENGINES } from '../media/engines.js';
 import type { CoreServices } from '../start.js';
 import { currentRemoteSource } from '../remote/audit.js';
 import type { RpcMethodSpec } from './server.js';
@@ -243,6 +248,141 @@ export function bindPluginsMethods(services: CoreServices): Record<string, RpcMe
         }
         await instances().delete(input.id);
         for (const botId of affected) services.pluginBotNotice?.note(botId);
+        return { ok: true as const };
+      },
+    ),
+    // --- D124 能力模型条目（60 号文档 §3/§5） ---------------------------------
+    /**
+     * 已装插件的条目全集（Bot 详情勾选 UI 的数据源）：按插件分组，条目行带
+     * 能力 / 模型 / 引擎与实例配置状态（instanceState + configured）。
+     * 内置 / 清单不可读的插件跳过（P4 内置数据插件落地后再入列）。
+     */
+    'plugins.listCapabilityEntries': method(
+      voidInput,
+      pluginsListCapabilityEntriesOutputSchema,
+      async () => {
+        const pluginRegistry = registry();
+        const groups: PluginCapabilityEntryGroup[] = [];
+        for (const summary of pluginRegistry.list()) {
+          if (summary.state !== 'installed') continue;
+          const manifest = await pluginRegistry.manifestOf(summary.id);
+          const entries = manifest?.contributions.capabilityModels ?? [];
+          if (manifest === null || entries.length === 0) continue;
+          const instanceRows = instances().list(summary.id).filter((row) => row.kind === 'capability-model');
+          const requiredOf = (engine: string) =>
+            (MEDIA_ENGINES[engine]?.credentialFields ?? []).filter((field) => field.required);
+          groups.push({
+            pluginId: summary.id,
+            pluginName: summary.name,
+            tier: summary.tier,
+            entries: entries.map((entry) => {
+              const required = requiredOf(entry.engine);
+              const configured = (row?: { values: Record<string, unknown>; storedSensitiveKeys: string[] }): boolean =>
+                row === undefined
+                  ? false
+                  : required.every((field) =>
+                      field.sensitive
+                        ? row.storedSensitiveKeys.includes(field.key)
+                        : row.values[field.key] !== undefined && row.values[field.key] !== '',
+                    );
+              const explicit =
+                entry.instance !== undefined
+                  ? instanceRows.find((row) => row.id === entry.instance)
+                  : undefined;
+              const instanceState =
+                instanceRows.length === 0
+                  ? 'none'
+                  : instanceRows.length === 1
+                    ? 'single'
+                    : 'multi';
+              return {
+                entryId: entry.id,
+                capability: entry.capability,
+                model: entry.model,
+                displayName: entry.displayName ?? null,
+                engine: entry.engine,
+                instanceState,
+                configured:
+                  explicit !== undefined
+                    ? configured(explicit)
+                    : instanceRows.length === 1
+                      ? configured(instanceRows[0])
+                      : instanceState === 'multi'
+                        ? instanceRows.some((row) => configured(row))
+                        : false,
+              };
+            }),
+          });
+        }
+        return { plugins: groups };
+      },
+    ),
+    /**
+     * 整集替换 Bot 的启用条目集（`profile_json.runtime.capability_entries`，≤16）。
+     * 与 `plugins.setBotPlugins` 同模式：先整批校验（插件已装且条目存在，未知 ref
+     * 整批拒绝并列出违规项），再单字段写入；写后广播 `bot.updated` + `plugins.changed`
+     * （ids = 新旧并集，让 Bot 详情与插件详情两侧都刷新）。
+     */
+    'plugins.setBotCapabilityEntries': method(
+      pluginsSetBotCapabilityEntriesInputSchema,
+      okOutputSchema,
+      async (input) => {
+        const domain = services.domain;
+        if (domain === null) throw new AppError('NOT_IMPLEMENTED', '插件模块未就绪');
+        const pluginRegistry = registry();
+        // 整批预检在任何写入之前：按插件聚合条目声明，未知 ref 一次性列出。
+        const byPlugin = new Map<string, Set<string>>();
+        for (const ref of input.entries) {
+          if (!byPlugin.has(ref.plugin)) {
+            const manifest = await pluginRegistry.manifestOf(ref.plugin);
+            byPlugin.set(
+              ref.plugin,
+              new Set((manifest?.contributions.capabilityModels ?? []).map((entry) => entry.id)),
+            );
+          }
+        }
+        const invalid: string[] = [];
+        for (const ref of input.entries) {
+          if (byPlugin.get(ref.plugin) === undefined) {
+            invalid.push(`${ref.plugin}/${ref.entry}（插件未安装）`);
+            continue;
+          }
+          if (!byPlugin.get(ref.plugin)!.has(ref.entry)) {
+            invalid.push(`${ref.plugin}/${ref.entry}（条目不存在）`);
+          }
+        }
+        if (invalid.length > 0) {
+          throw new AppError('INVALID_INPUT', `未知的模型条目引用：${invalid.join('；')}`, {
+            invalid,
+          });
+        }
+        const bot = domain.bots.get(input.botId);
+        const before = new Set((bot?.profile.runtime.capability_entries ?? []).map((r) => r.plugin));
+        domain.bots.setCapabilityEntries(input.botId, input.entries);
+        const updated = domain.bots.getOrThrow(input.botId);
+        services.events.emit('bot.updated', { bot: updated });
+        services.events.emit('plugins.changed', {
+          ids: [
+            ...new Set([
+              ...before,
+              ...input.entries.map((ref) => ref.plugin),
+            ]),
+          ],
+        });
+        return { ok: true as const };
+      },
+    ),
+    /** 条目级连通性测试：凭据取实例（keyOverride 支持未保存先测），探针同 testCapability。 */
+    'plugins.testCapabilityEntry': method(
+      pluginsTestCapabilityEntryInputSchema,
+      okOutputSchema,
+      async (input) => {
+        const media = services.media;
+        if (media === null) throw new AppError('NOT_IMPLEMENTED', '插件模块未就绪');
+        await media.testCapabilityEntry(input.pluginId, input.entryId, {
+          ...(input.instanceId !== undefined ? { instanceId: input.instanceId } : {}),
+          ...(input.keyOverride !== undefined ? { keyOverride: input.keyOverride } : {}),
+        });
         return { ok: true as const };
       },
     ),

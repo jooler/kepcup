@@ -60,6 +60,7 @@ export function buildSpeechTools(input: {
     voice?: string;
     format?: 'mp3' | 'wav' | 'opus';
     speed?: number;
+    model?: string;
   }> = {
     name: 'generate_speech',
     description:
@@ -79,6 +80,12 @@ export function buildSpeechTools(input: {
         ),
       ),
       speed: Type.Optional(Type.Number({ description: '语速（如 0.8~2.0，按厂商支持范围）' })),
+      model: Type.Optional(
+        Type.String({
+          description: '指定模型（插件提供的模型条目名 / 模型 id），可留空用默认',
+          maxLength: 200,
+        }),
+      ),
     }),
     execute: async (params) => {
       if (identity.conversationId === null || identity.botId === null) {
@@ -101,6 +108,7 @@ export function buildSpeechTools(input: {
           ...(params.voice !== undefined ? { voice: params.voice } : {}),
           ...(params.format !== undefined ? { format: params.format } : {}),
           ...(params.speed !== undefined ? { speed: params.speed } : {}),
+          ...(params.model !== undefined ? { model: params.model } : {}),
         });
       } catch (error) {
         if (error instanceof AppError) {
@@ -145,6 +153,7 @@ export function buildSpeechTools(input: {
   const generateVideo: ToolDefinition<{
     prompt: string;
     file_name?: string;
+    model?: string;
   }> = {
     name: 'generate_video',
     description:
@@ -153,6 +162,12 @@ export function buildSpeechTools(input: {
       prompt: Type.String({ description: '视频内容描述（主体、动作、镜头、风格）' }),
       file_name: Type.Optional(
         Type.String({ description: '保存的文件名（不含扩展名），缺省按时间戳命名' }),
+      ),
+      model: Type.Optional(
+        Type.String({
+          description: '指定模型（插件提供的模型条目名 / 模型 id），可留空用默认',
+          maxLength: 200,
+        }),
       ),
     }),
     execute: async (params, ctx) => {
@@ -171,7 +186,10 @@ export function buildSpeechTools(input: {
       if (readOnly !== null) return readOnly;
       let submitted;
       try {
-        submitted = await media.generateVideo({ prompt: params.prompt });
+        submitted = await media.generateVideo({
+          prompt: params.prompt,
+          ...(params.model !== undefined ? { model: params.model } : {}),
+        });
       } catch (error) {
         if (error instanceof AppError) {
           if (error.code === 'CAPABILITY_NOT_CONFIGURED' || error.code === 'PROVIDER_AUTH_FAILED') {

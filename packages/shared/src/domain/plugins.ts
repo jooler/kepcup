@@ -40,6 +40,8 @@ export const pluginItemKindSchema = z.enum([
   'mcp',
   'mail',
   'im',
+  // D124：能力模型条目照常记入 plugin_items 账本（ref = 条目 id），卸载可回滚。
+  'capability-model',
   'disabled_connection',
 ]);
 export type PluginItemKind = z.infer<typeof pluginItemKindSchema>;
@@ -379,6 +381,66 @@ export const pluginsEnableForBotsInputSchema = z.object({
   botIds: z.array(z.string().min(1)).min(1).max(200),
 });
 export type PluginsEnableForBotsInput = z.infer<typeof pluginsEnableForBotsInputSchema>;
+
+// --- capability model entries (D124, docs/design/60-capability-model-plugins.md §3/§5) ------
+
+/** 一个已装能力模型插件及其条目视图（`plugins.listCapabilityEntries` 的分组行）。 */
+export const pluginCapabilityEntryGroupSchema = z.object({
+  pluginId: pluginIdSchema,
+  pluginName: z.string(),
+  tier: pluginTierSchema,
+  entries: z.array(
+    z.object({
+      entryId: z.string(),
+      capability: z.enum(['image', 'video', 'tts', 'asr', 'embedding', 'rerank', 'multimodal']),
+      model: z.string(),
+      displayName: z.string().nullable(),
+      engine: z.string(),
+      /** 该插件当前 capability-model 实例数口径：0 / 1 / 多。 */
+      instanceState: z.enum(['none', 'single', 'multi']),
+      /** 条目生效实例的必填凭据是否齐备（未配齐 = 置灰 + 「去配置」）。 */
+      configured: z.boolean(),
+    }),
+  ),
+});
+export type PluginCapabilityEntryGroup = z.infer<typeof pluginCapabilityEntryGroupSchema>;
+
+export const pluginsListCapabilityEntriesOutputSchema = z.object({
+  plugins: z.array(pluginCapabilityEntryGroupSchema),
+});
+export type PluginsListCapabilityEntriesOutput = z.infer<
+  typeof pluginsListCapabilityEntriesOutputSchema
+>;
+
+/**
+ * D124：整体替换 Bot 的启用条目集（`profile_json.runtime.capability_entries`，≤16 软引用）。
+ * 写入前校验插件已装且条目存在，未知 ref 整批拒绝（INVALID_INPUT 列出违规项）。
+ */
+export const pluginsSetBotCapabilityEntriesInputSchema = z.object({
+  botId: z.string().min(1),
+  entries: z
+    .array(
+      z.object({
+        plugin: z.string().min(1),
+        entry: z.string().min(1),
+      }),
+    )
+    .max(16),
+});
+export type PluginsSetBotCapabilityEntriesInput = z.infer<
+  typeof pluginsSetBotCapabilityEntriesInputSchema
+>;
+
+/** `plugins.testCapabilityEntry`（D124）：条目级最小真实探测（复用 testCapability 探针）。 */
+export const pluginsTestCapabilityEntryInputSchema = z.object({
+  pluginId: pluginIdSchema,
+  entryId: z.string().min(1),
+  /** 缺省按条目 instance / 唯一实例解析；多实例未指定拒绝。 */
+  instanceId: z.string().min(1).optional(),
+  /** 未保存先测：覆盖实例的 API Key。 */
+  keyOverride: z.string().optional(),
+});
+export type PluginsTestCapabilityEntryInput = z.infer<typeof pluginsTestCapabilityEntryInputSchema>;
 
 /** `plugins.changed` (P0a): the renderer refreshes every projected view. */
 export const pluginsChangedPayloadSchema = z.object({ ids: z.array(pluginIdSchema).max(200) });

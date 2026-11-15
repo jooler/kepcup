@@ -17,6 +17,14 @@ export interface VendorCallContext {
   apiKey: string;
   logger: CoreLogger;
   fetchImpl?: typeof fetch;
+  /**
+   * D124 插件条目级参数覆盖（`CapabilityModelEntry.params`，60 号 §7）：只走
+   * 既有全局槽位路径的调用不携带（行为零变化）。`params` 白名单消费原则：
+   * 引擎逐键读取自己认识的键，未知键忽略并 warn——**绝不整包透传给厂商 HTTP
+   * 层**（社区插件的风险上限 = 诱导调用已注册引擎 + 参数注入，见 60 §7）。
+   * 现有三适配器不读取本字段（通道留给后续新增引擎）。
+   */
+  entryParams?: Record<string, unknown>;
 }
 
 export interface ImageGenerationParams {

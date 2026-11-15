@@ -1,6 +1,6 @@
 # P2 · core 引擎注册表与运行时解析链
 
-> 状态：**待实施** · 依赖：P1 · 分支：`feat/capability-plugins/p2-core-engine`
+> 状态：**已实施（2026-11-15，工作区未提交）** · 依赖：P1 · 分支：`feat/plugin-platform`（单集成分支）
 > 必读：[CURRENT-STATE](CURRENT-STATE.md) §1/§3/§4 → [60 号设计 §1 / §3 / §4 / §7](../../docs/design/60-capability-model-plugins.md) → `packages/core/src/media/service.ts`、`packages/core/src/plugins/kinds.ts`
 
 ## 1 目标
@@ -95,15 +95,16 @@ node scripts/run-tests.mjs run packages/core/test/unit/plugins   # 插件目录�
 
 ## 5 验收
 
-- [ ] `MEDIA_ENGINES` 三引擎注册，adapter 为现有对象，`media-adapters` / `media-service` 既有测试全绿（行为零变化）。证据：
-- [ ] `capability-model` kind 进 `CAPABILITY_KINDS`，实例可添加、凭据入 secrets、卸载可回滚。证据：
-- [ ] 安装含未知引擎条目的插件被拒（`PLUGIN_ENGINE_UNKNOWN`）。证据：
-- [ ] 解析顺序「条目 > 全局槽位 > 未配置」成立；多实例未指定返回 `INSTANCE_AMBIGUOUS`。证据：
-- [ ] 条目调用 `usage_ledger` 行带 `capability` / `model_entry_id`，全局路径两列 NULL。证据：
-- [ ] 三个 RPC 行为符合步骤 5 规格（含未知 ref 拒绝）。证据：
+- [x] `MEDIA_ENGINES` 三引擎注册，adapter 为现有对象，`media-adapters` / `media-service` 既有测试全绿（行为零变化）。证据：`packages/core/src/media/engines.ts`（`toBe` 同一性断言 `media-engines.test.ts`）；`node scripts/run-tests.mjs run media-adapters / media-service / media-tools / media-delivery` → 5 文件 95 用例全绿（收口前基线 63 用例先绿后才动手）。
+- [x] `capability-model` kind 进 `CAPABILITY_KINDS`，实例可添加、凭据入 secrets、卸载可回滚。证据：`kinds.ts` 投影顺序末位；`plugin-capability-model.test.ts`「实例落库 / secrets / 卸载级联回滚」3 用例（行 + `plugin:{pluginId}:instance:{instanceId}:{key}` + 账本条目全清）；materializer 注册于 `start.ts`。
+- [x] 安装含未知引擎条目的插件被拒（`PLUGIN_ENGINE_UNKNOWN`）。证据：`plugin-capability-model.test.ts`「未知引擎拒装」用例（错误信息含 `dashscope` 等已注册 id，落库前拒绝）；校验点在 `registry.ts` `#assertEnginesKnown`（install + update 两路）。
+- [x] 解析顺序「条目 > 全局槽位 > 未配置」成立；多实例未指定返回 `INSTANCE_AMBIGUOUS`。证据：`media-entry-resolution.test.ts` 8 用例（三分支、`INSTANCE_AMBIGUOUS` 带 payload、缺凭据 / 零实例 payload 定位、model 命中 model / displayName / entryId 与回首个、未注入仓库逐字节走旧路径）。
+- [x] 条目调用 `usage_ledger` 行带 `capability` / `model_entry_id`，全局路径两列 NULL。证据：`media-service-usage.test.ts` 两条 D124 用例（provider 记插件 id、`'{pluginId}/{entryId}'`）；`UsageService.record` 落 0075 两列。
+- [x] 三个 RPC 行为符合步骤 5 规格（含未知 ref 拒绝）。证据：`plugin-capability-model.test.ts` RPC 组 4 用例（listCapabilityEntries 分组 / instanceState / configured；setBotCapabilityEntries 未知 ref 一次列出 + 去重写入 + `bot.updated` / `plugins.changed`；testCapabilityEntry keyOverride 未保存先测与 NOT_FOUND）。
 
 ## 6 实施记录
 
-- 分支 / 提交：
-- MediaEntrySource 注入点与实现位置：
-- DEV 偏差：
+- 分支 / 提交：`feat/plugin-platform`（单集成分支；提交由主代理负责，本阶段未 commit）
+- MediaEntrySource 注入点与实现位置：接口定义在 `packages/core/src/media/service.ts`（media 侧，含 `entriesFor` + 实例 / 条目读取面，见 DEV-096）；实现为 `packages/core/src/plugins/media-entry-source.ts` 的 `createMediaEntrySource`（plugins 侧，断开 media → plugins 反向依赖）；注入点在 `packages/core/src/start.ts`（插件注册表 / 实例服务装配后 `media.attachEntrySource(...)`，`botRuntimeOf` 接 `BotsService`）。
+- DEV 偏差：DEV-095（contributionSchema 用单条目 schema 而非数组 schema——接口契约「ONE entry」与 coverage 断言口径）；DEV-096（MediaEntrySource 增补实例 / 条目读取面、ResolvedEntry 增补 `displayName` / `instances`——INSTANCE_AMBIGUOUS 判定 / 缺凭据定位 / testCapabilityEntry / video 往返所需，`entriesFor` 签名逐字不变）；DEV-097（embedTexts / rerank 不开条目通道——60 号决策 6 / §10 Q4 压过任务书「六方法」字面枚举）；DEV-098（顺带清 P1 遗留：renderer `bot-setup.ts` 一行、两个「回退重放」迁移测试随 0075 更新、shared `pluginItemKindSchema` 扩 `'capability-model'`；DEV-094 的 core / renderer 待修项就此闭环）；DEV-099（审查修正：model 参数匹配键扩到 entryId + entriesFor 输出序 = 插件级勾选序 + 插件内声明序）。
+- 审查修正（2026-11-15）：`entriesFor` 补有效集第三闸——插件全局 `enabled` / `state === 'installed'` 经 `registry.isConsumable` 校验（任务书步骤 3.1「∩ 插件 enabled」、60 决策 5「已安装启用」原欠落实）；条目输出序插件内改按声明序；新增 3 用例（停用不消费 / 声明序回退 / 本地重装更新流拒未知引擎）。
