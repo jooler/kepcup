@@ -8,6 +8,7 @@ import {
   SCHEDULE_CREATED_EVENT,
   SCHEDULE_OFFER_EVENT,
   TASK_EVENT_CONTEXT_MAX_CHARS,
+  TASK_SHOWN_ATTACHMENTS_NOTE_MAX,
   TASK_TRIGGER_RESULT_MAX_CHARS,
   type HandoverEventContent,
   type Attachment,
@@ -227,6 +228,30 @@ function closeOpenUntrusted(body: string): string {
   const opens = body.split('<untrusted>').length - 1;
   const closes = body.split('</untrusted>').length - 1;
   return opens > closes ? `${body}${'</untrusted>'.repeat(opens - closes)}` : body;
+}
+
+/**
+ * 终态条目的宿主备注：任务在执行中已把某些文件**作为消息附件发进对话**（生成
+ * 媒体的确定性投递、send_message 带附件）。这些消息是任务自己的行
+ * （isTaskInterimProgress），从不进任何模型上下文——消费结果的对话轮只看到
+ * 报告文本，无从知道文件已经展示过，容易按报告里的路径（或自己此前的承诺）
+ * 用 send_message 把同一文件再发一遍，用户就会在对话里看到同一张图出现两条
+ * 消息。备注把事实确定性地带进模型读到的结果行（触发 / 最近窗口 / 增量路径
+ * 不进 <untrusted>；消息工具 search_messages / get_messages_around 按各自约定
+ * 把整行包进 <untrusted>，备注在那里与其他宿主标注——语音标注、附件条目——
+ * 同待遇成为数据）。正文按模式截断，备注追加在截断之后，保证始终可见；
+ * 这是宿主陈述，文件名在上传时已做字符级清洗。导出供任务间等待的摘要
+ * （#terminalWaitResult）复用同一句。用户主动要求重发的场景由模型自行判断。
+ */
+export function shownAttachmentsNote(content: TaskEventContent): string {
+  if (content.phase !== 'result' && content.phase !== 'failure') return '';
+  const names = content.shownAttachments ?? [];
+  if (names.length === 0) return '';
+  const shown =
+    names.length <= TASK_SHOWN_ATTACHMENTS_NOTE_MAX
+      ? names.join('、')
+      : `${names.slice(0, TASK_SHOWN_ATTACHMENTS_NOTE_MAX).join('、')} 等 ${names.length} 个文件`;
+  return `\n（宿主备注：任务执行中已把 ${shown} 作为消息附件直接发进本对话，用户已经看到，无需再用 send_message 发送这些文件，除非用户明确要求重发。）`;
 }
 
 /** The visible question card of a task waiting for the user (design 30 §2.4.6). */
@@ -483,7 +508,7 @@ export function renderMessageLine(
       ? `你→任务 ${content.taskId}（${label}）`
       : `任务 ${content.taskId}→你（${label}）`;
     const body = clipTaskBody(taskEventBody(content), message, taskLines, content.phase);
-    return `[${message.id} | ${time} | ${direction}] ${body}`;
+    return `[${message.id} | ${time} | ${direction}] ${body}${shownAttachmentsNote(content)}`;
   }
   if (
     message.kind === 'system_event' &&

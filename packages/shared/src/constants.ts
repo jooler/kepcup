@@ -798,6 +798,18 @@ export const TASK_REDELIVER_AFTER_MS = 10 * 60_000;
  */
 export const TASK_REDELIVER_MAX_ATTEMPTS = 5;
 /**
+ * 终态条目里「任务已作为消息附件发进对话」的文件名收集上限（shownAttachments）：
+ * 只是条目体积的护栏——文件名很短，这个量级足以覆盖正常任务；超出的文件不再
+ * 收集，宿主备注也就无法覆盖它们（备注只是免重发的信号，不是完整清单）。
+ * 与展示上限（{@link TASK_SHOWN_ATTACHMENTS_NOTE_MAX}）解耦：收集多、展示少。
+ */
+export const TASK_SHOWN_ATTACHMENT_NAMES_MAX = 64;
+/**
+ * 模型侧宿主备注里逐个列出的文件名上限：超出的收成「等 N 个文件」（N 是
+ * shownAttachments 的真实条数，语义为真）。
+ */
+export const TASK_SHOWN_ATTACHMENTS_NOTE_MAX = 8;
+/**
  * Failed task auto-retry backoff（任务失败自动重试）：a task that settles as
  * `failed`（缺 setup 的失败、interrupted、cancelled 除外）is re-queued and
  * re-executed after these delays, in order — the N-th failure waits

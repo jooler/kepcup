@@ -1831,6 +1831,15 @@ export const taskEventContentSchema = z.object({
    */
   artifacts: z.array(messageArtifactSchema).optional(),
   /**
+   * 终态条目（result / failure）：任务在执行中**已作为消息附件发进对话**的
+   * 文件名（生成媒体的确定性投递、send_message 带附件）。这些消息是任务自己
+   * 的行，从不进模型上下文（isTaskInterimProgress）——消费结果的对话轮只看到
+   * 报告文本，无从知道文件已经展示过，容易拿报告里的路径用 send_message 再发
+   * 一遍，用户就会看到同一张图出现两条消息。模型侧渲染据此在结果行追加宿主
+   * 备注（见 renderMessageLine）；用户读的执行报告不受影响。
+   */
+  shownAttachments: z.array(z.string()).optional(),
+  /**
    * Terminal entries (result / failure): how many times the host handed the
    * entry to the bot (D75 审查 M4, capped by TASK_REDELIVER_MAX_ATTEMPTS).
    */
