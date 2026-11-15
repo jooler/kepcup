@@ -77,6 +77,9 @@ export function createMediaEntrySource(deps: {
           .filter((hit): hit is { entry: CapabilityModelEntry; declarationIndex: number } => hit !== null)
           .sort((a, b) => a.declarationIndex - b.declarationIndex);
         for (const { entry } of matched) {
+          // D125 过渡：执行型条目不填 engine（61 §2），PluginHost 未落地前不可消费
+          // ——返回也无法解析执行体，这里跳过（D125-P2 接管为 HostedAdapter 分支）。
+          if (entry.engine === undefined) continue;
           // embedding / rerank 条目本期不消费（60 §10 Q4：记忆管线绑定全局槽位）；
           // media 网关不会用这两个能力调 entriesFor，这里再挡一层（防御直调）。
           if (entry.capability === 'embedding' || entry.capability === 'rerank') continue;
@@ -106,7 +109,11 @@ export function createMediaEntrySource(deps: {
 
     async entryOf(pluginId, entryId) {
       const entries = await entriesOf(pluginId);
-      return entries.find((entry) => entry.id === entryId) ?? null;
+      // D125 过渡：engine-less（执行型）条目不可消费（PluginHost 未落地），视同不存在
+      // ——testCapabilityEntry 对其报 NOT_FOUND；D125-P2 接管。
+      return (
+        entries.find((entry) => entry.id === entryId && entry.engine !== undefined) ?? null
+      );
     },
 
     instancesOf(pluginId) {

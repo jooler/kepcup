@@ -1,0 +1,35 @@
+{
+  "format_version": 1,
+  "id": "io.kepcup/reference-media",
+  "name": "参考媒体插件（执行型示例）",
+  "icon": "icon.svg",
+  "version": "1.0.0",
+  "description": "第一方执行型参考插件：media 契约的假实现（内置 1×1 PNG 与 3 秒假视频任务），用于端到端验证插件运行时与开发者上手，不发起任何真实网络请求。",
+  "usage": "安装后无需配置：添加一个实例（无需凭据），并在 Bot 详情展开插件卡片勾选「参考图片生成」即可试用假实现。",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "engines": {
+    "kepcup": ">=0.5.14"
+  },
+  "instances": ["capability-model"],
+  "runtime": {
+    "entry": "dist/main.js",
+    "hostApi": "^1",
+    "network": {
+      "allow": ["example.invalid"]
+    }
+  },
+  "contributions": {
+    "capabilityModels": [
+      {
+        "id": "reference-image",
+        "capability": "image",
+        "model": "reference-image-1",
+        "displayName": "参考图片生成（假实现）",
+        "description": "总是返回一张内置的 1×1 PNG（data URL），带「已排队」「生成中」两个进度事件。用于验证运行链路，不产生真实图片。"
+      }
+    ]
+  }
+}

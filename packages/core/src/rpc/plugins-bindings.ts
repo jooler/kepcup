@@ -276,7 +276,9 @@ export function bindPluginsMethods(services: CoreServices): Record<string, RpcMe
             pluginName: summary.name,
             tier: summary.tier,
             entries: entries.map((entry) => {
-              const required = requiredOf(entry.engine);
+              // D125 过渡：执行型条目不填 engine（61 §2），无第一方引擎凭据（required 空，
+              // configured 只看实例存在性）；凭据语义由 D125-P2 接管。
+              const required = requiredOf(entry.engine ?? '');
               const configured = (row?: { values: Record<string, unknown>; storedSensitiveKeys: string[] }): boolean =>
                 row === undefined
                   ? false
@@ -300,7 +302,8 @@ export function bindPluginsMethods(services: CoreServices): Record<string, RpcMe
                 capability: entry.capability,
                 model: entry.model,
                 displayName: entry.displayName ?? null,
-                engine: entry.engine,
+                // D125 过渡：执行型条目 engine 为 null（61 §2）；D125-P2 接管。
+                engine: entry.engine ?? null,
                 instanceState,
                 configured:
                   explicit !== undefined

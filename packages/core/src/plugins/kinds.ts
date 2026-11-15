@@ -365,6 +365,9 @@ function capabilityModelInstanceFields(manifest: PluginManifest): PluginField[] 
   const fields: PluginField[] = [];
   const seen = new Set<string>();
   for (const entry of manifest.contributions.capabilityModels ?? []) {
+    // D125 过渡：执行型条目不填 engine（61 §2），凭据表单由 PluginHost 接管（D125-P2），
+    // 这里不贡献实例字段；数据型条目（有 engine）行为不变。
+    if (entry.engine === undefined) continue;
     const engine = MEDIA_ENGINES[entry.engine];
     if (engine === undefined) continue;
     for (const field of engine.credentialFields) {

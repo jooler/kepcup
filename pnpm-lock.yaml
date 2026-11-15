@@ -396,6 +396,15 @@ importers:
 
   packages/package-guard: {}
 
+  packages/plugin-sdk:
+    dependencies:
+      '@kepcup/shared':
+        specifier: workspace:*
+        version: link:../shared
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
+
   packages/shared:
     dependencies:
       birpc:

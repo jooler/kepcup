@@ -1,6 +1,6 @@
 # P1 · 协议、SDK 与参考插件
 
-> 状态：**待实施** · 依赖：capability-model-plugins P1（manifest 条目模型已落地）· 分支：`feat/plugin-runtime/p1-protocol-sdk`
+> 状态：**已实施（2026-11-15）** · 依赖：capability-model-plugins P1（manifest 条目模型已落地）· 分支：`feat/plugin-platform`（单集成分支，提交由主代理负责）
 > 必读：[README](README.md)（固定契约）→ [CURRENT-STATE](CURRENT-STATE.md) → [61 号设计 §2 / §3.2 / §5](../../docs/design/61-plugin-runtime-platform.md)
 
 ## 1 目标
@@ -66,14 +66,16 @@ node scripts/run-tests.mjs run packages/shared/test/unit/plugin-runtime-protocol
 
 ## 5 验收
 
-- [ ] 协议 schema 与 `parseFrame` 落地，两侧共用同一包（无第二份类型）。证据：
-- [ ] `@kepcup/plugin-sdk` 可用 `definePlugin` 写出 media 契约实现并通过假流测试。证据：
-- [ ] manifest `runtime` 段 schema + superRefine 生效。证据：
-- [ ] `plugins/reference-media` 打包产物通过包防护检查（无 native/路径逃逸）。证据：
-- [ ] 定向测试全绿。证据：
+- [x] 协议 schema 与 `parseFrame` 落地，两侧共用同一包（无第二份类型）。证据：`packages/shared/src/plugin-runtime/protocol.ts`（`pluginRuntimeFrameSchema` / `parseFrame` / `safeParseFrame` / 类型守卫）；SDK 客户端 import 同包 schema（`packages/plugin-sdk/src/client.ts`）。
+- [x] `@kepcup/plugin-sdk` 可用 `definePlugin` 写出 media 契约实现并通过假流测试。证据：`packages/plugin-sdk/test/client.test.ts` 19 用例全绿（invoke→result / cancel→AbortSignal / progress 限速 / 握手 / fail-safe）；另有真 fork IPC 冒烟（`plugins/reference-media/dist/main.js` 作子进程，init→ready→2 progress→result→shutdown 全链路，exit 0）。
+- [x] manifest `runtime` 段 schema + superRefine 生效。证据：`packages/shared/src/domain/plugin-manifest.ts`（`pluginRuntimeSectionSchema`，entry 禁 `..` / 绝对路径 / 首尾空白）；`plugin-runtime-protocol.test.ts` runtime 段 6 用例（含「不填 engine 的条目必须配对 runtime 段」拒绝路径——独立审查补齐）。
+- [x] `plugins/reference-media` 打包产物通过包防护检查（无 native/路径逃逸）。证据：`node packages/app-validator/dist/cli.js validate plugins/reference-media` PASS（0 error，1 条 homepage 可选警告）；bundle 扫描无 `.node` / `.wasm` / 静态 import（自包含 ESM）、目录无符号链接。
+- [x] 定向测试全绿。证据：`node scripts/run-tests.mjs run packages/shared/test/unit/plugin-runtime-protocol.test.ts packages/plugin-sdk` → 31 passed（12 + 19，含审查补齐的 engine↔runtime 配对拒绝用例）；`plugin-manifest-capability-models.test.ts` 12 passed 不回归；shared 全目录 634 passed 不回归。
 
 ## 6 实施记录
 
-- 分支 / 提交：
-- SDK 侧与 shared 类型的 re-derive 方式：
-- DEV 偏差：
+- 分支 / 提交：`feat/plugin-platform`（单集成分支；提交由主代理负责，本阶段未 commit）
+- SDK 侧与 shared 类型的 re-derive 方式：类型事实源 = shared `media/types.ts`（接口，源自 core `VendorAdapter` 方法面逐字段 re-derive）；wire 校验 = shared `media/schema.ts`（strictObject zod schema + `MEDIA_CONTRACT_METHOD_WIRE` 注册表，61 决策 6「两侧共用同一 schema 包」），文件底部对每对 schema↔接口做**双向赋值断言**（漂移即 shared typecheck 失败）；SDK（`packages/plugin-sdk`）只消费 shared 的类型与 schema——`MediaContractImpl` 方法面 = 七方法签名（`SecondArg` 从 impl 方法类型反推 params，不复刻参数类型），dispatch 表引用同一批 schema；`videoStatus` / `cancelVideo` 的 wire params 为 `{ taskId }` 对象（协议 invoke.params 恒对象）、`cancelVideo` wire output 恒 `null`，是 wire 形状不是语义分叉。core 未动（P2 re-point）。
+- 客户端行为要点：并发=1 防御拒绝（排队归宿主，61 §3.1）；cancel 帧命中在途调用即 abort `host.signal`；progress 限速 1 次/秒（窗口内合并最新一条尾随发送，调用结束丢弃）；invoke 输入 / result 输出按 shared media schema 双向校验（输出不合契约 → `PLUGIN_CONTRACT_VIOLATION`，绝不部分投递）；`runPluginRuntime(plugin)` 进程入口模式在 shutdown / 通道断开后自动 `exit(0)`，传入显式通道（测试 / 嵌入）则生命周期归调用方。`host.net / secrets / storage` 类型就绪、实现由 P2 能力桥经 `wireHostApi()` 注入，未注入时抛 `HostApiNotConnectedError`。
+- 参考插件：`plugins/reference-media/`（`build.mjs` 用 `createRequire` 复用 apps/desktop 的 esbuild 0.28.2，`@kepcup/plugin-sdk` / `@kepcup/shared` alias 到 workspace 源码打进单文件，零新依赖）；plugin 目录自带 `package.json`（仅 `"type": "module"`）让 fork 按 ESM 加载 `dist/main.js`（`dist/` 在 .gitignore 内，产物由脚本构建）。
+- DEV 偏差：已落账 DEVIATIONS.md **DEV-104..DEV-110**（wire schema 落 shared `media/schema.ts`（DEV-104）；vitest 项目登记（DEV-105）；客户端行为语义三则（DEV-106）；esbuild 复用与 type:module package.json（DEV-107）；dist 产物不入库无构建钩子——风险项移交 D125-P2（DEV-108）；错误码帧级选择与 engines.kepcup 对齐（DEV-109）；engine 可选化的 core 过渡适配——数据型行为零变化、engine-less 条目过渡期不可消费（DEV-110））。另：`runPluginRuntime` 签名与「几百行客户端」描述为意图对齐（实际 ~300 行 + host/plugin/index 三模块）。
