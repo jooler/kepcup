@@ -372,14 +372,26 @@ describe('response loop', () => {
         'message.created',
         (payload) => payload.message.attachments.length > 0,
       );
+      // 唤醒轮的触发段必须带「已投递附件」宿主备注：投递消息是任务自己的行，
+      // 不进对话轮的上下文——没有备注，对话轮只知道报告里的路径，容易把同一
+      // 张图用 send_message 再发一遍（同一张图出现两条消息）。
+      let wakeTriggerText = '';
       llm.script('mock-main', [
         ...viaTask({
           taskSteps: [
-            step().replyToolCall('generate_image', { prompt: '一只猫' }),
+            step().replyToolCall('generate_image', { prompt: '一只猫', file_name: 'pelican-bicycle' }),
             step().replyText('图片已经生成好了'),
           ],
-          relay: '画好了，图片已经发给你了',
         }),
+        step()
+          .inTurn()
+          .expect((req) => {
+            const text = req.lastUserText();
+            if (!text.includes('<trigger reason="task"')) return false;
+            wakeTriggerText = text;
+            return true;
+          })
+          .replyText('画好了，图片已经发给你了'),
       ]);
       const bot = await makeBot(core, '画师');
       const conv = await openDirect(core, bot.id);
@@ -393,8 +405,22 @@ describe('response loop', () => {
         return all.find((m) => m.senderBotId === bot.id && m.attachments.length > 0) ?? null;
       }, { label: 'bot message with image attachment' });
       expect(withImage?.attachments[0]?.mime).toBe('image/png');
-      // 媒体工具调用记入所在 task run 的用量：一行、归属 Bot / 对话 / run、token 为 0。
+      // 唤醒触发段带宿主备注：文件已随投递消息展示，不必重发。wake 轮的模型
+      // 请求可能在 run 置 completed 之后才落地——等 .expect 回调捕获到触发段
+      // 再断言，否则是竞态（负载高时偶发）。
+      const wakeText = await waitFor(
+        async () => (wakeTriggerText.includes('<trigger reason="task"') ? wakeTriggerText : null),
+        { label: 'wake trigger carrying the shown-attachments note' },
+      );
+      expect(wakeText).toContain('宿主备注：任务执行中已把 pelican-bicycle.png');
+      expect(wakeText).toContain('无需再用 send_message 发送这些文件');
+      // 终态条目记录已投递附件的文件名（执行报告的正文不受影响）。
       const taskRun = (await listRuns(core, conv.id)).find((r) => r.loopType === 'task')!;
+      const terminal = core.services.mainDb!.prepare(
+        "select content_json from messages where task_id = ? and kind = 'task_event' and json_extract(content_json, '$.phase') = 'result'",
+      ).get(taskRun.id) as { content_json: string };
+      expect(JSON.parse(terminal.content_json).shownAttachments).toEqual(['pelican-bicycle.png']);
+      // 媒体工具调用记入所在 task run 的用量：一行、归属 Bot / 对话 / run、token 为 0。
       const rows = core.services
         .mainDb!.prepare(
           "select run_id, bot_id, conversation_id, loop_type, provider, model, input_tokens, output_tokens, cost_usd from usage_ledger where provider = 'volcengine'",
