@@ -71,14 +71,14 @@ const emptyMailManifest = pluginManifestSchema.parse({
 describe('capability kind registry (D105 + D124)', () => {
   it('covers every contribution kind exactly once, and PLUGIN_PROJECTOR_ORDER derives from it', () => {
     expect(CAPABILITY_KINDS.map((adapter) => adapter.kind)).toEqual([...PLUGIN_PROJECTOR_ORDER]);
-    // D124 起注册表比贡献 kind 联合多一个 'capability-model'（实例 kind，投影末位）；
-    // 其余五个与 pluginContributionKindSchema 一一对应（集合相同，顺序即投影顺序）。
+    // D124 起注册表含 'capability-model'（实例 kind，投影末位）；P4 起该值也收编进
+    // pluginContributionKindSchema（市场索引 categories 需要）——两集合恒相等。
     expect([...CAPABILITY_KINDS.map((adapter) => adapter.kind)].sort()).toEqual(
-      [...pluginContributionKindSchema.options, 'capability-model'].sort(),
+      [...pluginContributionKindSchema.options].sort(),
     );
     expect(CAPABILITY_KINDS[CAPABILITY_KINDS.length - 1]?.kind).toBe('capability-model');
     expect(new Set(CAPABILITY_KINDS.map((adapter) => adapter.kind)).size).toBe(
-      pluginContributionKindSchema.options.length + 1,
+      pluginContributionKindSchema.options.length,
     );
   });
 

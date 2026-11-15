@@ -133,9 +133,8 @@ export const pluginIndexEntrySchema = z.object({
     .array(z.enum(['darwin', 'win32', 'linux']))
     .min(1)
     .optional(),
-  /** 签名时由贡献推导写入（skills→skill、connectors→connector、mcp→mcp、mail→mail）。 */
-  /** 签名时由贡献推导的类别（skill / connector / mcp / mail / im，至多 5 类）。 */
-  categories: z.array(pluginContributionKindSchema).max(5),
+  /** 签名时由贡献推导的类别（skill / connector / mcp / mail / im / capability-model，至多 6 类）。 */
+  categories: z.array(pluginContributionKindSchema).max(6),
   /** 签名时由贡献推导的一句话能力概述（D105 P4）；老索引没有此字段，消费端按 categories 回退推导。 */
   capabilitySummary: z.string().max(200).optional(),
   summary: z.object({

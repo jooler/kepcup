@@ -323,6 +323,16 @@ export class PluginRegistry {
     return (this.#deps.builtin?.get(id) ?? null) !== null;
   }
 
+  /**
+   * D124 P4：内置第一方数据插件（只读目录型，不入 `plugins` 表）对运行时恒可消费
+   * ——builtin 来源没有 enabled / state 状态可关（随目录在即在），条目有效集只由
+   * Bot 勾选（`capability_entries` ∩ `plugin_ids`）决定。目录不存在（生产构建）时
+   * 本分支不可达，既有 store 行为逐字节不变。
+   */
+  isBuiltin(id: string): boolean {
+    return this.#isBuiltin(id);
+  }
+
   ownerOf(kind: PluginItemKind, ref: string): string | null {
     return this.#deps.store.ownerOf(kind, ref);
   }
@@ -333,8 +343,10 @@ export class PluginRegistry {
    * `#convergeDisabled` 的语义一致——停用插件 = 贡献不再进运行时面；条目的
    * 运行时状态只住在 Bot profile 与本行上，故消费侧必须查这里。
    * 诊断面（testCapabilityEntry 的条目 / 实例解析）不经过本判定。
+   * 内置只读目录插件（D124 P4）恒可消费（`isBuiltin`）。
    */
   isConsumable(id: string): boolean {
+    if (this.#isBuiltin(id)) return true;
     const row = this.#deps.store.get(id);
     return row !== null && row.state === 'installed' && row.enabled;
   }
@@ -342,10 +354,13 @@ export class PluginRegistry {
   /**
    * 已装插件的完整清单（缓存 → 磁盘）；未装 / 清单损坏 = null。实例服务与 config
    * 读写用它取 `config.fields` / `instances` 声明（D105）。
+   * 内置只读目录插件（D124 P4）：`plugins` 表无行，直读 builtin 加载器已校验的
+   * 清单——条目投影（listCapabilityEntries）、Bot 条目写入校验、媒体条目解析与
+   * 实例表单都经这里取 builtin 清单。目录不存在时与今日逐字节一致。
    */
   async manifestOf(id: string): Promise<PluginManifest | null> {
     const row = this.#deps.store.get(id);
-    if (row === null) return null;
+    if (row === null) return this.#deps.builtin?.get(id)?.manifest ?? null;
     const cached = this.#manifests.get(`${row.id}@${row.version}`);
     if (cached !== undefined) return cached;
     return this.#readManifestFromDir(this.#dirOf(row.id, row.version));

@@ -13,6 +13,8 @@ plugins/
   connector-<slug>/    连接器插件：connectors/<slug>/server.json（+ 图标）
   mail-<id>/           邮件插件（D105 P3）：instances: ['mail'] + 一份 mail 贡献
   im-<id>/             即时通讯插件（D107）：instances: ['im'] + 一份 im 贡献
+  dashscope/           阿里云百炼（D124）：instances: ['capability-model'] + 20 条模型条目
+  volcengine-ark/      火山方舟（D124）：instances: ['capability-model'] + 7 条模型条目
   README.md
 ```
 
@@ -23,8 +25,9 @@ plugins/
   `validate` 报 error、签名告警，界面回落宿主默认图标（拼图），**不会**显示名称首字。
   详见 [docs/guides/write-a-plugin.md](../docs/guides/write-a-plugin.md) §2.4。
 
-- 插件 id 用 `app.kepcup/<名>`：`com.kepcup` / `local.kepcup` 是保留命名空间，
-  市场插件不得使用（`PLUGIN_RESERVED_NAMESPACES`）。
+- 插件 id 用 `app.kepcup/<名>`（市场首批 18 包的历史前缀）或 `io.kepcup/<名>`（2026-11
+  起的官方新包，如 `dashscope` / `volcengine-ark` / `reference-media`）：`com.kepcup` /
+  `local.kepcup` 是保留命名空间，市场插件不得使用（`PLUGIN_RESERVED_NAMESPACES`）。
 - 连接器目录通道（`dl.kepcup.com/connectors/v1`）已随商店化下线：连接能力完全由
   这里的市场插件承担；`server.json` 的 `_meta` 结构保持 registry 兼容形状。
 - 技能展示字段（`displayName` / `icon` / `section` / `tryIt`）是内置插件专属，
@@ -36,6 +39,13 @@ plugins/
 - **IM 插件**：清单声明 `instances: ['im']` 且恰好一份 `contributions.im`
   （transport / apiBase / setup / features，见设计 54）；账号由用户扫码或填表添加，
   再在 Bot 详情勾选绑定后才参与入站唤醒 / 出站转发。
+- **能力模型插件（D124）**：清单声明 `instances: ['capability-model']` +
+  `contributions.capabilityModels`（一个模型一条 `{id, capability, model, engine, …}`，
+  ≤32）。**纯数据包**：执行逻辑住在 core 内置引擎注册表 `MEDIA_ENGINES`（`engine`
+  字段绑定，安装期未知引擎拒绝），包内不含任何代码。条目 id 用 `[a-z0-9-]` slug
+  （厂商模型 id 含点号时进 `model` 字段原样保留）；实例（厂商账号）凭据由引擎
+  `credentialFields` 声明、敏感值只进 secrets。机制见
+  [docs/design/60-capability-model-plugins.md](../docs/design/60-capability-model-plugins.md)。
 - **MCP 插件凭据方案**：`contributions.mcp` 的 http 贡献可给 header 模板加
   `scheme`（当前仅 `"bearer"`）声明该 header 用裸凭据：宿主保存时 strip 用户自己粘的
   `Bearer `、发送时自动补前缀。未声明 `scheme` 的 header / 其他 MCP server 行为不变。
@@ -199,3 +209,23 @@ cd infra/cloudflare/directory && npx wrangler deploy
   `pkg.kepcup.com` 全量拉回逐一 sha256 复核通过，索引 / sig / 腾讯文档包与签名产物
   逐字节一致。索引 25 条：mcp-feishu / mcp-sciverse 仍属待发布批次，
   未纳入。
+
+### 能力模型条目包批次（2 个，2026-11-15 开发；**待发布**，随 D124 P4 收口）
+
+- **数据 2**：`dashscope`（阿里云百炼，20 条：embedding 3 / rerank 2 / multimodal 2 /
+  image 4 / tts 5 / asr 1 / video 3）/ `volcengine-ark`（火山方舟，7 条：embedding 1 /
+  multimodal 2 / image 2 / video 2；方舟数据面无 rerank / tts / asr）。首批
+  `contributions.capabilityModels` 纯数据插件（设计 60 决策 12）：条目 =
+  `VENDOR_DESCRIPTORS` 非 chat 的 presets 全量逐 preset 一条，`engine` 绑定 core 内置引擎
+  （`dashscope` / `volcengine-ark`），`params` 不迁（描述符无默认值，不发明）。
+- `engines.kepcup >=0.5.14`（`capabilityModels` 是 strict schema 新字段，旧宿主必须在
+  索引层看到可更新）；tier 建议 `verified`。图标复用渲染层厂商图标
+  （`model-provider-alibaba-cloud.png` 1.9 KiB / `model-provider-volcengine.png` 7.5 KiB，
+  ≤64 KiB）。两个包 `validate` 均 0 error / 0 warning，`pack` 本地留档
+  （dashscope 6108 B / volcengine-ark 11084 B）。
+- **索引生成流程配套**：`scripts/sign-plugin-index.mjs` 的 `categoriesOf` 补
+  `capability-model` 分支（im-wechat 上架同款做法）；shared
+  `pluginContributionKindSchema` 收编该值（市场条目 `categories` / 一句话概述
+  「提供 N 个模型；可添加多个厂商账号」随之可解析——不含该贡献的旧宿主在条目级
+  校验单独跳过，整份索引不受影响）。发布动作（生产密钥签名 → R2 → `wrangler
+  deploy`）走既有 release 流程，本批次未执行。

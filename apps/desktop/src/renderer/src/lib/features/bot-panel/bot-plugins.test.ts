@@ -98,7 +98,7 @@ describe('addedPlugins / matchesPluginQuery（添加弹框）', () => {
 });
 
 describe('pluginKindBadges / pluginProvides（类别徽标）', () => {
-  it('按贡献计数推导，顺序固定 技能 → 连接 → 工具 → 邮件 → 即时通讯', () => {
+  it('按贡献计数推导，顺序固定 技能 → 连接 → 工具 → 邮件 → 即时通讯 → 模型', () => {
     expect(
       pluginKindBadges(summary({ counts: { skills: 2, connectors: 1, mcp: 3, mail: 1, im: 1 } })),
     ).toEqual(['skill', 'connector', 'mcp', 'mail', 'im']);
@@ -116,6 +116,17 @@ describe('pluginKindBadges / pluginProvides（类别徽标）', () => {
     expect(PLUGIN_KIND_LABEL_KEYS.mcp).toBe('plugins.kind.mcp');
     expect(zhCN['plugins.kind.mcp']).toBe('工具');
     expect(enUS['plugins.kind.mcp']).toBe('Tools');
+  });
+
+  it('能力模型插件按 providesInstances 出「模型」徽标（D124），中英文案齐全', () => {
+    expect(pluginKindBadges(summary({ providesInstances: ['capability-model'] }))).toEqual([
+      'capability-model',
+    ]);
+    expect(PLUGIN_KIND_LABEL_KEYS['capability-model']).toBe('plugins.kind.capabilityModel');
+    expect(zhCN['plugins.kind.capabilityModel']).toBe('模型');
+    expect(enUS['plugins.kind.capabilityModel']).toBe('Models');
+    expect(zhCN['plugins.market.category.capability-model']).toBe('模型');
+    expect(enUS['plugins.market.category.capability-model']).toBe('Models');
   });
 
   it('pluginProvides：连接只看贡献计数；邮件 / IM 看贡献或实例声明', () => {

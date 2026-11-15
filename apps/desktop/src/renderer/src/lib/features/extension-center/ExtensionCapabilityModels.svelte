@@ -24,6 +24,13 @@
 
   const plugin = $derived(plugins.plugins.find((candidate) => candidate.id === pluginId) ?? null);
   const entries = $derived(capabilityEntries.entriesOf(pluginId));
+  /**
+   * builtin 只读目录插件不能持有实例：`plugin_instances.plugin_id` 外键引用 `plugins(id)`，
+   * 而 D104 内置插件不入该表（DEV-112）。生产分发的市场安装形态 origin 不是 builtin，
+   * 账号实例区照常显示；builtin 仅在开发 / e2e 投影时出现，这里把「添加入口」换成边界说明，
+   * 避免按钮可点但保存必然 NOT_FOUND 的断裂。
+   */
+  const isBuiltin = $derived(plugin?.origin === 'builtin');
 
   // --- 模型条目：逐条「测试连接」的行内状态 -----------------------------------
   type TestState = { state: 'running' | 'ok' | 'fail'; reason?: string };
@@ -186,9 +193,15 @@
   <section class="space-y-2 border-t pt-4" data-testid="extension-capability-instances">
     <div class="space-y-0.5">
       <h2 class="text-sm font-medium">{t('plugins.capabilityModels.instances')}</h2>
-      <p class="text-xs text-muted-foreground">{t('plugins.capabilityModels.instancesHint')}</p>
+      {#if !isBuiltin}
+        <p class="text-xs text-muted-foreground">{t('plugins.capabilityModels.instancesHint')}</p>
+      {/if}
     </div>
-    {#if view === 'list'}
+    {#if isBuiltin}
+      <p class="text-xs text-muted-foreground" data-testid="capability-instances-builtin-note">
+        {t('plugins.capabilityModels.builtinInstancesUnavailable')}
+      </p>
+    {:else if view === 'list'}
       <div class="flex justify-end">
         <Button
           size="sm"

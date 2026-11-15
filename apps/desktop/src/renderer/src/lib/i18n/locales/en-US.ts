@@ -2036,6 +2036,7 @@ export const enUS = {
   'plugins.market.category.mcp': 'Tools',
   'plugins.market.category.mail': 'Mail',
   'plugins.market.category.im': 'Instant messaging',
+  'plugins.market.category.capability-model': 'Models',
   'plugins.filter.im': 'Instant messaging',
   'plugins.market.refresh': 'Refresh',
   'plugins.market.refreshing': 'Syncing…',
@@ -2097,6 +2098,8 @@ export const enUS = {
   'plugins.capabilityModels.instances': 'Account instances',
   'plugins.capabilityModels.instancesHint':
     'An instance is a vendor account (API key and other credentials). Entries share these instances; uninstalling the plugin removes them.',
+  'plugins.capabilityModels.builtinInstancesUnavailable':
+    'Built-in read-only plugins cannot hold account instances (instance rows belong to marketplace-installed plugins). Install this plugin from the official marketplace to add an account and its credentials.',
   'plugins.capabilityModels.addInstance': 'Add account',
   'plugins.capabilityModels.empty':
     'No account instances yet. Add one with its credentials so entries can run.',

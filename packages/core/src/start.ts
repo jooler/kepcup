@@ -2525,7 +2525,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     ) as ConnectorsProjector;
     connectorCatalog.attachPlugins(connectorsProjector);
     // P2 注入模型：注入模型写路径的插件目录（store 行存在且 installed 才算已安装）。
+    // D124 P4：内置只读目录插件（不入 `plugins` 表）也算已安装——目录在即在，
+    // Bot 才能把官方数据插件（阿里云百炼 / 火山方舟）加进 plugin_ids 并勾选条目。
     const pluginInstalled = (id: string): boolean => {
+      if (builtinPlugins.get(id) !== null) return true;
       const row = pluginStore.get(id);
       return row !== null && row.state === 'installed';
     };

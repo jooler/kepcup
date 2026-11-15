@@ -1965,6 +1965,7 @@ export const zhCN = {
   'plugins.market.category.mcp': '工具',
   'plugins.market.category.mail': '邮件',
   'plugins.market.category.im': '即时通讯',
+  'plugins.market.category.capability-model': '模型',
   'plugins.filter.im': '即时通讯',
   'plugins.market.refresh': '刷新',
   'plugins.market.refreshing': '同步中…',
@@ -2022,6 +2023,8 @@ export const zhCN = {
   'plugins.capabilityModels.instances': '账号实例',
   'plugins.capabilityModels.instancesHint':
     '实例 = 厂商账号（API Key 等凭据）。条目共用这里的实例；插件卸载后账号一并删除。',
+  'plugins.capabilityModels.builtinInstancesUnavailable':
+    '内置只读插件不持有账号实例（实例数据挂在市场安装的插件行上）；从官方市场安装本插件后即可添加账号并填写凭据。',
   'plugins.capabilityModels.addInstance': '添加账号',
   'plugins.capabilityModels.empty': '还没有账号实例：添加并填写凭据后条目才能调用。',
   'plugins.capabilityModels.noEntries': '该插件还没有声明模型条目。',

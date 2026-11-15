@@ -530,6 +530,10 @@ export class PluginInstanceService {
     manifest: NonNullable<Awaited<ReturnType<PluginRegistry['manifestOf']>>>;
   }> {
     const row = this.#deps.pluginStore.get(pluginId);
+    // 注意：builtin 只读目录插件（D124 P4）在这里与未知插件同待遇（NOT_FOUND）——
+    // `plugin_instances.plugin_id` 外键引用 `plugins(id)`（0056/0075），而 D104 内置
+    // 插件不入该表，实例行无处挂靠。builtin 数据包的完整实例面（凭据 / 测试连接）
+    // 走市场安装路径（用户实际分发渠道）；builtin 来源只承担条目投影与 Bot 勾选校验。
     if (row === null) throw new AppError('NOT_FOUND', `没有已安装的插件：${pluginId}`);
     if (row.state !== 'installed') {
       throw new AppError('INVALID_INPUT', `插件当前状态（${row.state}）不允许添加实例`);

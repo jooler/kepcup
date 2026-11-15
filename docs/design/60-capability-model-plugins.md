@@ -1,6 +1,6 @@
 # 60 能力模型插件化（Capability Model Plugins）
 
-> 状态：**草案（待评审）** · 决策：D124 · 上游：[51 插件系统](51-plugin-system.md)（D104/D105 贡献-实例-注入模型）、[16 能力模型](16-capability-models.md)（VendorAdapter 契约）、[40 能力挂载](40-capability-mounting.md)（D91，本文修订其 §8）、[38 对话内设置](38-conversational-settings.md)（D89 setup 链复用）· 执行方案：[todo/capability-model-plugins](../../todo/capability-model-plugins/README.md)
+> 状态：**已实施（2026-11-15，P1–P4 开发收口；真机验收待用户执行，现状见 §11）** · 决策：D124 · 上游：[51 插件系统](51-plugin-system.md)（D104/D105 贡献-实例-注入模型）、[16 能力模型](16-capability-models.md)（VendorAdapter 契约）、[40 能力挂载](40-capability-mounting.md)（D91，本文修订其 §8）、[38 对话内设置](38-conversational-settings.md)（D89 setup 链复用）· 执行方案：[todo/capability-model-plugins](../../todo/capability-model-plugins/README.md)
 
 能力模型（非对话模型）目前是设置页 7 个全局槽位（`settings.capabilityModels.{embedding|rerank|multimodal|asr|tts|image|video}`，每槽单值 `{provider 实例, model}`），协议适配硬绑两个内置厂商（`VENDOR_DESCRIPTORS` 只有 dashscope / volcengine，适配器注册表 `ADAPTERS` 写死在 core）。厂商只有随应用发版才能新增，新模型（如百炼上新一张图模型）也常常要等版本。
 
@@ -133,6 +133,85 @@ P1 shared 契约与迁移（manifest + botRuntime + usage 列）→ P2 core 引�
 - **Q2 条目与全局槽位的优先级 UI**：本期固定「条目 > 槽位」且不做全局开关；若用户反馈「想临时回退全局」，再加 Bot 级覆盖开关。
 - **Q3 渲染层语音播报的条目化**：`media.synthesizeSpeech`（D106）本期维持全局槽位；条目化需要 RPC 带 botId 语义，随语音对话迭代顺延。
 - **Q4 embedding / rerank 条目化**：记忆管线绑定全局槽位（`memory/service.ts` 直读），条目开放会引入「按 Bot 换向量模型」的一致性问题（同库向量维度混用），本期不消费；schema 允许声明以便后续单独立项。
+
+## 11 现状（D124 收口后）
+
+> 本节是 D124 四个阶段（[todo/capability-model-plugins](../../todo/capability-model-plugins/README.md)：
+> P1 shared 契约与迁移 → P2 core 引擎与运行时 → P3 renderer UI → P4 内置官方插件与收口，P1–P3
+> 提交 5f13352e / 2737420a / f8bd9225，单分支 `feat/plugin-platform`）完成后的**现状事实**，
+> 与 §决策 / §1–§10 冲突处以本节为准。D125（[61 号](61-plugin-runtime-platform.md)）在其上
+> 追加执行型插件形态，本节只记 D124 口径。
+
+### 11.1 落地面
+
+- **manifest**（`shared/domain/plugin-manifest.ts`）：`contributions.capabilityModels`
+  （`capabilityModelEntrySchema`，≤32，id 插件内查重；条目声明 ⇔ `instances:
+  ['capability-model']` 配对强制，反向不强制）；`PLUGIN_INSTANCE_KINDS` 增
+  `'capability-model'`。`engine` 因 D125 已可选（数据型条目仍必填，执行型条目不填且
+  必须与 `runtime` 段配对）。`botRuntimeSchema.capability_entries`（≤16 软引用）随
+  `bots.profile_json` 存储。
+- **迁移 0075**（main，实际号未顺延）：`plugin_items` / `plugin_instances` kind CHECK
+  重建扩 `'capability-model'`（0066 同款）；`usage_ledger` 增 `capability` /
+  `model_entry_id`（nullable）。注意 `plugin_instances.plugin_id` 外键引用
+  `plugins(id)` 未变——内置只读目录插件因此不能持有实例（见 11.3）。
+- **core**：`media/engines.ts` `MEDIA_ENGINES`（`dashscope` / `volcengine-ark` /
+  `openai-compatible`，adapter 为既有适配器对象原样注册，行为逐字节不变；
+  credentialFields = apiKey 必填敏感 + baseUrl 可选，openai-compatible 的 baseUrl 必填）；
+  `plugins/kinds.ts` `capabilityModelKind`（`CAPABILITY_KINDS` 末位）+
+  `materializers/capability-model.ts`；安装期 `#assertEnginesKnown`
+  （`PLUGIN_ENGINE_UNKNOWN`，install + update 两路）；`plugins/media-entry-source.ts`
+  条目仓库（有效集 = Bot 勾选 ∩ `effectivePluginIds` ∩ `isConsumable`；插件内按声明序，
+  回退默认条目 = 声明序首个）；`MediaService` 解析链 ①条目 → ②全局槽位 → ③
+  `CAPABILITY_NOT_CONFIGURED`，多实例未指定 `INSTANCE_AMBIGUOUS`；embedding / rerank
+  条目声明不消费（§10 Q4，`entriesFor` 防御性跳过）；条目调用记账 `provider` = 插件 id、
+  `model_entry_id` = `{pluginId}/{entryId}`。RPC 三件
+  （`listCapabilityEntries` / `setBotCapabilityEntries` 未知 ref 整批拒 /
+  `testCapabilityEntry`）按 P2 规格落地。
+- **renderer**（P3）：Bot 详情条目勾选（`BotPluginsSection` + `bot-panel/bot-plugins.ts`
+  纯函数）、条目 store（`capability-entries.svelte.ts`）、插件详情「模型条目 + 账号实例」
+  （`ExtensionCapabilityModels` / `CapabilityInstanceForm`）、对话内凭据卡
+  （`PluginCredentialSetupBody`，分发判定 `chats/setup-alias.ts`）、设置页能力卡
+  「插件提供 · N 个模型」入口行（落 `ModelConfigDetail`，DEV-100）、工具描述注入
+  （`core/tools/media-entry-hints.ts`，清单为空描述逐字节不变）。
+- **设置目录零新增**：`settings-catalog` 无任何改动（决策 10 兑现，四个设置护栏测试
+  全绿）。
+
+### 11.2 内置官方插件与市场（P4）
+
+- **两个纯数据包**：`plugins/dashscope`（阿里云百炼，20 条 = `VENDOR_DESCRIPTORS.dashscope.presets`
+  非 chat 部分全量：embedding 3 / rerank 2 / multimodal 2 / image 4 / tts 5 / asr 1 / video 3）与
+  `plugins/volcengine-ark`（火山方舟，7 条：embedding 1 / multimodal 2 / image 2 /
+  video 2；方舟数据面无 rerank / tts / asr，描述符为空即条目不含）。条目只迁描述符已有
+  信息（模型 id、能力矩阵、渠道事实注释进 `description`），**`params` 一概不迁**（描述符
+  无默认值，不发明）；`displayName` 中文；条目 id 为 `[a-z0-9-]` slug（模型 id 含点号时
+  原样进 `model` 字段）。`VENDOR_DESCRIPTORS` / `PROVIDER_TEMPLATES` / `ADAPTERS` /
+  settings-catalog / `media/http.ts` 零改动。`engines.kepcup >=0.5.14`。
+- **分发双通道**：生产走官方市场安装（`plugins/` 是市场开发目录，打包钩子 = 既有
+  `for d in plugins/*/` 全量 pack 流程）；开发 / e2e 可经 `KEPCUP_BUILTIN_PLUGINS` 以
+  builtin 来源投影（D104 只读目录机制，不入 `plugins` 表）。**builtin 通路的实例面定界**：
+  `plugin_instances` 外键引用 `plugins(id)`，builtin 插件不能持有实例——凭据 / 测试连接 /
+  真机出图走市场安装路径；builtin 来源承担条目投影与 Bot 勾选校验（`manifestOf` builtin
+  回退、`isConsumable` builtin 恒真、`summaries` 带实例供给声明、`pluginInstalled` 认
+  builtin；DEV-112）。渲染层对 `origin: 'builtin'` 的能力模型插件详情**不渲染「账号实例」
+  区**，只显示边界说明（市场安装形态 `origin` 为 `marketplace` / `local`，实例区照常可用）；
+  生产构建无 builtin 目录，这些分支不可达。
+- **市场索引**：`categoriesOf` 补 `capability-model` 分支（im-wechat 先例）；
+  `pluginContributionKindSchema` 收编该值（DEV-111），市场条目 `categories` /
+  一句话概述（「提供 N 个模型；可添加多个厂商账号」）随之可解析；schema 尚未收编
+  该类别的旧客户端在条目级逐条跳过，已收编但低于 `0.5.14` 的客户端由 `engines`
+  标为不可安装，整份索引不受影响。两包 `validate` 0 error、`pack` 通过；
+  **发布动作（生产签名 / R2 / deploy）未执行**，批次记录见
+  [plugins/README.md](../../plugins/README.md)。
+
+### 11.3 偏差索引（D124 相关）
+
+DEV-093（条目 id 复用 mcp 系规则）、DEV-095（kind contributionSchema 单条目）、
+DEV-096（MediaEntrySource 增补读取面）、DEV-097（embedding / rerank 不开条目通道）、
+DEV-098（P1 遗留清理含 `pluginItemKindSchema` 扩值）、DEV-099（model 参数匹配键 + 输出序）、
+DEV-100（「插件提供」入口落 `ModelConfigDetail`）、DEV-101（`shell.extensionCenterPluginFocus`
+deepLink）、DEV-102（渲染端保存前剔除残留 ref）、DEV-103（条目分组常量落 bot-plugins.ts）、
+DEV-111（贡献 kind 枚举收编 `'capability-model'`）、DEV-112（builtin 条目通路与实例面
+定界）。DEV-094 的 typecheck 中断已在 P2/P3 清零（DEV-098 闭环）。
 
 ## 验收锚点
 
