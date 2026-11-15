@@ -77,9 +77,12 @@ describe('0073 tool_usage_ledger migration', () => {
     const db = openMainDb();
     try {
       runMigrations(db, migrationsUrl('main'));
-      // 回拨到 0072：0073 之后新增的表摘除，既有账本行保留。
+      // 回拨到 0072：0073 之后新增的表摘除，既有账本行保留。0075 给 usage_ledger
+      // 加的两列也一并摘除（ADD COLUMN 不可原样重放），0075 本体可重放。
       db.exec('drop table tool_usage_ledger;');
       db.exec('drop table conversation_notes;');
+      db.exec('alter table usage_ledger drop column capability;');
+      db.exec('alter table usage_ledger drop column model_entry_id;');
       db.pragma('user_version = 72');
       db.prepare(
         `insert into usage_ledger (id, run_id, bot_id, conversation_id, loop_type, provider, model,

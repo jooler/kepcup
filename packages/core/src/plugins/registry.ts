@@ -23,6 +23,7 @@ import {
 } from '@kepcup/shared';
 import { compareConnectorVersions } from '../apps/connector-utils.js';
 import { validateUserConfig } from '../apps/mcpb/manifest.js';
+import { MEDIA_ENGINES } from '../media/engines.js';
 import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
 import type { BuiltinPlugins } from './builtin.js';
@@ -324,6 +325,18 @@ export class PluginRegistry {
 
   ownerOf(kind: PluginItemKind, ref: string): string | null {
     return this.#deps.store.ownerOf(kind, ref);
+  }
+
+  /**
+   * 插件当前是否可被运行时消费（D124 条目仓库的有效集口径，60 号设计决策 5
+   * 「插件已安装启用」）：已装（state installed）且全局启用（enabled）。与
+   * `#convergeDisabled` 的语义一致——停用插件 = 贡献不再进运行时面；条目的
+   * 运行时状态只住在 Bot profile 与本行上，故消费侧必须查这里。
+   * 诊断面（testCapabilityEntry 的条目 / 实例解析）不经过本判定。
+   */
+  isConsumable(id: string): boolean {
+    const row = this.#deps.store.get(id);
+    return row !== null && row.state === 'installed' && row.enabled;
   }
 
   /**
@@ -640,6 +653,8 @@ export class PluginRegistry {
       const { id, version } = manifest;
       // Reserved namespaces are rejected for marketplace / local installs.
       assertInstallablePluginId(id);
+      // D124：条目绑定的引擎必须在当前版本已注册（在任何持久化写入之前拒绝）。
+      this.#assertEnginesKnown(manifest);
       const row = this.#deps.store.get(id);
       if (row !== null) {
         // P1-2: reinstalling the SAME id from a local source IS the update flow (design 51
@@ -807,6 +822,8 @@ export class PluginRegistry {
       throw new AppError('PLUGIN_INVALID', '包与确认时不一致，请重新选择');
     }
     this.#assertMatchesMarketplaceEntry(staged, resolved.marketplace);
+    // D124：更新同样不允许引入未注册引擎的条目（① validate 步内，先于一切写入）。
+    this.#assertEnginesKnown(manifest);
     const origin: PluginRow['origin'] = resolved.marketplace === null ? 'local' : 'marketplace';
     const tier: PluginRow['tier'] =
       resolved.marketplace === null ? 'developer' : resolved.marketplace.entry.tier;
@@ -1292,6 +1309,26 @@ export class PluginRegistry {
   }
 
   /**
+   * D124 安装管线校验步（60 号文档 §2）：能力模型条目绑定的 `engine` 必须已在
+   * `MEDIA_ENGINES` 注册——未知引擎拒绝安装 / 更新（PLUGIN_ENGINE_UNKNOWN，错误
+   * 信息列出已注册引擎 id）。执行逻辑住在第一方引擎里：包内数据指向不存在的
+   * 引擎 = 当前版本无法安全执行，不能静默忽略。
+   */
+  #assertEnginesKnown(manifest: PluginManifest): void {
+    const unknown = new Set<string>();
+    for (const entry of manifest.contributions.capabilityModels ?? []) {
+      if (MEDIA_ENGINES[entry.engine] === undefined) unknown.add(entry.engine);
+    }
+    if (unknown.size > 0) {
+      throw new AppError(
+        'PLUGIN_ENGINE_UNKNOWN',
+        `条目绑定的引擎未注册：${[...unknown].sort().join('、')}（已注册：${Object.keys(MEDIA_ENGINES).join('、')}）`,
+        { engines: [...unknown].sort() },
+      );
+    }
+  }
+
+  /**
    * Required user_config fields of the NEW version's mcpb contributions must be
    * satisfiable BEFORE any persistent write: provided values count, a declared default
    * counts (same rule as `validateUserConfig` on first install), and a required sensitive
@@ -1557,6 +1594,7 @@ export class PluginRegistry {
       mcp: new Set(),
       mail: new Set(),
       im: new Set(),
+      'capability-model': new Set(),
     };
     for (const item of this.#deps.store.items(pluginId)) {
       if (item.kind === 'disabled_connection') continue;
@@ -1587,7 +1625,14 @@ export class PluginRegistry {
     conflicts: PluginInspectOutput['conflicts'];
     blockers: string[];
   }> {
-    const items: ConsentItems = { skills: [], connectors: [], mcp: [], mail: [], im: [] };
+    const items: ConsentItems = {
+      skills: [],
+      connectors: [],
+      mcp: [],
+      mail: [],
+      im: [],
+      capabilityModels: [],
+    };
     const conflicts: PluginInspectOutput['conflicts'] = [];
     const blockers: string[] = [];
     for (const projector of this.#projectors) {
@@ -1756,8 +1801,12 @@ export class PluginRegistry {
     const yielded = this.#yieldedSlugs();
     for (const adapter of CAPABILITY_KINDS) {
       const kind = adapter.kind;
+      // D124：capability-model 条目不进插件卡的 counts / items（共享契约的固定五键），
+      // 条目清单走 `plugins.listCapabilityEntries`；账本行仍由投影器维护。
+      if (kind === 'capability-model') continue;
       const refs = this.#deps.store.refs(row.id, kind);
-      counts[adapter.consentKey] = refs.length;
+      // kind 排除 capability-model 后 consentKey 必在固定五键内（跨属性关系 TS 不可推断）。
+      counts[adapter.consentKey as keyof typeof counts] = refs.length;
       if (refs.length === 0) continue;
       const missing = new Set(this.#projectorOf(kind)?.missing?.(identity, refs) ?? []);
       for (const ref of refs) {

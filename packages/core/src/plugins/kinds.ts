@@ -1,4 +1,5 @@
 import type {
+  CapabilityModelEntry,
   PluginContributionKind,
   PluginConsentConnector,
   PluginConsentIm,
@@ -6,10 +7,12 @@ import type {
   PluginConsentMcp,
   PluginConsentSkill,
   PluginField,
+  PluginInstanceKind,
   PluginMcpContribution,
   PluginManifest,
 } from '@kepcup/shared';
 import {
+  capabilityModelEntrySchema,
   mcpHeaderFieldKey,
   pluginConnectorContributionSchema,
   pluginImContributionSchema,
@@ -17,12 +20,14 @@ import {
   pluginMcpContributionSchema,
   pluginSkillContributionSchema,
 } from '@kepcup/shared';
+import { MEDIA_ENGINES } from '../media/engines.js';
 import type { ConsentItems } from './permissions.js';
 import type {
   PluginProjector,
   PluginProjectorsDeps,
   ProjectedKind,
 } from './projectors/index.js';
+import { CapabilityModelsProjector } from './projectors/capability-models.js';
 import { ConnectorsProjector } from './projectors/connectors.js';
 import { ImProjector } from './projectors/im.js';
 import { MailProjector } from './projectors/mail.js';
@@ -49,10 +54,16 @@ export type ConsentItem =
   | PluginConsentConnector
   | PluginConsentMcp
   | PluginConsentMail
-  | PluginConsentIm;
+  | PluginConsentIm
+  | CapabilityModelEntry;
 
-/** Where this kind's items live in `ConsentItems` / `PluginSummary['counts']` (plural keys of the fixed shared contracts). */
-export type CapabilityConsentKey = 'skills' | 'connectors' | 'mcp' | 'mail' | 'im';
+/**
+ * Where this kind's items live in `ConsentItems` (plural keys of the fixed shared
+ * contracts). `'capabilityModels'` exists only in ConsentItems — `PluginSummary['counts']`
+ * keeps its five fixed keys (D124 entries surface via `plugins.listCapabilityEntries`,
+ * not the plugin-card count badges).
+ */
+export type CapabilityConsentKey = 'skills' | 'connectors' | 'mcp' | 'mail' | 'im' | 'capabilityModels';
 
 export interface CapabilityKindAdapter {
   readonly kind: ProjectedKind;
@@ -83,6 +94,23 @@ export interface CapabilityKindAdapter {
 function defineCapabilityKind(adapter: CapabilityKindAdapter): CapabilityKindAdapter {
   return adapter;
 }
+
+/**
+ * D124：能力模型条目 kind 适配器（60 号文档 §1/§2）——固定契约具名常量
+ * （todo/capability-model-plugins/README.md「固定契约」），投影顺序末位，
+ * 卸载 / 回滚反序。条目 = 纯数据声明，绑定第一方引擎（安装期
+ * PLUGIN_ENGINE_UNKNOWN 校验）；实例 = 厂商账号（materializer 落地）。
+ */
+export const capabilityModelKind: CapabilityKindAdapter = defineCapabilityKind({
+  kind: 'capability-model',
+  contributionSchema: capabilityModelEntrySchema,
+  consentKey: 'capabilityModels',
+  hasInstances: true,
+  instanceFields: capabilityModelInstanceFields,
+  hasContribution: (manifest) => (manifest.contributions.capabilityModels ?? []).length > 0,
+  consentItems: (inspection) => inspection.items as ConsentItem[],
+  createProjector: () => new CapabilityModelsProjector(),
+});
 
 /**
  * The registry, in projection order (skills and MCP first, then connectors and mail;
@@ -139,6 +167,7 @@ export const CAPABILITY_KINDS: readonly CapabilityKindAdapter[] = [
     consentItems: (inspection) => inspection.items as ConsentItem[],
     createProjector: () => new ImProjector(),
   }),
+  capabilityModelKind,
 ] satisfies readonly CapabilityKindAdapter[];
 
 /**
@@ -325,7 +354,34 @@ function mcpInstanceFields(manifest: PluginManifest): PluginField[] {
   return fields;
 }
 
-export function capabilityKindOf(kind: PluginContributionKind): CapabilityKindAdapter {
+/**
+ * Capability-model instance form fields (D124, 60 号文档 §2)：实例 = 厂商账号，
+ * 凭据表单由引擎声明——该插件条目 `engine` 并集对应的 `MEDIA_ENGINES[engine].
+ * credentialFields` 去重（保序：条目声明序；同名键以首个引擎的声明为准）。
+ * 引擎在安装期已校验（PLUGIN_ENGINE_UNKNOWN），这里对未知引擎防御性跳过
+ * （旧版本清单 / 手工构造的 manifest 不至于让实例表单崩溃）。
+ */
+function capabilityModelInstanceFields(manifest: PluginManifest): PluginField[] {
+  const fields: PluginField[] = [];
+  const seen = new Set<string>();
+  for (const entry of manifest.contributions.capabilityModels ?? []) {
+    const engine = MEDIA_ENGINES[entry.engine];
+    if (engine === undefined) continue;
+    for (const field of engine.credentialFields) {
+      if (seen.has(field.key)) continue;
+      seen.add(field.key);
+      fields.push(field);
+    }
+  }
+  return fields;
+}
+
+/**
+ * Kind id → adapter. Accepts both the contribution kinds and the instance kinds
+ * (D124: `'capability-model'` is an instance kind that is not a contribution kind of
+ * the fixed five-kind union, yet carries a full adapter).
+ */
+export function capabilityKindOf(kind: PluginContributionKind | PluginInstanceKind): CapabilityKindAdapter {
   const adapter = CAPABILITY_KINDS.find((candidate) => candidate.kind === kind);
   if (adapter === undefined) {
     throw new Error(`capability kind not registered: ${kind}`);
@@ -354,6 +410,9 @@ export function mergeConsentItems(
       break;
     case 'im':
       items.im.push(...(values as PluginConsentIm[]));
+      break;
+    case 'capabilityModels':
+      items.capabilityModels.push(...(values as CapabilityModelEntry[]));
       break;
   }
 }

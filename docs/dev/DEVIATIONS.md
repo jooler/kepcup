@@ -1423,3 +1423,107 @@
   的 6 处，P3 修 renderer 的 1 处；两阶段落地前全量 `pnpm test` 的 typecheck 段
   不会绿（P1 定向测试不受影响，vitest 不做类型检查）。
 - 已更新的文档：本条；P1 任务书「实施记录」。
+
+### DEV-095 capabilityModelKind 的 contributionSchema 用单条目 schema 而非数组 schema（D124 P2）
+
+- 状态：已落实
+- 阶段：D124 P2（2026-11-15）
+- 是否阻塞：否
+- 问题：P2 任务书步骤 2.1 写「`contributionSchema = z.array(capabilityModelEntrySchema).max(32)`」，
+  但 `CapabilityKindAdapter.contributionSchema` 的接口契约是「manifest `contributions[kind]`
+  数组**单条目**的 schema」（与 skill / mcp / connector / mail / im 五个适配器一致，均为
+  单条目 schema）；≤32 上限已由 shared 清单 schema（`PLUGIN_MAX_CAPABILITY_MODELS`）
+  承担。该字段当前无运行时消费方，唯一引用是 `plugin-projectors-coverage.test.ts`
+  的「每个适配器引用其 kind 的 shared 条目 schema」断言（`CONTRIBUTION_SCHEMAS[adapter.kind]`）。
+- 影响范围：`packages/core/src/plugins/kinds.ts`（capabilityModelKind）。
+- 决定：跟随接口既有语义用单条目 `capabilityModelEntrySchema`，保持五适配器同构与
+  coverage 测试的派生口径不变；≤32 不在适配器重复声明（shared 是唯一事实来源）。
+- 已更新的文档：本条；P2 任务书「实施记录」。
+
+### DEV-096 MediaEntrySource 增补实例 / 条目读取面与 ResolvedEntry 增补 displayName / instances（D124 P2）
+
+- 状态：已落实
+- 阶段：D124 P2（2026-11-15）
+- 是否阻塞：否
+- 问题：任务书步骤 3 只给 `MediaEntrySource { entriesFor }` 与 `ResolvedEntry = { pluginId,
+  entryId, model, engine, params?, instanceId? }`，但按该最小面无法落实步骤 3.2 / 3.5 的
+  行为：INSTANCE_AMBIGUOUS（多实例未指定）要在**条目选定之后**判（model 匹配在
+  MediaService，条目仓库不知道哪个条目会被选中）→ MediaService 需要候选实例全集；
+  缺凭据 → CAPABILITY_NOT_CONFIGURED 需要读实例凭据（secrets 名含插件 id 转义，
+  media 侧不得反向依赖 plugins 的 `pluginSecretScope`）；`plugins.testCapabilityEntry`
+  需要条目定义与实例解析；generateVideo → videoStatus 的 provider（pli_…）往返需要
+  「实例 → 插件 + 引擎」反查；工具 model 参数要匹配 displayName（60 §6，任务书步骤
+  3.2 同文）→ 条目要带 displayName。
+- 影响范围：`packages/core/src/media/service.ts`（接口与 `ResolvedEntry`）、
+  `packages/core/src/plugins/media-entry-source.ts`（实现）。
+- 决定：`entriesFor(botId, capability)` 签名逐字保留；接口增补五个读取方法
+  （`entryOf` / `instancesOf` / `instanceCredential` / `instanceConfig` /
+  `capabilityInstanceOf`），`ResolvedEntry` 增补可选 `displayName` / `instances`。
+  实例歧义仍由 MediaService 判（源只负责「唯一可解析时填 instanceId，否则留空 +
+  带全集」）；凭据读取经接口注入，media 不 import plugins。均属任务书「阶段内接口
+  细节可微调」授权面，固定契约不受影响。
+- 已更新的文档：本条；P2 任务书「实施记录」。
+
+### DEV-097 embedTexts / rerank 不开条目通道（D124 P2）
+
+- 状态：已落实（按 60 号设计决策压过任务书字面枚举）
+- 阶段：D124 P2（2026-11-15）
+- 是否阻塞：否
+- 问题：任务书步骤 3.3 写「六个媒体方法（generateImage / synthesizeSpeech /
+  transcribeSpeech / understandImage / submitVideo / embed 等）加可选 resolve 透传
+  参数」，但 60 号设计决策 6 明文「条目消费面 = 经 media 网关的五个工具能力
+  （image / video / tts / asr / multimodal）；**embedding / rerank 不开放**」，
+  README「不包含」栏同样写「embedding/rerank 条目消费（永不，本期范围外）」。
+- 影响范围：`packages/core/src/media/service.ts`（embedTexts / rerank 签名不变）。
+- 决定：条目解析只落在五个工具能力对应的五个方法上（generateImage /
+  synthesizeSpeech / transcribeSpeech / generateVideo / understandImage）；embedTexts /
+  rerank 保持原签名与全局槽位语义，条目仓库实现侧也把 embedding / rerank 条目挡在
+  entriesFor 之外（防御直调）。与 60 号 §10 Q4 一致。
+- 已更新的文档：本条；P2 任务书「实施记录」。
+
+### DEV-098 D124 P2 顺带清 P1 遗留三件：renderer 空字面量、两个「回退重放」迁移测试、PluginItemKind 扩条目 kind（D124 P2）
+
+- 状态：已落实
+- 阶段：D124 P2（2026-11-15）
+- 是否阻塞：否
+- 问题：P1 契约与迁移落地后有四处顺带面没被 P1 修（P1 交接记录在 DEV-094 与
+  P2 开工上下文）：
+  1. `apps/desktop/src/renderer/src/lib/features/bot-setup.ts` 的 `emptyProfile` 缺
+     `capability_entries`（DEV-094 第 2 条的 renderer 半句，原定 P3 修）；
+  2. `tool-usage-migration.test.ts` / `public-skills-migration.test.ts` 的「回退重放」
+     手法假设 0073 之后的迁移都是纯新增表——0075 对既有 `usage_ledger` 做
+     ADD COLUMN，重放必失败（P1 加 0075 后即红，不在 P1 定向清单内故未暴露）；
+  3. shared `pluginItemKindSchema`（`PluginItemKind`）未含 `'capability-model'`——0075
+     已扩 `plugin_items` 的 kind CHECK，而设计 60 §2 要求条目「照常记入
+     plugin_items 账本（kind 'capability-model'，ref = 条目 id），卸载可回滚」，
+     账本写入（`PluginLedger.add`）在 P2 的投影器里没有这个枚举值写不了。
+- 影响范围：`apps/desktop/src/renderer/src/lib/features/bot-setup.ts`（一行
+  `capability_entries: []`）；`packages/core/test/unit/tool-usage-migration.test.ts`、
+  `packages/core/test/unit/public-skills-migration.test.ts`（回退块摘除 0075 两列，
+  使 0075 可重放）；`packages/shared/src/domain/plugins.ts`（`pluginItemKindSchema`
+  追加 `'capability-model'`，纯枚举扩展，消费面全在 core 账本侧）；顺带
+  `pnpm --filter @kepcup/desktop typecheck` 提前恢复全绿。
+- 决定：三件全为 P1 契约 / 迁移的机械联动面，零行为变化，随 P2 一次清零；
+  DEV-094 的 core（P2 步骤 2 一并修复的 6 处收窄）与 renderer 待修项就此闭环。
+- 已更新的文档：本条；P2 任务书「实施记录」。
+
+### DEV-099 工具 model 参数匹配键扩到 entryId；entriesFor 输出序 = 插件级勾选序 + 插件内声明序（D124 P2）
+
+- 状态：已落实
+- 阶段：D124 P2（2026-11-15，审查修正时记录）
+- 是否阻塞：否
+- 问题：两处与任务书字面有出入的实现口径，随审查一并定案：
+  1. P2 任务书步骤 3.2 与 60 号决策 7 写工具显式 `model` 参数「匹配条目
+     model / displayName，未命中回默认条目」，实现（`MediaService.#selectEntry`）
+     额外把条目 `entryId` 作为第三个匹配键。
+  2. 任务书步骤 3.1 写 entriesFor 返回「条目声明序」，未界定多插件时的排序；
+     实现输出序 = 插件级按 `capability_entries` 勾选序（与「按插件分组勾选」的
+     UI 语义一致）、插件内按清单声明序——单插件场景与「条目声明序」完全一致。
+- 影响范围：`packages/core/src/media/service.ts`（#selectEntry）、
+  `packages/core/src/plugins/media-entry-source.ts`（entriesFor 排序）。
+- 决定：两处都保留——entryId 匹配只提高显式命中的命中率、不动「未命中回默认」
+  语义与「条目 > 全局槽位」顺序；条目序以插件内声明序为准满足 60 §4「① 内排序」
+  的回退默认条目 = 声明序首个。接口注释（MediaEntrySource）已写明精确口径；
+  `media-entry-resolution.test.ts`（命中三分支）与
+  `plugin-capability-model.test.ts`（声明序回退）锁定行为。
+- 已更新的文档：本条；P2 任务书「实施记录」。

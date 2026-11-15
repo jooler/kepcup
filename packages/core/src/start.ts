@@ -217,6 +217,8 @@ import {
 } from './plugins/instances.js';
 import { PluginBotNotice, type PluginActivationEntry } from './plugins/bot-notice.js';
 import { createMailMaterializer, reconcileMailInstanceRows } from './plugins/materializers/mail.js';
+import { createCapabilityModelMaterializer } from './plugins/materializers/capability-model.js';
+import { createMediaEntrySource } from './plugins/media-entry-source.js';
 import { createMcpMaterializer, reconcileMcpInstanceRows } from './plugins/materializers/mcp.js';
 import { createImMaterializer, reconcileImInstanceRows } from './plugins/materializers/im.js';
 import { PluginStore } from './plugins/store.js';
@@ -2663,6 +2665,21 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
     pluginInstancesForSettings = pluginInstances;
     plugins.attachInstanceTeardown((pluginId) => pluginInstances.deleteAllOf(pluginId));
+    // D124：capability-model 实例 materializer（实例 = 厂商账号；行 + secrets 由通用
+    // 流程落地，materializer 只做引擎注册校验与标题）。无外部领域状态，无需启动对账。
+    pluginInstances.registerMaterializer('capability-model', createCapabilityModelMaterializer());
+    // D124：条目仓库注入 MediaService（media → plugins 反向依赖经此断开）。条目解析
+    // = capability_entries ∩ effectivePluginIds ∩ 已装启用；未装配时 MediaService
+    // 恒走全局槽位路径（行为与从前逐字节一致）。
+    media.attachEntrySource(
+      createMediaEntrySource({
+        registry: plugins,
+        instances: pluginInstanceStore,
+        secrets: { getValue: (name) => secrets.getValue(name) },
+        botRuntimeOf: (botId) => bots.get(botId)?.profile.runtime ?? null,
+        logger,
+      }),
+    );
     // P4-M2：mcp 实例 materializer 落地（实例 = settings.mcpServers 的 streamable-http
     // server，来自插件的 http 模版）；启动对账清「实例行在、server 不见」的孤儿行。
     pluginInstances.registerMaterializer(

@@ -5801,18 +5801,69 @@ export class Orchestrator {
           error instanceof AppError &&
           (error.code === 'CAPABILITY_NOT_CONFIGURED' || error.code === 'PROVIDER_AUTH_FAILED')
         ) {
-          setupHit.requirement = { kind: 'capability-model', capability };
+          // D124：条目路径的缺凭据在 error.details 带插件 / 条目 / 实例定位——
+          // 渲染层据此出插件实例凭据卡而不是全局设置卡（全局槽位路径不带定位，
+          // payload 与 D58 现状逐字节一致）。
+          const details =
+            typeof error.details === 'object' && error.details !== null
+              ? (error.details as Record<string, unknown>)
+              : {};
+          const id = (key: string): string | undefined => {
+            const value = details[key];
+            return typeof value === 'string' && value.length > 0 ? value : undefined;
+          };
+          const pluginId = id('pluginId');
+          const instanceId = id('instanceId');
+          const entryId = id('entryId');
+          setupHit.requirement = {
+            kind: 'capability-model',
+            capability,
+            ...(pluginId !== undefined ? { pluginId } : {}),
+            ...(instanceId !== undefined ? { instanceId } : {}),
+            ...(entryId !== undefined ? { entryId } : {}),
+          };
         }
         throw error;
       }
     };
+    // D124：botId 透传给条目解析（MediaService.#resolve 的 ① 分支）；生成工具的
+    // 可选 model 参数同样透传（匹配条目 model / displayName）。缺省（botId 空 /
+    // 无 model）时 MediaService 走全局槽位路径，行为与从前逐字节一致。
+    const resolve = {
+      ...(identity.botId !== null ? { botId: identity.botId } : {}),
+    };
     return {
-      generateImage: (input) => setupGuard('image', () => media.generateImage(input, usage)),
+      generateImage: (input) =>
+        setupGuard(
+          'image',
+          () =>
+            media.generateImage(input, usage, {
+              ...resolve,
+              ...(input.model !== undefined ? { model: input.model } : {}),
+            }),
+        ),
       understandImage: (input) =>
-        setupGuard('multimodal', () => media.understandImage(input, usage)),
-      synthesizeSpeech: (input) => setupGuard('tts', () => media.synthesizeSpeech(input, usage)),
-      transcribeSpeech: (input) => setupGuard('asr', () => media.transcribeSpeech(input, usage)),
-      generateVideo: (input) => setupGuard('video', () => media.generateVideo(input, usage)),
+        setupGuard('multimodal', () => media.understandImage(input, usage, resolve)),
+      synthesizeSpeech: (input) =>
+        setupGuard(
+          'tts',
+          () =>
+            media.synthesizeSpeech(input, usage, {
+              ...resolve,
+              ...(input.model !== undefined ? { model: input.model } : {}),
+            }),
+        ),
+      transcribeSpeech: (input) =>
+        setupGuard('asr', () => media.transcribeSpeech(input, usage, resolve)),
+      generateVideo: (input) =>
+        setupGuard(
+          'video',
+          () =>
+            media.generateVideo(input, usage, {
+              ...resolve,
+              ...(input.model !== undefined ? { model: input.model } : {}),
+            }),
+        ),
       videoStatus: (provider, taskId) => media.videoStatus(provider, taskId),
     };
   }

@@ -13,6 +13,8 @@ import type { SettingsService } from '../domain/settings.js';
 import type { UsageService } from '../domain/usage.js';
 import type { SecretsService } from '../domain/secrets.js';
 import type { CoreLogger } from '../infra/logger.js';
+import { MEDIA_ENGINES } from './engines.js';
+import type { MediaEngine } from './engines.js';
 import { dashscopeAdapter } from './adapters/dashscope.js';
 import { volcengineAdapter } from './adapters/volcengine.js';
 import { openAICompatibleAdapter } from './adapters/openai-compatible.js';
@@ -32,6 +34,7 @@ import type {
   VideoGenerationParams,
   VideoTaskStatus,
 } from './types.js';
+import type { CapabilityModelEntry } from '@kepcup/shared';
 
 /**
  * 媒体网关：统一调用入口，按能力取 settings.capabilityModels 的配置
@@ -64,14 +67,69 @@ export interface MediaUsageContext {
 /** 除 chat 外的全部模型能力（settings.capabilityModels 的 key）。 */
 type MediaCapability = Exclude<keyof Settings['capabilityModels'], number>;
 
+/**
+ * 条目仓库（D124，60 号文档 §4）：media 侧只依赖本接口，实现住 plugins/ 侧
+ * （media → plugins 的反向依赖经注入断开，start.ts 在插件装配后接上）。
+ * entriesFor 返回该 Bot 在该能力下可用的条目（botRuntime.capability_entries ∩
+ * effectivePluginIds ∩ 插件已装启用；输出序 = 插件级 Bot 勾选序 + 插件内条目
+ * 声明序，见 DEV-099）；实例维度：
+ * - `instanceId` 仅在「条目显式指定且存在」或「插件恰好一个实例」时填；
+ * - 多实例未指定留空并带上 `instances` 全集（MediaService 据此判 INSTANCE_AMBIGUOUS）；
+ * - 零实例留空（MediaService 报 CAPABILITY_NOT_CONFIGURED，payload 带条目定位）。
+ */
+export interface MediaEntrySource {
+  entriesFor(botId: string | undefined, capability: MediaCapability): Promise<ResolvedEntry[]>;
+  /** 单个条目定义（清单投影；null = 插件 / 条目不存在）。 */
+  entryOf(pluginId: string, entryId: string): Promise<CapabilityModelEntry | null>;
+  /** 插件当前的 capability-model 实例 id 全集（条目测试的实例解析用）。 */
+  instancesOf(pluginId: string): string[];
+  /** 实例敏感凭据（secrets；keyOverride 支持未保存先测）。null = 缺失。 */
+  instanceCredential(
+    pluginId: string,
+    instanceId: string,
+    key: string,
+    keyOverride?: string,
+  ): string | null;
+  /** 实例非敏感配置（config_json；无行 = null）。 */
+  instanceConfig(pluginId: string, instanceId: string): Record<string, unknown> | null;
+  /** 实例 → 所属插件与引擎（generateVideo → videoStatus 的 provider 往返；null = 非插件实例）。 */
+  capabilityInstanceOf(instanceId: string): Promise<{ pluginId: string; engine: string } | null>;
+}
+
+/** 解析出的一个可用条目（60 号 §4 的 ① 分支）。 */
+export interface ResolvedEntry {
+  pluginId: string;
+  entryId: string;
+  model: string;
+  engine: string;
+  /** 条目展示名（displayName 缺省时实现侧回填 model，工具 model 参数匹配用）。 */
+  displayName?: string;
+  /** 条目级引擎参数覆盖（原样透传到 VendorCallContext.entryParams）。 */
+  params?: Record<string, unknown>;
+  /** 唯一实例 / 条目显式指定且存在时填；多实例未指定或零实例留空。 */
+  instanceId?: string;
+  /** 该插件当前全部实例 id（INSTANCE_AMBIGUOUS 判定与文案用）。 */
+  instances?: readonly string[];
+}
+
+/** 媒体方法的条目解析透传（缺省 = 现行为：走全局槽位）。 */
+export interface MediaResolveOptions {
+  /** Bot 上下文；null / 缺省 = 不走条目路径。 */
+  botId?: string | null | undefined;
+  /** 工具显式 model 参数：匹配条目 model / displayName，未命中回首个条目。 */
+  model?: string | undefined;
+}
+
 interface ResolvedProvider {
   /** 适配器路由键：厂商 id，自定义实例为 'custom'。 */
   vendor: VendorId | 'custom';
-  /** 实例 id（用量记账与 videoStatus 往返的 provider 值）。 */
+  /** 实例 id（用量记账与 videoStatus 往返的 provider 值）；条目路径为插件实例 id。 */
   instanceId: string;
   modelId: string;
   context: VendorCallContext;
   adapter: VendorAdapter;
+  /** 条目命中时携带（用量记账写 capability / model_entry_id，provider 记插件 id）。 */
+  entry?: { pluginId: string; entryId: string; capability: MediaCapability } | undefined;
 }
 
 export class MediaService {
@@ -81,6 +139,11 @@ export class MediaService {
   readonly #usage: UsageService | undefined;
   /** Test seam: injected fetch for adapter unit tests. */
   readonly #fetchImpl?: typeof fetch;
+  /**
+   * 条目仓库（D124）：start.ts 在插件装配后注入。未注入（单测 / 未装配）=
+   * 恒走全局槽位路径——未装任何能力模型插件的环境行为与从前逐字节一致。
+   */
+  #entrySource: MediaEntrySource | undefined;
 
   constructor(deps: {
     settings: SettingsService;
@@ -97,13 +160,19 @@ export class MediaService {
     this.#fetchImpl = deps.fetchImpl;
   }
 
+  /** D124：接入条目仓库（插件装配后调用一次；全局槽位路径不受影响）。 */
+  attachEntrySource(source: MediaEntrySource): void {
+    this.#entrySource = source;
+  }
+
   // --- 统一调用入口（media.* RPC 背后的方法） ------------------------------
 
   async generateImage(
     input: ImageGenerationParams & { model?: string },
     usage?: MediaUsageContext | null,
+    resolve?: MediaResolveOptions,
   ): Promise<ImageGenerationResult> {
-    const resolved = this.#resolve('image', input.model);
+    const resolved = await this.#resolve('image', input.model, resolve);
     const fn = resolved.adapter.generateImage;
     if (fn === undefined) throw this.#unsupported(resolved, 'image');
     const result = await fn(resolved.context, resolved.modelId, {
@@ -114,15 +183,16 @@ export class MediaService {
       negativePrompt: input.negativePrompt,
       seed: input.seed,
     });
-    this.#recordUsage(resolved.instanceId, resolved.modelId, usage);
+    this.#recordUsage(resolved.instanceId, resolved.modelId, usage, resolved.entry);
     return result;
   }
 
   async synthesizeSpeech(
     input: SpeechParams & { model?: string },
     usage?: MediaUsageContext | null,
+    resolve?: MediaResolveOptions,
   ): Promise<SpeechResult> {
-    const resolved = this.#resolve('tts', input.model);
+    const resolved = await this.#resolve('tts', input.model, resolve);
     const fn = resolved.adapter.synthesizeSpeech;
     if (fn === undefined) throw this.#unsupported(resolved, 'tts');
     const result = await fn(resolved.context, resolved.modelId, {
@@ -131,15 +201,16 @@ export class MediaService {
       format: input.format,
       speed: input.speed,
     });
-    this.#recordUsage(resolved.instanceId, resolved.modelId, usage);
+    this.#recordUsage(resolved.instanceId, resolved.modelId, usage, resolved.entry);
     return result;
   }
 
   async transcribeSpeech(
     input: TranscriptionParams & { model?: string },
     usage?: MediaUsageContext | null,
+    resolve?: MediaResolveOptions,
   ): Promise<TranscriptionResult> {
-    const resolved = this.#resolve('asr', input.model);
+    const resolved = await this.#resolve('asr', input.model, resolve);
     const fn = resolved.adapter.transcribeSpeech;
     if (fn === undefined) throw this.#unsupported(resolved, 'asr');
     const result = await fn(resolved.context, resolved.modelId, {
@@ -147,15 +218,16 @@ export class MediaService {
       audioMime: input.audioMime,
       language: input.language,
     });
-    this.#recordUsage(resolved.instanceId, resolved.modelId, usage);
+    this.#recordUsage(resolved.instanceId, resolved.modelId, usage, resolved.entry);
     return result;
   }
 
   async generateVideo(
     input: VideoGenerationParams & { model?: string },
     usage?: MediaUsageContext | null,
+    resolve?: MediaResolveOptions,
   ): Promise<{ provider: string; taskId: string }> {
-    const resolved = this.#resolve('video', input.model);
+    const resolved = await this.#resolve('video', input.model, resolve);
     const fn = resolved.adapter.submitVideo;
     if (fn === undefined) throw this.#unsupported(resolved, 'video');
     const handle = await fn(resolved.context, resolved.modelId, {
@@ -167,22 +239,28 @@ export class MediaService {
       duration: input.duration,
     });
     // 记在提交成功处：一次任务一行，轮询状态不计。
-    this.#recordUsage(resolved.instanceId, resolved.modelId, usage);
+    this.#recordUsage(resolved.instanceId, resolved.modelId, usage, resolved.entry);
+    // provider 返回给调用方做 videoStatus 往返：条目路径是插件实例 id（pli_…），
+    // videoStatus 经条目仓库解析回插件凭据（全局路径仍是供应商实例 id，不变）。
     return { provider: resolved.instanceId, taskId: handle.taskId };
   }
 
   async videoStatus(provider: string, taskId: string): Promise<VideoTaskStatus> {
-    const resolved = this.#resolveProvider(provider);
+    const resolved = await this.#resolveVideoProvider(provider);
     const fn = resolved.adapter.videoStatus;
     if (fn === undefined) throw this.#unsupported(resolved, 'video');
     return fn(resolved.context, taskId);
   }
 
+  /**
+   * rerank / embedTexts 不走条目路径（60 号 §10 Q4：embedding / rerank 条目本期
+   * 不消费——记忆管线绑定全局槽位），保持原签名与语义。
+   */
   async rerank(
     input: RerankParams & { model?: string },
     usage?: MediaUsageContext | null,
   ): Promise<RerankResult> {
-    const resolved = this.#resolve('rerank', input.model);
+    const resolved = await this.#resolve('rerank', input.model);
     const fn = resolved.adapter.rerank;
     if (fn === undefined) throw this.#unsupported(resolved, 'rerank');
     const result = await fn(resolved.context, resolved.modelId, {
@@ -190,22 +268,23 @@ export class MediaService {
       documents: input.documents,
       topN: input.topN,
     });
-    this.#recordUsage(resolved.instanceId, resolved.modelId, usage);
+    this.#recordUsage(resolved.instanceId, resolved.modelId, usage, resolved.entry);
     return result;
   }
 
   async understandImage(
     input: UnderstandImageParams & { model?: string },
     usage?: MediaUsageContext | null,
+    resolve?: MediaResolveOptions,
   ): Promise<{ text: string }> {
-    const resolved = this.#resolve('multimodal', input.model);
+    const resolved = await this.#resolve('multimodal', input.model, resolve);
     const fn = resolved.adapter.understandImage;
     if (fn === undefined) throw this.#unsupported(resolved, 'multimodal');
     const result = await fn(resolved.context, resolved.modelId, {
       images: input.images,
       prompt: input.prompt,
     });
-    this.#recordUsage(resolved.instanceId, resolved.modelId, usage);
+    this.#recordUsage(resolved.instanceId, resolved.modelId, usage, resolved.entry);
     return result;
   }
 
@@ -246,7 +325,7 @@ export class MediaService {
   ): Promise<number[][]> {
     const resolved = this.#resolveProvider(provider);
     const vectors = await resolved.adapter.embed(resolved.context, model, texts);
-    this.#recordUsage(resolved.instanceId, model, usage);
+    this.#recordUsage(resolved.instanceId, model, usage, resolved.entry);
     return vectors;
   }
 
@@ -287,10 +366,68 @@ export class MediaService {
     ) {
       throw this.#unsupported(resolved, capability);
     }
+    return this.#runProbe(capability, resolved);
+  }
+
+  /**
+   * 条目级连通性测试（D124，`plugins.testCapabilityEntry`）：按条目能力走
+   * testCapability 同款探针（1×1 PNG / 静音 WAV / 「你好」/ video 提交即取消），
+   * 凭据取插件实例（keyOverride 支持未保存先测）。实例解析：入参 > 条目
+   * `instance` > 唯一实例；多实例未指定拒绝（INSTANCE_AMBIGUOUS）。
+   */
+  async testCapabilityEntry(
+    pluginId: string,
+    entryId: string,
+    options: { instanceId?: string; keyOverride?: string } = {},
+  ): Promise<void> {
+    const source = this.#requireEntrySource();
+    const entry = await source.entryOf(pluginId, entryId);
+    if (entry === null) {
+      throw new AppError('NOT_FOUND', `插件 ${pluginId} 没有条目「${entryId}」`);
+    }
+    const engine = MEDIA_ENGINES[entry.engine];
+    if (engine === undefined) {
+      throw new AppError(
+        'PLUGIN_ENGINE_UNKNOWN',
+        `条目「${entryId}」绑定的引擎「${entry.engine}」未注册`,
+      );
+    }
+    let instanceId = options.instanceId ?? entry.instance;
+    if (instanceId === undefined) {
+      const rows = source.instancesOf(pluginId);
+      if (rows.length === 1) instanceId = rows[0]!;
+      else if (rows.length > 1) {
+        throw new AppError(
+          'INSTANCE_AMBIGUOUS',
+          `插件有 ${rows.length} 个厂商账号实例，请指定要测试的实例`,
+          { pluginId, entryId, instances: rows },
+        );
+      } else {
+        throw this.#entryNotConfigured('该条目还没有可用的厂商账号实例，请先添加并填写凭据', {
+          pluginId,
+          entryId,
+        });
+      }
+    }
+    const resolved = this.#resolvePluginInstance(pluginId, instanceId, engine, options.keyOverride);
+    resolved.modelId = entry.model;
+    // 引擎能力矩阵（安装期已保证引擎注册；这里防御引擎不支持条目声明的能力）。
+    if (!engine.capabilities.includes(entry.capability)) {
+      throw this.#unsupported(resolved, entry.capability);
+    }
+    return this.#runProbe(entry.capability, resolved);
+  }
+
+  /** 各能力探针开关（testCapability / testCapabilityEntry 共用；modelId 已在 resolved 上）。 */
+  async #runProbe(
+    capability: Exclude<ModelCapability, 'chat'>,
+    resolved: ResolvedProvider,
+  ): Promise<void> {
     const ctx = resolved.context;
+    const modelId = resolved.modelId;
     switch (capability) {
       case 'embedding': {
-        const vectors = await resolved.adapter.embed(ctx, target.model, ['ping']);
+        const vectors = await resolved.adapter.embed(ctx, modelId, ['ping']);
         if (vectors.length === 0 || vectors[0]!.length === 0) {
           throw new AppError('PROVIDER_UNAVAILABLE', '未返回向量');
         }
@@ -299,7 +436,7 @@ export class MediaService {
       case 'rerank': {
         const fn = resolved.adapter.rerank;
         if (fn === undefined) throw this.#unsupported(resolved, 'rerank');
-        const result = await fn(ctx, target.model, {
+        const result = await fn(ctx, modelId, {
           query: '连通性测试',
           documents: ['这是一条用于连通性测试的候选文档。', '今天天气不错。'],
           topN: 2,
@@ -312,7 +449,7 @@ export class MediaService {
       case 'multimodal': {
         const fn = resolved.adapter.understandImage;
         if (fn === undefined) throw this.#unsupported(resolved, 'multimodal');
-        const result = await fn(ctx, target.model, {
+        const result = await fn(ctx, modelId, {
           images: [buildSolidPngDataUri()],
           prompt: '请用不超过五个字回答：这张图是什么？',
         });
@@ -325,8 +462,8 @@ export class MediaService {
         // 编辑专用模型（id 含 edit）必须带参考图：附带探针 PNG 走编辑路径。
         const fn = resolved.adapter.generateImage;
         if (fn === undefined) throw this.#unsupported(resolved, 'image');
-        const isEditModel = /edit/i.test(target.model);
-        const result = await fn(ctx, target.model, {
+        const isEditModel = /edit/i.test(modelId);
+        const result = await fn(ctx, modelId, {
           prompt: isEditModel ? '把这张图里的圆形改成蓝色' : '一个纯红色圆形，纯白背景，极简测试图',
           ...(isEditModel ? { images: [buildSolidPngDataUri()] } : {}),
           n: 1,
@@ -337,7 +474,7 @@ export class MediaService {
       case 'tts': {
         const fn = resolved.adapter.synthesizeSpeech;
         if (fn === undefined) throw this.#unsupported(resolved, 'tts');
-        const result = await fn(ctx, target.model, { text: '你好' });
+        const result = await fn(ctx, modelId, { text: '你好' });
         if (result.audioBase64.length === 0)
           throw new AppError('PROVIDER_UNAVAILABLE', '未返回音频');
         return;
@@ -345,14 +482,14 @@ export class MediaService {
       case 'asr': {
         const fn = resolved.adapter.transcribeSpeech;
         if (fn === undefined) throw this.#unsupported(resolved, 'asr');
-        await fn(ctx, target.model, {
+        await fn(ctx, modelId, {
           audioBase64: buildSilentWavBase64(),
           audioMime: PROBE_AUDIO_MIME,
         });
         return;
       }
       case 'video':
-        return this.#testVideo(resolved, target.model);
+        return this.#testVideo(resolved, modelId);
     }
   }
 
@@ -378,12 +515,15 @@ export class MediaService {
   /**
    * 一次成功调用 = 账本一行（次数按行统计，不新增列）。适配器目前不上报
    * token，故 token 记 0、费用留空；失败的调用不记；记账失败只打日志，绝不
-   * 影响调用结果。provider 记实例 id（与对话侧 pi 注册表的 provider 一致）。
+   * 影响调用结果。provider 记实例 id（与对话侧 pi 注册表的 provider 一致）；
+   * D124 条目命中时改记插件 id，并写 capability / model_entry_id 两列
+   * （'{pluginId}/{entryId}'）——全局槽位路径两列为 NULL（迁移 0075）。
    */
   #recordUsage(
     provider: string,
     modelId: string,
     usage: MediaUsageContext | null | undefined,
+    entry?: ResolvedProvider['entry'],
   ): void {
     if (this.#usage === undefined || usage === undefined || usage === null) return;
     try {
@@ -392,7 +532,9 @@ export class MediaService {
         botId: usage.botId ?? null,
         conversationId: usage.conversationId ?? null,
         loopType: usage.loopType,
-        provider,
+        ...(entry !== undefined
+          ? { provider: entry.pluginId, capability: entry.capability, modelEntryId: `${entry.pluginId}/${entry.entryId}` }
+          : { provider }),
         model: modelId,
         inputTokens: 0,
         outputTokens: 0,
@@ -409,10 +551,140 @@ export class MediaService {
   // --- 解析 ----------------------------------------------------------------
 
   /**
-   * 能力 → 配置（capabilityModels）+ 实例 + 适配器 + 调用上下文。model
-   * 显式传入时覆盖配置里的模型 id。
+   * 能力 → 调用面（D124 解析顺序，60 号文档 §4）：① Bot 绑定条目（`resolve.botId`
+   * 且条目仓库返回非空时——显式 model 匹配条目 model/displayName，未命中回首个）
+   * → ② 全局槽位（`#resolveGlobal`，现状路径逐字节保留）→ ③ 未配置
+   * （CAPABILITY_NOT_CONFIGURED，现状语义）。`modelId` 是全局路径的裸模型覆盖。
    */
-  #resolve(capability: MediaCapability, modelId?: string): ResolvedProvider {
+  async #resolve(
+    capability: MediaCapability,
+    modelId?: string,
+    resolve?: MediaResolveOptions,
+  ): Promise<ResolvedProvider> {
+    if (resolve?.botId != null && resolve.botId !== '' && this.#entrySource !== undefined) {
+      const entries = await this.#entrySource.entriesFor(resolve.botId, capability);
+      if (entries.length > 0) {
+        return this.#resolveEntry(capability, this.#selectEntry(entries, resolve.model));
+      }
+    }
+    return this.#resolveGlobal(capability, modelId);
+  }
+
+  /** 条目挑选：显式 model 依次命中条目 model / displayName / entryId 才生效，否则用首个（声明序）。 */
+  #selectEntry(entries: readonly ResolvedEntry[], modelHint?: string): ResolvedEntry {
+    if (modelHint !== undefined && modelHint !== '') {
+      const hit = entries.find(
+        (entry) =>
+          entry.model === modelHint ||
+          entry.displayName === modelHint ||
+          entry.entryId === modelHint,
+      );
+      if (hit !== undefined) return hit;
+    }
+    return entries[0]!;
+  }
+
+  /**
+   * 条目 → 引擎 + 插件实例凭据。失败语义（60 号 §4）：多实例未指定 →
+   * INSTANCE_AMBIGUOUS；缺实例 / 缺凭据 → CAPABILITY_NOT_CONFIGURED（details 带
+   * {pluginId, entryId, instanceId?} 定位，orchestrator 据此出插件凭据卡）。
+   */
+  #resolveEntry(capability: MediaCapability, entry: ResolvedEntry): ResolvedProvider {
+    const engine = MEDIA_ENGINES[entry.engine];
+    if (engine === undefined) {
+      // 安装期已校验；这里兜底降级 / 数据异常（60 §7：引擎永远在第一方）。
+      throw new AppError(
+        'PLUGIN_ENGINE_UNKNOWN',
+        `条目 ${entry.entryId} 绑定的引擎「${entry.engine}」未注册`,
+      );
+    }
+    if (entry.instanceId === undefined) {
+      const candidates = entry.instances ?? [];
+      if (candidates.length > 1) {
+        throw new AppError(
+          'INSTANCE_AMBIGUOUS',
+          `插件有 ${candidates.length} 个厂商账号实例，条目「${entry.entryId}」未指定使用哪个；请在插件详情里指定实例`,
+          { pluginId: entry.pluginId, entryId: entry.entryId, instances: [...candidates] },
+        );
+      }
+      throw this.#entryNotConfigured(
+        `条目「${entry.entryId}」还没有可用的厂商账号实例，请先在插件详情里添加并填写凭据`,
+        { pluginId: entry.pluginId, entryId: entry.entryId },
+      );
+    }
+    const resolved = this.#resolvePluginInstance(entry.pluginId, entry.instanceId, engine);
+    resolved.modelId = entry.model;
+    this.#requireAdapterCapability(resolved, capability);
+    // 条目级参数覆盖：原样进调用上下文（适配器本期不读；引擎逐键白名单消费，60 §7）。
+    if (entry.params !== undefined) resolved.context.entryParams = entry.params;
+    resolved.entry = { pluginId: entry.pluginId, entryId: entry.entryId, capability };
+    return resolved;
+  }
+
+  /** 条目路径的 CAPABILITY_NOT_CONFIGURED：payload 携带插件 / 条目 / 实例定位。 */
+  #entryNotConfigured(
+    message: string,
+    details: { pluginId: string; entryId?: string; instanceId?: string },
+  ): AppError {
+    return new AppError('CAPABILITY_NOT_CONFIGURED', message, details);
+  }
+
+  /**
+   * 插件实例（pli_…）→ 引擎 + 凭据。必填凭据缺一不可：sensitive 字段读
+   * secrets，非敏感字段读 config_json；缺 required → CAPABILITY_NOT_CONFIGURED
+   * （details 带插件与实例定位）。
+   */
+  #resolvePluginInstance(
+    pluginId: string,
+    instanceId: string,
+    engine: MediaEngine,
+    keyOverride?: string,
+  ): ResolvedProvider {
+    const source = this.#requireEntrySource();
+    const config = source.instanceConfig(pluginId, instanceId) ?? {};
+    let apiKey: string | null = null;
+    for (const field of engine.credentialFields) {
+      const raw = field.sensitive
+        ? source.instanceCredential(pluginId, instanceId, field.key, keyOverride)
+        : (config[field.key] ?? null);
+      if (field.required && (raw === null || raw === '')) {
+        throw this.#entryNotConfigured(
+          `条目凭据未配齐：请在插件详情的账号实例里填写「${field.title}」`,
+          { pluginId, instanceId },
+        );
+      }
+      if (field.sensitive && typeof raw === 'string' && apiKey === null) {
+        apiKey = raw;
+      }
+    }
+    if (apiKey === null) {
+      throw this.#entryNotConfigured('条目凭据未配齐：缺少 API Key', { pluginId, instanceId });
+    }
+    // baseUrl：实例 config 覆盖优先；缺省用引擎厂商的内置根（通用兼容引擎无内置根）。
+    const configBaseUrl = typeof config['baseUrl'] === 'string' ? config['baseUrl'] : undefined;
+    const baseUrl =
+      configBaseUrl !== undefined && configBaseUrl !== ''
+        ? configBaseUrl
+        : engine.vendor !== 'custom'
+          ? VENDOR_DESCRIPTORS[engine.vendor].baseUrl
+          : '';
+    return {
+      vendor: engine.vendor,
+      instanceId,
+      modelId: '',
+      context: {
+        vendor: engine.vendor,
+        baseUrl,
+        apiKey,
+        logger: this.#logger,
+        ...(this.#fetchImpl !== undefined ? { fetchImpl: this.#fetchImpl } : {}),
+      },
+      adapter: engine.adapter,
+    };
+  }
+
+  /** 全局槽位路径（D124 前的原 #resolve，逐字节保留）。 */
+  #resolveGlobal(capability: MediaCapability, modelId?: string): ResolvedProvider {
     const config = this.#settings.get().capabilityModels[capability];
     if (config === null) {
       // 专用错误码（而非 INVALID_INPUT）：调用方（Bot 工具、inline setup）
@@ -441,9 +713,17 @@ export class MediaService {
     return resolved;
   }
 
+  #requireEntrySource(): MediaEntrySource {
+    if (this.#entrySource === undefined) {
+      throw new AppError('NOT_IMPLEMENTED', '条目仓库未装配，无法解析插件模型条目');
+    }
+    return this.#entrySource;
+  }
+
   /**
    * 实例 id → key/baseUrl 解析与适配器。不校验能力方法（调用方负责）。
    * keyOverride：未保存先测（providers.test）用入参 key，不读密钥表。
+   * 保持同步：embeddingReady 等同步判定面依赖它按现状抛错。
    */
   #resolveProvider(instanceId: string, keyOverride?: string): ResolvedProvider {
     const instance = findProviderInstance(this.#settings.get(), instanceId);
@@ -467,6 +747,30 @@ export class MediaService {
       },
       adapter: instance.vendor === null ? openAICompatibleAdapter : ADAPTERS[instance.vendor],
     };
+  }
+
+  /**
+   * videoStatus / cancelVideo 的 provider 解析：settings 实例优先（现状逐字节），
+   * NOT_FOUND 时回落插件实例（D124 条目路径的 generateVideo 返回 pli_…，凭据
+   * 经条目仓库读回）；都查不到维持原 NOT_FOUND。
+   */
+  async #resolveVideoProvider(provider: string): Promise<ResolvedProvider> {
+    try {
+      return this.#resolveProvider(provider);
+    } catch (error) {
+      if (
+        error instanceof AppError &&
+        error.code === 'NOT_FOUND' &&
+        this.#entrySource !== undefined
+      ) {
+        const pluginInstance = await this.#entrySource.capabilityInstanceOf(provider);
+        const engine = pluginInstance === null ? undefined : MEDIA_ENGINES[pluginInstance.engine];
+        if (pluginInstance !== null && engine !== undefined) {
+          return this.#resolvePluginInstance(pluginInstance.pluginId, provider, engine);
+        }
+      }
+      throw error;
+    }
   }
 
   /** 适配器未实现该能力（应与描述符能力矩阵一致）时的明确提示。 */

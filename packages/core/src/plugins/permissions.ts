@@ -1,4 +1,5 @@
 import type {
+  CapabilityModelEntry,
   PluginConsentConnector,
   PluginConsentIm,
   PluginConsentMail,
@@ -21,6 +22,12 @@ export interface ConsentItems {
   mcp: PluginConsentMcp[];
   mail: PluginConsentMail[];
   im: PluginConsentIm[];
+  /**
+   * D124：能力模型条目（条目 = 纯数据声明，绑定第一方引擎，无主机 / 凭据面）——
+   * 进同意视图供确认卡展示，但**不参与权限 token**（引擎绑定在安装期由
+   * PLUGIN_ENGINE_UNKNOWN 校验，条目增删不算扩权）。
+   */
+  capabilityModels: CapabilityModelEntry[];
 }
 
 /** Canonical permission tokens of one consent view (one kind per prefix, prefix + colon). */

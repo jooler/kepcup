@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { settingsSchema, type Settings } from '@kepcup/shared';
-import { MediaService } from '../../src/media/service.js';
+import { MediaService, type MediaEntrySource } from '../../src/media/service.js';
 import type { SettingsService } from '../../src/domain/settings.js';
 import type { SecretsService } from '../../src/domain/secrets.js';
 import type { UsageRecordInput, UsageService } from '../../src/domain/usage.js';
@@ -166,5 +166,54 @@ describe('媒体调用记入 usage_ledger', () => {
     });
     const result = await service.generateImage({ prompt: '图' }, CTX);
     expect(result.images).toHaveLength(1);
+  });
+
+  it('D124 条目命中：provider 记插件 id，capability / model_entry_id 两列写入', async () => {
+    // 条目走 dashscope 引擎适配器：探针响应取百炼多模态生成的形状。
+    const okDashscope = (async () =>
+      new Response(
+        JSON.stringify({
+          output: { choices: [{ message: { content: [{ image: 'https://out.example/i.png' }] } }] },
+        }),
+      )) as unknown as typeof fetch;
+    const { service, rows } = setup(okDashscope);
+    const source: MediaEntrySource = {
+      entriesFor: async (_botId, capability) =>
+        capability === 'image'
+          ? [
+              {
+                pluginId: 'io.kepcup/dashscope',
+                entryId: 'qwen-image',
+                model: 'qwen-image-2.0',
+                engine: 'dashscope',
+                instanceId: 'pli_a',
+                instances: ['pli_a'],
+              },
+            ]
+          : [],
+      entryOf: async () => null,
+      instancesOf: () => ['pli_a'],
+      instanceCredential: () => 'sk-plugin',
+      instanceConfig: () => ({}),
+      capabilityInstanceOf: async () => null,
+    };
+    service.attachEntrySource(source);
+    await service.generateImage({ prompt: '图' }, CTX, { botId: 'bot_1' });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      provider: 'io.kepcup/dashscope',
+      model: 'qwen-image-2.0',
+      capability: 'image',
+      modelEntryId: 'io.kepcup/dashscope/qwen-image',
+    });
+  });
+
+  it('D124 全局槽位路径：capability / model_entry_id 两列为 NULL（undefined）', async () => {
+    const { service, rows } = setup(okImage);
+    await service.generateImage({ prompt: '图' }, CTX, { botId: 'bot_1' });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.provider).toBe('volcengine');
+    expect(rows[0]?.capability).toBeUndefined();
+    expect(rows[0]?.modelEntryId).toBeUndefined();
   });
 });

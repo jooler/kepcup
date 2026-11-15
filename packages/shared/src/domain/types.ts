@@ -2092,6 +2092,11 @@ export const setupRequirementSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('capability-model'),
     capability: z.enum(['embedding', 'rerank', 'multimodal', 'asr', 'tts', 'image', 'video']),
+    // D124：插件条目路径缺凭据时携带定位（全局槽位路径不带这三个字段，渲染端据此
+    // 出插件实例凭据卡而不是全局设置卡）。凭据永不经模型，payload 由宿主生成。
+    pluginId: z.string().optional(),
+    instanceId: z.string().optional(),
+    entryId: z.string().optional(),
   }),
   /**
    * 联网检索供应商未配置（docs/design/21-web-search.md）：web_search 工具的

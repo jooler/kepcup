@@ -4,7 +4,7 @@ import path from 'node:path';
 import { Type } from 'typebox';
 import { AppError, TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
 import { truncateToBudget } from '../agent/tokens.js';
-import type { MediaUsageContext } from '../media/service.js';
+import type { MediaResolveOptions, MediaUsageContext } from '../media/service.js';
 import type { ImageGenerationResult } from '../media/types.js';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
 import type { AttachmentsService } from '../domain/attachments.js';
@@ -32,20 +32,28 @@ import { readOnlyRefusal } from './read-only.js';
 /** 单张理解图片的字节上限（与 docs/design/20-conversation-media.md 视觉注入对齐）。 */
 const UNDERSTAND_IMAGE_MAX_BYTES = 5_000_000;
 
-/** The slice of MediaService the media-generation tools consume (P15/P17/P25). */
+/**
+ * The slice of MediaService the media-generation tools consume (P15/P17/P25).
+ * `resolve`（D124）由 orchestrator 的 facade 注入 botId / model——工具本身不传；
+ * 接口与 MediaService 对应方法同形（第三参可选），保证 facade 就是 service 切片。
+ */
 export interface MediaToolFacade {
   generateImage(
     input: {
       prompt: string;
       images?: string[];
       n?: number;
+      /** D124：指定条目模型（匹配插件条目 model / displayName）；缺省用默认。 */
+      model?: string;
     },
     usage?: MediaUsageContext | null,
+    resolve?: MediaResolveOptions,
   ): Promise<ImageGenerationResult>;
   /** 图片理解（understand_image，docs/design/25-capability-tools.md）。 */
   understandImage(
     input: { images: string[]; prompt: string },
     usage?: MediaUsageContext | null,
+    resolve?: MediaResolveOptions,
   ): Promise<{ text: string }>;
   /** 语音合成（generate_speech，docs/design/20-conversation-media.md）。 */
   synthesizeSpeech(
@@ -54,8 +62,11 @@ export interface MediaToolFacade {
       voice?: string;
       format?: 'mp3' | 'wav' | 'opus';
       speed?: number;
+      /** D124：指定条目模型（匹配插件条目 model / displayName）；缺省用默认。 */
+      model?: string;
     },
     usage?: MediaUsageContext | null,
+    resolve?: MediaResolveOptions,
   ): Promise<{ audioBase64: string; mimeType: string }>;
   /** 语音转写（transcribe_audio，docs/design/25-capability-tools.md）。 */
   transcribeSpeech(
@@ -65,11 +76,17 @@ export interface MediaToolFacade {
       language?: string;
     },
     usage?: MediaUsageContext | null,
+    resolve?: MediaResolveOptions,
   ): Promise<{ text: string }>;
   /** 视频生成：提交返回 taskId，状态用 videoStatus 轮询。 */
   generateVideo(
-    input: { prompt: string },
+    input: {
+      prompt: string;
+      /** D124：指定条目模型（匹配插件条目 model / displayName）；缺省用默认。 */
+      model?: string;
+    },
     usage?: MediaUsageContext | null,
+    resolve?: MediaResolveOptions,
   ): Promise<{ provider: string; taskId: string }>;
   videoStatus(
     provider: string,
@@ -104,6 +121,7 @@ export function buildImageTools(input: {
     prompt: string;
     file_name?: string;
     n?: number;
+    model?: string;
   }> = {
     name: 'generate_image',
     description:
@@ -114,6 +132,12 @@ export function buildImageTools(input: {
         Type.String({ description: '保存的文件名（不含扩展名），缺省按时间戳命名' }),
       ),
       n: Type.Optional(Type.Number({ description: '生成张数，默认 1' })),
+      model: Type.Optional(
+        Type.String({
+          description: '指定模型（插件提供的模型条目名 / 模型 id），可留空用默认',
+          maxLength: 200,
+        }),
+      ),
     }),
     execute: async (params) => {
       if (identity.conversationId === null || identity.botId === null) {
@@ -138,6 +162,7 @@ export function buildImageTools(input: {
         result = await media.generateImage({
           prompt: params.prompt,
           ...(params.n !== undefined ? { n: params.n } : {}),
+          ...(params.model !== undefined ? { model: params.model } : {}),
         });
       } catch (error) {
         if (error instanceof AppError) {

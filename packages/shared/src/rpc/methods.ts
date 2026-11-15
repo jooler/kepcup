@@ -284,6 +284,9 @@ import {
   pluginsInstancesDeleteInputSchema,
   pluginsSetBotPluginsInputSchema,
   pluginsEnableForBotsInputSchema,
+  pluginsListCapabilityEntriesOutputSchema,
+  pluginsSetBotCapabilityEntriesInputSchema,
+  pluginsTestCapabilityEntryInputSchema,
 } from '../domain/plugins.js';
 import {
   pairingOfferSchema,
@@ -3405,6 +3408,19 @@ export const rpcMethodSchemas = {
   'plugins.instances.delete': { input: pluginsInstancesDeleteInputSchema, output: okOutput },
   'plugins.setBotPlugins': { input: pluginsSetBotPluginsInputSchema, output: okOutput },
   'plugins.enableForBots': { input: pluginsEnableForBotsInputSchema, output: okOutput },
+  // D124：能力模型条目（60 号 §3/§5）——已装插件条目全集、Bot 启用条目整集替换、条目级测试。
+  'plugins.listCapabilityEntries': {
+    input: voidInput,
+    output: pluginsListCapabilityEntriesOutputSchema,
+  },
+  'plugins.setBotCapabilityEntries': {
+    input: pluginsSetBotCapabilityEntriesInputSchema,
+    output: okOutput,
+  },
+  'plugins.testCapabilityEntry': {
+    input: pluginsTestCapabilityEntryInputSchema,
+    output: okOutput,
+  },
 } as const;
 
 export type RpcMethodName = keyof typeof rpcMethodSchemas;
