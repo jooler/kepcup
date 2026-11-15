@@ -4,14 +4,21 @@ import type { McpServer, PluginSummary } from '@kepcup/shared';
 import { enUS } from '../../i18n/locales/en-US';
 import { zhCN } from '../../i18n/locales/zh-CN';
 import {
+  CAPABILITY_ENTRIES_MAX,
+  ENTRY_GROUP_LABEL_KEYS,
+  ENTRY_GROUP_ORDER,
   PLUGIN_KIND_LABEL_KEYS,
   addedPlugins,
+  dedupeEntryRefs,
   dedupePluginIds,
   enabledPluginCount,
+  groupEntriesByCapability,
   manualToolServers,
   matchesPluginQuery,
   pluginKindBadges,
   pluginProvides,
+  saveableEntryRefs,
+  toggleEntryRef,
   togglePluginId,
 } from './bot-plugins';
 
@@ -161,5 +168,109 @@ describe('manualToolServers（展开细选：仅手动 server）', () => {
       server({ id: 'off', name: '已停用', enabled: false }),
     ];
     expect(manualToolServers(servers).map((entry) => entry.id)).toEqual(['manual', 'mcpb']);
+  });
+});
+
+// --- D124：模型条目勾选（capability_entries 整集写入） ------------------------
+
+const entry = (
+  pluginId: string,
+  entryId: string,
+  capability: 'image' | 'video' | 'tts' | 'asr' | 'multimodal' | 'embedding' | 'rerank',
+) => ({
+  entryId,
+  capability,
+  model: `${entryId}-model`,
+  displayName: null,
+  engine: 'dashscope',
+  instanceState: 'single' as const,
+  configured: true,
+});
+
+describe('toggleEntryRef / dedupeEntryRefs（plugins.setBotCapabilityEntries 整集写入）', () => {
+  it('缺失（未勾选过任何条目）视作空集', () => {
+    expect(toggleEntryRef(undefined, 'p', 'e1', true)).toEqual([{ plugin: 'p', entry: 'e1' }]);
+    expect(toggleEntryRef(undefined, 'p', 'e1', false)).toEqual([]);
+  });
+
+  it('勾选追加、取消移除，保持其余引用顺序', () => {
+    const current = [
+      { plugin: 'p', entry: 'e1' },
+      { plugin: 'q', entry: 'f1' },
+    ];
+    expect(toggleEntryRef(current, 'p', 'e2', true)).toEqual([
+      { plugin: 'p', entry: 'e1' },
+      { plugin: 'q', entry: 'f1' },
+      { plugin: 'p', entry: 'e2' },
+    ]);
+    expect(toggleEntryRef(current, 'p', 'e1', false)).toEqual([{ plugin: 'q', entry: 'f1' }]);
+    // 重复勾选不产生两份（实现是先移除再尾插：已勾选项被移到末尾，防御性路径）
+    expect(toggleEntryRef(current, 'p', 'e1', true)).toEqual([
+      { plugin: 'q', entry: 'f1' },
+      { plugin: 'p', entry: 'e1' },
+    ]);
+  });
+
+  it('dedupeEntryRefs 按 (plugin, entry) 去重、保序', () => {
+    expect(
+      dedupeEntryRefs([
+        { plugin: 'p', entry: 'e1' },
+        { plugin: 'p', entry: 'e1' },
+        { plugin: 'p', entry: 'e2' },
+        { plugin: 'q', entry: 'e1' },
+      ]),
+    ).toEqual([
+      { plugin: 'p', entry: 'e1' },
+      { plugin: 'p', entry: 'e2' },
+      { plugin: 'q', entry: 'e1' },
+    ]);
+  });
+});
+
+describe('saveableEntryRefs（保存前剔除已卸载插件的残留引用）', () => {
+  it('只保留插件仍在已装清单里的引用；顺序与去重不变', () => {
+    const current = [
+      { plugin: 'p', entry: 'e1' },
+      { plugin: 'gone', entry: 'z' },
+      { plugin: 'q', entry: 'f1' },
+    ];
+    expect(saveableEntryRefs(current, ['p', 'q'])).toEqual([
+      { plugin: 'p', entry: 'e1' },
+      { plugin: 'q', entry: 'f1' },
+    ]);
+    expect(saveableEntryRefs(undefined, ['p'])).toEqual([]);
+  });
+});
+
+describe('groupEntriesByCapability（展开区按能力分组）', () => {
+  it('按固定顺序分组；空能力不出组；组内保持清单序', () => {
+    const entries = [
+      entry('p', 'tts-a', 'tts'),
+      entry('p', 'img-a', 'image'),
+      entry('p', 'img-b', 'image'),
+      entry('p', 'vid-a', 'video'),
+    ];
+    const groups = groupEntriesByCapability(entries);
+    expect(groups.map((group) => group.capability)).toEqual(['image', 'video', 'tts']);
+    expect(groups[0]!.entries.map((row) => row.entryId)).toEqual(['img-a', 'img-b']);
+  });
+
+  it('清单外能力（如新增枚举）不进组；空清单不出任何组', () => {
+    expect(groupEntriesByCapability([entry('p', 'x', 'rerank')]).map((g) => g.capability)).toEqual([
+      'rerank',
+    ]);
+    expect(groupEntriesByCapability([])).toEqual([]);
+  });
+
+  it('ENTRY_GROUP_ORDER 与文案键一一对应；七组中英文案都登记（i18n 不缺键）', () => {
+    expect(Object.keys(ENTRY_GROUP_LABEL_KEYS)).toHaveLength(ENTRY_GROUP_ORDER.length);
+    for (const capability of ENTRY_GROUP_ORDER) {
+      const key = ENTRY_GROUP_LABEL_KEYS[capability];
+      expect(typeof zhCN[key]).toBe('string');
+      expect(typeof enUS[key]).toBe('string');
+    }
+    expect(zhCN['botPanel.plugins.entryGroup.image']).toBe('图片生成');
+    expect(zhCN['botPanel.plugins.entryGroup.multimodal']).toBe('图文理解');
+    expect(CAPABILITY_ENTRIES_MAX).toBe(16);
   });
 });

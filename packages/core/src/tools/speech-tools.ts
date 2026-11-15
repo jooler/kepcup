@@ -15,6 +15,7 @@ import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js'
 import type { AttachmentsService } from '../domain/attachments.js';
 import type { ToolGateway } from '../gateway/index.js';
 import { readOnlyRefusal } from './read-only.js';
+import { ENTRY_CAPABILITY_LABELS, appendEntryHint, type MediaEntryHints } from './media-entry-hints.js';
 
 /**
  * 语音合成、语音转写与视频生成的 Bot 工具（docs/design/20-conversation-media.md、
@@ -50,6 +51,8 @@ export function buildSpeechTools(input: {
   checkWritable?: ((target: string) => void) | undefined;
   /** 轮询间隔（测试注入缩短）；默认 5s。 */
   videoPollIntervalMs?: number;
+  /** D124 P3：Bot 已勾选条目摘要（注入 generate_speech / generate_video 描述；缺省 / 空清单 = 描述逐字节不变）。 */
+  entryHints?: MediaEntryHints | undefined;
 }): ToolDefinition[] {
   const { identity, media, workspacePath } = input;
   const pollIntervalMs = input.videoPollIntervalMs ?? VIDEO_POLL_INTERVAL_MS;
@@ -63,8 +66,12 @@ export function buildSpeechTools(input: {
     model?: string;
   }> = {
     name: 'generate_speech',
-    description:
+    // D124 P3：Bot 绑定了模型条目时在描述尾部追加条目清单（appendEntryHint 空清单原样返回）。
+    description: appendEntryHint(
       '把文本合成为语音（TTS）。用户要配音、朗读、语音消息等真实音频文件时必须调用本工具产出，不要只给文字稿；音频保存到 workspace 后会自动作为消息附件发给用户，无需再调 send_message。未配置语音合成模型时本工具会返回「需要设置」，由系统引导用户完成配置并自动继续。',
+      ENTRY_CAPABILITY_LABELS.tts,
+      input.entryHints?.tts,
+    ),
     parameters: Type.Object({
       text: Type.String({ description: '要合成的文本（限一次可读的段落，过长请分段生成）' }),
       file_name: Type.Optional(
@@ -156,8 +163,12 @@ export function buildSpeechTools(input: {
     model?: string;
   }> = {
     name: 'generate_video',
-    description:
+    // D124 P3：同 generate_speech——条目清单注入，空清单不追加。
+    description: appendEntryHint(
       '根据文字描述生成一段短视频（文生视频，异步任务，通常需要几十秒到几分钟）。用户要真实视频文件时必须调用本工具产出，不要只给分镜脚本；视频保存到 workspace 后会自动作为消息附件发给用户，无需再调 send_message。未配置视频生成模型时本工具会返回「需要设置」，由系统引导用户完成配置并自动继续。',
+      ENTRY_CAPABILITY_LABELS.video,
+      input.entryHints?.video,
+    ),
     parameters: Type.Object({
       prompt: Type.String({ description: '视频内容描述（主体、动作、镜头、风格）' }),
       file_name: Type.Optional(

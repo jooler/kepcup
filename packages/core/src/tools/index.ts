@@ -43,6 +43,7 @@ import type { ApprovalsService } from '../permissions/approvals.js';
 import { buildImageTools, type MediaToolFacade } from './image-tools.js';
 import { buildSpeechTools } from './speech-tools.js';
 import { createGeneratedMediaDelivery } from './media-delivery.js';
+import type { MediaEntryHints } from './media-entry-hints.js';
 import { buildWebTools, type SearchToolFacade } from './web-tools.js';
 import { readOnlyRefusal } from './read-only.js';
 import { buildDelegateTools } from './delegate-tools.js';
@@ -198,6 +199,11 @@ export interface ResponseToolDeps {
    * orchestrator 中断 run 并引导设置。
    */
   media?: MediaToolFacade | undefined;
+  /**
+   * D124 P3：Bot 已勾选的模型条目摘要（orchestrator 经 MediaService 解析）。
+   * 三个生成工具的描述按它注入条目清单；缺省 / 空清单 = 描述逐字节不变。
+   */
+  mediaEntryHints?: MediaEntryHints | undefined;
   /**
    * 联网检索网关（docs/design/21-web-search.md）：present 时注册
    * web_search / web_fetch 工具；web_search 缺配置返回 SETUP_REQUIRED。
@@ -1194,6 +1200,7 @@ export function buildResponseTools(input: {
           delivery: generatedMediaDelivery,
           recordFile: recordGenerated,
           checkWritable: (target) => gateway.assertWritableArtifact(identity, target),
+          ...(deps.mediaEntryHints !== undefined ? { entryHints: deps.mediaEntryHints } : {}),
         })
       : [];
   const speechTools =
@@ -1207,6 +1214,7 @@ export function buildResponseTools(input: {
           delivery: generatedMediaDelivery,
           recordFile: recordGenerated,
           checkWritable: (target) => gateway.assertWritableArtifact(identity, target),
+          ...(deps.mediaEntryHints !== undefined ? { entryHints: deps.mediaEntryHints } : {}),
         })
       : [];
 

@@ -92,3 +92,18 @@ export function extensionTabForKey(
       return null;
   }
 }
+
+/**
+ * D124 插件详情深链（`shell.extensionCenterPluginFocus`）的消费判定（纯函数）：
+ * 返回要落的内容管理视图；null = 本次不消费（focus 保持挂起，等清单拉到后由
+ * effect 重跑再判定）。清单尚未拉到（`loaded === false`，冷启动直达深链）不能
+ * 立即消费——立即判「不在已装清单」会把 focus 吞掉，深链落回网格而不是详情。
+ */
+export function pluginFocusContentView(
+  focus: string | null,
+  loaded: boolean,
+  installedIds: readonly string[],
+): { kind: 'capability-model'; pluginId: string } | null {
+  if (focus === null || !loaded) return null;
+  return installedIds.includes(focus) ? { kind: 'capability-model', pluginId: focus } : null;
+}
