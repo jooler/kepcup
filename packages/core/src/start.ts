@@ -219,6 +219,9 @@ import { PluginBotNotice, type PluginActivationEntry } from './plugins/bot-notic
 import { createMailMaterializer, reconcileMailInstanceRows } from './plugins/materializers/mail.js';
 import { createCapabilityModelMaterializer } from './plugins/materializers/capability-model.js';
 import { createMediaEntrySource } from './plugins/media-entry-source.js';
+import { PluginHost } from './plugins/runtime/host.js';
+import { CapabilityBridge } from './plugins/runtime/bridge.js';
+import { PluginStorageStore } from './plugins/runtime/storage.js';
 import { createMcpMaterializer, reconcileMcpInstanceRows } from './plugins/materializers/mcp.js';
 import { createImMaterializer, reconcileImInstanceRows } from './plugins/materializers/im.js';
 import { PluginStore } from './plugins/store.js';
@@ -699,6 +702,11 @@ export interface CoreServices {
   plugins: PluginRegistry | null;
   /** D105 插件实例服务（配置 / 实例 RPC 与卸载级联）；未装配时为 null。 */
   pluginInstances: PluginInstanceService | null;
+  /**
+   * D125 P2 插件运行时（PluginHost：进程 / 握手 / 看门狗 / 调用队列 + 能力桥）；
+   * 未装配时为 null（`plugins.runtime.*` 报 NOT_IMPLEMENTED）。
+   */
+  pluginRuntime: PluginHost | null;
   /** 2026-11-03（51 号文档 §15.8）：插件激活变化的 30 秒合并通报器；未装配时为 null。 */
   pluginBotNotice: PluginBotNotice | null;
   /** D104 P1-1 插件市场端点解析与同步；close() 停定时器，RPC 绑定取用。 */
@@ -1000,6 +1008,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     mcpb: null,
     plugins: null,
     pluginInstances: null,
+    pluginRuntime: null,
     pluginBotNotice: null,
     marketplace: null,
     toolLock: null,
@@ -1093,6 +1102,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       }
       services.agentsService?.dispose();
       services.agents?.host.dispose();
+      // D125 P2：杀掉全部执行型插件进程（在 run DB / main DB 关闭之前）。
+      services.pluginRuntime?.disposeAll();
       // D123: clear task peer-wait timers before the run DB closes.
       services.orchestrator?.dispose();
       await services.agents?.bridge.stop().catch(() => undefined);
@@ -2671,6 +2682,38 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // D124：capability-model 实例 materializer（实例 = 厂商账号；行 + secrets 由通用
     // 流程落地，materializer 只做引擎注册校验与标题）。无外部领域状态，无需启动对账。
     pluginInstances.registerMaterializer('capability-model', createCapabilityModelMaterializer());
+    // D125 P2：插件运行时（PluginHost + 能力桥）。组装根插在 PluginInstanceService 之后、
+    // Orchestrator 之前（CURRENT-STATE §2）；能力桥强制 net 白名单 / SSRF / secrets 前缀 /
+    // storage 配额，PluginHost 管进程 / 握手 / 看门狗 / 串行队列。MediaService 的 late-wire
+    // 走 attachXxx 模式：下面 createMediaEntrySource 注入 hostedAdapterOf（托管适配器）。
+    const pluginStorage = new PluginStorageStore({ db: mainDb, clock });
+    const pluginBridge = new CapabilityBridge({
+      registry: plugins,
+      instances: pluginInstanceStore,
+      secrets: {
+        getValue: (name) => secrets.getValue(name),
+        names: () => secrets.names(),
+      },
+      storage: pluginStorage,
+      logger,
+    });
+    const pluginRuntime = new PluginHost({
+      registry: plugins,
+      bridge: pluginBridge,
+      events,
+      logger,
+    });
+    services.pluginRuntime = pluginRuntime;
+    // 停用 = kill switch 即时生效；卸载 / 回滚 = kill + 清 plugin_storage（61 §7）。
+    plugins.attachRuntimeStop((pluginId) => pluginRuntime.dispose(pluginId));
+    plugins.attachRuntimeTeardown((pluginId) => {
+      try {
+        pluginRuntime.forget(pluginId);
+      } finally {
+        // 即使进程终止路径异常也清除插件 KV（卸载的硬承诺）。
+        pluginBridge.clearStorage(pluginId);
+      }
+    });
     // D124：条目仓库注入 MediaService（media → plugins 反向依赖经此断开）。条目解析
     // = capability_entries ∩ effectivePluginIds ∩ 已装启用；未装配时 MediaService
     // 恒走全局槽位路径（行为与从前逐字节一致）。
@@ -2681,6 +2724,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         secrets: { getValue: (name) => secrets.getValue(name) },
         botRuntimeOf: (botId) => bots.get(botId)?.profile.runtime ?? null,
         logger,
+        // D125：执行型插件的条目 → 托管适配器（PluginHost 代理）。
+        hostedAdapterOf: (pluginId) => pluginRuntime.adapterFor(pluginId),
       }),
     );
     // P4-M2：mcp 实例 materializer 落地（实例 = settings.mcpServers 的 streamable-http

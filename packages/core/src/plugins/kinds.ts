@@ -365,8 +365,9 @@ function capabilityModelInstanceFields(manifest: PluginManifest): PluginField[] 
   const fields: PluginField[] = [];
   const seen = new Set<string>();
   for (const entry of manifest.contributions.capabilityModels ?? []) {
-    // D125 过渡：执行型条目不填 engine（61 §2），凭据表单由 PluginHost 接管（D125-P2），
-    // 这里不贡献实例字段；数据型条目（有 engine）行为不变。
+    // D125：执行型条目不填 engine（61 §2），v1 的 runtime 段也没有实例字段声明面
+    // （DEV-114）——不贡献表单字段，插件凭据面为空；数据型条目（有 engine）行为不变。
+    // P4 试点前补 `runtime.instanceFields` 时，这里改为消费该声明（DEV-114 方案 1）。
     if (entry.engine === undefined) continue;
     const engine = MEDIA_ENGINES[entry.engine];
     if (engine === undefined) continue;

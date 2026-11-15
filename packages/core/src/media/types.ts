@@ -25,6 +25,15 @@ export interface VendorCallContext {
    * 现有三适配器不读取本字段（通道留给后续新增引擎）。
    */
   entryParams?: Record<string, unknown>;
+  /**
+   * D125 托管适配器（执行型插件）：条目与插件定位。仅 `source: 'plugin'` 的条目
+   * 路径携带；全局槽位与内置引擎路径不填（行为零变化）。
+   */
+  entryRef?: { pluginId: string; entryId: string };
+  /** D125：插件实例 id（宿主据此注入该实例的敏感凭据）。仅托管路径携带。 */
+  instanceId?: string;
+  /** D125：调用方语言（进 invoke.context.locale）。仅托管路径携带。 */
+  locale?: string;
 }
 
 export interface ImageGenerationParams {

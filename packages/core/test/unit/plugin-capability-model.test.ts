@@ -195,6 +195,19 @@ const TWO_MANIFEST = {
   },
 };
 
+/** 混能力 / 混引擎条目（capabilityInstanceOf 的 D124 口径回归：引擎取声明序首个）。 */
+const MIXED_MANIFEST = {
+  id: 'io.test/mixed',
+  name: '混引擎测试包',
+  instances: ['capability-model'],
+  contributions: {
+    capabilityModels: [
+      { id: 'img', capability: 'image', model: 'model-img', engine: 'dashscope' },
+      { id: 'vid', capability: 'video', model: 'model-vid', engine: 'volcengine-ark' },
+    ],
+  },
+};
+
 async function installPlugin(
   rig: Awaited<ReturnType<typeof makeRig>>,
   manifest: Record<string, unknown>,
@@ -229,7 +242,9 @@ function entrySourceOf(rig: Awaited<ReturnType<typeof makeRig>>) {
 }
 
 const okArkImage = (async () =>
-  new Response(JSON.stringify({ data: [{ url: 'https://out.example/ark.png' }] }))) as unknown as typeof fetch;
+  new Response(
+    JSON.stringify({ data: [{ url: 'https://out.example/ark.png' }] }),
+  )) as unknown as typeof fetch;
 
 describe('capability-model 安装管线（D124）', () => {
   it('条目 engine 未注册 → 拒装（PLUGIN_ENGINE_UNKNOWN，错误信息列出已注册引擎）', async () => {
@@ -334,7 +349,11 @@ describe('capability-model 实例 materializer（D124）', () => {
   it('实例删除：行与 secrets 一并清掉（前缀扫描）', async () => {
     const rig = makeRig();
     await installArk(rig);
-    const instance = await rig.pluginInstances.create('io.test/ark', { apiKey: 'sk-live' }, 'capability-model');
+    const instance = await rig.pluginInstances.create(
+      'io.test/ark',
+      { apiKey: 'sk-live' },
+      'capability-model',
+    );
     expect(rig.secrets.size()).toBe(1);
     await rig.pluginInstances.delete(instance.id);
     expect(rig.instanceStore.list('io.test/ark')).toHaveLength(0);
@@ -415,11 +434,17 @@ describe('plugins.* 能力模型条目 RPC（D124）', () => {
     ).resolves.toEqual({ ok: true });
     // 存量凭据同样可测。
     await expect(
-      bindings['plugins.testCapabilityEntry']!.handle({ pluginId: 'io.test/ark', entryId: 'seedream' }),
+      bindings['plugins.testCapabilityEntry']!.handle({
+        pluginId: 'io.test/ark',
+        entryId: 'seedream',
+      }),
     ).resolves.toEqual({ ok: true });
     // 条目不存在 → NOT_FOUND。
     await expect(
-      bindings['plugins.testCapabilityEntry']!.handle({ pluginId: 'io.test/ark', entryId: 'ghost' }),
+      bindings['plugins.testCapabilityEntry']!.handle({
+        pluginId: 'io.test/ark',
+        entryId: 'ghost',
+      }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
@@ -440,13 +465,17 @@ describe('plugins.* 能力模型条目 RPC（D124）', () => {
         model: 'doubao-seedream-4-5',
         displayName: 'Seedream 4.5',
         engine: 'volcengine-ark',
+        source: 'engine',
         instanceState: 'none',
         configured: false,
       },
     ]);
     await rig.pluginInstances.create('io.test/ark', { apiKey: 'sk-live' }, 'capability-model');
     const after = await rig.bindings['plugins.listCapabilityEntries']!.handle(undefined);
-    expect(after.plugins[0]?.entries[0]).toMatchObject({ instanceState: 'single', configured: true });
+    expect(after.plugins[0]?.entries[0]).toMatchObject({
+      instanceState: 'single',
+      configured: true,
+    });
   });
 
   it('plugins.setBotCapabilityEntries：未知 ref 整批拒绝并列出违规项；合法写入 capability_entries', async () => {
@@ -565,5 +594,22 @@ describe('plugins.* 能力模型条目 RPC（D124）', () => {
     // 声明序 alpha → beta 胜出；回退默认条目 = alpha。
     expect(entries.map((entry) => entry.entryId)).toEqual(['alpha', 'beta']);
     expect(entries.every((entry) => entry.model === `model-${entry.entryId}`)).toBe(true);
+  });
+
+  it('capabilityInstanceOf 数据型口径不变：引擎 / 条目取声明序首个（不因 video 条目改道）', async () => {
+    const rig = makeRig();
+    await installPlugin(rig, MIXED_MANIFEST);
+    const instance = await rig.pluginInstances.create(
+      'io.test/mixed',
+      { apiKey: 'sk-live' },
+      'capability-model',
+    );
+    expect(await entrySourceOf(rig).capabilityInstanceOf(instance.id)).toEqual({
+      pluginId: 'io.test/mixed',
+      engine: 'dashscope',
+      source: 'engine',
+      entryId: 'img',
+      model: 'model-img',
+    });
   });
 });

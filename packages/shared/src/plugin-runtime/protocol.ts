@@ -251,6 +251,132 @@ export function safeParseFrame(input: unknown): SafeParsedFrame {
 /** zod safeParse 的结果类型（zod v4 不再导出独立别名，从 schema 推导）。 */
 export type SafeParsedFrame = ReturnType<typeof pluginRuntimeFrameSchema.safeParse>;
 
+// --- Host API 通道（D125 P2 能力桥） ---------------------------------------------
+//
+// Host API v1 的 net / secrets / storage 由插件进程发起、宿主侧能力桥裁决（61 §4）。
+// 帧判别联合 `PluginRuntimeFrame` 是**调用协议**（九帧，固定契约），Host API 是另一条
+// 服务通道：这里用独立的请求 / 应答信封，只增不改——九帧语义与名字均不受影响
+// （DEV-113 记录该落点）。信封同样 strictObject，未知字段即拒绝。
+//
+// `ping` 是看门狗的内部方法（61 §3.1「每 15s ping」）：插件进程收到即回，宿主据此
+// 判定「事件循环是否还活着」。它不出现在 `host` 命名空间里，插件代码不应直接调用。
+
+/** 宿主 API 通道的请求方法面（固定闭集，宿主逐方法强制边界）。 */
+export const PLUGIN_HOST_API_METHODS = [
+  'ping',
+  'net.fetch',
+  'secrets.get',
+  'storage.get',
+  'storage.set',
+  'storage.delete',
+  'storage.list',
+] as const;
+export type PluginHostApiMethod = (typeof PLUGIN_HOST_API_METHODS)[number];
+
+/** `host.storage` 配额（每个插件 10MB，61 §3.3）。 */
+export const PLUGIN_RUNTIME_STORAGE_QUOTA_BYTES = 10 * 1024 * 1024;
+/** `host.net.fetch` 单次响应体上限（20MB，61 §4）。 */
+export const PLUGIN_RUNTIME_NET_MAX_BYTES = 20 * 1024 * 1024;
+
+/** 请求 / 应答共用的标识形状（requestId 由插件侧生成、宿主原样回显）。 */
+const hostApiEnvelopeBase = {
+  type: z.literal('host-api'),
+  requestId: z.string().min(1).max(64),
+} as const;
+const hostApiResponseBase = {
+  type: z.literal('host-api-response'),
+  requestId: z.string().min(1).max(64),
+} as const;
+
+const hostApiNetInitSchema = z.strictObject({
+  method: z.string().min(1).max(16).optional(),
+  headers: z.record(z.string(), z.string().max(8192)).optional(),
+  /** 文本 / JSON 请求体。 */
+  body: z.string().max(30_000_000).optional(),
+  /** 二进制请求体（base64；与 body 恰好一个）。 */
+  bodyBase64: z.string().max(30_000_000).optional(),
+});
+export type PluginHostApiNetInit = z.infer<typeof hostApiNetInitSchema>;
+
+/**
+ * Host API 请求（插件 → 宿主）：按 `api` 判别的 strictObject 联合。
+ * `storage.*` 的 key / prefix 长度上限与配额无关，只是帧级防滥用。
+ */
+export const pluginHostApiRequestSchema = z.union([
+  z.strictObject({ ...hostApiEnvelopeBase, api: z.literal('ping') }),
+  z.strictObject({
+    ...hostApiEnvelopeBase,
+    api: z.literal('net.fetch'),
+    url: z.string().min(1).max(4096),
+    init: hostApiNetInitSchema.optional(),
+  }),
+  z.strictObject({
+    ...hostApiEnvelopeBase,
+    api: z.literal('secrets.get'),
+    key: z.string().min(1).max(128),
+  }),
+  z.strictObject({
+    ...hostApiEnvelopeBase,
+    api: z.literal('storage.get'),
+    key: z.string().min(1).max(256),
+  }),
+  z.strictObject({
+    ...hostApiEnvelopeBase,
+    api: z.literal('storage.set'),
+    key: z.string().min(1).max(256),
+    value: z.unknown(),
+  }),
+  z.strictObject({
+    ...hostApiEnvelopeBase,
+    api: z.literal('storage.delete'),
+    key: z.string().min(1).max(256),
+  }),
+  z.strictObject({
+    ...hostApiEnvelopeBase,
+    api: z.literal('storage.list'),
+    prefix: z.string().max(256).optional(),
+  }),
+]);
+export type PluginHostApiRequest = z.infer<typeof pluginHostApiRequestSchema>;
+
+/** `net.fetch` 的应答载荷：文本类直返，二进制转 base64（恰好一个非空）。 */
+export const pluginHostNetResponseSchema = z.strictObject({
+  status: z.number().int().min(100).max(599),
+  ok: z.boolean(),
+  headers: z.record(z.string(), z.string()),
+  bodyText: z.string().optional(),
+  bodyBase64: z.string().optional(),
+});
+export type PluginHostNetResponse = z.infer<typeof pluginHostNetResponseSchema>;
+
+/**
+ * Host API 应答（宿主 → 插件）：`value` 形状由方法决定（宿主侧 schema 生成）。失败时
+ * `code` 是宿主错误码（PLUGIN_NETWORK_DENIED / INVALID_INPUT / …），`message` 为可读
+ * 文本——**不含凭据**（能力桥的硬约束）。
+ */
+export const pluginHostApiResponseSchema = z.union([
+  z.strictObject({
+    ...hostApiResponseBase,
+    ok: z.literal(true),
+    value: z.unknown(),
+  }),
+  z.strictObject({
+    ...hostApiResponseBase,
+    ok: z.literal(false),
+    code: z.string().min(1).max(100),
+    message: z.string().min(1).max(2000),
+  }),
+]);
+export type PluginHostApiResponse = z.infer<typeof pluginHostApiResponseSchema>;
+
+export function isPluginHostApiRequest(input: unknown): input is PluginHostApiRequest {
+  return pluginHostApiRequestSchema.safeParse(input).success;
+}
+
+export function isPluginHostApiResponse(input: unknown): input is PluginHostApiResponse {
+  return pluginHostApiResponseSchema.safeParse(input).success;
+}
+
 // --- 类型守卫 ------------------------------------------------------------------
 
 export function isPluginRuntimeFrame(input: unknown): input is PluginRuntimeFrame {

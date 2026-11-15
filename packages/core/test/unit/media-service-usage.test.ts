@@ -63,7 +63,9 @@ function setup(fetchImpl: typeof fetch, usage?: Pick<UsageService, 'record'>) {
 }
 
 const okImage = (async () =>
-  new Response(JSON.stringify({ data: [{ url: 'https://out.example/i.png' }] }))) as unknown as typeof fetch;
+  new Response(
+    JSON.stringify({ data: [{ url: 'https://out.example/i.png' }] }),
+  )) as unknown as typeof fetch;
 
 describe('媒体调用记入 usage_ledger', () => {
   it('成功调用写一行：厂商 / 模型 / 归属取自上下文，token 为 0、费用为空', async () => {
@@ -101,7 +103,9 @@ describe('媒体调用记入 usage_ledger', () => {
     const failing = (async () => new Response('boom', { status: 500 })) as unknown as typeof fetch;
     const { service, rows } = setup(failing);
     await expect(service.generateImage({ prompt: '图' }, CTX)).rejects.toBeDefined();
-    await expect(service.embedTexts('dashscope', 'text-embedding-v4', ['a'], CTX)).rejects.toBeDefined();
+    await expect(
+      service.embedTexts('dashscope', 'text-embedding-v4', ['a'], CTX),
+    ).rejects.toBeDefined();
     expect(rows).toHaveLength(0);
   });
 
@@ -123,7 +127,9 @@ describe('媒体调用记入 usage_ledger', () => {
   it('向量与重排：embedTexts 一次调用一行（内部分批不多记），rerank 一行', async () => {
     const fetchImpl = (async (url: RequestInfo | URL, init?: RequestInit) => {
       if (String(url).includes('rerank')) {
-        return new Response(JSON.stringify({ output: { results: [{ index: 0, relevance_score: 1 }] } }));
+        return new Response(
+          JSON.stringify({ output: { results: [{ index: 0, relevance_score: 1 }] } }),
+        );
       }
       const body = JSON.parse(String(init?.body)) as { input: string[] };
       return new Response(
@@ -149,13 +155,19 @@ describe('媒体调用记入 usage_ledger', () => {
       String(url).endsWith('/contents/generations/tasks')
         ? new Response(JSON.stringify({ id: 'req-9' }))
         : new Response(
-            JSON.stringify({ status: 'succeeded', content: { video_url: 'https://v.example/f.mp4' } }),
+            JSON.stringify({
+              status: 'succeeded',
+              content: { video_url: 'https://v.example/f.mp4' },
+            }),
           )) as unknown as typeof fetch;
     const { service, rows } = setup(fetchImpl);
     const handle = await service.generateVideo({ prompt: '夜景' }, CTX);
     await service.videoStatus(handle.provider, handle.taskId);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ provider: 'volcengine', model: 'doubao-seedance-1-0-pro-250528' });
+    expect(rows[0]).toMatchObject({
+      provider: 'volcengine',
+      model: 'doubao-seedance-1-0-pro-250528',
+    });
   });
 
   it('记账本身出错只影响日志，不影响调用结果', async () => {
@@ -186,6 +198,7 @@ describe('媒体调用记入 usage_ledger', () => {
                 entryId: 'qwen-image',
                 model: 'qwen-image-2.0',
                 engine: 'dashscope',
+                source: 'engine',
                 instanceId: 'pli_a',
                 instances: ['pli_a'],
               },

@@ -13,7 +13,8 @@ manifest 带 `runtime` 段、包内带打包后的 JS（`dist/main.js`），由�
 
 ```
 plugin.json      清单（runtime: { entry: 'dist/main.js', hostApi: '^1', network.allow: ['example.invalid'] }；
-                 contributions.capabilityModels 一条 image 条目，不填 engine）
+                 contributions.capabilityModels 两条条目——reference-image（image）与
+                 reference-video（video，P2 验收假视频轮询），均不填 engine）
 package.json     仅声明 "type": "module"（Node 据此把 dist/main.js 按 ESM 加载）；非 workspace 包
 src/main.ts      插件源码（definePlugin + runPluginRuntime，import @kepcup/plugin-sdk）
 build.mjs        打包脚本：src/main.ts → dist/main.js（esbuild 单文件 ESM）
