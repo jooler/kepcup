@@ -152,6 +152,10 @@ export function categoriesOf(manifest) {
   if ((contributions.mcp ?? []).length > 0) categories.push('mcp');
   if ((contributions.mail ?? []).length > 0) categories.push('mail');
   if ((contributions.im ?? []).length > 0) categories.push('im');
+  // D124：能力模型条目插件（阿里云百炼 / 火山方舟数据包）。类别值由 shared 的
+  // pluginContributionKindSchema 收编；不含该贡献的旧宿主在条目级校验单独跳过
+  // （整份索引不受影响），且 `engines.kepcup >=0.5.14` 已在索引层过滤旧客户端。
+  if ((contributions.capabilityModels ?? []).length > 0) categories.push('capability-model');
   return categories;
 }
 

@@ -73,12 +73,15 @@ export const PLUGIN_KIND_LABEL_KEYS: Readonly<Record<PluginContributionKind, Mes
   mcp: 'plugins.kind.mcp',
   mail: 'plugins.kind.mail',
   im: 'plugins.kind.im',
+  'capability-model': 'plugins.kind.capabilityModel',
 };
 
 /**
- * 插件类别徽标（技能 / 连接 / 工具 / 邮件）：按贡献计数与实例声明推导。`mcp`
- * 一律显示「工具」类说法（显示名在 i18n `plugins.kind.mcp`，协议词不出现在
- * 界面）；纯实例插件（`providesInstances`）没有贡献计数也能被标出类别。
+ * 插件类别徽标（技能 / 连接 / 工具 / 邮件 / 即时通讯 / 模型，顺序固定）：按贡献
+ * 计数与实例声明推导。`mcp` 一律显示「工具」类说法（显示名在 i18n
+ * `plugins.kind.mcp`，协议词不出现在界面）；纯实例插件（`providesInstances`）
+ * 没有贡献计数也能被标出类别。D124：能力模型条目显示「模型」（counts 无该键，
+ * 条目数走 capability-entries store，这里只按 `providesInstances` 判定出徽标）。
  */
 export function pluginKindBadges(
   plugin: Pick<PluginSummary, 'counts' | 'providesInstances'>,
@@ -89,6 +92,7 @@ export function pluginKindBadges(
   if (plugin.counts.mcp > 0 || plugin.providesInstances.includes('mcp')) kinds.push('mcp');
   if (plugin.counts.mail > 0 || plugin.providesInstances.includes('mail')) kinds.push('mail');
   if (plugin.counts.im > 0 || plugin.providesInstances.includes('im')) kinds.push('im');
+  if (plugin.providesInstances.includes('capability-model')) kinds.push('capability-model');
   return kinds;
 }
 

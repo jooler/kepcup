@@ -255,7 +255,8 @@ export function bindPluginsMethods(services: CoreServices): Record<string, RpcMe
     /**
      * 已装插件的条目全集（Bot 详情勾选 UI 的数据源）：按插件分组，条目行带
      * 能力 / 模型 / 引擎与实例配置状态（instanceState + configured）。
-     * 内置 / 清单不可读的插件跳过（P4 内置数据插件落地后再入列）。
+     * D124 P4 起 builtin 只读目录插件经 `manifestOf` 的 builtin 回退同样入列
+     * （生产构建无 builtin 目录）；清单不可读的插件跳过。
      */
     'plugins.listCapabilityEntries': method(
       voidInput,

@@ -40,7 +40,20 @@ export const PLUGIN_MAX_IM = 10;
 export const PLUGIN_MAX_CAPABILITY_MODELS = 32;
 
 /** Contribution kinds (defined here so plugin-manifest.ts stays dependency-free; plugins.ts re-exports). */
-export const pluginContributionKindSchema = z.enum(['skill', 'connector', 'mcp', 'mail', 'im']);
+/**
+ * 贡献 / 投影类别（市场索引 categories、摘要回退与账本 ref 共用）。D124 追加
+ * `'capability-model'`（能力模型条目，60 号文档 §2）——随包不含 capabilityModels
+ * 贡献的旧宿主在逐条校验的索引层跳过含该类别的条目（plugin-index.ts 的条目级
+ * 校验语义），整份索引不受影响。
+ */
+export const pluginContributionKindSchema = z.enum([
+  'skill',
+  'connector',
+  'mcp',
+  'mail',
+  'im',
+  'capability-model',
+]);
 export type PluginContributionKind = z.infer<typeof pluginContributionKindSchema>;
 
 // --- declarative fields / instances (D105, todo/plugin-platform README §2.2–2.3) ---------
@@ -285,6 +298,8 @@ export interface PluginCapabilityFacts {
   mcp: number;
   mail: number;
   im: number;
+  /** D124：能力模型条目数（一个模型一条）。 */
+  capabilityModels: number;
   instances: readonly PluginInstanceKind[];
   /** Up to two skill display names from the manifest (shown in parentheses). */
   skillNames: readonly string[];
@@ -297,6 +312,7 @@ export function capabilityFactsOf(manifest: PluginManifest): PluginCapabilityFac
     mcp: manifest.contributions.mcp.length,
     mail: manifest.contributions.mail.length,
     im: manifest.contributions.im.length,
+    capabilityModels: (manifest.contributions.capabilityModels ?? []).length,
     instances: manifest.instances ?? [],
     skillNames: manifest.contributions.skills
       .map((skill) => skill.displayName ?? skill.dir.split('/').pop() ?? skill.dir)
@@ -321,12 +337,16 @@ export function pluginCapabilitySummary(facts: PluginCapabilityFacts): string {
   }
   if (facts.connectors > 0) parts.push(`${facts.connectors} 个连接`);
   if (facts.mcp > 0) parts.push(`${facts.mcp} 个工具`);
+  // D124：能力模型条目 = 「一个模型一条」的模型清单（用户在 Bot 详情勾选启用）。
+  if (facts.capabilityModels > 0) parts.push(`${facts.capabilityModels} 个模型`);
   // P3: a mail contribution is the instance provisioning spec, not a capability unit —
   // the instances tail below is the user-facing line for it. D107: im is the same shape.
+  // D124: capability-model 同配方（厂商账号实例，凭据入 secrets）。
   const tail: string[] = [];
   if (facts.instances.includes('mail')) tail.push('可添加多个邮箱账号');
   if (facts.instances.includes('mcp')) tail.push('可添加自定义工具');
   if (facts.instances.includes('im')) tail.push('可添加 IM 账号（如微信），收发消息');
+  if (facts.instances.includes('capability-model')) tail.push('可添加多个厂商账号');
   const head =
     parts.length > 0
       ? `提供 ${parts.slice(0, -1).join('、')}${parts.length > 1 ? ' 与 ' : ''}${parts[parts.length - 1]!}`
@@ -350,6 +370,7 @@ export function pluginCapabilitySummaryFromCategories(
   if (categories.includes('mcp')) labels.push('工具');
   if (categories.includes('mail')) labels.push('邮件');
   if (categories.includes('im')) labels.push('即时通讯');
+  if (categories.includes('capability-model')) labels.push('模型');
   return sanitizeDisplayText(
     labels.length === 0 ? '提供扩展能力' : `提供${labels.join('、')}能力`,
     200,

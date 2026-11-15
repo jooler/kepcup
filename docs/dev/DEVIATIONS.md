@@ -1672,3 +1672,56 @@
   （既有 continue/filter 分支对其不可达，语义与原 `MEDIA_ENGINES[undefined]` 兜底等价）。
   D125-P2 落 `HostedAdapter` 分支时替换这些过渡点。
 - 已更新的文档：本条；P1 任务书「实施记录」。
+
+### DEV-111 `pluginContributionKindSchema` 收编 `'capability-model'` + 摘要 / 徽标连带（D124 P4）
+
+- 状态：已落实
+- 阶段：D124 P4（2026-11-15）
+- 是否阻塞：否
+- 问题：任务书步骤 2「市场索引条目」只说加两条 verified 条目，但索引生成流程
+  （`scripts/sign-plugin-index.mjs` 的 `categoriesOf`）与消费端（shared
+  `pluginIndexEntrySchema.categories`、市场卡一句话概述回退、renderer 类别徽标 /
+  i18n）都不认识能力模型贡献——不扩的话两个包的索引条目 `categories` 为空、概述
+  回落「提供扩展能力」，与 im-wechat 上架时补 `im` 分支的先例不一致。
+- 影响范围：shared `plugin-manifest.ts`（枚举 + `PluginCapabilityFacts` +
+  `pluginCapabilitySummary` + `…FromCategories`）、`plugin-index.ts`（categories
+  max 5→6）、`scripts/sign-plugin-index.mjs`、renderer `bot-plugins.ts`
+  （`PLUGIN_KIND_LABEL_KEYS` / `pluginKindBadges`）、zh-CN / en-US 的
+  `plugins.kind.capabilityModel` 与 `plugins.market.category.capability-model` 两键。
+- 决定：按 im 先例收编。旧宿主兼容：索引条目校验是逐条跳过（plugin-index.ts 注释
+  语义）——schema 未收编 `capability-model` 的旧客户端只跳过这两条，整份索引不受
+  影响；已收编但低于 `0.5.14` 的客户端由 `engines.kepcup` 兼容性判定标为不可安装
+  （P1-1 语义，不会下载后解析失败）。概述中文派生维持 DEV-074 单一中文句姿态
+  （「提供 N 个模型；可添加多个厂商账号」）。
+- 已更新的文档：本条；60 号 §11；plugins/README.md 批次清单。
+
+### DEV-112 builtin 只读目录插件的条目通路补齐与实例面定界（D124 P4）
+
+- 状态：已落实
+- 阶段：D124 P4（2026-11-15）
+- 是否阻塞：否
+- 问题：两个官方数据包以 D104 只读目录机制（builtin 来源，不入 `plugins` 表）在
+  开发 / e2e 环境投影时，P2/P3 落地的消费链路全部以 store 行为前提：
+  `PluginRegistry.manifestOf` 返回 null（条目投影 / Bot 条目写入校验 / 媒体条目
+  解析 / testCapabilityEntry 全部落空）、`isConsumable` 恒 false（有效集第三闸
+  拦掉）、`BuiltinPlugins.summaries()` 的 `providesInstances` / `instanceFields` /
+  `configFields` 恒空（渲染层「模型」管理入口不出）、`BotsService` 的
+  `pluginInstalled` 不认 builtin（Bot 无法启用插件）。任务书只点名
+  `listCapabilityEntries` 一处，实际是一组同根缺口。
+- 影响范围：`core/plugins/registry.ts`（`manifestOf` builtin 回退 + 公开
+  `isBuiltin` + `isConsumable` builtin 恒真）、`core/plugins/builtin.ts`
+  （summaries 按清单派生实例供给声明与字段）、`core/start.ts`（`pluginInstalled`
+  认 builtin）、`core/rpc/plugins-bindings.ts`（listCapabilityEntries 注释）、
+  renderer `ExtensionCapabilityModels.svelte` + zh/en i18n（builtin 隐藏账号实例区
+  并显示边界说明）。生产构建无 builtin 目录（resources/plugins 不存在），上述分支
+  不可达，既有路径逐字节不变（行为零变化护栏全绿）。
+- 决定（实例面定界）：**builtin 插件不能持有实例**——`plugin_instances.plugin_id`
+  外键引用 `plugins(id)`（0056/0075），D104 内置插件不入该表，实例行无处挂靠；
+  `#pluginForInstances` 保持 NOT_FOUND 干净拒绝（曾试放行，FK 会以 SqliteError 爆
+  破，已回退并留注释）。builtin 来源只承担「安装可见 / 条目可勾选 / 解析投影」
+  （P4 任务书验收的必需面）；「凭据可配 / 测试连接 / 真机出图出片」走市场安装路径
+  （用户实际分发渠道，P2/P3 已测；市场安装会写入 `plugins` 表，实例外键因此成立）。
+  为避免渲染层出现「添加入口可点、保存必失败」的断裂，能力模型插件详情对
+  `origin: 'builtin'` 不渲染账号实例表单，只显示「从市场安装后可添加账号」的说明。
+- 已更新的文档：本条；60 号 §11；plugins/dashscope/README.md §4、
+  plugins/volcengine-ark/README.md §4（边界声明）；P4 任务书「实施记录」。

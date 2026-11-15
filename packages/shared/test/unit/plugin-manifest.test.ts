@@ -849,6 +849,8 @@ describe('capability summary (D105)', () => {
       connectors: 0,
       mcp: 0,
       mail: 0,
+      im: 0,
+      capabilityModels: 0,
       instances: [],
       skillNames: ['a\nb\u202ec'],
     });
@@ -863,6 +865,7 @@ describe('capability summary (D105)', () => {
         mcp: 0,
         mail: 0,
         im: 0,
+        capabilityModels: 0,
         instances: ['mcp'],
         skillNames: [],
       }),
@@ -874,15 +877,32 @@ describe('capability summary (D105)', () => {
         mcp: 0,
         mail: 0,
         im: 0,
+        capabilityModels: 0,
         instances: ['im'],
         skillNames: [],
       }),
     ).toBe('可添加 IM 账号（如微信），收发消息');
   });
 
+  it('counts capability model entries and the vendor-account tail (D124)', () => {
+    expect(
+      pluginCapabilitySummary({
+        skills: 0,
+        connectors: 0,
+        mcp: 0,
+        mail: 0,
+        im: 0,
+        capabilityModels: 20,
+        instances: ['capability-model'],
+        skillNames: [],
+      }),
+    ).toBe('提供 20 个模型；可添加多个厂商账号');
+  });
+
   it('derives the coarse market fallback from categories alone (P4)', () => {
     expect(pluginCapabilitySummaryFromCategories(['skill', 'mcp'])).toBe('提供技能、工具能力');
     expect(pluginCapabilitySummaryFromCategories(['mail'])).toBe('提供邮件能力');
+    expect(pluginCapabilitySummaryFromCategories(['capability-model'])).toBe('提供模型能力');
     expect(pluginCapabilitySummaryFromCategories([])).toBe('提供扩展能力');
   });
 });
