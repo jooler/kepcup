@@ -404,6 +404,9 @@ export const zhCN = {
   'settings.capabilitySlotKeyMissing': '缺 API Key',
   'settings.capabilitySlotGoProvider': '去设置',
   'settings.capabilitySlotFootnote': '向量来源在下方「向量来源」区选择本地模型或供应商接口。',
+  // D124：插件提供的模型条目入口（deepLink 扩展中心对应插件详情）。
+  'settings.capabilityPluginProvided': '插件提供 · {count} 个模型',
+  'settings.capabilityPluginProvidedHint': '到 Bot 详情的插件卡里勾选启用。',
   'settings.customIdDuplicate': '实例 id {id} 已存在',
   'settings.back': '返回',
   'settings.templateGroupZhipu': '智谱',
@@ -730,6 +733,24 @@ export const zhCN = {
   'botPanel.plugins.staleAccounts': '失效的账号授权',
   'botPanel.plugins.staleAccountsHint':
     '这些连接已不存在（可能在扩展中心断开，或授权流程没有走完）。移除后才能保存对这个 Bot 的其它修改。',
+  // --- D124：模型条目勾选（插件卡展开区） -----------------------------------------
+  'botPanel.plugins.entries': '模型条目',
+  'botPanel.plugins.entriesHint':
+    '勾选后这个 Bot 的图片 / 视频 / 语音生成工具优先使用对应条目模型（在全局默认之前）。',
+  'botPanel.plugins.entryGroup.image': '图片生成',
+  'botPanel.plugins.entryGroup.video': '视频生成',
+  'botPanel.plugins.entryGroup.tts': '语音合成',
+  'botPanel.plugins.entryGroup.asr': '语音识别',
+  'botPanel.plugins.entryGroup.multimodal': '图文理解',
+  'botPanel.plugins.entryGroup.embedding': '向量',
+  'botPanel.plugins.entryGroup.rerank': '重排',
+  'botPanel.plugins.entryNotConfigured': '未配置',
+  'botPanel.plugins.entryConfigured': '已配置',
+  'botPanel.plugins.entryConfigure': '去配置',
+  'botPanel.plugins.entryUninstalled': '已卸载',
+  'botPanel.plugins.uninstalledEntries': '已卸载插件的模型条目',
+  'botPanel.plugins.uninstalledEntriesHint':
+    '这些条目来自已卸载的插件，不会生效；保存勾选后会被清理。',
   'rightPanel.exportTemplate': '导出为模板',
   // --- 其余 tab 的二级菜单行（详情里是原有内容） --------------------------------
   'rightPanel.menuSectionKnowledge': '知识与能力',
@@ -1987,6 +2008,25 @@ export const zhCN = {
   'plugins.bot.notice': '只有你确认后才会安装；确认前不会写入任何内容。',
   'plugins.bot.confirm': '确认安装',
   'plugins.bot.dismiss': '不装了',
+  // --- D124：能力模型插件（Bot 条目勾选 / 插件详情模型条目与实例 / 设置页入口行） ---
+  'plugins.kind.capabilityModel': '模型',
+  'plugins.capabilityModels.title': '模型条目',
+  'plugins.capabilityModels.hint':
+    '插件声明的一个模型一条；到 Bot 详情的插件卡里勾选要启用的条目。',
+  'plugins.capabilityModels.loadFailed': '模型条目加载失败：{reason}',
+  'plugins.capabilityModels.test': '测试连接',
+  'plugins.capabilityModels.testing': '测试中…',
+  'plugins.capabilityModels.testOk': '连接成功',
+  'plugins.capabilityModels.testFailed': '连接失败：{reason}',
+  'plugins.capabilityModels.multiInstance': '该插件有多个账号实例，调用需在条目上指定实例。',
+  'plugins.capabilityModels.instances': '账号实例',
+  'plugins.capabilityModels.instancesHint':
+    '实例 = 厂商账号（API Key 等凭据）。条目共用这里的实例；插件卸载后账号一并删除。',
+  'plugins.capabilityModels.addInstance': '添加账号',
+  'plugins.capabilityModels.empty': '还没有账号实例：添加并填写凭据后条目才能调用。',
+  'plugins.capabilityModels.noEntries': '该插件还没有声明模型条目。',
+  'plugins.capabilityModels.notConfiguredHint': '条目生效前需要先在下方「账号实例」填写厂商凭据。',
+  'plugins.capabilityModels.instanceFormNote': '凭据保存在本机密钥库，不会出现在任何回执或快照里。',
 
   'wiki.tabHint': 'Wiki 是这个 Bot 自己维护的知识库。',
   'wiki.empty': '还没有 Wiki 页面。Bot 在整理资料后会在这里生成页面。',
@@ -2477,6 +2517,11 @@ export const zhCN = {
   'setupCard.mainModelHint':
     '还没有可用的对话模型：先添加厂商并填入 API Key，再选择默认模型；确认后对话自动继续。',
   'setupCard.capabilityHint': '配置与「设置 → 模型」是同一份数据，随时可以在设置中修改。',
+  // D124：插件模型条目缺凭据（payload 带插件 / 条目 / 实例定位 → 插件实例凭据卡）。
+  'setupCard.pluginCredentialTitle': '配置「{plugin} · {entry}」的账号凭据',
+  'setupCard.pluginCredentialReason':
+    '这个模型条目缺少厂商账号凭据：填好后本次请求会自动继续；凭据保存在本机密钥库。',
+  'setupCard.pluginCredentialSaved': '已配置 {plugin} · {entry}，正在继续',
   'setupCard.botModelLabel': '这个 Bot 使用的模型',
   'setupCard.botModelFollowDefault': '跟随默认主模型',
   'setupCard.confirm': '完成设置，继续对话',

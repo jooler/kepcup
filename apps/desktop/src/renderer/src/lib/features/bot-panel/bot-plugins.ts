@@ -1,4 +1,10 @@
-import type { McpServer, PluginContributionKind, PluginSummary } from '@kepcup/shared';
+import type {
+  CapabilityEntryRef,
+  McpServer,
+  PluginCapabilityEntryGroup,
+  PluginContributionKind,
+  PluginSummary,
+} from '@kepcup/shared';
 import type { MessageKey } from '$lib/i18n';
 
 /**
@@ -112,3 +118,88 @@ export function manualToolServers(servers: readonly McpServer[]): McpServer[] {
       server.source?.kind !== 'instance',
   );
 }
+
+// --- D124：模型条目勾选（`runtime.capability_entries` 整集替换） -----------------
+
+/** 条目分组的展示顺序（schema 七能力；embedding / rerank 本期不消费，声明了也照常展示）。 */
+export const ENTRY_GROUP_ORDER = [
+  'image',
+  'video',
+  'tts',
+  'asr',
+  'multimodal',
+  'embedding',
+  'rerank',
+] as const;
+
+/** 能力 → 分组标题文案键（图片生成 / 视频生成 / 语音合成 / 语音识别 / 图文理解…）。 */
+export const ENTRY_GROUP_LABEL_KEYS: Readonly<Record<(typeof ENTRY_GROUP_ORDER)[number], MessageKey>> =
+  {
+    image: 'botPanel.plugins.entryGroup.image',
+    video: 'botPanel.plugins.entryGroup.video',
+    tts: 'botPanel.plugins.entryGroup.tts',
+    asr: 'botPanel.plugins.entryGroup.asr',
+    multimodal: 'botPanel.plugins.entryGroup.multimodal',
+    embedding: 'botPanel.plugins.entryGroup.embedding',
+    rerank: 'botPanel.plugins.entryGroup.rerank',
+  };
+
+/** 去重（保序）：`capability_entries` 与 `plugin_ids` 同一套整集写入前的出口。 */
+export function dedupeEntryRefs(refs: readonly CapabilityEntryRef[]): CapabilityEntryRef[] {
+  return refs.filter(
+    (ref, index) =>
+      refs.findIndex((candidate) => candidate.plugin === ref.plugin && candidate.entry === ref.entry) ===
+      index,
+  );
+}
+
+/**
+ * 勾选 / 取消一个条目后的引用集：保持其余引用顺序、去重（`plugins.setBotCapabilityEntries`
+ * 整体替换，写入端以此为准）。缺失视作空集。
+ */
+export function toggleEntryRef(
+  current: readonly CapabilityEntryRef[] | undefined,
+  pluginId: string,
+  entryId: string,
+  enabled: boolean,
+): CapabilityEntryRef[] {
+  const kept = dedupeEntryRefs(current ?? []).filter(
+    (ref) => !(ref.plugin === pluginId && ref.entry === entryId),
+  );
+  return enabled ? [...kept, { plugin: pluginId, entry: entryId }] : kept;
+}
+
+/**
+ * 该插件在清单里的条目按能力分组（能力标题用固定顺序；空能力不出组）。Bot 展开
+ * 区的「模型条目」区按组渲染复选。
+ */
+export function groupEntriesByCapability(
+  entries: readonly PluginCapabilityEntryGroup['entries'][number][],
+): Array<{ capability: (typeof ENTRY_GROUP_ORDER)[number]; entries: typeof entries }> {
+  const groups: Array<{
+    capability: (typeof ENTRY_GROUP_ORDER)[number];
+    entries: typeof entries;
+  }> = [];
+  for (const capability of ENTRY_GROUP_ORDER) {
+    const matched = entries.filter((entry) => entry.capability === capability);
+    if (matched.length > 0) groups.push({ capability, entries: matched });
+  }
+  return groups;
+}
+
+/**
+ * 保存（整集替换）前剔除已卸载插件的残留引用：core 的 `setBotCapabilityEntries`
+ * 对未知 ref 整批拒绝（INVALID_INPUT），「卸载残留由 core 忽略」在渲染端落地为
+ * 不发送（60 §决策 5 与 P2 校验语义的合成，见 P3 实施记录）。
+ */
+export function saveableEntryRefs(
+  current: readonly CapabilityEntryRef[] | undefined,
+  installedIds: readonly string[],
+): CapabilityEntryRef[] {
+  const installed = new Set(installedIds);
+  return dedupeEntryRefs(current ?? []).filter((ref) => installed.has(ref.plugin));
+}
+
+/** `capability_entries` 上限（shared 契约 ≤16）：超出时勾选不再追加。 */
+export const CAPABILITY_ENTRIES_MAX = 16;
+

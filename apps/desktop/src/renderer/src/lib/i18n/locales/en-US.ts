@@ -432,6 +432,9 @@ export const enUS = {
   'settings.capabilitySlotGoProvider': 'Open provider',
   'settings.capabilitySlotFootnote':
     'Pick local model or provider API under "Embedding source" below.',
+  // D124: plugin-provided model entries entry row (deep link into the plugin detail).
+  'settings.capabilityPluginProvided': 'From plugins · {count} models',
+  'settings.capabilityPluginProvidedHint': 'Enable them on the plugin card in Bot details.',
   'settings.customIdDuplicate': 'Instance id {id} already exists',
   'settings.back': 'Back',
   'settings.templateGroupZhipu': 'Zhipu',
@@ -768,6 +771,24 @@ export const enUS = {
   'botPanel.plugins.staleAccounts': 'Invalid account grants',
   'botPanel.plugins.staleAccountsHint':
     'These connections no longer exist (disconnected in the extension center, or the authorization flow did not finish). Remove them to save any other change to this bot.',
+  // --- D124: model entry toggles (plugin card expanded area) ---------------------
+  'botPanel.plugins.entries': 'Model entries',
+  'botPanel.plugins.entriesHint':
+    'Checked entries take priority over the global default for this bot\'s image / video / speech generation tools.',
+  'botPanel.plugins.entryGroup.image': 'Image generation',
+  'botPanel.plugins.entryGroup.video': 'Video generation',
+  'botPanel.plugins.entryGroup.tts': 'Speech synthesis',
+  'botPanel.plugins.entryGroup.asr': 'Speech recognition',
+  'botPanel.plugins.entryGroup.multimodal': 'Image understanding',
+  'botPanel.plugins.entryGroup.embedding': 'Embedding',
+  'botPanel.plugins.entryGroup.rerank': 'Rerank',
+  'botPanel.plugins.entryNotConfigured': 'Not configured',
+  'botPanel.plugins.entryConfigured': 'Configured',
+  'botPanel.plugins.entryConfigure': 'Set up',
+  'botPanel.plugins.entryUninstalled': 'Uninstalled',
+  'botPanel.plugins.uninstalledEntries': 'Model entries from uninstalled plugins',
+  'botPanel.plugins.uninstalledEntriesHint':
+    'These entries belong to uninstalled plugins and have no effect; saving the selection clears them.',
   'rightPanel.exportTemplate': 'Export as template',
   // --- Secondary menu rows of the other tabs (details hold the original content) -
   'rightPanel.menuSectionKnowledge': 'Knowledge & capabilities',
@@ -2061,6 +2082,29 @@ export const enUS = {
   'plugins.bot.notice': 'Nothing is installed until you confirm.',
   'plugins.bot.confirm': 'Confirm install',
   'plugins.bot.dismiss': 'Not now',
+  // --- D124: capability model plugins (Bot entry toggles / plugin detail / settings entry row) ---
+  'plugins.kind.capabilityModel': 'Models',
+  'plugins.capabilityModels.title': 'Model entries',
+  'plugins.capabilityModels.hint':
+    'One model per entry, declared by the plugin. Enable entries on the plugin card in the Bot details.',
+  'plugins.capabilityModels.loadFailed': 'Failed to load model entries: {reason}',
+  'plugins.capabilityModels.test': 'Test connection',
+  'plugins.capabilityModels.testing': 'Testing…',
+  'plugins.capabilityModels.testOk': 'Connected',
+  'plugins.capabilityModels.testFailed': 'Connection failed: {reason}',
+  'plugins.capabilityModels.multiInstance':
+    'This plugin has multiple account instances; the entry must specify one to run.',
+  'plugins.capabilityModels.instances': 'Account instances',
+  'plugins.capabilityModels.instancesHint':
+    'An instance is a vendor account (API key and other credentials). Entries share these instances; uninstalling the plugin removes them.',
+  'plugins.capabilityModels.addInstance': 'Add account',
+  'plugins.capabilityModels.empty':
+    'No account instances yet. Add one with its credentials so entries can run.',
+  'plugins.capabilityModels.noEntries': 'This plugin does not declare any model entries yet.',
+  'plugins.capabilityModels.notConfiguredHint':
+    'Fill in vendor credentials under "Account instances" below before this entry can run.',
+  'plugins.capabilityModels.instanceFormNote':
+    'Credentials are stored in the local key store and never appear in receipts or snapshots.',
   'wiki.tabHint': "The Wiki is this Bot's own knowledge base.",
   'wiki.empty': 'No Wiki pages yet. The Bot will create pages here after organizing information.',
   'wiki.searchPlaceholder': 'Search Wiki…',
@@ -2566,6 +2610,11 @@ export const enUS = {
     'No chat model available yet: add a provider and enter an API key, then choose a default model. The conversation continues automatically after you confirm.',
   'setupCard.capabilityHint':
     'This is the same data as Settings → Models, and you can change it anytime in Settings.',
+  // D124: plugin model entry missing credentials (payload carries plugin / entry / instance).
+  'setupCard.pluginCredentialTitle': 'Set up account credentials for "{plugin} · {entry}"',
+  'setupCard.pluginCredentialReason':
+    'This model entry is missing vendor account credentials. The request continues automatically once saved; credentials stay in the local key store.',
+  'setupCard.pluginCredentialSaved': 'Configured {plugin} · {entry}, continuing',
   'setupCard.botModelLabel': 'Model used by this Bot',
   'setupCard.botModelFollowDefault': 'Use default main model',
   'setupCard.confirm': 'Finish setup and continue',

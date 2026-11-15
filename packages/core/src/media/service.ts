@@ -15,6 +15,7 @@ import type { SecretsService } from '../domain/secrets.js';
 import type { CoreLogger } from '../infra/logger.js';
 import { MEDIA_ENGINES } from './engines.js';
 import type { MediaEngine } from './engines.js';
+import type { MediaEntrySummaries } from '../tools/media-entry-hints.js';
 import { dashscopeAdapter } from './adapters/dashscope.js';
 import { volcengineAdapter } from './adapters/volcengine.js';
 import { openAICompatibleAdapter } from './adapters/openai-compatible.js';
@@ -367,6 +368,32 @@ export class MediaService {
       throw this.#unsupported(resolved, capability);
     }
     return this.#runProbe(capability, resolved);
+  }
+
+  /**
+   * Bot 已勾选条目的摘要（D124 P3：三个生成工具描述注入的数据面）。按能力返回
+   * `displayName(model)` 名单（displayName 与 model 相同时只留 model，避免重复）；
+   * 条目仓库未装配 / botId 为空 = 各能力恒空数组（工具描述保持逐字节不变）。
+   * 只查三个生成能力——understand_image / transcribe_audio 无条目注入（无 model 参数）。
+   */
+  async entrySummariesFor(botId: string | null | undefined): Promise<MediaEntrySummaries> {
+    const summaries = { image: [] as string[], tts: [] as string[], video: [] as string[] };
+    if (this.#entrySource === undefined || botId === null || botId === undefined || botId === '') {
+      return summaries;
+    }
+    const push = (capability: 'image' | 'tts' | 'video', entries: ResolvedEntry[]): void => {
+      for (const entry of entries) {
+        const name =
+          entry.displayName !== undefined && entry.displayName !== entry.model
+            ? `${entry.displayName}（${entry.model}）`
+            : entry.model;
+        if (!summaries[capability].includes(name)) summaries[capability].push(name);
+      }
+    };
+    push('image', await this.#entrySource.entriesFor(botId, 'image'));
+    push('tts', await this.#entrySource.entriesFor(botId, 'tts'));
+    push('video', await this.#entrySource.entriesFor(botId, 'video'));
+    return summaries;
   }
 
   /**

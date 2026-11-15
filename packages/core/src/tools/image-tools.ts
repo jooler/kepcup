@@ -16,6 +16,7 @@ import {
 } from './media-delivery.js';
 import { resolveMediaSource } from './media-source.js';
 import { readOnlyRefusal } from './read-only.js';
+import { ENTRY_CAPABILITY_LABELS, appendEntryHint, type MediaEntryHints } from './media-entry-hints.js';
 
 /**
  * 图像生成的 Bot 工具（docs/design/18-inline-setup.md）：图像能力在
@@ -114,6 +115,8 @@ export function buildImageTools(input: {
   recordFile?: ((target: string) => void) | undefined;
   /** D123: front gate before saving a generated artifact (throws WRITE_OUT_OF_DOMAIN). */
   checkWritable?: ((target: string) => void) | undefined;
+  /** D124 P3：Bot 已勾选条目摘要（注入 generate_image 描述；缺省 / 空清单 = 描述逐字节不变）。 */
+  entryHints?: MediaEntryHints | undefined;
 }): ToolDefinition[] {
   const { identity, media, workspacePath } = input;
 
@@ -124,8 +127,12 @@ export function buildImageTools(input: {
     model?: string;
   }> = {
     name: 'generate_image',
-    description:
+    // D124 P3：Bot 绑定了模型条目时在描述尾部追加条目清单（appendEntryHint 空清单原样返回）。
+    description: appendEntryHint(
       '生成图片（文生图）。用户要图片、图标、插画、海报等真实图片文件时必须调用本工具产出，不要用文字描述或字符画代替；图片保存到 workspace 后会自动作为消息附件发给用户，无需再调 send_message。未配置图像生成模型时本工具会返回「需要设置」，由系统引导用户完成配置并自动继续，不要因此改用文字方案或推荐外部工具。',
+      ENTRY_CAPABILITY_LABELS.image,
+      input.entryHints?.image,
+    ),
     parameters: Type.Object({
       prompt: Type.String({ description: '图片描述（提示词），尽量具体：主体、风格、构图' }),
       file_name: Type.Optional(

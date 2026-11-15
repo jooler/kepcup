@@ -11,7 +11,7 @@ import {
 } from '../../src/tools/image-tools.js';
 import type { AttachmentsService } from '../../src/domain/attachments.js';
 import type { ToolGateway } from '../../src/gateway/index.js';
-import type { RunIdentity, ToolContext } from '../../src/agent/types.js';
+import type { RunIdentity, ToolContext, ToolDefinition } from '../../src/agent/types.js';
 
 /**
  * generate_speech / generate_video / transcribe_audio / understand_image 工具
@@ -121,6 +121,90 @@ function speechTools(
       : {}),
   });
 }
+
+/**
+ * D124 P3：工具描述的条目清单注入（docs/design/60-capability-model-plugins.md 决策 7）。
+ * 未绑定条目（hints 缺省或空清单）时描述与今日逐字节一致——字符串级断言是硬约束。
+ */
+describe('生成工具描述的条目清单注入（D124 P3）', () => {
+  const BASE_IMAGE_DESCRIPTION =
+    '生成图片（文生图）。用户要图片、图标、插画、海报等真实图片文件时必须调用本工具产出，不要用文字描述或字符画代替；图片保存到 workspace 后会自动作为消息附件发给用户，无需再调 send_message。未配置图像生成模型时本工具会返回「需要设置」，由系统引导用户完成配置并自动继续，不要因此改用文字方案或推荐外部工具。';
+  const BASE_SPEECH_DESCRIPTION =
+    '把文本合成为语音（TTS）。用户要配音、朗读、语音消息等真实音频文件时必须调用本工具产出，不要只给文字稿；音频保存到 workspace 后会自动作为消息附件发给用户，无需再调 send_message。未配置语音合成模型时本工具会返回「需要设置」，由系统引导用户完成配置并自动继续。';
+  const BASE_VIDEO_DESCRIPTION =
+    '根据文字描述生成一段短视频（文生视频，异步任务，通常需要几十秒到几分钟）。用户要真实视频文件时必须调用本工具产出，不要只给分镜脚本；视频保存到 workspace 后会自动作为消息附件发给用户，无需再调 send_message。未配置视频生成模型时本工具会返回「需要设置」，由系统引导用户完成配置并自动继续。';
+
+  function imageToolWithHints(hints?: { image?: string[] }): ToolDefinition {
+    return buildImageTools({
+      identity,
+      media: facade(),
+      workspacePath: path.join(root, 'hints-ws'),
+      attachments: attachmentsFake({}),
+      gateway: gatewayFake(root),
+      ...(hints !== undefined ? { entryHints: hints } : {}),
+    }).find((tool) => tool.name === 'generate_image')!;
+  }
+
+  it('未绑定条目（缺省 hints）：三个生成工具描述与今日逐字节一致', () => {
+    expect(imageToolWithHints().description).toBe(BASE_IMAGE_DESCRIPTION);
+    const speech = buildSpeechTools({
+      identity,
+      media: facade(),
+      workspacePath: path.join(root, 'hints-ws'),
+      attachments: attachmentsFake({}),
+      gateway: gatewayFake(root),
+    });
+    expect(speech.find((tool) => tool.name === 'generate_speech')!.description).toBe(
+      BASE_SPEECH_DESCRIPTION,
+    );
+    expect(speech.find((tool) => tool.name === 'generate_video')!.description).toBe(
+      BASE_VIDEO_DESCRIPTION,
+    );
+  });
+
+  it('清单为空数组（如 Bot 勾选集为空）：同样逐字节一致', () => {
+    expect(imageToolWithHints({ image: [] }).description).toBe(BASE_IMAGE_DESCRIPTION);
+  });
+
+  it('绑定了条目：描述尾部追加条目清单段', () => {
+    const tool = imageToolWithHints({ image: ['水墨画（inkwash-xl）', 'qwen-image-2.0'] });
+    expect(tool.description).toBe(
+      `${BASE_IMAGE_DESCRIPTION}本 Bot 可用的图片生成模型条目：水墨画（inkwash-xl）、qwen-image-2.0；用 model 参数指定，留空用默认。`,
+    );
+  });
+
+  it('只注入对应能力：speech 工具不出现 image 条目，video 工具不出现 tts 条目', () => {
+    const tools = buildSpeechTools({
+      identity,
+      media: facade(),
+      workspacePath: path.join(root, 'hints-ws'),
+      attachments: attachmentsFake({}),
+      gateway: gatewayFake(root),
+      entryHints: {
+        tts: ['音色甲（voice-a）'],
+        video: ['wan2.6-t2v'],
+      },
+    });
+    const speech = tools.find((tool) => tool.name === 'generate_speech')!;
+    expect(speech.description).toBe(
+      `${BASE_SPEECH_DESCRIPTION}本 Bot 可用的语音合成模型条目：音色甲（voice-a）；用 model 参数指定，留空用默认。`,
+    );
+    const video = tools.find((tool) => tool.name === 'generate_video')!;
+    expect(video.description).toBe(
+      `${BASE_VIDEO_DESCRIPTION}本 Bot 可用的视频生成模型条目：wan2.6-t2v；用 model 参数指定，留空用默认。`,
+    );
+  });
+
+  it('清单超过 6 条：截断为前 6 条 + 「等 N 个」', () => {
+    const names = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+    const tool = imageToolWithHints({ image: names });
+    expect(tool.description).toBe(
+      `${BASE_IMAGE_DESCRIPTION}本 Bot 可用的图片生成模型条目：${names
+        .slice(0, 6)
+        .join('、')} 等 8 个；用 model 参数指定，留空用默认。`,
+    );
+  });
+});
 
 describe('generate_speech', () => {
   it('成功：字节落盘 workspace/.generated 并返回路径', async () => {

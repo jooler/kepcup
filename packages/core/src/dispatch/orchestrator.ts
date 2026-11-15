@@ -166,6 +166,7 @@ import {
   type ResponseToolDeps,
 } from '../tools/index.js';
 import { TOOL_SETUP_REQUIRED, type MediaToolFacade } from '../tools/image-tools.js';
+import type { MediaEntrySummariesFn } from '../tools/media-entry-hints.js';
 import { decideMailSetupRequest, mailBoundFor, type MailSetupFacade } from '../tools/mail-tools.js';
 import { visibleMailAccounts } from '../mail/service.js';
 import type { AppToolFacade, LocalConnectorToolFacade } from '../tools/app-tools.js';
@@ -501,8 +502,10 @@ export interface OrchestratorDeps {
   /**
    * 图像生成后端（docs/design/18-inline-setup.md）；omitted in stripped test
    * setups, which then simply have no generate_image tool.
+   * D124 P3：真实装配传 MediaService——条目摘要 `entrySummariesFor` 以可选方法
+   * 叠加（精简测试夹具的门面没有它 → 不注入条目清单，行为不变）。
    */
-  media?: MediaToolFacade | undefined;
+  media?: (MediaToolFacade & { entrySummariesFor?: MediaEntrySummariesFn | undefined }) | undefined;
   /**
    * 联网检索网关（docs/design/21-web-search.md）：web_search / web_fetch 工具；
    * omitted in stripped test setups。web_search 未配置供应商时以结构化 setup
@@ -4333,6 +4336,13 @@ export class Orchestrator {
               },
             })
           : undefined;
+      // D124 P3：Bot 已勾选条目摘要（三个生成工具描述注入的数据面）。精简装配的
+      // 门面没有 entrySummariesFor（或未绑定条目 → 各清单为空）时不注入，工具描述
+      // 与从前逐字节一致；解析失败降级为不注入（工具可用性优先）。
+      const mediaEntryHints =
+        this.#deps.media?.entrySummariesFor !== undefined && identity.botId !== null
+          ? await this.#deps.media.entrySummariesFor(identity.botId).catch(() => undefined)
+          : undefined;
       const toolDeps: ResponseToolDeps = {
         ...(scheduleSource !== null ? { scheduleSource } : {}),
         ...(todoSource !== null ? { todoSource } : {}),
@@ -4421,6 +4431,7 @@ export class Orchestrator {
         // 模型看不到 computer_*（调用期错误引导只对已注册工具存在）。
         ...(await this.#computerToolDeps(identity, loopType)),
         ...(this.#deps.media !== undefined ? { media: this.#mediaFacade(setupHit, identity) } : {}),
+        ...(mediaEntryHints !== undefined ? { mediaEntryHints } : {}),
         ...(this.#deps.search !== undefined ? { search: this.#searchFacade(setupHit) } : {}),
         ...(appFacade !== undefined ? { apps: appFacade } : {}),
         ...(pluginFacade !== undefined ? { pluginInstall: pluginFacade } : {}),
