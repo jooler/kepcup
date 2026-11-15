@@ -172,6 +172,8 @@ export function botProfile(
       browser_profile: overrides.runtime?.browser_profile ?? '',
       message_transport: overrides.runtime?.message_transport ?? '',
       inkcop_agent_keys: overrides.runtime?.inkcop_agent_keys ?? [],
+      // D124 能力模型插件：字段带 schema 默认值，fixture 恒补空数组（见 botRuntimeSchema）。
+      capability_entries: overrides.runtime?.capability_entries ?? [],
       agent: { ...BUILTIN_AGENT_RUNTIME, ...overrides.runtime?.agent },
     },
     // P10 guardrails: default profile keeps proactive on; tests override.

@@ -13,6 +13,11 @@ import { sanitizeDisplayText } from './text-sanitize.js';
  * checks `format_version` / byte budget and runs the schema; every unknown field is a
  * rejection (`strictObject`), so a manifest can never self-declare trust (`tier`,
  * `permissions`, …).
+ *
+ * D124 (docs/design/60-capability-model-plugins.md §2) adds the declarative
+ * capability-model contribution (`contributions.capabilityModels`：一个模型一条) and the
+ * `'capability-model'` instance kind — the mail / mcp / im recipe: the contribution is
+ * the supply spec, instances are user-added, execution stays in first-party engines.
  */
 
 export const PLUGIN_FORMAT_VERSION = 1;
@@ -28,6 +33,7 @@ export const PLUGIN_MAX_CONNECTORS = 20;
 export const PLUGIN_MAX_MCP = 10;
 export const PLUGIN_MAX_MAIL = 10;
 export const PLUGIN_MAX_IM = 10;
+export const PLUGIN_MAX_CAPABILITY_MODELS = 32;
 
 /** Contribution kinds (defined here so plugin-manifest.ts stays dependency-free; plugins.ts re-exports). */
 export const pluginContributionKindSchema = z.enum(['skill', 'connector', 'mcp', 'mail', 'im']);
@@ -42,7 +48,7 @@ export type PluginContributionKind = z.infer<typeof pluginContributionKindSchema
 export const PLUGIN_FIELD_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
 /** Instantiable capability kinds a pure-instance manifest may declare. */
-export const PLUGIN_INSTANCE_KINDS = ['mail', 'mcp', 'im'] as const;
+export const PLUGIN_INSTANCE_KINDS = ['mail', 'mcp', 'im', 'capability-model'] as const;
 export const pluginInstanceKindSchema = z.enum(PLUGIN_INSTANCE_KINDS);
 export type PluginInstanceKind = z.infer<typeof pluginInstanceKindSchema>;
 export const PLUGIN_MAX_INSTANCES = 4;
@@ -711,6 +717,35 @@ export type PluginImContribution = z.infer<typeof pluginImContributionSchema>;
  */
 export const PLUGIN_IM_BUILTIN_INSTANCE_FIELD_KEYS: readonly string[] = ['bot_token'] as const;
 
+/**
+ * 能力模型条目（D124，docs/design/60-capability-model-plugins.md §2）：插件声明的一个
+ * 可调用媒体模型——用户视角「一个模型一条」，插件粒度 = 平台协议族。执行逻辑不住在
+ * 插件里：`engine` 绑定 core 内置引擎注册表（安装期校验未知引擎拒绝），插件永远只是
+ * 数据。`capability` 用独立七值枚举（既有 `ModelCapability` 去掉 `'chat'`，不引入跨
+ * 文件耦合）；`params` 是引擎参数默认/覆盖（引擎逐键白名单消费，未知键忽略）；
+ * `instance` 在插件多实例时显式指定，缺省用唯一实例。`id` 复用既有贡献 id 规则
+ * （`PLUGIN_MCP_KEY_PATTERN`，mcp / mail / im 同款），插件内唯一性交给
+ * `pluginManifestSchema` 的 superRefine；声明条目必须同时
+ * `instances: ['capability-model']`（enforced in `pluginManifestSchema`）。
+ */
+export const capabilityModelEntrySchema = z.strictObject({
+  id: pluginMcpIdSchema,
+  capability: z.enum(['image', 'video', 'tts', 'asr', 'embedding', 'rerank', 'multimodal']),
+  /** 厂商模型 id，如 'qwen-image-2.0'。 */
+  model: z.string().min(1).max(200),
+  /** MEDIA_ENGINES 键，安装期校验（PLUGIN_ENGINE_UNKNOWN）。 */
+  engine: z.string().min(1).max(64),
+  /** 缺省用 model。 */
+  displayName: z.string().max(100).optional(),
+  /** 呈现给用户与模型的能力说明。 */
+  description: z.string().max(500).optional(),
+  /** 引擎参数默认/覆盖（如 size 档位），键为引擎白名单消费。 */
+  params: z.record(z.string(), z.unknown()).optional(),
+  /** 多实例时显式指定实例 id，缺省用插件唯一实例。 */
+  instance: z.string().optional(),
+});
+export type CapabilityModelEntry = z.infer<typeof capabilityModelEntrySchema>;
+
 // --- manifest ----------------------------------------------------------------
 
 export const pluginManifestSchema = z
@@ -756,6 +791,11 @@ export const pluginManifestSchema = z
         mcp: z.array(pluginMcpContributionSchema).max(PLUGIN_MAX_MCP).default([]),
         mail: z.array(pluginMailContributionSchema).max(PLUGIN_MAX_MAIL).default([]),
         im: z.array(pluginImContributionSchema).max(PLUGIN_MAX_IM).default([]),
+        // D124：能力模型条目可选声明（其余贡献缺省空数组；这里省略 = 未声明，兼容旧清单）。
+        capabilityModels: z
+          .array(capabilityModelEntrySchema)
+          .max(PLUGIN_MAX_CAPABILITY_MODELS)
+          .optional(),
       })
       // D105：纯实例插件（只声明 `instances`）可以整个省略 contributions；解析输出恒为完整对象。
       .prefault({}),
@@ -767,7 +807,7 @@ export const pluginManifestSchema = z
     instances: z.array(pluginInstanceKindSchema).max(PLUGIN_MAX_INSTANCES).optional(),
   })
   .superRefine((manifest, ctx) => {
-    const { skills, connectors, mcp, mail, im } = manifest.contributions;
+    const { skills, connectors, mcp, mail, im, capabilityModels = [] } = manifest.contributions;
     if (
       skills.length +
         connectors.length +
@@ -830,6 +870,12 @@ export const pluginManifestSchema = z
       ['contributions', 'mail'],
       'id',
     );
+    // D124：能力模型条目 id 插件内查重（id 是 plugin_items 账本 ref 与 Bot 勾选键）。
+    dup(
+      capabilityModels.map((entry, index) => [entry.id, index] as const),
+      ['contributions', 'capabilityModels'],
+      'id',
+    );
     // D105 P3: a mail contribution IS the mail-instance provisioning spec — exactly one
     // per manifest, and ONLY together with the `instances: ['mail']` declaration. The
     // reverse holds too (review P2-1): a declared mail instance kind without its
@@ -875,6 +921,16 @@ export const pluginManifestSchema = z
         code: 'custom',
         path: ['instances'],
         message: "声明 instances: ['im'] 时必须同时声明一份 IM 贡献",
+      });
+    }
+    // D124：能力模型条目 = 'capability-model' 实例的供给规范——声明条目就必须声明该
+    // 实例 kind（实例表单由引擎 credentialFields 生成，没有条目就没有引擎可指向）。
+    // 反向不强制（instances: ['capability-model'] 可先于条目声明，语义归 P2 安装管线）。
+    if (capabilityModels.length > 0 && !manifest.instances?.includes('capability-model')) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['contributions', 'capabilityModels'],
+        message: "声明能力模型条目时必须同时声明 instances: ['capability-model']",
       });
     }
     // P4-M2 mcp instance templates: an `mcpb` contribution is a bundled server and is

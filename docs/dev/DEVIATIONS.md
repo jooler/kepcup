@@ -1376,3 +1376,50 @@
   产物写入都查认领），在以后放宽域串行、或域判定出现未预见的保守性缺口时兜底；
   TaskView / 任务详情页照常展示认领，供用户与任务观察协调状态。`claim` 的工具
   说明与任务提示词按「协调原语」措辞，不承诺在现行调度下必然发生拦截。
+
+### DEV-093 能力模型条目 id 复用 mcp 系 id 规则而非「skills 的 id schema」（D124 P1）
+
+- 状态：已落实
+- 阶段：D124 P1（2026-11-15）
+- 是否阻塞：否
+- 问题：P1 任务书步骤 1 写「`id`：复用既有贡献 id 规则（对齐 skills 贡献的 id
+  schema）」，但 skills 贡献（`pluginSkillContributionSchema`）**没有 id 字段**（唯一键
+  是 `dir` 相对路径）；60 号设计 §2 的注释是「贡献 id 规则复用」，示例 `'qwen-image'`。
+  「既有贡献 id 规则」实际只有一条：`pluginMcpIdSchema`（`PLUGIN_MCP_KEY_PATTERN`，
+  mcp / mail / im 同款，小写字母数字连字符、≤32）。
+- 影响范围：`packages/shared/src/domain/plugin-manifest.ts`
+  （`capabilityModelEntrySchema.id`）。
+- 决定：`capabilityModelEntrySchema.id` 复用 `pluginMcpIdSchema`——与设计示例、既有
+  贡献 id 规则及条目 id 作为 `plugin_items` 账本 ref 的用途（同 server id）一致；
+  插件内唯一性仍由 superRefine 查重（大小写不敏感，同既有 `dup` 规则）。
+- 已更新的文档：本条；60 号 §2 注释本身已是「贡献 id 规则复用」，无需改。
+
+### DEV-094 D124 P1 触碰 testkit 一行编译修复；core / renderer 类型检查中断列为 P2/P3 待修（D124 P1）
+
+- 状态：已落实（core / renderer 部分待 P2 / P3）
+- 阶段：D124 P1（2026-11-15）
+- 是否阻塞：否（P1 验收范围内不阻塞；全量收口前必须由 P2 / P3 清零）
+- 问题：P1 的两处 shared 契约扩展有编译面后果，超出「本阶段纯 shared + 迁移」的
+  文件面：
+  1. `botRuntimeSchema` 新增 `capability_entries`（`.default([])`，输出类型必有该键）→
+     手写完整 runtime 字面量的三处编译失败：`packages/testkit/src/helpers.ts`
+     （botProfile fixture）、`packages/core/src/domain/bots.ts`（`emptyProfile`）、
+     `apps/desktop/src/renderer/src/lib/features/bot-setup.ts`（`emptyProfile`）。
+  2. `PLUGIN_INSTANCE_KINDS` 增 `'capability-model'` → core 把共享 kind 联合传入按
+     窄联合收参的 `capabilityKindOf` 系函数，5 处编译失败（`plugins/instances.ts` ×4、
+     `plugins/registry.ts` ×1）——这正是 P2「capabilityModelKind 适配器 + 注册表」
+     的改动面。
+- 影响范围：`packages/testkit/src/helpers.ts`（P1 已修：fixture 恒补
+  `capability_entries: []`，一行、零行为变化）；`packages/core/src/domain/bots.ts`、
+  `packages/core/src/plugins/instances.ts`、`packages/core/src/plugins/registry.ts`
+  （P2 修）；`apps/desktop/src/renderer/src/lib/features/bot-setup.ts`（P3 修）。
+- 决定：testkit 不在 P1 禁改清单（settings-catalog / core / renderer）内，且
+  AGENTS.md 把 testkit 列为 shared 契约改动的联动面——补一行默认值让 desktop
+  node 侧 typecheck（`tsconfig.node.json`，e2e / web 测试经 testkit 消费
+  botProfile fixture）恢复。core 与 renderer 按 P1 硬约束**不动**，typecheck 中断
+  （core 6 处、renderer 1 处；renderer 为 svelte-check `tsconfig.web.json` 下
+  bot-setup.ts 的 `emptyProfile`，desktop 整体 `pnpm --filter @kepcup/desktop
+  typecheck` 在 P3 之前仍不绿）如实交接：P2 落 `capabilityModelKind` 时顺带修 core
+  的 6 处，P3 修 renderer 的 1 处；两阶段落地前全量 `pnpm test` 的 typecheck 段
+  不会绿（P1 定向测试不受影响，vitest 不做类型检查）。
+- 已更新的文档：本条；P1 任务书「实施记录」。

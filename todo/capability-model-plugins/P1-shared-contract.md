@@ -1,6 +1,6 @@
 # P1 · shared 契约与数据迁移
 
-> 状态：**待实施** · 依赖：无 · 分支：`feat/capability-plugins/p1-shared-contract`
+> 状态：**已实施（2026-11-15）** · 依赖：无 · 分支：`feat/plugin-platform`（单集成分支，覆盖每阶段一分支约定）
 > 必读：[README](README.md)（固定契约）→ [CURRENT-STATE](CURRENT-STATE.md) → [60 号设计 §2 / §3](../../docs/design/60-capability-model-plugins.md)
 
 ## 1 目标
@@ -81,13 +81,13 @@ node scripts/run-tests.mjs run packages/shared/test/unit   # shared 全目录定
 
 ## 5 验收
 
-- [ ] `capabilityModelEntrySchema` / `contributions.capabilityModels` / `'capability-model'` kind / `capability_entries` 字段落地，名字与 [README 固定契约](README.md#固定契约名字不得改动)一致。证据：
-- [ ] 迁移落库可重放（新库 + 0066 既有库两条路径），`plugin_items` / `plugin_instances` 可写 kind `'capability-model'` 行。证据：
-- [ ] `usage_ledger` 新列存在且旧行读出 NULL。证据：
-- [ ] shared 定向测试全绿，旧清单解析兼容。证据：
+- [x] `capabilityModelEntrySchema` / `contributions.capabilityModels` / `'capability-model'` kind / `capability_entries` 字段落地，名字与 [README 固定契约](README.md#固定契约名字不得改动)一致。证据：`packages/shared/src/domain/plugin-manifest.ts`（schema + contributions + `PLUGIN_INSTANCE_KINDS` + superRefine 两条）、`packages/shared/src/domain/types.ts`（`capabilityEntryRefSchema` + `capability_entries`）；名字核对见 `plugin-manifest-capability-models.test.ts`。
+- [x] 迁移落库可重放（新库 + 0066 既有库两条路径），`plugin_items` / `plugin_instances` 可写 kind `'capability-model'` 行。证据：0075 逐字沿用 0066 重建写法；`packages/core/test/unit/plugins-migration.test.ts` 7/7 过（新库全链）；/tmp 一次性重放脚本（一次性脚本，不入库）双路径 17 项全过——路径 B 模拟 0074 既有库（含 im 行与 `config_json`），补跑仅应用 0075、数据与 `plugin_items_ref` 索引保留、新 kind 两表均可写。
+- [x] `usage_ledger` 新列存在且旧行读出 NULL。证据：重放脚本路径 A / B 各验一条旧行 `capability` / `model_entry_id` 读 NULL，写入后可读回。
+- [x] shared 定向测试全绿，旧清单解析兼容。证据：`node scripts/run-tests.mjs run packages/shared/test/unit` → 52 文件 622 用例全过；新增 `plugin-manifest-capability-models.test.ts` 12 用例（含旧清单 `capabilityModels` 缺省、旧 profile `capability_entries` 默认 `[]`）。
 
 ## 6 实施记录
 
-- 分支 / 提交：
-- 实际迁移号：
-- DEV 偏差：
+- 分支 / 提交：`feat/plugin-platform`（提交由主代理负责，本阶段未 commit）
+- 实际迁移号：0075（`packages/core/migrations/main/0075_capability_model_plugins.sql`，head 核对时 0074 未被占用，未顺延）
+- DEV 偏差：DEV-093（条目 `id` 复用 `pluginMcpIdSchema`——任务书「skills 贡献的 id schema」表述失准，skills 无 id 字段）；DEV-094（testkit 一行编译修复已落；core 6 处 / renderer 1 处 typecheck 中断为固定契约的必然后果，待 P2 / P3 清零，P2/P3 落地前全量 `pnpm test` 的 typecheck 段不会绿）
