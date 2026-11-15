@@ -5,8 +5,9 @@ import { Type } from 'typebox';
 import { AppError, TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
 import { truncateToBudget } from '../agent/tokens.js';
 import type { MediaResolveOptions, MediaUsageContext } from '../media/service.js';
-import type { ImageGenerationResult } from '../media/types.js';
-import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
+import type { ImageGenerationResult, MediaCallControls } from '../media/types.js';
+import { formatPluginProgress } from '../media/plugin-progress.js';
+import type { RunIdentity, ToolContext, ToolDefinition, ToolResult } from '../agent/types.js';
 import type { AttachmentsService } from '../domain/attachments.js';
 import type { ToolGateway } from '../gateway/index.js';
 import {
@@ -37,6 +38,8 @@ const UNDERSTAND_IMAGE_MAX_BYTES = 5_000_000;
  * The slice of MediaService the media-generation tools consume (P15/P17/P25).
  * `resolve`（D124）由 orchestrator 的 facade 注入 botId / model——工具本身不传；
  * 接口与 MediaService 对应方法同形（第三参可选），保证 facade 就是 service 切片。
+ * D125 P3：第四个参数（可选）携带工具 `ctx.signal` / `ctx.progress` 的桥，只有
+ * 执行型插件条目消费（取消链 / 阶段文案）；数据型路径忽略。
  */
 export interface MediaToolFacade {
   generateImage(
@@ -49,12 +52,14 @@ export interface MediaToolFacade {
     },
     usage?: MediaUsageContext | null,
     resolve?: MediaResolveOptions,
+    controls?: MediaCallControls,
   ): Promise<ImageGenerationResult>;
   /** 图片理解（understand_image，docs/design/25-capability-tools.md）。 */
   understandImage(
     input: { images: string[]; prompt: string },
     usage?: MediaUsageContext | null,
     resolve?: MediaResolveOptions,
+    controls?: MediaCallControls,
   ): Promise<{ text: string }>;
   /** 语音合成（generate_speech，docs/design/20-conversation-media.md）。 */
   synthesizeSpeech(
@@ -68,6 +73,7 @@ export interface MediaToolFacade {
     },
     usage?: MediaUsageContext | null,
     resolve?: MediaResolveOptions,
+    controls?: MediaCallControls,
   ): Promise<{ audioBase64: string; mimeType: string }>;
   /** 语音转写（transcribe_audio，docs/design/25-capability-tools.md）。 */
   transcribeSpeech(
@@ -78,6 +84,7 @@ export interface MediaToolFacade {
     },
     usage?: MediaUsageContext | null,
     resolve?: MediaResolveOptions,
+    controls?: MediaCallControls,
   ): Promise<{ text: string }>;
   /** 视频生成：提交返回 taskId，状态用 videoStatus 轮询。 */
   generateVideo(
@@ -88,15 +95,36 @@ export interface MediaToolFacade {
     },
     usage?: MediaUsageContext | null,
     resolve?: MediaResolveOptions,
+    controls?: MediaCallControls,
   ): Promise<{ provider: string; taskId: string }>;
   videoStatus(
     provider: string,
     taskId: string,
+    controls?: MediaCallControls,
   ): Promise<{
     status: 'queued' | 'running' | 'succeeded' | 'failed';
     videoUrl?: string;
     error?: string;
   }>;
+}
+
+/**
+ * D125 P3：工具 → facade 的取消 / 进度桥。插件 progress 帧收成一行状态行文案
+ * （空文案跳过，不覆盖状态行）；`ctx.signal` 原样下传（托管适配器转 cancel 帧）。
+ */
+export function mediaCallControls(
+  ctx: Pick<ToolContext, 'signal' | 'progress'>,
+  onPluginProgress?: () => void,
+): MediaCallControls {
+  return {
+    signal: ctx.signal,
+    onProgress: (payload) => {
+      const text = formatPluginProgress(payload);
+      if (text.length === 0) return;
+      onPluginProgress?.();
+      ctx.progress(text);
+    },
+  };
 }
 
 /** 工具向模型返回的「需要用户设置」错误码；orchestrator 据此中断并改判。 */
@@ -146,7 +174,7 @@ export function buildImageTools(input: {
         }),
       ),
     }),
-    execute: async (params) => {
+    execute: async (params, ctx) => {
       if (identity.conversationId === null || identity.botId === null) {
         return {
           ok: false,
@@ -166,11 +194,16 @@ export function buildImageTools(input: {
       // facade 借这两个错误码记下 setup 需求后原样抛回，这里转 SETUP_REQUIRED。
       let result: ImageGenerationResult;
       try {
-        result = await media.generateImage({
-          prompt: params.prompt,
-          ...(params.n !== undefined ? { n: params.n } : {}),
-          ...(params.model !== undefined ? { model: params.model } : {}),
-        });
+        result = await media.generateImage(
+          {
+            prompt: params.prompt,
+            ...(params.n !== undefined ? { n: params.n } : {}),
+            ...(params.model !== undefined ? { model: params.model } : {}),
+          },
+          undefined,
+          undefined,
+          mediaCallControls(ctx),
+        );
       } catch (error) {
         if (error instanceof AppError) {
           if (error.code === 'CAPABILITY_NOT_CONFIGURED' || error.code === 'PROVIDER_AUTH_FAILED') {
@@ -258,7 +291,7 @@ export function buildImageTools(input: {
         description: '对图片的问题或指令（如「描述这张图」「读出图里的表格数据」）',
       }),
     }),
-    execute: async (params) => {
+    execute: async (params, ctx) => {
       if (identity.conversationId === null || identity.botId === null) {
         return {
           ok: false,
@@ -302,7 +335,12 @@ export function buildImageTools(input: {
       }
       let result: { text: string };
       try {
-        result = await media.understandImage({ images: dataUris, prompt: params.prompt });
+        result = await media.understandImage(
+          { images: dataUris, prompt: params.prompt },
+          undefined,
+          undefined,
+          mediaCallControls(ctx),
+        );
       } catch (error) {
         if (error instanceof AppError) {
           if (error.code === 'CAPABILITY_NOT_CONFIGURED' || error.code === 'PROVIDER_AUTH_FAILED') {

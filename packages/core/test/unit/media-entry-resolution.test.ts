@@ -490,4 +490,83 @@ describe('D125 P2 执行型条目（source: plugin → HostedAdapter 分支）',
     expect(status.status).toBe('running');
     expect(seen).toEqual(['task-42']);
   });
+
+  // --- D125 P3：取消 / 进度只进托管路径的 VendorCallContext ----------------------
+
+  it('D125 P3：resolve.signal / onProgress 进托管适配器上下文（generateVideo / videoStatus）', async () => {
+    const controller = new AbortController();
+    const onProgress = (): void => {};
+    const contexts: Array<{ signal?: AbortSignal; onProgress?: unknown }> = [];
+    const adapter = {
+      embed: async () => [],
+      submitVideo: async (ctx: { signal?: AbortSignal; onProgress?: unknown }) => {
+        contexts.push({ signal: ctx.signal, onProgress: ctx.onProgress });
+        return { taskId: 'hosted-task-1' };
+      },
+      videoStatus: async (ctx: { signal?: AbortSignal; onProgress?: unknown }, taskId: string) => {
+        contexts.push({ signal: ctx.signal, onProgress: ctx.onProgress });
+        return { status: 'running' as const, taskId };
+      },
+    };
+    const hostedVideoEntry: ResolvedEntry = {
+      pluginId: HOSTED_PLUGIN,
+      entryId: 'hosted-video',
+      model: 'hosted-video-1',
+      engine: '',
+      source: 'plugin',
+      instanceId: 'pli_h',
+      instances: ['pli_h'],
+    };
+    const service = makeService(
+      okArkImage,
+      fakeSource([hostedVideoEntry], {
+        entriesFor: async (_botId, capability) =>
+          capability === 'video' ? [hostedVideoEntry] : [],
+        hostedAdapterOf: async () => adapter as never,
+        capabilityInstanceOf: async () => ({
+          pluginId: HOSTED_PLUGIN,
+          engine: '',
+          source: 'plugin' as const,
+          entryId: 'hosted-video',
+          model: 'hosted-video-1',
+        }),
+      }),
+    );
+    const handle = await service.generateVideo(
+      { prompt: '托管视频' },
+      { loopType: 'task' },
+      { botId: 'bot_1', signal: controller.signal, onProgress },
+    );
+    expect(handle).toMatchObject({ provider: 'pli_h', taskId: 'hosted-task-1' });
+    await service.videoStatus(handle.provider, handle.taskId, {
+      signal: controller.signal,
+      onProgress,
+    });
+    expect(contexts).toHaveLength(2);
+    for (const ctx of contexts) {
+      expect(ctx.signal).toBe(controller.signal);
+      expect(ctx.onProgress).toBe(onProgress);
+    }
+  });
+
+  it('D125 P3：数据型路径（内置引擎）不携带 signal / onProgress（行为零变化）', async () => {
+    let seen: RequestInit | undefined;
+    const fetchImpl = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      seen = init;
+      return new Response(
+        JSON.stringify({
+          output: { choices: [{ message: { content: [{ image: 'https://out.example/i.png' }] } }] },
+        }),
+      );
+    }) as unknown as typeof fetch;
+    const service = makeService(fetchImpl, fakeSource(ENTRIES));
+    const controller = new AbortController();
+    await service.generateImage(
+      { prompt: '图' },
+      { loopType: 'task', botId: 'bot_1' },
+      { botId: 'bot_1', signal: controller.signal, onProgress: () => {} },
+    );
+    // 内置引擎适配器只挂自己的超时信号；工具 / run 的取消信号不进引擎路径。
+    expect(seen?.signal).not.toBe(controller.signal);
+  });
 });

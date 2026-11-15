@@ -308,6 +308,40 @@ function probeSource(): string {
   return stageSourceDir('probe', probeFixtureDir, ['plugin.json', 'main.mjs']);
 }
 
+/** 数据型插件（无 runtime 段）：`plugins.runtime.list` 必须忽略它（P3 验收 4）。 */
+function dataPluginSource(): string {
+  const dir = path.join(root, `data-plugin-${Math.random().toString(36).slice(2, 8)}`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    path.join(dir, 'plugin.json'),
+    JSON.stringify(
+      {
+        format_version: 1,
+        id: 'io.test/data-only',
+        name: '数据型插件（测试夹具）',
+        version: '1.0.0',
+        description: '不含 runtime 段的能力条目包：运行时列表不得出现它的行。',
+        usage: '测试专用：与执行型探针同装，断言 plugins.runtime.list 只含执行型插件。',
+        instances: ['capability-model'],
+        contributions: {
+          capabilityModels: [
+            {
+              id: 'data-image',
+              capability: 'image',
+              model: 'data-image-model',
+              engine: 'dashscope',
+              displayName: '数据型图片',
+            },
+          ],
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  return dir;
+}
+
 /** 安装探针 + 建一个实例（探针无凭据字段），返回插件 id 对应的 rig。 */
 async function withProbe(options: RigOptions = {}) {
   const rig = makeRig(options);
@@ -738,8 +772,26 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     rig.host.disposeAll();
   });
 
+  it('error → restart → ready 闭环（P3 验收 1：插件卡「重启运行时」的宿主语义）', async () => {
+    const { rig, instanceId } = await withProbe();
+    await expect(callProbe(rig, instanceId, 'hang')).rejects.toMatchObject({
+      code: 'PLUGIN_TIMEOUT',
+    });
+    expect(rig.host.statusOf(PROBE_ID).status).toBe('error');
+    await rig.host.restart(PROBE_ID);
+    expect(rig.host.statusOf(PROBE_ID).status).toBe('ready');
+    // 最近错误保留（重启不清历史；徽标回 ready 后不显示 tooltip）。
+    expect(rig.host.statusOf(PROBE_ID).lastError).toContain('无响应');
+    const after = await callProbe(rig, instanceId, 'ok');
+    expect((after as { images: unknown[] }).images).toHaveLength(1);
+    rig.host.disposeAll();
+  });
+
   it('plugins.runtime.list：全部已装执行型插件的状态机行；非执行型插件不出现', async () => {
     const { rig, instanceId } = await withProbe();
+    // 同装一个数据型插件（无 runtime 段）：registry 里有它，但运行时列表不得出现。
+    await rig.installSource(dataPluginSource());
+    expect(rig.store.get('io.test/data-only')).not.toBeNull();
     await callProbe(rig, instanceId, 'ok');
     const rows = await rig.host.list();
     expect(rows.map((row) => row.pluginId)).toEqual([PROBE_ID]);
@@ -814,6 +866,69 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     await expect(callProbe(rig, instanceId, 'ok')).rejects.toMatchObject({
       code: 'PROVIDER_UNAVAILABLE',
     });
+    rig.host.disposeAll();
+  });
+
+  // --- D125 P3：进度 / 取消的生产链路（工具 → MediaService → HostedAdapter → Host） ---
+
+  /** 建 Bot 并绑定探针条目（MediaService 的条目路径要求 botId + 条目）。 */
+  const bindProbeBot = (
+    rig: Rig,
+    entries: Array<{ plugin: string; entry: string }> = [{ plugin: PROBE_ID, entry: 'probe-image' }],
+  ): string => {
+    const bot = rig.bots.create({ identity: { name: '探针 Bot' } }, { skipDefaultAgent: true });
+    rig.bots.setPluginIds(bot.id, [PROBE_ID]);
+    rig.bots.setCapabilityEntries(bot.id, entries);
+    return bot.id;
+  };
+
+  it('进度链：host.progress 帧 → MediaService resolve.onProgress（宿主限速后透传）', async () => {
+    const rig = makeRig();
+    await rig.installSource(probeSource());
+    await rig.pluginInstances.create(PROBE_ID, {}, 'capability-model');
+    const botId = bindProbeBot(rig);
+    const progress: unknown[] = [];
+    const result = await rig.media.generateImage(
+      { prompt: '进度测试' },
+      { loopType: 'task', botId },
+      { botId, onProgress: (payload) => progress.push(payload) },
+    );
+    expect(result.images).toHaveLength(1);
+    // 探针 'ok' 行为发一条 progress（phase/percent/message 原样透传）。
+    expect(progress).toEqual([{ phase: 'queued', percent: 10, message: '探针已排队' }]);
+    rig.host.disposeAll();
+  });
+
+  it('取消链（DEV-118）：MediaService resolve.signal → cancel 帧；活动历史标 CANCELLED', async () => {
+    const rig = makeRig({ callTimeoutOverride: { 'media.generateImage': 5_000 } });
+    await rig.installSource(probeSource());
+    await rig.pluginInstances.create(PROBE_ID, {}, 'capability-model');
+    // probe-abort 条目 model = abortable：等宿主 cancel 帧后返回可区分结果。
+    const botId = bindProbeBot(rig, [{ plugin: PROBE_ID, entry: 'probe-abort' }]);
+    const controller = new AbortController();
+    const pending = rig.media.generateImage(
+      { prompt: '取消测试' },
+      { loopType: 'task', botId },
+      { botId, signal: controller.signal },
+    );
+    for (let i = 0; i < 200 && rig.host.statusOf(PROBE_ID).status !== 'busy'; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(rig.host.statusOf(PROBE_ID).status).toBe('busy');
+    controller.abort();
+    // 工具拿到的仍是插件返回（取消由工具侧决定是否采用）；这里断言链路与历史。
+    const result = await pending;
+    expect(result.images[0]?.mimeType).toBe('image/png+aborted');
+    expect(rig.host.statusOf(PROBE_ID).recent[0]).toMatchObject({
+      ok: false,
+      errorCode: 'CANCELLED',
+      message: '调用已取消',
+      contract: 'media',
+      method: 'generateImage',
+    });
+    // 取消不是插件错误：活动历史记 CANCELLED，但不污染「最近错误」。
+    expect(rig.host.statusOf(PROBE_ID).lastError).toBeNull();
+    expect(rig.host.statusOf(PROBE_ID).status).toBe('ready');
     rig.host.disposeAll();
   });
 });

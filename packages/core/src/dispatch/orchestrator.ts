@@ -5840,42 +5840,52 @@ export class Orchestrator {
     // D124：botId 透传给条目解析（MediaService.#resolve 的 ① 分支）；生成工具的
     // 可选 model 参数同样透传（匹配条目 model / displayName）。缺省（botId 空 /
     // 无 model）时 MediaService 走全局槽位路径，行为与从前逐字节一致。
+    // D125 P3：工具第 4 参（取消信号 / 插件进度桥）并入 resolve——只有执行型插件
+    // 条目消费，数据型路径不读取（行为零变化）。
     const resolve = {
       ...(identity.botId !== null ? { botId: identity.botId } : {}),
     };
     return {
-      generateImage: (input) =>
+      generateImage: (input, _usage, _resolve, controls) =>
         setupGuard(
           'image',
           () =>
             media.generateImage(input, usage, {
               ...resolve,
               ...(input.model !== undefined ? { model: input.model } : {}),
+              ...controls,
             }),
         ),
-      understandImage: (input) =>
-        setupGuard('multimodal', () => media.understandImage(input, usage, resolve)),
-      synthesizeSpeech: (input) =>
+      understandImage: (input, _usage, _resolve, controls) =>
+        setupGuard('multimodal', () =>
+          media.understandImage(input, usage, { ...resolve, ...controls }),
+        ),
+      synthesizeSpeech: (input, _usage, _resolve, controls) =>
         setupGuard(
           'tts',
           () =>
             media.synthesizeSpeech(input, usage, {
               ...resolve,
               ...(input.model !== undefined ? { model: input.model } : {}),
+              ...controls,
             }),
         ),
-      transcribeSpeech: (input) =>
-        setupGuard('asr', () => media.transcribeSpeech(input, usage, resolve)),
-      generateVideo: (input) =>
+      transcribeSpeech: (input, _usage, _resolve, controls) =>
+        setupGuard('asr', () =>
+          media.transcribeSpeech(input, usage, { ...resolve, ...controls }),
+        ),
+      generateVideo: (input, _usage, _resolve, controls) =>
         setupGuard(
           'video',
           () =>
             media.generateVideo(input, usage, {
               ...resolve,
               ...(input.model !== undefined ? { model: input.model } : {}),
+              ...controls,
             }),
         ),
-      videoStatus: (provider, taskId) => media.videoStatus(provider, taskId),
+      videoStatus: (provider, taskId, controls) =>
+        media.videoStatus(provider, taskId, { ...resolve, ...controls }),
     };
   }
 

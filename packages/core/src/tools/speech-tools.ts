@@ -4,7 +4,7 @@ import path from 'node:path';
 import { Type } from 'typebox';
 import { AppError, TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
 import { truncateToBudget } from '../agent/tokens.js';
-import { TOOL_SETUP_REQUIRED, type MediaToolFacade } from './image-tools.js';
+import { TOOL_SETUP_REQUIRED, mediaCallControls, type MediaToolFacade } from './image-tools.js';
 import {
   mediaDeliveryResult,
   recordUndeliveredFiles,
@@ -94,7 +94,7 @@ export function buildSpeechTools(input: {
         }),
       ),
     }),
-    execute: async (params) => {
+    execute: async (params, ctx) => {
       if (identity.conversationId === null || identity.botId === null) {
         return {
           ok: false,
@@ -110,13 +110,18 @@ export function buildSpeechTools(input: {
       if (readOnly !== null) return readOnly;
       let result;
       try {
-        result = await media.synthesizeSpeech({
-          text: params.text,
-          ...(params.voice !== undefined ? { voice: params.voice } : {}),
-          ...(params.format !== undefined ? { format: params.format } : {}),
-          ...(params.speed !== undefined ? { speed: params.speed } : {}),
-          ...(params.model !== undefined ? { model: params.model } : {}),
-        });
+        result = await media.synthesizeSpeech(
+          {
+            text: params.text,
+            ...(params.voice !== undefined ? { voice: params.voice } : {}),
+            ...(params.format !== undefined ? { format: params.format } : {}),
+            ...(params.speed !== undefined ? { speed: params.speed } : {}),
+            ...(params.model !== undefined ? { model: params.model } : {}),
+          },
+          undefined,
+          undefined,
+          mediaCallControls(ctx),
+        );
       } catch (error) {
         if (error instanceof AppError) {
           if (error.code === 'CAPABILITY_NOT_CONFIGURED' || error.code === 'PROVIDER_AUTH_FAILED') {
@@ -195,12 +200,23 @@ export function buildSpeechTools(input: {
         '生成的视频要保存到 workspace，本次执行不能生成视频',
       );
       if (readOnly !== null) return readOnly;
+      // D125 P3：插件路径的阶段文案由插件给（host.progress 透传）。一旦插件开口，
+      // 宿主工具自己的轮询文案让位，避免同一状态行出现两份进度。
+      let pluginProgress = false;
+      const controls = mediaCallControls(ctx, () => {
+        pluginProgress = true;
+      });
       let submitted;
       try {
-        submitted = await media.generateVideo({
-          prompt: params.prompt,
-          ...(params.model !== undefined ? { model: params.model } : {}),
-        });
+        submitted = await media.generateVideo(
+          {
+            prompt: params.prompt,
+            ...(params.model !== undefined ? { model: params.model } : {}),
+          },
+          undefined,
+          undefined,
+          controls,
+        );
       } catch (error) {
         if (error instanceof AppError) {
           if (error.code === 'CAPABILITY_NOT_CONFIGURED' || error.code === 'PROVIDER_AUTH_FAILED') {
@@ -215,7 +231,7 @@ export function buildSpeechTools(input: {
         };
       }
 
-      ctx.progress(`视频任务已提交（${submitted.taskId}），等待生成…`);
+      if (!pluginProgress) ctx.progress(`视频任务已提交（${submitted.taskId}），等待生成…`);
       const deadline = Date.now() + VIDEO_TIMEOUT_MS;
       let lastPhase = '';
       for (;;) {
@@ -224,7 +240,7 @@ export function buildSpeechTools(input: {
         }
         let status;
         try {
-          status = await media.videoStatus(submitted.provider, submitted.taskId);
+          status = await media.videoStatus(submitted.provider, submitted.taskId, controls);
         } catch (error) {
           return {
             ok: false,
@@ -234,8 +250,8 @@ export function buildSpeechTools(input: {
         }
         if (status.status !== lastPhase) {
           lastPhase = status.status;
-          if (status.status === 'queued') ctx.progress('视频排队中…');
-          if (status.status === 'running') ctx.progress('视频生成中…');
+          if (!pluginProgress && status.status === 'queued') ctx.progress('视频排队中…');
+          if (!pluginProgress && status.status === 'running') ctx.progress('视频生成中…');
         }
         if (status.status === 'failed') {
           return {
@@ -344,7 +360,7 @@ export function buildSpeechTools(input: {
         Type.String({ description: '语言提示（BCP-47，如 zh），可提高识别准确度' }),
       ),
     }),
-    execute: async (params) => {
+    execute: async (params, ctx) => {
       if (identity.conversationId === null || identity.botId === null) {
         return {
           ok: false,
@@ -379,11 +395,16 @@ export function buildSpeechTools(input: {
       }
       let result: { text: string };
       try {
-        result = await media.transcribeSpeech({
-          audioBase64,
-          audioMime,
-          ...(params.language !== undefined ? { language: params.language } : {}),
-        });
+        result = await media.transcribeSpeech(
+          {
+            audioBase64,
+            audioMime,
+            ...(params.language !== undefined ? { language: params.language } : {}),
+          },
+          undefined,
+          undefined,
+          mediaCallControls(ctx),
+        );
       } catch (error) {
         if (error instanceof AppError) {
           if (error.code === 'CAPABILITY_NOT_CONFIGURED' || error.code === 'PROVIDER_AUTH_FAILED') {

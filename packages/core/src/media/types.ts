@@ -1,5 +1,5 @@
 import type { CoreLogger } from '../infra/logger.js';
-import type { VendorId } from '@kepcup/shared';
+import type { PluginRuntimeProgressPayload, VendorId } from '@kepcup/shared';
 
 /**
  * 厂商媒体适配器的厂商无关契约。每个国内厂商实现一份（adapters/），
@@ -34,6 +34,25 @@ export interface VendorCallContext {
   instanceId?: string;
   /** D125：调用方语言（进 invoke.context.locale）。仅托管路径携带。 */
   locale?: string;
+  /**
+   * D125 P3：run 取消信号（用户取消任务 / 工具超时）。仅托管适配器消费（转发
+   * `cancel` 帧，DEV-118）；内置适配器不读取，数据型路径行为零变化。
+   */
+  signal?: AbortSignal;
+  /**
+   * D125 P3：插件阶段进度（`host.progress` 帧，宿主已限速）→ 工具 `ctx.progress`
+   * （对话内状态行 D55 / 任务详情页 D93）。仅托管路径携带。
+   */
+  onProgress?: (payload: PluginRuntimeProgressPayload) => void;
+}
+
+/**
+ * D125 P3：工具 → 媒体调用的取消 / 进度联动（工具 facade 的第 4 个参数）。
+ * 数据型路径（全局槽位 / 内置引擎）不消费，行为与从前逐字节一致。
+ */
+export interface MediaCallControls {
+  signal?: AbortSignal;
+  onProgress?: (payload: PluginRuntimeProgressPayload) => void;
 }
 
 export interface ImageGenerationParams {

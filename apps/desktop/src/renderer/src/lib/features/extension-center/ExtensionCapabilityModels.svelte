@@ -8,6 +8,8 @@
   import { capabilityEntries } from '$lib/features/plugins/capability-entries.svelte';
   import { ENTRY_GROUP_LABEL_KEYS } from '$lib/features/bot-panel/bot-plugins';
   import CapabilityInstanceForm from '$lib/features/plugins/CapabilityInstanceForm.svelte';
+  import PluginRuntimeStatus from '$lib/features/plugins/PluginRuntimeStatus.svelte';
+  import { pluginRuntime } from '$lib/features/plugins/plugin-runtime.svelte';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
 
@@ -96,6 +98,8 @@
 
   onMount(() => {
     capabilityEntries.start();
+    // D125 P3：插件详情头部的运行状态徽标 / 活动抽屉（非执行型插件无条目）。
+    pluginRuntime.start();
     void capabilityEntries.load().catch(() => undefined);
     void plugins.load().catch(() => undefined);
     void reload().catch((error: unknown) => {
@@ -108,6 +112,12 @@
 </script>
 
 <div class="space-y-5" data-testid="extension-capability-models">
+  <!-- D125 P3：执行型插件的运行状态头部（非执行型插件不渲染任何 DOM，零变化）。 -->
+  {#if pluginRuntime.isExecuting(pluginId)}
+    <div class="flex flex-wrap items-center gap-2" data-testid="plugin-detail-runtime-header">
+      <PluginRuntimeStatus {pluginId} />
+    </div>
+  {/if}
   <!-- 模型条目（只读 + 测试连接） -->
   <section class="space-y-2" data-testid="extension-capability-entries">
     <div class="space-y-0.5">

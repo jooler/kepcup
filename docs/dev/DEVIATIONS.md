@@ -1823,7 +1823,7 @@
 
 ### DEV-118 托管适配器的调用级取消尚未接入工具的 AbortSignal（D125 P2）
 
-- 状态：待 P3/P4 接线
+- 状态：已落实（D125 P3 接线，见 DEV-119）
 - 阶段：D125 P2（2026-11-16）
 - 是否阻塞：否
 - 问题：61 §4 的 `signal`（用户取消任务 / 工具超时 → 插件 `cancel` 帧）在运行时层
@@ -1839,3 +1839,79 @@
   加可选 `signal`，由工具传 `ctx.signal`，`HostedAdapter` 原样转给 `PluginHost.call`。
   运行时与测试已就绪，届时只需接线。
 - 已更新的文档：本条。
+
+### DEV-119 取消链以「工具 facade 第 4 参 + 解析选项可选字段」接线（D125 P3）
+
+- 状态：已落实
+- 阶段：D125 P3（2026-11-16）
+- 是否阻塞：否
+- 问题：DEV-118 要求把工具 `ctx.signal` 接到托管适配器，但 `MediaToolFacade` 与
+  `MediaService` 的公开方法只有三个参数（input / usage / resolve），orchestrator 的
+  facade 又自行组装 resolve（botId / model）。把 signal 塞进 input 或改 facade 结构
+  会触碰 D124 数据面契约（工具调用形状与行为零变化是硬约束）。
+- 影响范围：`packages/core/src/media/{types,service}.ts`、`tools/image-tools.ts` /
+  `speech-tools.ts`、`dispatch/orchestrator.ts`（仅 `#mediaFacade` 注入点）、
+  `plugins/runtime/hosted-adapter.ts`。
+- 决定：facade 方法加**可选第 4 参** `MediaCallControls { signal?, onProgress? }`
+  （`videoStatus` 加可选第 3 参）；orchestrator 的 facade 把它并进
+  `MediaResolveOptions`（新增同名可选字段）；`MediaService.#hostedProvider` 只对
+  执行型条目写进 `VendorCallContext`，内置引擎路径不读取（数据面零变化）。
+  `HostedAdapter` 原样转给 `PluginHost.call`（运行时的 cancel 帧 / progress 透传
+  在 P2 已就绪）。取消链：任务卡取消 / 工具超时 → pi 的 `AbortSignal` →
+  `ctx.signal` → facade → `MediaResolveOptions.signal` → `VendorCallContext.signal`
+  → `PluginHost.call` → `cancel` 帧。
+- 已更新的文档：本条；P3 任务书「实施记录」。
+
+### DEV-120 活动历史用 `errorCode: 'CANCELLED'` 表示取消，不扩记录 schema（D125 P3）
+
+- 状态：已落实
+- 阶段：D125 P3（2026-11-16）
+- 是否阻塞：否
+- 问题：README 固定契约的调用历史 shape 是
+  `{at, contract, method, durationMs, ok, errorCode?, message?}`；P3 任务书要求活动
+  抽屉把被取消的调用标 cancelled。新增字段会改动固定契约的载荷形状。
+- 影响范围：`packages/core/src/plugins/runtime/host.ts`（`#settle` / abort 监听）、
+  shared `pluginRuntimeCallRecordSchema`（未改）、renderer 活动抽屉展示口径。
+- 决定：`PluginHost` 在 `AbortSignal` 触发时给在途调用打 `cancelled` 标记；结算时
+  写 `ok:false, errorCode:'CANCELLED', message:'调用已取消'`——即使插件按自己的
+  语义迟到返回了结果，用户取消也是这次调用的真实结局（抽屉不应把迟到结果当成功）。
+  记录 schema 未改；渲染端把 `CANCELLED` 单列为「已取消」结果态，不当作错误码走
+  `errorText`（取消不是厂商错误）。活动历史的 `lastError`（插件卡 error tooltip 的
+  「最近错误」）只收真实失败，CANCELLED 不写，避免取消污染错误提示。宿主不拦截
+  插件在取消后返回的结果（保持 P2 的 invoke promise 结算语义，工具侧自行按
+  `ctx.signal` 决定是否采用）；取消的 UI 结局以活动历史 / 徽标为准。
+- 已更新的文档：本条；P3 任务书「实施记录」。
+
+### DEV-121 视频阶段文案让位：插件开口后才抑制宿主自己的轮询文案（D125 P3）
+
+- 状态：已落实
+- 阶段：D125 P3（2026-11-16）
+- 是否阻塞：否
+- 问题：任务书要求「插件路径用透传避免双份进度（媒体工具自身轮询的 progress
+  上报点要让位给插件阶段文案）」。但宿主在提交前无法知道插件是否会上报进度；
+  一律抑制会让不上报进度的插件（如参考插件的 `submitVideo`）在状态行上完全静默，
+  反而丢失既有反馈。
+- 影响范围：`packages/core/src/tools/speech-tools.ts`（generate_video）、
+  `media/plugin-progress.ts`（新增格式化）。
+- 决定：工具在本次 `generate_video` 调用内记录「是否已收到插件 progress 帧」；收到
+  后不再发自己的「视频任务已提交 / 排队中 / 生成中」文案（同一状态行不出现两份），
+  未收到时保持既有文案（内置引擎与参考插件行为不变）。`generateVideo` 返回值不变
+  （不新增 `source` 字段，避免数据面返回 shape 变化）。
+- 已更新的文档：本条；P3 任务书「实施记录」。
+
+### DEV-122 非执行型插件的判定来源是 `plugins.runtime.list` 快照（D125 P3）
+
+- 状态：已落实
+- 阶段：D125 P3（2026-11-16）
+- 是否阻塞：否
+- 问题：任务书要求「非执行型插件卡片无状态徽标与活动入口（零变化）」。
+  `PluginSummary`（`plugins.list`）没有 `runtime` 标记——只有 `plugins.inspect`
+  的同意卡披露字段（DEV-117 起为 optional）。为此扩 `PluginSummary` 会动 D124 的
+  列表数据面。
+- 影响范围：renderer `plugin-runtime.svelte.ts`（store）、`PluginRuntimeStatus.svelte`、
+  `ExtensionInstalled.svelte` / `ExtensionCapabilityModels.svelte`（落点）。
+- 决定：渲染端以 `plugins.runtime.list` 是否含该 `pluginId` 判定执行型（core 侧
+  `PluginHost.list()` 只列 manifest 含 `runtime` 段的已装插件）；快照未到 / 非执行型
+  = 组件不渲染任何 DOM（`runtimeBadge(null) === null` 有测试）。`PluginSummary`
+  零改动。
+- 已更新的文档：本条；P3 任务书「实施记录」。

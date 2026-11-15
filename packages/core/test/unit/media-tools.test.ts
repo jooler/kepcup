@@ -33,6 +33,14 @@ const ctx = (signal = new AbortController().signal): ToolContext => ({
   progress: () => {},
 });
 
+/** D125 P3：记录状态行文案 / 可注入取消信号的工具上下文。 */
+const progressCtx = (lines: string[], signal?: AbortSignal): ToolContext => ({
+  identity,
+  signal: signal ?? new AbortController().signal,
+  terminate: () => {},
+  progress: (text) => lines.push(text),
+});
+
 function facade(overrides: Partial<MediaToolFacade>): MediaToolFacade {
   return {
     generateImage: async () => ({ images: [] }),
@@ -669,5 +677,118 @@ describe('文件卡登记：已投递的生成媒体不再列出（recordUndeliv
     const image = tools.find((tool) => tool.name === 'generate_image')!;
     await image.execute({ prompt: '一只猫', file_name: 'cat' }, ctx());
     expect(recorded).toEqual([path.join(workspace, '.generated', 'cat.png')]);
+  });
+});
+
+/**
+ * D125 P3：插件进度 / 取消的工具侧接线（61 §6、DEV-118）。
+ * 工具把 `ctx.signal` / `ctx.progress` 桥成 facade 第 4 参；插件 progress 帧收成
+ * 状态行文案；视频工具在插件开口后不再重复上报宿主自己的阶段文案。
+ */
+describe('插件进度与取消接线（D125 P3）', () => {
+  it('generate_image：ctx.signal 下传 facade；插件 progress → 状态行（message + percent）', async () => {
+    const workspace = path.join(root, 'ws-p3-image');
+    const controller = new AbortController();
+    const seen: Array<{ signal?: AbortSignal; hasProgress: boolean }> = [];
+    const lines: string[] = [];
+    const tools = buildImageTools({
+      identity,
+      media: facade({
+        generateImage: async (_input, _usage, _resolve, controls) => {
+          seen.push({
+            signal: controls?.signal,
+            hasProgress: controls?.onProgress !== undefined,
+          });
+          controls?.onProgress?.({ phase: 'queued', percent: 42.4, message: '生成中' });
+          controls?.onProgress?.({ phase: 'downloading' });
+          controls?.onProgress?.({ phase: 'noop' }); // 无 message/percent → phase 原样
+          return { images: [{ b64: Buffer.from('png-bytes').toString('base64') }] };
+        },
+      }),
+      workspacePath: workspace,
+      attachments: attachmentsFake({}),
+      gateway: gatewayFake(root),
+    });
+    const image = tools.find((tool) => tool.name === 'generate_image')!;
+    const result = await image.execute(
+      { prompt: '一只猫', file_name: 'cat' },
+      progressCtx(lines, controller.signal),
+    );
+    expect(result.ok).toBe(true);
+    expect(seen).toEqual([{ signal: controller.signal, hasProgress: true }]);
+    expect(lines).toEqual(['生成中 42%', 'downloading', 'noop']);
+  });
+
+  it('generate_video：插件给了阶段文案后，宿主自己的轮询文案让位（不双份）', async () => {
+    const workspace = path.join(root, 'ws-p3-video-plugin');
+    const lines: string[] = [];
+    let polls = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(new Uint8Array([1, 2]), { status: 200 })) as typeof fetch;
+    try {
+      const tools = speechTools(
+        {
+          generateVideo: async (_input, _usage, _resolve, controls) => {
+            controls?.onProgress?.({ phase: 'queued', percent: 5, message: '任务已排队' });
+            return { provider: 'pli_x', taskId: 'task_p3' };
+          },
+          videoStatus: async (_provider, _taskId, controls) => {
+            polls += 1;
+            if (polls === 1) {
+              controls?.onProgress?.({ phase: 'generating', percent: 60, message: '生成中' });
+              return { status: 'running' };
+            }
+            return { status: 'succeeded', videoUrl: 'https://example.invalid/v.mp4' };
+          },
+        },
+        { workspace, videoPollIntervalMs: 5 },
+      );
+      const video = tools.find((tool) => tool.name === 'generate_video')!;
+      const result = await video.execute(
+        { prompt: '一只猫', file_name: 'cat' },
+        progressCtx(lines),
+      );
+      expect(result.ok).toBe(true);
+      expect(lines).toEqual(['任务已排队 5%', '生成中 60%']);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('generate_video：内置引擎路径（插件未开口）保持既有宿主阶段文案', async () => {
+    const workspace = path.join(root, 'ws-p3-video-engine');
+    const lines: string[] = [];
+    let polls = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(new Uint8Array([1, 2]), { status: 200 })) as typeof fetch;
+    try {
+      const tools = speechTools(
+        {
+          generateVideo: async () => ({ provider: 'volcengine', taskId: 'task_engine' }),
+          videoStatus: async () => {
+            polls += 1;
+            if (polls === 1) return { status: 'queued' };
+            if (polls === 2) return { status: 'running' };
+            return { status: 'succeeded', videoUrl: 'https://example.invalid/v.mp4' };
+          },
+        },
+        { workspace, videoPollIntervalMs: 5 },
+      );
+      const video = tools.find((tool) => tool.name === 'generate_video')!;
+      const result = await video.execute(
+        { prompt: '一只猫', file_name: 'cat' },
+        progressCtx(lines),
+      );
+      expect(result.ok).toBe(true);
+      expect(lines).toEqual([
+        '视频任务已提交（task_engine），等待生成…',
+        '视频排队中…',
+        '视频生成中…',
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

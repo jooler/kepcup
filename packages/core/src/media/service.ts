@@ -5,6 +5,7 @@ import {
   type CapabilityModelKey,
   type LoopType,
   type ModelCapability,
+  type PluginRuntimeProgressPayload,
   type Settings,
   type VendorId,
 } from '@kepcup/shared';
@@ -139,6 +140,12 @@ export interface MediaResolveOptions {
   botId?: string | null | undefined;
   /** 工具显式 model 参数：匹配条目 model / displayName，未命中回首个条目。 */
   model?: string | undefined;
+  /**
+   * D125 P3：取消信号与插件进度（只对执行型条目生效）。工具传 `ctx.signal` /
+   * `ctx.progress` 桥；数据型路径不读取，行为零变化。
+   */
+  signal?: AbortSignal | undefined;
+  onProgress?: ((payload: PluginRuntimeProgressPayload) => void) | undefined;
 }
 
 interface ResolvedProvider {
@@ -266,8 +273,12 @@ export class MediaService {
     return { provider: resolved.instanceId, taskId: handle.taskId };
   }
 
-  async videoStatus(provider: string, taskId: string): Promise<VideoTaskStatus> {
-    const resolved = await this.#resolveVideoProvider(provider);
+  async videoStatus(
+    provider: string,
+    taskId: string,
+    resolve?: MediaResolveOptions,
+  ): Promise<VideoTaskStatus> {
+    const resolved = await this.#resolveVideoProvider(provider, resolve);
     const fn = resolved.adapter.videoStatus;
     if (fn === undefined) throw this.#unsupported(resolved, 'video');
     return fn(resolved.context, taskId);
@@ -630,7 +641,7 @@ export class MediaService {
     if (resolve?.botId != null && resolve.botId !== '' && this.#entrySource !== undefined) {
       const entries = await this.#entrySource.entriesFor(resolve.botId, capability);
       if (entries.length > 0) {
-        return await this.#resolveEntry(capability, this.#selectEntry(entries, resolve.model));
+        return await this.#resolveEntry(capability, this.#selectEntry(entries, resolve.model), resolve);
       }
     }
     return this.#resolveGlobal(capability, modelId);
@@ -660,6 +671,7 @@ export class MediaService {
   async #resolveEntry(
     capability: MediaCapability,
     entry: ResolvedEntry,
+    resolve?: MediaResolveOptions,
   ): Promise<ResolvedProvider> {
     if (entry.source === 'plugin') {
       const instanceId = this.#entryInstanceOf(entry);
@@ -670,6 +682,7 @@ export class MediaService {
         instanceId,
         entry.model,
         adapter,
+        resolve,
       );
       resolved.entry = { pluginId: entry.pluginId, entryId: entry.entryId, capability };
       if (entry.params !== undefined) resolved.context.entryParams = entry.params;
@@ -722,6 +735,7 @@ export class MediaService {
     instanceId: string,
     modelId: string,
     adapter: VendorAdapter,
+    resolve?: MediaResolveOptions,
   ): ResolvedProvider {
     return {
       vendor: 'custom',
@@ -736,6 +750,9 @@ export class MediaService {
         instanceId,
         locale: this.#settings.get().appLanguage,
         ...(this.#fetchImpl !== undefined ? { fetchImpl: this.#fetchImpl } : {}),
+        // D125 P3：取消 / 进度只走托管路径（内置引擎不读取这两个字段）。
+        ...(resolve?.signal !== undefined ? { signal: resolve.signal } : {}),
+        ...(resolve?.onProgress !== undefined ? { onProgress: resolve.onProgress } : {}),
       },
       adapter,
     };
@@ -884,7 +901,10 @@ export class MediaService {
    * NOT_FOUND 时回落插件实例（D124 条目路径的 generateVideo 返回 pli_…，凭据
    * 经条目仓库读回）；都查不到维持原 NOT_FOUND。
    */
-  async #resolveVideoProvider(provider: string): Promise<ResolvedProvider> {
+  async #resolveVideoProvider(
+    provider: string,
+    resolve?: MediaResolveOptions,
+  ): Promise<ResolvedProvider> {
     try {
       return this.#resolveProvider(provider);
     } catch (error) {
@@ -905,6 +925,7 @@ export class MediaService {
               provider,
               pluginInstance.model,
               adapter,
+              resolve,
             );
             resolved.entry = {
               pluginId: pluginInstance.pluginId,
