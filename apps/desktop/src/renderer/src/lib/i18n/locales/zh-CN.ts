@@ -1952,6 +1952,14 @@ export const zhCN = {
   'plugins.consent.author': '作者',
   'plugins.consent.developerWarn':
     '未审核来源：它的连接应用与 MCP 工具每次调用都需要你确认，也没有持续授权。',
+  'plugins.consent.runtime': '执行型插件（包含可执行代码，在独立子进程中运行）',
+  'plugins.consent.runtimeNetwork': '可联网域名',
+  'plugins.consent.runtimeNetworkEmpty': '未声明联网域名（插件不能访问网络）',
+  'plugins.consent.runtimeNetworkWildcard':
+    '带 * 的条目按通配匹配其子域；这些请求都由应用代插件发出，并记录调用次数。',
+  'plugins.consent.runtimeCredentials': '将请求的凭据（只列字段名，不含值）',
+  'plugins.consent.runtimeCredentialsEmpty': '不需要凭据',
+  'plugins.consent.runtimeStorage': '本地存储：最多 {quota}（插件键值数据，卸载时清除）',
   'plugins.consent.skills': '技能（安装后对所有 Bot 可见）',
   'plugins.consent.skillIncompatible': '与当前环境不兼容：{reason}',
   'plugins.consent.skillDeps': '需要运行时：{deps}',

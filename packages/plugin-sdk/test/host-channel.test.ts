@@ -142,11 +142,12 @@ describe('connectHostApiChannel（插件侧 Host API 代理）', () => {
       channel.isChannelMessage({ type: 'ready', hostApiVersion: 1, contracts: ['media'] }),
     ).toBe(false);
     ipc.emit({ type: 'host-api', requestId: 'ping-1', api: 'ping' });
-    expect(ipc.sent.at(-1)).toEqual({
+    // D125 P4：pong 顺带自报 RSS（宿主 >512MB 记 warn 的观测项）。
+    expect(ipc.sent.at(-1)).toMatchObject({
       type: 'host-api-response',
       requestId: 'ping-1',
       ok: true,
-      value: { pong: true },
+      value: { pong: true, rssBytes: expect.any(Number) },
     });
     channel.dispose();
   });

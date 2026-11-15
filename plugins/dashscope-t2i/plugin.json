@@ -1,0 +1,50 @@
+{
+  "format_version": 1,
+  "id": "io.kepcup/dashscope-t2i",
+  "name": "百炼文生图（执行型试点）",
+  "icon": "icon.svg",
+  "version": "1.0.0",
+  "description": "阿里云百炼 wan 系列异步文生图的首个执行型官方插件试点：插件内自带提交 / 轮询 / 进度 / 错误映射实现（经宿主网络白名单访问 dashscope.aliyuncs.com），产物下载与落附件在应用侧完成。",
+  "usage": "安装后在插件详情「账号实例」添加百炼账号并填入 API Key（百炼控制台 bailian.console.aliyun.com 创建），再到 Bot 详情展开本插件卡片勾选「百炼万相文生图」条目；勾选后该 Bot 的 generate_image 即可走本插件。未填 Key 时调用会提示补配。",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "homepage": "https://kepcup.com",
+  "engines": {
+    "kepcup": ">=0.5.14"
+  },
+  "instances": ["capability-model"],
+  "runtime": {
+    "entry": "dist/main.js",
+    "hostApi": "^1",
+    "network": {
+      "allow": ["dashscope.aliyuncs.com"]
+    },
+    "instanceFields": [
+      {
+        "key": "apiKey",
+        "type": "string",
+        "title": "百炼 API Key",
+        "description": "阿里云百炼控制台（bailian.console.aliyun.com）创建的 API Key；只保存在本机，调用时由应用注入插件进程",
+        "required": true,
+        "sensitive": true
+      }
+    ]
+  },
+  "contributions": {
+    "capabilityModels": [
+      {
+        "id": "wan-t2i",
+        "capability": "image",
+        "model": "wan2.7-t2v",
+        "displayName": "百炼万相文生图（异步）",
+        "description": "百炼 wan 系列异步文生图：提交任务（X-DashScope-Async）→ 轮询任务状态 → 返回图片地址；支持尺寸 / 张数 / 种子参数，排队与生成阶段经插件进度上报。",
+        "params": {
+          "size": "1024*1024",
+          "n": 1
+        }
+      }
+    ]
+  }
+}

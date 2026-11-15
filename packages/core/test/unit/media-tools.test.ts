@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { AppError } from '@kepcup/shared';
 import { buildSpeechTools } from '../../src/tools/speech-tools.js';
 import {
@@ -12,6 +12,23 @@ import {
 import type { AttachmentsService } from '../../src/domain/attachments.js';
 import type { ToolGateway } from '../../src/gateway/index.js';
 import type { RunIdentity, ToolContext, ToolDefinition } from '../../src/agent/types.js';
+
+/**
+ * D125 P4：产物下载经 `safeFetch`，它用 undici 自身的 fetch（与 SSRF Agent 同版本）。
+ * 视频下载测试打桩 undici.fetch，而不是 globalThis.fetch。
+ */
+const undiciFetchMock = vi.hoisted(() => vi.fn());
+vi.mock('undici', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('undici')>();
+  return { ...actual, fetch: undiciFetchMock };
+});
+
+const stubDownload = (bytes: number[]): void => {
+  undiciFetchMock.mockImplementation(
+    async () => new Response(new Uint8Array(bytes), { status: 200 }),
+  );
+};
+afterEach(() => undiciFetchMock.mockReset());
 
 /**
  * generate_speech / generate_video / transcribe_audio / understand_image 工具
@@ -375,29 +392,23 @@ describe('投递失败时的工具结果（不得谎称已显示）', () => {
 
   it('generate_video：超过附件上限 → 回路径与原因', async () => {
     const workspace = path.join(root, 'ws-delivery-video-fail');
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () =>
-      new Response(new Uint8Array([1, 2, 3]), { status: 200 })) as typeof fetch;
-    try {
-      const tools = buildSpeechTools({
-        identity,
-        media: facade(),
-        workspacePath: workspace,
-        attachments: attachmentsFake({}),
-        gateway: gatewayFake(root),
-        delivery: {
-          send: (files) => failedOutcome(files[0]!, '文件过大（40.0MB，附件上限 30.0MB）'),
-        },
-      });
-      const video = tools.find((tool) => tool.name === 'generate_video')!;
-      const result = await video.execute({ prompt: 'x', file_name: 'v' }, ctx());
-      expect(result.ok).toBe(true);
-      expect(result.content).toContain(path.join(workspace, '.generated', 'v.mp4'));
-      expect(result.content).toContain('文件过大');
-      expect(result.content).not.toContain('无需再调 send_message');
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    stubDownload([1, 2, 3]);
+    const tools = buildSpeechTools({
+      identity,
+      media: facade(),
+      workspacePath: workspace,
+      attachments: attachmentsFake({}),
+      gateway: gatewayFake(root),
+      delivery: {
+        send: (files) => failedOutcome(files[0]!, '文件过大（40.0MB，附件上限 30.0MB）'),
+      },
+    });
+    const video = tools.find((tool) => tool.name === 'generate_video')!;
+    const result = await video.execute({ prompt: 'x', file_name: 'v' }, ctx());
+    expect(result.ok).toBe(true);
+    expect(result.content).toContain(path.join(workspace, '.generated', 'v.mp4'));
+    expect(result.content).toContain('文件过大');
+    expect(result.content).not.toContain('无需再调 send_message');
   });
 });
 
@@ -416,19 +427,13 @@ describe('generate_video', () => {
       },
       { workspace, videoPollIntervalMs: 5 },
     );
-    // 让下载得到确定字节：替换全局 fetch。
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () =>
-      new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 })) as typeof fetch;
-    try {
-      const video = tools.find((tool) => tool.name === 'generate_video')!;
-      const result = await video.execute({ prompt: '一只猫', file_name: 'cat' }, ctx());
-      expect(result.ok).toBe(true);
-      expect(result.content).toContain('cat.mp4');
-      expect(readFileSync(path.join(workspace, '.generated', 'cat.mp4')).length).toBe(4);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    // 让下载得到确定字节（safeFetch 走 undici.fetch）。
+    stubDownload([1, 2, 3, 4]);
+    const video = tools.find((tool) => tool.name === 'generate_video')!;
+    const result = await video.execute({ prompt: '一只猫', file_name: 'cat' }, ctx());
+    expect(result.ok).toBe(true);
+    expect(result.content).toContain('cat.mp4');
+    expect(readFileSync(path.join(workspace, '.generated', 'cat.mp4')).length).toBe(4);
   });
 
   it('任务失败 → 携带厂商原因的失败结果', async () => {
@@ -723,72 +728,60 @@ describe('插件进度与取消接线（D125 P3）', () => {
     const workspace = path.join(root, 'ws-p3-video-plugin');
     const lines: string[] = [];
     let polls = 0;
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () =>
-      new Response(new Uint8Array([1, 2]), { status: 200 })) as typeof fetch;
-    try {
-      const tools = speechTools(
-        {
-          generateVideo: async (_input, _usage, _resolve, controls) => {
-            controls?.onProgress?.({ phase: 'queued', percent: 5, message: '任务已排队' });
-            return { provider: 'pli_x', taskId: 'task_p3' };
-          },
-          videoStatus: async (_provider, _taskId, controls) => {
-            polls += 1;
-            if (polls === 1) {
-              controls?.onProgress?.({ phase: 'generating', percent: 60, message: '生成中' });
-              return { status: 'running' };
-            }
-            return { status: 'succeeded', videoUrl: 'https://example.invalid/v.mp4' };
-          },
+    stubDownload([1, 2]);
+    const tools = speechTools(
+      {
+        generateVideo: async (_input, _usage, _resolve, controls) => {
+          controls?.onProgress?.({ phase: 'queued', percent: 5, message: '任务已排队' });
+          return { provider: 'pli_x', taskId: 'task_p3' };
         },
-        { workspace, videoPollIntervalMs: 5 },
-      );
-      const video = tools.find((tool) => tool.name === 'generate_video')!;
-      const result = await video.execute(
-        { prompt: '一只猫', file_name: 'cat' },
-        progressCtx(lines),
-      );
-      expect(result.ok).toBe(true);
-      expect(lines).toEqual(['任务已排队 5%', '生成中 60%']);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+        videoStatus: async (_provider, _taskId, controls) => {
+          polls += 1;
+          if (polls === 1) {
+            controls?.onProgress?.({ phase: 'generating', percent: 60, message: '生成中' });
+            return { status: 'running' };
+          }
+          return { status: 'succeeded', videoUrl: 'https://example.invalid/v.mp4' };
+        },
+      },
+      { workspace, videoPollIntervalMs: 5 },
+    );
+    const video = tools.find((tool) => tool.name === 'generate_video')!;
+    const result = await video.execute(
+      { prompt: '一只猫', file_name: 'cat' },
+      progressCtx(lines),
+    );
+    expect(result.ok).toBe(true);
+    expect(lines).toEqual(['任务已排队 5%', '生成中 60%']);
   });
 
   it('generate_video：内置引擎路径（插件未开口）保持既有宿主阶段文案', async () => {
     const workspace = path.join(root, 'ws-p3-video-engine');
     const lines: string[] = [];
     let polls = 0;
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () =>
-      new Response(new Uint8Array([1, 2]), { status: 200 })) as typeof fetch;
-    try {
-      const tools = speechTools(
-        {
-          generateVideo: async () => ({ provider: 'volcengine', taskId: 'task_engine' }),
-          videoStatus: async () => {
-            polls += 1;
-            if (polls === 1) return { status: 'queued' };
-            if (polls === 2) return { status: 'running' };
-            return { status: 'succeeded', videoUrl: 'https://example.invalid/v.mp4' };
-          },
+    stubDownload([1, 2]);
+    const tools = speechTools(
+      {
+        generateVideo: async () => ({ provider: 'volcengine', taskId: 'task_engine' }),
+        videoStatus: async () => {
+          polls += 1;
+          if (polls === 1) return { status: 'queued' };
+          if (polls === 2) return { status: 'running' };
+          return { status: 'succeeded', videoUrl: 'https://example.invalid/v.mp4' };
         },
-        { workspace, videoPollIntervalMs: 5 },
-      );
-      const video = tools.find((tool) => tool.name === 'generate_video')!;
-      const result = await video.execute(
-        { prompt: '一只猫', file_name: 'cat' },
-        progressCtx(lines),
-      );
-      expect(result.ok).toBe(true);
-      expect(lines).toEqual([
-        '视频任务已提交（task_engine），等待生成…',
-        '视频排队中…',
-        '视频生成中…',
-      ]);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+      },
+      { workspace, videoPollIntervalMs: 5 },
+    );
+    const video = tools.find((tool) => tool.name === 'generate_video')!;
+    const result = await video.execute(
+      { prompt: '一只猫', file_name: 'cat' },
+      progressCtx(lines),
+    );
+    expect(result.ok).toBe(true);
+    expect(lines).toEqual([
+      '视频任务已提交（task_engine），等待生成…',
+      '视频排队中…',
+      '视频生成中…',
+    ]);
   });
 });

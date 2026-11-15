@@ -209,7 +209,7 @@ export const pluginRuntimeDisclosureSchema = z.strictObject({
   hostApi: z.string(),
   /** `runtime.network.allow` 域名白名单（精确 host 或 '*.domain'）。 */
   networkDomains: z.array(z.string()),
-  /** 实例凭据字段名（键名；v1 执行型插件尚未声明字段面时为空的数组）。 */
+  /** 实例凭据字段名（键名；D125 P4 起 = `runtime.instanceFields` 的敏感键 ∪ 引擎凭据）。 */
   credentialFields: z.array(z.string()),
   /** `host.storage` 配额（字节，10MB）。 */
   storageQuotaBytes: z.number().int().positive().default(PLUGIN_RUNTIME_STORAGE_QUOTA_BYTES),

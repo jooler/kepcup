@@ -187,15 +187,25 @@ export function connectHostApiChannel(ipc: HostChannelIpc): HostApiChannel {
   };
 
   const listener = (message: unknown): void => {
-    // 宿主 → 插件的 ping（看门狗）：立即回 pong，证明事件循环还活着。
+    // 宿主 → 插件的 ping（看门狗）：立即回 pong，证明事件循环还活着。pong 顺带带上
+    // 自身 RSS（61 §3.3「RSS > 512MB 记 warn」观测项）：宿主用这条轻量自报代替
+    // pidusage 依赖；只用于日志，不参与任何治理判定。
     const request = pluginHostApiRequestSchema.safeParse(message);
     if (request.success) {
       if (request.data.api === 'ping') {
+        const memoryUsage = (globalThis as { process?: { memoryUsage?: () => { rss?: number } } })
+          .process?.memoryUsage;
+        let rssBytes: number | undefined;
+        try {
+          rssBytes = memoryUsage?.().rss;
+        } catch {
+          rssBytes = undefined;
+        }
         sendRaw({
           type: 'host-api-response',
           requestId: request.data.requestId,
           ok: true,
-          value: { pong: true },
+          value: { pong: true, ...(rssBytes !== undefined ? { rssBytes } : {}) },
         });
       }
       return;

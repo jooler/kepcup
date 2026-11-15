@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { untrustedBlock } from '../infra/data-boundary.js';
+import { safeFetch } from '../infra/safe-dispatcher.js';
 import path from 'node:path';
 import { Type } from 'typebox';
 import { AppError, TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
@@ -383,7 +384,9 @@ async function imageBytes(image: { b64?: string; url?: string }): Promise<Buffer
     return Buffer.from(image.b64, 'base64');
   }
   if (image.url !== undefined && image.url.length > 0) {
-    const response = await fetch(image.url);
+    // D125 P4：产物 URL 可能来自执行型插件——统一走 SSRF 守卫（私网 / 元数据拒绝，
+    // 重定向逐跳复检）；公网厂商 URL 行为不变。
+    const response = await safeFetch(image.url);
     if (!response.ok) return null;
     return Buffer.from(await response.arrayBuffer());
   }

@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { untrustedBlock } from '../infra/data-boundary.js';
+import { safeFetch } from '../infra/safe-dispatcher.js';
 import path from 'node:path';
 import { Type } from 'typebox';
 import { AppError, TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
@@ -271,8 +272,9 @@ export function buildSpeechTools(input: {
           let bytes: Buffer;
           try {
             // 下载挂取消信号与独立超时：此前裸 fetch 既不响应 run 取消也无上限，
-            // 慢速 CDN 可绕过 10 分钟轮询 deadline 把工具无限挂起。
-            const response = await fetch(status.videoUrl, {
+            // 慢速 CDN 可绕过 10 分钟轮询 deadline 把工具无限挂起。D125 P4：产物 URL
+            // 可能来自执行型插件，统一走 SSRF 守卫（私网 / 元数据拒绝，重定向逐跳复检）。
+            const response = await safeFetch(status.videoUrl, {
               signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(VIDEO_DOWNLOAD_TIMEOUT_MS)]),
             });
             if (!response.ok) {

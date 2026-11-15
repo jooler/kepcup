@@ -40,8 +40,8 @@ node packages/app-validator/dist/cli.js validate plugins/reference-media
 
 ## 备注
 
-- `engines.kepcup` 当前对齐仓库应用版本（0.5.14）；`runtime` 段真正可用的最低版本以
-  P2（PluginHost 接线）发版为准，届时按需抬高。
-- 实例凭据：本阶段 manifest schema 对执行型条目没有凭据字段声明位（D124 的实例字段
-  从引擎 `credentialFields` 并集派生，执行型条目无引擎）——假实现不需要凭据；声明位
-  在 P2 安装管线补（61 §2「凭据字段名进同意卡披露」）。
+- `engines.kepcup` 对齐仓库应用版本（0.5.14，D125 P4 收口版本）；`runtime` 段随该版本可用。
+- 实例凭据：执行型插件的实例字段声明面是 `runtime.instanceFields`（D125 P4 / DEV-114，
+  复用 D105 字段 schema；`sensitive: true` 走实例 secrets，调用时经 `ctx.credentials`
+  注入）。参考插件是假实现、不需要凭据，因此没有声明；真实插件参见
+  [`plugins/dashscope-t2i`](../dashscope-t2i/)。

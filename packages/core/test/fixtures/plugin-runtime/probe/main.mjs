@@ -20,12 +20,16 @@
 //   env         → 报告 env 白名单 / cwd / execArgv（进程边界测试）
 //   stderr      → 写 stderr 后返回（宿主日志收集 / 限速测试）
 //   creds       → 回显注入的 credentials 键与 apiKey（调用时注入测试）
+//   ctx         → 回显 invoke.context.instanceId（D125 P4 / DEV-114）
 //   secret      → host.secrets.get(context.params.key)（前缀越权测试）
 
 const ONE_BY_ONE_PNG_DATA_URL =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 
 const CONTRACTS = ['media'];
+// 目录名带 probe-legacy = 模拟旧 SDK 的 ready 帧（不带 features，宿主因此不发送
+// invoke.context.instanceId）。同一份夹具，便于 D125 P4 的兼容性对照。
+const LEGACY_SDK = import.meta.url.includes('probe-legacy');
 let ready = false;
 let busy = false;
 let requestSeq = 0;
@@ -45,7 +49,12 @@ process.on('message', (message) => {
         return;
       }
       ready = true;
-      process.send({ type: 'ready', hostApiVersion: 1, contracts: CONTRACTS });
+      process.send({
+        type: 'ready',
+        hostApiVersion: 1,
+        contracts: CONTRACTS,
+        ...(LEGACY_SDK ? {} : { features: ['invoke.context.instanceId'] }),
+      });
       return;
     case 'invoke':
       void handleInvoke(message);
@@ -64,7 +73,8 @@ process.on('message', (message) => {
           type: 'host-api-response',
           requestId: message.requestId,
           ok: true,
-          value: { pong: true },
+          // P4 观测项：宿主从 pong 里读自报 RSS（>512MB 记 warn）。
+          value: { pong: true, rssBytes: process.memoryUsage().rss },
         });
       }
       return;
@@ -198,6 +208,17 @@ async function handleInvoke(frame) {
           {
             url: ONE_BY_ONE_PNG_DATA_URL,
             mimeType: `image/png+${keys}+${credentials.apiKey ?? ''}`,
+          },
+        ],
+      });
+      return;
+    }
+    if (model === 'ctx') {
+      sendResult(callId, {
+        images: [
+          {
+            url: ONE_BY_ONE_PNG_DATA_URL,
+            mimeType: `image/png+${frame.context.instanceId ?? ''}`,
           },
         ],
       });

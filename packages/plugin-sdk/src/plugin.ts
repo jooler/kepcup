@@ -35,6 +35,11 @@ export interface MediaCallContext {
   entryId: string;
   /** 厂商模型 id（条目 model）。 */
   model: string;
+  /**
+   * 本次调用所属实例 id（D125 P4 / DEV-114）；无实例的调用为空串。多实例插件据此
+   * 把 `credentials` 与实例的非敏感配置对齐（`host.secrets.get` 也按实例前缀裁决）。
+   */
+  instanceId: string;
   /** 调用方 locale（如 'zh-CN'）。 */
   locale: string;
   /**

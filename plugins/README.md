@@ -15,6 +15,8 @@ plugins/
   im-<id>/             即时通讯插件（D107）：instances: ['im'] + 一份 im 贡献
   dashscope/           阿里云百炼（D124）：instances: ['capability-model'] + 20 条模型条目
   volcengine-ark/      火山方舟（D124）：instances: ['capability-model'] + 7 条模型条目
+  dashscope-t2i/       百炼文生图（D125 执行型试点）：runtime 段 + 自带代码 + 1 条 image 条目
+  reference-media/     执行型参考插件（D125）：media 契约假实现，开发者调试用
   README.md
 ```
 
@@ -46,6 +48,14 @@ plugins/
   （厂商模型 id 含点号时进 `model` 字段原样保留）；实例（厂商账号）凭据由引擎
   `credentialFields` 声明、敏感值只进 secrets。机制见
   [docs/design/60-capability-model-plugins.md](../docs/design/60-capability-model-plugins.md)。
+- **执行型插件（D125）**：清单增 `runtime` 段（`entry` / `hostApi` / `network.allow` /
+  `instanceFields`），包内带 esbuild 打包的单文件 ESM（`dist/main.js`，**不入库**）；
+  条目**不填 `engine`**，执行逻辑在插件代码里（经 `host.net.fetch` 等 Host API）。
+  只允许 builtin / verified / developer 层级；市场签名前逐版本静态扫描（native /
+  eval / 动态远程 import / 域名白名单一致性），fail 不出包。实例字段由
+  `runtime.instanceFields` 声明（敏感值入 secrets，调用时注入凭据）。开发约定见
+  [packages/plugin-sdk/README.md](../packages/plugin-sdk/README.md)，首个试点
+  `dashscope-t2i/`（百炼文生图），现状见 [61 §12](../docs/design/61-plugin-runtime-platform.md#12-现状d125-收口后)。
 - **MCP 插件凭据方案**：`contributions.mcp` 的 http 贡献可给 header 模板加
   `scheme`（当前仅 `"bearer"`）声明该 header 用裸凭据：宿主保存时 strip 用户自己粘的
   `Bearer `、发送时自动补前缀。未声明 `scheme` 的 header / 其他 MCP server 行为不变。

@@ -147,6 +147,8 @@ describe('0013 public_skills 迁移', () => {
     db.exec('drop table stickies;');
     // main 0074（右栏对话便签）的 conversation_notes 表同样摘除（纯新增，回放时重建）。
     db.exec('drop table conversation_notes;');
+    // main 0076（D125 插件运行时）的 plugin_storage 同样摘除（纯新增，回放时重建）。
+    db.exec('drop table plugin_storage;');
     // main 0075（D124 能力模型插件化）给 usage_ledger 加的两列同样摘除
     // （ADD COLUMN 不可原样重放）；plugin_items / plugin_instances 随 0053/0056
     // 的摘除整表回退，0075 本体重放时重建。

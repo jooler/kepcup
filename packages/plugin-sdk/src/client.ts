@@ -1,6 +1,7 @@
 import {
   MEDIA_CONTRACT_METHODS,
   PLUGIN_RUNTIME_HOST_API_VERSION,
+  PLUGIN_RUNTIME_INSTANCE_ID_FEATURE,
   imageGenerationParamsSchema,
   imageGenerationResultSchema,
   pluginRuntimeHostToPluginFrameSchema,
@@ -387,6 +388,8 @@ export function runPluginRuntime(
       type: 'ready',
       hostApiVersion: PLUGIN_RUNTIME_HOST_API_VERSION,
       contracts: declaredContracts,
+      // D125 P4：声明认识的增量 invoke 字段；旧 SDK 不带，宿主据此不发送 instanceId。
+      features: [PLUGIN_RUNTIME_INSTANCE_ID_FEATURE],
     });
   }
 
@@ -441,6 +444,7 @@ export function runPluginRuntime(
       host,
       entryId: frame.context.entryId,
       model: frame.context.model,
+      instanceId: frame.context.instanceId ?? '',
       locale: frame.context.locale,
       params: frame.context.params,
       credentials: frame.context.credentials,

@@ -776,10 +776,29 @@ export const pluginRuntimeSectionSchema = z
           .max(32),
       })
       .optional(),
+    /**
+     * D125 P4（DEV-114 方案 1）：执行型插件的实例字段声明面——复用 D105 的
+     * `pluginFieldSchema`（表单 / 校验 / secrets 管线全部沿用），`sensitive: true`
+     * 的值走实例 secrets（`plugin:{pluginId}:instance:{instanceId}:{key}`），调用时
+     * 经 `invoke.context.credentials` 注入。声明序去重；与数据型条目的引擎凭据字段
+     * 并集构成实例表单（core `capabilityModelInstanceFields`）。
+     */
+    instanceFields: z.array(pluginFieldSchema).max(16).optional(),
     /** 每插件进程内调用并发上限（v1 运行时恒串行排队，本字段预留）。 */
     maxConcurrent: z.number().int().min(1).max(4).default(1),
   })
   .superRefine((runtime, ctx) => {
+    const seenFields = new Set<string>();
+    (runtime.instanceFields ?? []).forEach((field, index) => {
+      if (seenFields.has(field.key)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['instanceFields', index, 'key'],
+          message: `实例字段重复：${field.key}`,
+        });
+      }
+      seenFields.add(field.key);
+    });
     // Trim 纪律同 mail/im host：空白填充的路径不能当合法 entry 通过（否则 P2 到
     // 安装管线才以令人困惑的方式失败）。
     if (runtime.entry.trim() !== runtime.entry) {

@@ -34,6 +34,7 @@ import {
   describePermission,
   diffPermissions,
   permissionTokens,
+  unionPermissionTokens,
   type ConsentItems,
 } from './permissions.js';
 import type { PluginRow, PluginStore } from './store.js';
@@ -964,20 +965,32 @@ export class PluginRegistry {
       throw new AppError('PLUGIN_INCOMPATIBLE', newInspection.blockers.join('；'));
     }
     this.#prevalidateUpdateUserConfig(manifest, newInspection, input.userConfig, row.id);
+    // D125 P4：执行型插件的网络域名 / 敏感实例字段也进扩权 diff（扩大 → 重新同意）。
+    const oldRuntimeDisclosure = await runtimeDisclosureOf(oldManifest, {
+      dir: oldDir,
+      tier: this.#identityOf(row).tier,
+    });
+    const newRuntimeDisclosure = await runtimeDisclosureOf(manifest, {
+      dir: staged.stagingDir,
+      tier,
+    });
     const diff = diffPermissions(
-      permissionTokens(
-        itemsOf(
-          await this.#inspectContext({
-            plugin: this.#identityOf(row),
-            manifest: oldManifest,
-            dir: oldDir,
-            userConfig: {},
-            ledger: new NullLedger(),
-            owned,
-          }),
+      unionPermissionTokens(
+        permissionTokens(
+          itemsOf(
+            await this.#inspectContext({
+              plugin: this.#identityOf(row),
+              manifest: oldManifest,
+              dir: oldDir,
+              userConfig: {},
+              ledger: new NullLedger(),
+              owned,
+            }),
+          ),
         ),
+        oldRuntimeDisclosure.runtime,
       ),
-      permissionTokens(itemsOf(newInspection)),
+      unionPermissionTokens(permissionTokens(itemsOf(newInspection)), newRuntimeDisclosure.runtime),
     );
     if (diff.expanded && !input.acknowledgeDiff) {
       throw new AppError('INVALID_INPUT', '更新新增了权限，请先确认差异', {
@@ -1895,9 +1908,13 @@ export class PluginRegistry {
             ledger: new NullLedger(),
             owned,
           });
+          const oldRuntimeDisclosure = await runtimeDisclosureOf(oldManifest, {
+            dir: this.#slotDirOf(existingRow),
+            tier: this.#identityOf(existingRow).tier,
+          });
           const diff = diffPermissions(
-            permissionTokens(oldItems.items),
-            permissionTokens(inspection.items),
+            unionPermissionTokens(permissionTokens(oldItems.items), oldRuntimeDisclosure.runtime),
+            unionPermissionTokens(permissionTokens(inspection.items), runtimeCheck.runtime),
           );
           update = {
             from: existingRow.version,

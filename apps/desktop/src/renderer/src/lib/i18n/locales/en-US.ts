@@ -780,7 +780,7 @@ export const enUS = {
   // --- D124: model entry toggles (plugin card expanded area) ---------------------
   'botPanel.plugins.entries': 'Model entries',
   'botPanel.plugins.entriesHint':
-    'Checked entries take priority over the global default for this bot\'s image / video / speech generation tools.',
+    "Checked entries take priority over the global default for this bot's image / video / speech generation tools.",
   'botPanel.plugins.entryGroup.image': 'Image generation',
   'botPanel.plugins.entryGroup.video': 'Video generation',
   'botPanel.plugins.entryGroup.tts': 'Speech synthesis',
@@ -2022,6 +2022,17 @@ export const enUS = {
   'plugins.consent.author': 'Author',
   'plugins.consent.developerWarn':
     'Unreviewed source: tools from its connected apps and MCP servers need your confirmation on every call, with no standing grants.',
+  'plugins.consent.runtime': 'Executable plugin (ships code and runs in a separate child process)',
+  'plugins.consent.runtimeNetwork': 'Network domains',
+  'plugins.consent.runtimeNetworkEmpty':
+    'No network domains declared (the plugin cannot use the network)',
+  'plugins.consent.runtimeNetworkWildcard':
+    'Entries starting with * match their subdomains; these requests are made by the app on the plugin’s behalf and counted per domain.',
+  'plugins.consent.runtimeCredentials':
+    'Credentials it will request (field names only, never values)',
+  'plugins.consent.runtimeCredentialsEmpty': 'No credentials required',
+  'plugins.consent.runtimeStorage':
+    'Local storage: up to {quota} (plugin key-value data, removed on uninstall)',
   'plugins.consent.skills': 'Skills (visible to all Bots once installed)',
   'plugins.consent.skillIncompatible': 'Incompatible with this environment: {reason}',
   'plugins.consent.skillDeps': 'Needs runtimes: {deps}',
