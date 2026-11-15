@@ -111,6 +111,10 @@ export class HostedAdapter implements VendorAdapter {
         ...(ctx.locale !== undefined ? { locale: ctx.locale } : {}),
         ...(ctx.entryParams !== undefined ? { params: ctx.entryParams } : {}),
         instanceId: ctx.instanceId ?? '',
+        // D125 P3（DEV-118）：工具的 AbortSignal → Host cancel 帧；插件 progress
+        // 帧 → 工具的 ctx.progress（对话内状态行 / 任务详情页）。
+        ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}),
+        ...(ctx.onProgress !== undefined ? { onProgress: ctx.onProgress } : {}),
       });
       return output as T;
     } catch (error) {

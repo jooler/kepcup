@@ -30,6 +30,8 @@
   import PluginInstallDialog from '../plugins/PluginInstallDialog.svelte';
   import PluginFieldForm from '../plugins/PluginFieldForm.svelte';
   import PluginIcon from '../plugins/PluginIcon.svelte';
+  import PluginRuntimeStatus from '../plugins/PluginRuntimeStatus.svelte';
+  import { pluginRuntime } from '../plugins/plugin-runtime.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
@@ -63,6 +65,8 @@
 
   $effect(() => {
     plugins.start();
+    // D125 P3：执行型插件运行状态（事件 + 初始快照）；非执行型插件没有条目。
+    pluginRuntime.start();
     void plugins.load(true);
   });
 
@@ -625,6 +629,11 @@
         <Badge variant="outline" data-testid={`plugins-update-badge-${plugin.id}`}>
           {t('plugins.update.available', { version: plugin.updateAvailable.version })}
         </Badge>
+      {/if}
+      <!-- D125 P3：执行型插件运行状态徽标 / 活动入口（非执行型插件连组件都不挂载，
+           无徽标 / 活动入口节点，数据型插件卡零可见变化）。 -->
+      {#if pluginRuntime.isExecuting(plugin.id)}
+        <PluginRuntimeStatus pluginId={plugin.id} class="ms-auto" />
       {/if}
     </div>
     {#if plugin.description.length > 0}

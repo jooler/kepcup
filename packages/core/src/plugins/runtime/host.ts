@@ -155,6 +155,8 @@ interface PendingCall {
   logCount: number;
   logWarned: boolean;
   settled: boolean;
+  /** D125 P3：调用被 AbortSignal 取消过（活动历史标 CANCELLED，与厂商错误区分）。 */
+  cancelled: boolean;
   resolve(output: unknown): void;
   reject(error: unknown): void;
 }
@@ -420,6 +422,7 @@ export class PluginHost {
         logCount: 0,
         logWarned: false,
         settled: false,
+        cancelled: false,
         resolve: (output) => {
           this.#settle(live, pending, null);
           resolve(output);
@@ -452,6 +455,9 @@ export class PluginHost {
       if (ctx.signal !== undefined) {
         const onAbort = (): void => {
           if (pending.settled) return;
+          // 历史里标 cancelled（D125 P3）：即使插件按自己的语义返回了结果，这次
+          // 调用也是被用户取消的，插件活动抽屉据此显示「已取消」。
+          pending.cancelled = true;
           try {
             this.#send(live, { type: 'cancel', callId });
           } catch {
@@ -500,7 +506,19 @@ export class PluginHost {
     pending.abortCleanup = null;
     live.pending.delete(pending.callId);
     const durationMs = Math.max(0, Date.now() - pending.startedAt);
-    if (error === null) {
+    if (pending.cancelled) {
+      // 取消优先于插件自己的返回（D125 P3）：用户取消 / 工具超时是这次调用的真实
+      // 结局，活动抽屉据此标「已取消」而不是把插件迟到返回的结果当成功。
+      this.#record(live.descriptor.pluginId, {
+        at: pending.startedAt,
+        contract: pending.contract,
+        method: pending.method,
+        durationMs,
+        ok: false,
+        errorCode: 'CANCELLED',
+        message: '调用已取消',
+      });
+    } else if (error === null) {
       this.#record(live.descriptor.pluginId, {
         at: pending.startedAt,
         contract: pending.contract,
@@ -1208,7 +1226,11 @@ export class PluginHost {
     const state = this.#stateOf(pluginId);
     state.recent.unshift(record);
     if (state.recent.length > HISTORY_MAX) state.recent.length = HISTORY_MAX;
-    if (!record.ok && record.message !== null) state.lastError = record.message;
+    // 取消不是插件错误（D125 P3 / DEV-120）：活动历史照记 CANCELLED，但「最近错误」
+    // 只收真实失败，避免插件卡 error tooltip 被「调用已取消」污染。
+    if (!record.ok && record.errorCode !== 'CANCELLED' && record.message !== null) {
+      state.lastError = record.message;
+    }
   }
 
   #send(live: LiveProcess, frame: Record<string, unknown> | object): void {
