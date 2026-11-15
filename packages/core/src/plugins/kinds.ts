@@ -360,14 +360,20 @@ function mcpInstanceFields(manifest: PluginManifest): PluginField[] {
  * credentialFields` 去重（保序：条目声明序；同名键以首个引擎的声明为准）。
  * 引擎在安装期已校验（PLUGIN_ENGINE_UNKNOWN），这里对未知引擎防御性跳过
  * （旧版本清单 / 手工构造的 manifest 不至于让实例表单崩溃）。
+ *
+ * D125 P4（DEV-114 方案 1）：执行型插件（manifest 含 `runtime`）的实例字段来自
+ * `runtime.instanceFields` 声明面——执行型条目不填 `engine`，凭据只在插件自己的
+ * 声明里；声明序在前，随后才是数据型条目的引擎凭据（混合插件两者并在一个表单里）。
  */
 function capabilityModelInstanceFields(manifest: PluginManifest): PluginField[] {
   const fields: PluginField[] = [];
   const seen = new Set<string>();
+  for (const field of manifest.runtime?.instanceFields ?? []) {
+    if (seen.has(field.key)) continue;
+    seen.add(field.key);
+    fields.push(field);
+  }
   for (const entry of manifest.contributions.capabilityModels ?? []) {
-    // D125：执行型条目不填 engine（61 §2），v1 的 runtime 段也没有实例字段声明面
-    // （DEV-114）——不贡献表单字段，插件凭据面为空；数据型条目（有 engine）行为不变。
-    // P4 试点前补 `runtime.instanceFields` 时，这里改为消费该声明（DEV-114 方案 1）。
     if (entry.engine === undefined) continue;
     const engine = MEDIA_ENGINES[entry.engine];
     if (engine === undefined) continue;

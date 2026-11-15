@@ -238,3 +238,83 @@ describe('capabilityEntryRefSchema / botRuntimeSchema.capability_entries (D124)'
     ).toThrow();
   });
 });
+
+/**
+ * D125 P4（DEV-114 方案 1）：执行型插件的实例字段声明面 `runtime.instanceFields`。
+ * 复用 D105 的 pluginFieldSchema；sensitive 字段走既有实例 secrets 管线。
+ */
+describe('runtime.instanceFields (D125 P4, DEV-114)', () => {
+  const runtimeManifest = {
+    ...baseManifest,
+    runtime: {
+      entry: 'dist/main.js',
+      hostApi: '^1',
+      instanceFields: [
+        {
+          key: 'apiKey',
+          type: 'string',
+          title: 'API Key',
+          required: true,
+          sensitive: true,
+        },
+        { key: 'region', type: 'string', title: 'Region', default: 'cn-beijing' },
+      ],
+    },
+    contributions: {
+      ...baseManifest.contributions,
+      capabilityModels: [
+        { id: 'wan-t2i', capability: 'image', model: 'wan2.7-t2v' },
+      ],
+    },
+  };
+
+  it('accepts the declaration and keeps it on the parsed manifest', () => {
+    const manifest = parse(runtimeManifest);
+    expect(manifest.runtime?.instanceFields).toHaveLength(2);
+    expect(manifest.runtime?.instanceFields?.[0]).toMatchObject({
+      key: 'apiKey',
+      sensitive: true,
+      required: true,
+    });
+  });
+
+  it('rejects duplicate keys (same rule as every other instanceFields surface)', () => {
+    expect(() =>
+      parse({
+        ...runtimeManifest,
+        runtime: {
+          ...runtimeManifest.runtime,
+          instanceFields: [
+            { key: 'apiKey', type: 'string', title: 'A' },
+            { key: 'apiKey', type: 'string', title: 'B' },
+          ],
+        },
+      }),
+    ).toThrow(/实例字段重复/);
+  });
+
+  it('rejects unknown field keys / more than 16 fields', () => {
+    expect(() =>
+      parse({
+        ...runtimeManifest,
+        runtime: {
+          ...runtimeManifest.runtime,
+          instanceFields: [{ key: 'api key', type: 'string', title: 'bad' }],
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      parse({
+        ...runtimeManifest,
+        runtime: {
+          ...runtimeManifest.runtime,
+          instanceFields: Array.from({ length: 17 }, (_, i) => ({
+            key: `f${i}`,
+            type: 'string',
+            title: `F${i}`,
+          })),
+        },
+      }),
+    ).toThrow();
+  });
+});

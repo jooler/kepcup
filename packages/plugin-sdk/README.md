@@ -27,9 +27,15 @@ runPluginRuntime(plugin); // 缺省挂到 Node fork 内置 IPC（宿主 PluginHo
 
 - `runPluginRuntime(spec, transport?)`：第二参数可传自定义 `PluginFrameTransport` 或
   `{ send, on, once, off }` 形的通道（测试用）；缺省用 `process`（fork IPC）。
-- `ctx`：`{ host, entryId, model, locale, credentials, signal }`——`credentials` 是宿主
-  调用时注入的实例敏感字段键值（进程内存活，永不落盘、永不入日志）；`signal` 在宿主
-  发 `cancel` 帧（用户取消 / 超时）时 abort，插件应尽快返回。
+- `ctx`：`{ host, entryId, model, instanceId, locale, credentials, signal }`——`credentials`
+  是宿主调用时注入的实例敏感字段键值（进程内存活，永不落盘、永不入日志）；`instanceId`
+  是本次调用的实例 id（无实例时为空串，D125 P4 / DEV-114：多实例插件用它把凭据与实例
+  的非敏感配置对齐）；`signal` 在宿主发 `cancel` 帧（用户取消 / 超时）时 abort，插件应
+  尽快返回。SDK 的 ready 帧会声明 `invoke.context.instanceId` 能力，宿主才发送该字段
+  （旧 SDK 不声明 → `instanceId` 恒为空串，帧 schema 不会因未知字段失效）。
+- 实例字段来自 manifest `runtime.instanceFields`（`pluginFieldSchema` 同形，≤16 个；
+  `sensitive: true` 的值存进实例 secrets，调用时进 `ctx.credentials`；非敏感值可从
+  `ready()` 的实例 `fields` 读取）。执行型条目不填 `engine`，凭据面完全由该声明决定。
 - 七个 media 方法（`generateImage / synthesizeSpeech / transcribeSpeech / understandImage /
   submitVideo / videoStatus / cancelVideo`）全部可选，只实现支持的；未实现的被调用时
   SDK 回 `NOT_IMPLEMENTED` error 帧。`embed` / `rerank` 不开放（61 §5）。

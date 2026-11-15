@@ -586,8 +586,36 @@ D73 工具定义锁定要等首次 tools/list 登记，再经人工「测试 →
 `apps.connection_status`（connected）→ `appDetailStore` 重拉工具清单 → 待复核徽标自动消失；
 失败可见性 = 管理区现有「N 个待复核」徽标 + 手动链路。
 
+### 15.10 运行时平台（D125，2026-11-16 收口）
 
+D125 在 D104/D105 的声明式插件（形态 A）之上新增**执行型插件**（形态 B）：清单增
+`runtime` 段（入口 / Host API 版本 / 域名白名单 / 实例字段），包内带打包单文件 JS，在
+宿主外子进程运行；v1 只开放 `media` 能力契约，条目解析「含 runtime 的插件条目 →
+托管适配器，否则按 `engine` 走内置引擎」。**进程内执行第三方代码仍然禁止**；
+community 执行型 v1 仍拒绝（Q4）；安装管线不变的部分（清单校验、同意卡、原子落盘、
+账本投影、签名市场、撤销名单）全部沿用 D104/D105。
 
+本节只记与本文安装管线的接缝增量：
+
+- **同意卡**：对含 `runtime` 的清单增三项披露——可联网域名清单（含 `*.domain` 通配
+  说明）、将请求的凭据字段名（只列名、不含值）、`host.storage` 配额（10MB）；更新时
+  域名 / 敏感字段清单扩大 → 走既有 `permissionsExpanded` + `acknowledgeDiff` 重新同意
+  （token 前缀 `plugin-network:` / `plugin-credential:`，与技能 / 连接器 token 同一 diff）。
+- **安装校验**：`runtime` 仅 builtin / verified / developer；entry 存在、包内且为
+  `.js/.mjs`（`.js` 要求 `package.json` 的 `"type":"module"`，禁嵌套 package.json）；
+  包内 native / 可执行文件（`.node/.wasm/.dll/.so/.dylib/.exe`）与符号链接拒绝；
+  `hostApi` 不匹配复用 `PLUGIN_UPGRADE_REQUIRED`。
+- **市场**：签名脚本对含 `runtime` 的包逐版本静态扫描（文件面 / 代码面 / 域名白名单
+  一致性），代码面含动态执行（eval / Function / require / createRequire）与受限内置模块
+  （fs / net / http / child_process / vm / …）及远程 / 包外 import 检测；fail 不出包，
+  pass/warn 写入索引条目 `runtimeScan`；签名 / 撤销 / tier 机制零改动。
+- **实例**：执行型条目不填 `engine`，实例字段由清单 `runtime.instanceFields` 声明
+  （复用 D105 字段 schema）；`sensitive` 值入既有实例 secrets，调用时经
+  `invoke.context.credentials` 注入，`invoke.context.instanceId` 仅在插件 `ready.features`
+  声明后发送（旧 SDK 兼容）。
+
+设计、现状与试点 A/B 结论见 [61-plugin-runtime-platform.md](61-plugin-runtime-platform.md)
+§12；首个执行型官方插件为 `plugins/dashscope-t2i/`（百炼文生图）。
 
 - VS Code：[Extension Anatomy](https://code.visualstudio.com/api/get-started/extension-anatomy)、[Publishing Extensions](https://code.visualstudio.com/api/working-with-extensions/publishing-extension)（VSIX / `--install-extension` / 平台分发包 / Entra ID 发布）
 - Open VSX：<https://open-vsx.org>（Eclipse 基金会开放市场；REST API + 静态托管，fork 以 endpoint 消费）

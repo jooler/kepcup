@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   AppError,
   PLUGIN_RUNTIME_HOST_API_VERSION,
+  PLUGIN_RUNTIME_INSTANCE_ID_FEATURE,
   isPluginHostApiRequest,
   isPluginHostApiResponse,
   pluginRuntimeInitFrameSchema,
@@ -42,6 +43,13 @@ import { HostedAdapter } from './hosted-adapter.js';
  */
 
 export const PLUGIN_RUNTIME_HISTORY_LIMIT = 50;
+
+/**
+ * P4 观测项（61 §3.3）：插件进程 RSS 超过该值记一条 warn（不强制、不击杀）。
+ * 数据来源是插件进程在心跳 pong 里自报的 `process.memoryUsage().rss`——零新依赖、
+ * 零额外进程；恶意插件可以谎报，但这只是观测不是治理边界。
+ */
+export const PLUGIN_RUNTIME_RSS_WARN_BYTES = 512 * 1024 * 1024;
 
 export type PluginProcessStatus = PluginRuntimeStatus;
 
@@ -140,6 +148,8 @@ export interface PluginHostDeps {
   forkImpl?: typeof fork;
   /** 子进程环境白名单的来源（缺省 process.env）。 */
   baseEnv?: NodeJS.ProcessEnv;
+  /** RSS warn 阈值覆盖（测试调小；缺省 {@link PLUGIN_RUNTIME_RSS_WARN_BYTES}）。 */
+  rssWarnBytes?: number;
 }
 
 /** 在途调用（一次 invoke 的生命周期）。 */
@@ -170,9 +180,13 @@ interface LiveProcess {
   readyReject: ((error: unknown) => void) | null;
   handshaken: boolean;
   contracts: string[];
+  /** D125 P4：插件在 ready 帧声明的可选协议能力（旧 SDK 为空）。 */
+  features: string[];
   pending: Map<string, PendingCall>;
   heartbeat: NodeJS.Timeout | null;
   pingMisses: number;
+  /** P4 观测项：本次进程生命周期内已对「RSS > 512MB」记过一次 warn。 */
+  rssWarned: boolean;
   idle: NodeJS.Timeout | null;
   gone: boolean;
   stopReason: string | null;
@@ -229,6 +243,7 @@ export class PluginHost {
   readonly #queued = new Map<string, number>();
   readonly #states = new Map<string, PluginStateRecord>();
   readonly #adapters = new Map<string, HostedAdapter>();
+  readonly #rssWarnBytes: number;
   #disposed = false;
 
   constructor(deps: PluginHostDeps) {
@@ -244,6 +259,7 @@ export class PluginHost {
         deps.timings?.outputLinesPerMinute ?? DEFAULT_PLUGIN_HOST_TIMINGS.outputLinesPerMinute,
       callTimeoutOverride: deps.timings?.callTimeoutOverride ?? {},
     };
+    this.#rssWarnBytes = deps.rssWarnBytes ?? PLUGIN_RUNTIME_RSS_WARN_BYTES;
   }
 
   // --- 查询面 -------------------------------------------------------------------
@@ -480,6 +496,12 @@ export class PluginHost {
           // 凭据只进帧：不写日志、不进历史、不进错误消息（61 §4）。
           credentials:
             ctx.instanceId === '' ? {} : this.#deps.bridge.credentialsFor(pluginId, ctx.instanceId),
+          // D125 P4（DEV-114）：多实例插件用 instanceId 把凭据与实例的非敏感配置对齐。
+          // 旧 SDK 没有该字段且帧 schema 是 strictObject——只发给在 ready.features 里
+          // 声明认识它的插件，否则旧插件会丢弃整帧、调用挂到超时（兼容面）。
+          ...(ctx.instanceId !== '' && live.features.includes(PLUGIN_RUNTIME_INSTANCE_ID_FEATURE)
+            ? { instanceId: ctx.instanceId }
+            : {}),
           params: ctx.params ?? {},
         },
       });
@@ -736,9 +758,11 @@ export class PluginHost {
       readyReject,
       handshaken: false,
       contracts: [],
+      features: [],
       pending: new Map(),
       heartbeat: null,
       pingMisses: 0,
+      rssWarned: false,
       idle: null,
       gone: false,
       stopReason: null,
@@ -808,8 +832,12 @@ export class PluginHost {
         void this.#handleHostApiRequest(live, message);
         return;
       }
-      // 心跳 ping 的 pong（host-api-response）只用于存活判定，静默消费。
-      if (isPluginHostApiResponse(message)) return;
+      // 心跳 ping 的 pong（host-api-response）只用于存活判定；P4 起顺带读取插件
+      // 自报 RSS 做「>512MB 记 warn」观测（61 §3.3，不参与治理判定）。
+      if (isPluginHostApiResponse(message)) {
+        this.#notePluginMemory(live, message);
+        return;
+      }
       // 非法 host-api 信封（超长 url / 未知 api / 多余字段）：若 requestId 可回显，
       // 回一个失败应答让插件立即失败，而不是等 SDK 侧 30s / 120s 超时。
       const envelope = message as { type?: unknown; requestId?: unknown } | null;
@@ -964,6 +992,7 @@ export class PluginHost {
         }
         live.handshaken = true;
         live.contracts = [...frame.contracts];
+        live.features = [...(frame.features ?? [])];
         live.readyResolve?.();
         return;
       }
@@ -1048,10 +1077,7 @@ export class PluginHost {
         // 是宿主侧生命周期值，插件上报无效（协议注释：state 帧是 ready ⇄ busy）。
         if (frame.status === 'error') {
           this.#setStatus(live.descriptor.pluginId, 'error', frame.detail ?? '插件上报错误');
-        } else if (
-          live.handshaken &&
-          (frame.status === 'ready' || frame.status === 'busy')
-        ) {
+        } else if (live.handshaken && (frame.status === 'ready' || frame.status === 'busy')) {
           this.#setStatus(live.descriptor.pluginId, frame.status, frame.detail);
         }
         return;
@@ -1118,6 +1144,29 @@ export class PluginHost {
   }
 
   // --- 心跳 / 空闲 / 状态 -------------------------------------------------------
+
+  /**
+   * 心跳 pong 里的 RSS 观测（61 §3.3）：超过 512MB 记一条 warn，每进程一次（避免
+   * 15s 一条刷屏）。RSS 由插件自报，缺失 / 非数值静默忽略（老 SDK 不带该字段）。
+   */
+  #notePluginMemory(live: LiveProcess, response: unknown): void {
+    if (live.rssWarned) return;
+    const value = (response as { value?: unknown }).value;
+    if (value === null || typeof value !== 'object') return;
+    const rss = (value as { rssBytes?: unknown }).rssBytes;
+    if (typeof rss !== 'number' || !Number.isFinite(rss) || rss <= this.#rssWarnBytes) {
+      return;
+    }
+    live.rssWarned = true;
+    this.#deps.logger.warn(
+      {
+        plugin: live.descriptor.pluginId,
+        rssBytes: rss,
+        thresholdBytes: this.#rssWarnBytes,
+      },
+      'plugin process RSS exceeded the observation threshold (warn only)',
+    );
+  }
 
   #startHeartbeat(live: LiveProcess): void {
     live.heartbeat = setInterval(() => {

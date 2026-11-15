@@ -135,7 +135,13 @@ describe('plugin sdk runtime client (D125 P1)', () => {
         client.pluginToHost,
         (frame) => frame.type === 'ready',
       )) as Extract<PluginToHostFrame, { type: 'ready' }>;
-      expect(ready).toEqual({ type: 'ready', hostApiVersion: 1, contracts: ['media'] });
+      expect(ready).toEqual({
+        type: 'ready',
+        hostApiVersion: 1,
+        contracts: ['media'],
+        // D125 P4：声明认识的增量 invoke 字段（旧 SDK 不带 → 宿主不发送 instanceId）。
+        features: ['invoke.context.instanceId'],
+      });
       expect(readyContexts).toEqual([
         {
           hostApiVersion: 1,
@@ -213,12 +219,9 @@ describe('plugin sdk runtime client (D125 P1)', () => {
       );
       await handshake(client);
       client.fromHost(
-        invokeFrame(
-          'generateImage',
-          { prompt: '一只猫', size: '1024x1024' },
-          'call-1',
-          { params: { style: 'anime', seed: 7 } },
-        ),
+        invokeFrame('generateImage', { prompt: '一只猫', size: '1024x1024' }, 'call-1', {
+          params: { style: 'anime', seed: 7 },
+        }),
       );
       const result = (await waitForFrame(
         client.pluginToHost,

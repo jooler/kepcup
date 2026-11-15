@@ -1915,3 +1915,169 @@
   = 组件不渲染任何 DOM（`runtimeBadge(null) === null` 有测试）。`PluginSummary`
   零改动。
 - 已更新的文档：本条；P3 任务书「实施记录」。
+
+### DEV-123 执行型插件实例字段声明面：`runtime.instanceFields` + `invoke.context.instanceId`（D125 P4，落实 DEV-114）
+
+- 状态：已落实
+- 阶段：D125 P4（2026-11-16）
+- 是否阻塞：否（P4 开工前审查已给出方案 1；本阶段按其实施）
+- 问题：DEV-114 记录的事实是「执行型插件没有实例字段声明面」——`runtime` 段只有
+  entry / hostApi / network / maxConcurrent，百炼试点需要的 `apiKey` 无处声明；实例表单
+  由 `capabilityModelInstanceFields` 从条目 `engine` 的 `credentialFields` 派生，而执行型
+  条目**不填 engine**（61 §2），于是表单为空、secrets 管线无法把 Key 送到
+  `invoke.context.credentials`。
+- 影响范围：shared `plugin-manifest.ts`（`pluginRuntimeSectionSchema`）、
+  `plugin-runtime/protocol.ts`（invoke.context）、core `plugins/kinds.ts`、
+  `plugins/runtime/{install,host}.ts`、SDK `plugin.ts` / `client.ts`、同意卡披露、
+  `todo/plugin-runtime/README.md` 固定契约、61 §2。
+- 决定（方案 1）：
+  1. `runtime.instanceFields: z.array(pluginFieldSchema).max(16).optional()`，复用 D105
+     字段 schema；superRefine 查 key 唯一（与 mail / im / mcp 的 `instanceFields` 同规则）。
+  2. `capabilityModelInstanceFields` 对含 `runtime` 的清单合并 `runtime.instanceFields`
+     （声明序在前、去重），随后才追加数据型条目的引擎凭据（混合插件两者并存）。
+     `sensitive: true` 的值走既有实例 secrets（`plugin:{pluginId}:instance:{instanceId}:{key}`），
+     非敏感值进 `config_json`；`PluginSummary.instanceFields` / 自动实例表单自动生效。
+     混合插件中 runtime 字段与引擎凭据字段**重名**时安装期拒绝（PLUGIN_INVALID）：合并
+     顺序会让 runtime 声明覆盖引擎字段，若 runtime 声明成非敏感，用户填的引擎 Key 会
+     落进 `config_json` 而不是 secrets。
+  3. `runtimeDisclosureOf.credentialFields` = runtime 敏感字段名（声明序）∪ 引擎凭据字段，
+     同意卡「将请求的凭据」直接渲染，不含值；`networkDomains` 按声明序去重（同意卡以
+     域名为 keyed each 键，schema 未约束唯一性）。
+  4. `invoke.context.instanceId` 新增**可选**字段（有实例才带）：多实例插件把 credentials
+     与实例的非敏感配置对齐；SDK `MediaCallContext.instanceId` 恒为 string（缺省空串）。
+     兼容性用握手能力位：SDK 在 `ready.features` 声明
+     `invoke.context.instanceId`，宿主只向声明了的插件发送该字段（新增常量
+     `PLUGIN_RUNTIME_INSTANCE_ID_FEATURE`）。
+  5. 能力桥无需改动：`credentialsFor` 已按实例前缀扫描 secrets，实例字段写入即被注入。
+  6. 兼容性：`instanceFields` 是清单增量可选字段，旧清单不受影响。旧 SDK 的 ready 帧
+     没有 `features`，宿主不会发送 `instanceId`，因此其 strict 帧校验不会因未知字段丢弃
+     invoke（旧插件继续可用，只是 `ctx.instanceId` 为空串）；新 SDK 才收到该字段。
+     修正了本条最初草案里「旧 SDK 会走 PLUGIN_UPGRADE_REQUIRED」的错误描述。
+- 已更新的文档：本条；61 §2 / §3.2 runtime 固定段、`todo/plugin-runtime/README.md`
+  固定契约、`packages/plugin-sdk/README.md`（ctx 与实例字段）。
+
+### DEV-124 百炼试点条目 model 取 `wan2.7-t2v`（16 号只有 wan 视频预置），真机可能需换文生图 id（D125 P4）
+
+- 状态：已记录（待真机确认）
+- 阶段：D125 P4（2026-11-16）
+- 是否阻塞：否（不影响运行时链路的开发验收；影响真机出图）
+- 问题：任务书步骤 3 要求条目 `model` 取「16 号 wan 系列预置 id」。16 号当前登记的
+  wan 系列预置只有视频三条（`wan2.7-t2v / wan3.0-video / wan2.2-t2v-plus`），没有 wan
+  文生图预置；而试点的协议（`input.prompt` 顶层 + `X-DashScope-Async` +
+  `GET /api/v1/tasks/{id}`）是百炼 **text2image/image-synthesis** 的异步文生图形态。
+- 影响范围：`plugins/dashscope-t2i/plugin.json` 的条目 `model`（仅清单数据）。
+- 决定：按任务书字面取 `wan2.7-t2v`。若真机验证发现文生图端点不接受该 id（预期风险），
+  只改 manifest 的 `model` 为厂商在售的 wan 文生图 id（如 `wan2.2-t2i-plus`），插件代码、
+  协议与运行时链路完全不变。A/B 的「同源」前提也按事实修正：内置 `dashscope` 引擎的
+  `generateImage` 是 qwen-image **同步** multimodal-generation，并未实现 wan 异步文生图
+  （异步提交/轮询的代码形状在内置引擎里属于 `submitVideo/videoStatus`），见 61 §12。
+- 已更新的文档：本条；`plugins/dashscope-t2i/README.md`、61 §12。
+
+### DEV-125 RSS > 512MB 观测用插件心跳自报，不引入 pidusage（D125 P4）
+
+- 状态：已落实
+- 阶段：D125 P4（2026-11-16）
+- 是否阻塞：否
+- 问题：61 §3.3 的「RSS > 512MB 记 warn」需要子进程内存；引入 `pidusage` 会新增运行时
+  依赖与平台分支，`process.memoryUsage()` 在宿主进程里读到的不是插件进程。
+- 影响范围：`packages/plugin-sdk/src/host-channel.ts`（pong 带 `rssBytes`）、
+  `packages/core/src/plugins/runtime/host.ts`（阈值 warn、每进程一次）。
+- 决定：SDK 在心跳 `ping` 的 pong 里附 `{ rssBytes: process.memoryUsage().rss }`；宿主
+  消费超过阈值的第一次上报记 warn（`PLUGIN_RUNTIME_RSS_WARN_BYTES = 512MB`），不击杀、
+  不进治理判定。插件可以谎报——这是观测项而非边界；旧 SDK 打包的插件不带该字段，静默
+  不报（可接受的降级）。阈值可经 `PluginHostDeps.rssWarnBytes` 注入（测试调小）。
+- 已更新的文档：本条；61 §12。
+
+### DEV-126 静态扫描的代码面在「掩码文本」上判定，域名一致性在原文上提取（D125 P4）
+
+- 状态：已落实
+- 阶段：D125 P4（2026-11-16）
+- 是否阻塞：否
+- 问题：逐版本扫描直接对打包 JS 文本跑正则会把注释 / 字符串里的字样当成代码——首批
+  dogfood 的两个官方插件都因 zod 打包产物里的一句注释（提到 `import()`）被判 fail，
+  明显是假阳性；同理 `eval(` 出现在文档字符串里也不代表执行。
+- 影响范围：`scripts/scan-plugin-runtime.mjs`。
+- 决定：用一个轻量词法掩码把注释、字符串 / 模板**文本段**、正则字面量替换为空格（保留
+  换行与下标），代码规则在掩码文本上判定；模板 `${…}` 表达式按代码处理，正则 / 模板嵌套
+  不会让掩码失步（D125 P4 审查把初版掩码的引号 / 正则偏移问题修掉，见 DEV-129）。动态
+  import 的 **specifier** 回原文读取（白名单语义：静态相对路径 / 裸包名放行，远程 scheme、
+  计算值、child_process / vm 目标 fail）。域名一致性在原文上提取 `https?://host`
+  （`json-schema.org` 等标识符命名空间豁免），未知域 → warn。
+- 已更新的文档：本条；61 §7 / §12；额外加固见 DEV-129。
+
+### DEV-127 产物下载 SSRF 加固对所有来源生效（数据型路径一并覆盖）（D125 P4）
+
+- 状态：已落实
+- 阶段：D125 P4（2026-11-16）
+- 是否阻塞：否
+- 问题：P2 审查遗留——执行型插件返回的产物 URL 在 core 侧下载（`imageBytes` /
+  视频 `videoUrl`）时是裸 `fetch`，可被指向私网 / 云元数据。任务书要求「只影响执行型
+  来源或对所有来源等价安全（选后者更简单，但必须证明内置厂商 URL 仍可用）」。
+- 影响范围：`packages/core/src/infra/safe-dispatcher.ts`（新增 `safeFetch`）、
+  `tools/image-tools.ts`、`tools/speech-tools.ts`。
+- 决定：统一走 `safeFetch`：http(s) 挂 `sharedSafeDispatcher()`（连接期逐跳校验解析地址，
+  重定向同样经过），IP 字面量先过 `assertNoPrivateAddress`；data: 等非网络协议原样放行。
+  只加连接防线，不改错误文案 / 字节 / 落盘行为；内置厂商与 CDN 均为公网域名，行为等价
+  （媒体工具回归全绿）。`media/http.ts` 错误归一未动。
+  **实现细节（P4 审查修正）**：http(s) 用 `undici` 包的 `fetch`（与 Agent 同版本）而不是
+  全局 `fetch`——Electron / Node 的全局 fetch 是另一个 undici 版本，把外部 Agent 传进去会
+  以 `UND_ERR_INVALID_ARG` 失败（所有公网图片 / 视频下载都挂）。`safe-dispatcher-connect.test.ts`
+  用真实连接链路（localhost → 连接期拒绝）覆盖该集成。
+- 已更新的文档：本条；61 §12。
+
+### DEV-128 扫描/安装的 native 扩展名补 `.dll/.so/.exe/.dylib`（D125 P4）
+
+- 状态：已落实
+- 阶段：D125 P4（2026-11-16）
+- 是否阻塞：否
+- 问题：P2 安装管线的包扫描只拦 `.node` / `.wasm`；Windows 的 `.dll` / `.exe` 与
+  POSIX 的 `.so`（以及 macOS `.dylib`）会漏过。
+- 影响范围：`packages/core/src/plugins/runtime/install.ts`、`scripts/scan-plugin-runtime.mjs`。
+- 决定：两处统一扩展为 `.node/.wasm/.dll/.so/.dylib/.exe`；`.dylib` 是任务书清单之外的
+  补充（macOS 动态库与 `.so` 同类）。仅对含 `runtime` 的包生效，数据型插件安装零变化。
+- 已更新的文档：本条；61 §12。
+
+### DEV-129 静态扫描在任务书规则外的加固：标识符级规则 / 静态 import / 无扩展名 entry / `.kepcup-ignore`（D125 P4 审查）
+
+- 状态：已落实
+- 阶段：D125 P4（2026-11-16 审查）
+- 是否阻塞：否
+- 问题：审查按「扫描是否可被简单绕过」实测初版 `scripts/scan-plugin-runtime.mjs`，确认
+  以下写法**通过**（应为 fail）：`(0,eval)(...)`（规则只匹配 `eval(`）、`Function(...)`
+  不带 `new`、`globalThis["ev"+"al"]` / `process["bin"+"ding"]`、`createRequire` +
+  静态 `import 'node:fs'` / `import 'node:vm'`、静态 `import 'data:text/javascript,…'`、
+  `import("node:"+"child_process")`（拼接 specifier）、`import(/*x*/'…')` 与
+  `import(/* c */ './a.js')`（注释导致误判 / 漏判）、模板插值 `` `${eval(…)}` ``、
+  正则字面量里的引号使掩码失步从而隐藏后续 `eval`、以及 `runtime.entry` 不带 JS 扩展名
+  （Node 可执行，扫描器不读）。另外目录扫描会把 `build.mjs`（`createRequire` /
+  `node:module`）当运行时包代码 fail，与 `.kepcup-ignore` 的发布口径不一致。
+- 影响范围：`scripts/scan-plugin-runtime.mjs`、`scripts/sign-plugin-index.mjs`、
+  `plugins/{dashscope-t2i,reference-media}/.kepcup-ignore`、测试
+  `scan-plugin-runtime.test.ts` / `sign-plugin-index.test.ts`。
+- 决定：
+  1. 代码规则改为标识符级：`eval` / `Function(` / `require` / `createRequire` /
+     `process.binding|_linkedBinding|dlopen|getBuiltinModule|mainModule` / `Worker(` /
+     `globalThis[...]` / `process[...]`；注释、字符串、正则与模板文本先掩码，模板表达式
+     按代码处理。
+  2. 静态 import / re-export 也检查 specifier：拒绝 `fs / fs/promises / net / http(s) /
+     http2 / dgram / dns / tls / child_process / vm / worker_threads / cluster / module /
+     inspector / repl / wasi`（任务书的「不得获得 fs / 子进程 / 网络」在插件直接 import
+     时同样成立），拒绝远程 scheme（含 `data:` / `file:`）与包外路径（绝对路径 / `..`）。
+  3. 动态 import 跳过注释 trivia 后再读 specifier；specifier 带转义、后接 `+`（拼接）、
+     模板插值、包外路径、**相对路径无扩展名**一律 fail（Node 会把无扩展名相对 import 按
+     ESM 加载，否则干净的 entry 可 `import './chunk'` 拉入未扫描代码）；
+     `import(/* local */ './a.js')` 不再假阳性。
+  4. `runtime.entry` 必须是 `.js` / `.mjs`；`.js` 要求根 `package.json` 声明
+     `"type":"module"`，并拒绝嵌套 `package.json`（Node 的「最近 package.json」判定会让
+     `.js` 落回 CommonJS，`module['require']` / `module.constructor._load` 可绕过 require
+     规则）。目录 / `.kepcup` 两种读取都带 entry 与根 package.json 数据；entry 无论
+     扩展名都按代码扫描（策略与代码规则两条都生效）。
+  5. 目录扫描镜像 `kepcup-app pack` 的排除口径（`.git` / `node_modules` / `.kepcup` /
+     `.kepcup-ignore`）；签名仍扫描归档本身、**不**应用 ignore（随包发布的字节全部要扫）。
+     两个官方插件新增 `.kepcup-ignore` 排除 `build.mjs` / `src/` / `tsconfig.json`。
+  6. 静态扫描仍是发布门禁的一层，不是沙箱：计算成员访问经变量别名
+     （`const g = globalThis; g['ev'+'al']`）、`Object.getPrototypeOf(async()=>{}).constructor`、
+     Unicode 转义标识符（`\u0065val`）等仍有假阴性面；`Reflect.get(globalThis, …)` /
+     `getOwnPropertyDescriptor(globalThis, …)` / `constructor.constructor` 已单独 fail。
+     verified 层级仍要求人工复审，运行期依靠进程隔离与「不给 fs / 子进程」的 Host API 面。
+- 已更新的文档：本条；DEV-126 / 61 §7、§12、P4 任务书实施记录。

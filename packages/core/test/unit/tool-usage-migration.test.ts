@@ -81,6 +81,8 @@ describe('0073 tool_usage_ledger migration', () => {
       // 加的两列也一并摘除（ADD COLUMN 不可原样重放），0075 本体可重放。
       db.exec('drop table tool_usage_ledger;');
       db.exec('drop table conversation_notes;');
+      // 0076（D125 插件运行时）的 plugin_storage 同样摘除，否则回放到 0076 时建表冲突。
+      db.exec('drop table plugin_storage;');
       db.exec('alter table usage_ledger drop column capability;');
       db.exec('alter table usage_ledger drop column model_entry_id;');
       db.pragma('user_version = 72');

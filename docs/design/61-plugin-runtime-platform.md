@@ -1,6 +1,6 @@
 # 61 插件运行时平台（Plugin Runtime Platform）
 
-> 状态：**草案（待评审）** · 决策：D125 · 上游：[51 插件系统](51-plugin-system.md)（D104/D105）、[60 能力模型插件化](60-capability-model-plugins.md)（D124，本文修订其决策 1 并退休其 Q1）· 执行方案：[todo/plugin-runtime](../../todo/plugin-runtime/README.md)
+> 状态：**已实施（2026-11-16，D125 P1–P4 开发收口；真机验收待用户执行，现状见 §12）** · 决策：D125 · 上游：[51 插件系统](51-plugin-system.md)（D104/D105）、[60 能力模型插件化](60-capability-model-plugins.md)（D124，本文修订其决策 1 并退休其 Q1）· 执行方案：[todo/plugin-runtime](../../todo/plugin-runtime/README.md)
 
 愿景（用户原话的架构化）：**应用提供舞台，保证核心能力稳定运行，为插件提供基础能力和运行规范，插件在规范内享有最大范围的构建、运行自由**。拆成五个可验收的支柱：
 
@@ -59,6 +59,9 @@ runtime: strictObject({
   hostApi: string,                  // 期望的 Host API semver，如 '^1'
   network: strictObject({ allow: z.array(z.string()).max(32) }).optional(),
                                     // 域名白名单：精确 host 或 '*.domain'
+  instanceFields: z.array(pluginFieldSchema).max(16).optional(),
+                                    // D125 P4（DEV-114）：实例字段声明面（敏感值走实例
+                                    // secrets，调用时经 invoke.context.credentials 注入）
   maxConcurrent: z.number().int().min(1).max(4).default(1),
 }).optional()
 ```
@@ -80,11 +83,12 @@ runtime: strictObject({
 
 ```text
 host → plugin   init / invoke{callId, contract, method, params, context} / cancel{callId} / shutdown
-plugin → host   ready / result{callId, output} / error{callId, code, message, details?}
+plugin → host   ready{hostApiVersion, contracts, features?}
+                / result{callId, output} / error{callId, code, message, details?}
                 event{callId, kind:'progress'|'log', payload} / state{status, detail?}
 ```
 
-- `context` = `{ entryId, model, params(条目 params 合并), locale, credentials }`——`credentials` 为该实例 `sensitive:true` 字段的键值（调用时注入，进程内存存活，**永不落盘、永不入日志**）。
+- `context` = `{ entryId, model, params(条目 params 合并), locale, credentials, instanceId? }`——`credentials` 为该实例 `sensitive:true` 字段的键值（调用时注入，进程内存存活，**永不落盘、永不入日志**）；`instanceId` 仅在插件于 `ready.features` 声明 `invoke.context.instanceId` 时发送（旧 SDK 不带 features → 不发送，其 strict 帧校验不会被未知字段打断）。
 - 两侧 zod 校验同一 schema 包；宿主侧输出校验失败 = `PLUGIN_CONTRACT_VIOLATION`（不重试、不部分投递）；输入校验失败 = 插件侧拒绝并回 error。
 - 传输即 fork 内置 IPC（JSON 序列化）；大产物一律按引用（厂商 URL 或 `host.net` 拉取后的 base64，上限 20MB），**媒体产物下载与落附件永远 core 侧**（60 §1 产物策略不变）。
 
@@ -135,7 +139,8 @@ plugin → host   ready / result{callId, output} / error{callId, code, message, 
 | developer | ✓ | ✓ | 本机目录，安装即恒 developer（D104） |
 
 - 同意卡披露：联网域名清单、凭据字段名（不含值）、存储配额；更新时能力清单扩大 → 重新同意（D104 既有机制延伸）。
-- 逐版本扫描（市场 CI）：native/二进制检测、`eval`/`Function` 构造检测、远程动态 require 检测、`network.allow` 与包内字符串域一致性比对；告警即人工复审，违者走撤销名单（warn/disable 既有语义）。
+- 逐版本扫描（市场 CI）：native/二进制检测、`eval`/`Function`/`require`/`createRequire` 等动态代码执行面检测、静态与动态 import 的受限内置模块（fs / net / http / child_process / vm / worker_threads / module …）与远程 / 包外 specifier 检测、`network.allow` 与包内字符串域一致性比对；告警即人工复审，违者走撤销名单（warn/disable 既有语义）。`runtime.entry` 限定 `.js/.mjs`（`.js` 需 `package.json` 的 `"type":"module"`，禁嵌套
+package.json）；签名扫描归档本身，不应用 `.kepcup-ignore`。
 - 运行期治理：插件级停用（kill switch）即时生效（kill 进程 + 拒绝后续调用）；撤销名单命中 → disable（既有）。
 
 ## 8 与存量决策的关系
@@ -168,8 +173,102 @@ plugin → host   ready / result{callId, output} / error{callId, code, message, 
 - 卸载插件：进程终止、`plugin_storage` 清除、secrets 清除、条目残留按 60 §决策 5 静默跳过。
 - 全程未安装执行型插件的环境：行为与今日逐字节一致（定向测试证据）。
 
+## 12 现状（D125 收口后）
+
+> 2026-11-16，P1–P4 开发收口。仿 [51 §15](51-plugin-system.md#15-现状d105-插件平台迭代2026-10-29-收口)：
+> 实际落地、与决策的差异、迁移号、DEV 索引、试点 A/B 结论与未决项。真机项标注「待用户验证」。
+
+### 12.1 实际落地（与本文决策的对应）
+
+| 决策 | 落地 |
+|---|---|
+| 1 双形态 / 进程外执行 | `runtime` 段 + `plugins/*` 单文件 ESM；`child_process.fork`（execArgv 空、最小 env、cwd=安装目录）；进程内执行仍禁止 |
+| 2 三层边界 | 内核未动；`plugins/runtime/` 为第一方运行时；插件经 SDK 只见 `host` 命名空间 |
+| 3 能力契约注册表 | `plugins/runtime/contracts.ts` 的 `CAPABILITY_CONTRACTS`，v1 仅 `media`（七方法 zod 双向） |
+| 4 进程模型 | 每插件一进程；懒启动 / 空闲 5 分钟优雅停 / 15s ping ×2 击杀 / 调用级超时；串行队列（`maxConcurrent` 预留） |
+| 5 Host API v1 | `net.fetch`（白名单 + SSRF + 审计 + 20MB）/ `credentials` / `secrets.get` / `storage`（10MB）/ `log` / `progress` / `signal`；未给 fs / 子进程 / env；`secrets.set` 未开放（Q1） |
+| 6 边界即契约 | shared `plugin-runtime/protocol.ts` 单一事实源；输出不过契约 = `PLUGIN_CONTRACT_VIOLATION`，不部分投递；产物 URL 由 core 下载落附件 |
+| 7 可观测 | `plugin.runtime` 事件 + 状态徽标 + 活动抽屉（50 条环形） + progress 走既有状态行；错误经 `HostedAdapter` 归一 |
+| 8 信任矩阵 | 安装管线拒 community 执行型；builtin / verified / developer 放行；同意卡披露 + 扩权 diff 重新同意 |
+| 9 SDK / 协议 | `@kepcup/plugin-sdk`：`definePlugin` / `runPluginRuntime` / `host`；esbuild 单文件；`hostApi` 不匹配复用 `PLUGIN_UPGRADE_REQUIRED` |
+| 10 治理自动化 | 市场签名脚本逐版本静态扫描（文件面 / 代码面 / 白名单一致性），fail 不出包，pass/warn 写索引 `runtimeScan`；kill switch 沿用 D104 |
+| 11 D124 Q1 退休 | 条目解析新增 `source: 'plugin'` 分支（含 runtime 的插件条目 → `HostedAdapter`），数据型条目行为不变 |
+
+固定契约名全部未改；本阶段只**增量**了 `runtime.instanceFields`（DEV-114 方案 1）、
+`invoke.context.instanceId`（可选）与 `ready.features`（可选能力声明，宿主据此决定是否
+发送 `instanceId`），已在 §2 / §3.2 与 todo README 同步。
+
+### 12.2 迁移与数据
+
+- 迁移实际号 **0076**（main）：`plugin_storage (plugin_id, key, value_json, updated_at, PK(plugin_id,key))`，
+  与规划一致；无其它迁移。
+- secrets 无新键型：执行型实例凭据沿用 `plugin:{pluginId}:instance:{instanceId}:{key}`
+  （`instanceFields.sensitive` 写入、`credentialsFor` 前缀扫描读取）。
+- 卸载清理：进程终止、`plugin_storage` 清空、实例行与 secrets 级联清除、条目残留静默跳过
+  （`packages/core/test/unit/plugin-host.test.ts` 的卸载用例覆盖）。
+
+### 12.3 DEV 偏差索引
+
+- P1–P3：DEV-104–DEV-122（协议落点、Host API 信封、心跳与 SDK 重建、取消链、活动历史口径、
+  视频阶段文案、执行型判定来源等），详见 [DEVIATIONS.md](../dev/DEVIATIONS.md)。
+- P4：**DEV-123** `runtime.instanceFields` + `invoke.context.instanceId`（落实 DEV-114；
+  兼容面用 `ready.features` 握手，旧 SDK 不收到新字段）；
+  **DEV-124** 试点条目 model 取 `wan2.7-t2v`（16 号只有 wan 视频预置，真机可能需换文生图 id）；
+  **DEV-125** RSS 观测用插件心跳自报；**DEV-126** 静态扫描掩码与域名豁免；
+  **DEV-127** 产物下载 SSRF 加固对所有来源生效（http(s) 使用与 Agent 同版本的 undici fetch）；
+  **DEV-128** native 扩展名补 `.dll/.so/.exe/.dylib`；
+  **DEV-129** 静态扫描审查加固（标识符级规则 / 静态 import 与包外路径 / `runtime.entry`
+  的 ESM 策略（`.js/.mjs` + `type: module`）/ `.kepcup-ignore` 目录口径；已知假阴性面见该条）。
+  无未决阻塞项。
+
+### 12.4 试点 A/B 结论（百炼文生图，`plugins/dashscope-t2i/`）
+
+**重要事实修正**：任务书假设「插件协议与内置引擎同源」。实际内置 `dashscope` 引擎的
+`generateImage` 走 **qwen-image 同步** `multimodal-generation`，并未实现 wan 异步文生图；
+异步「提交 → 轮询」的代码形状属于内置引擎的 `submitVideo / videoStatus`。因此试点 A/B
+是「执行型运行时 vs 第一方同步引擎」，不是同一端点的双实现。
+
+集成层对照（同一 prompt / 逻辑 size，无 API Key，测试
+`plugin-host.test.ts` 的「A/B 对照（集成层）」）：
+
+| 维度 | 执行型插件（wan 异步） | 内置引擎（qwen-image 同步） |
+|---|---|---|
+| 端点 | `text2image/image-synthesis` + `GET /api/v1/tasks/{id}` | `multimodal-generation/generation` 单请求 |
+| 延迟形态 | 提交 RTT + 至少一次 2s 轮询（测试 ≥2s；真实生成更久） | 单次厂商 RTT |
+| 进度 | `submitting → queued → generating → downloading` 进状态行 | 无阶段进度 |
+| 活动记录 | 插件卡 busy→ready + 调用历史（时长 / 结果 / 错误） | 无插件活动 |
+| 取消 | `signal` → cancel 帧，插件尽快返回（不删服务端任务） | 引擎路径无工具 signal（DEV-118/119 记录） |
+| 错误文案 | 插件映射：`百炼鉴权失败 / 额度不足 / 请求过于频繁 / 文生图失败` | `media/http.ts` 的厂商错误归一 |
+| 产物 | URL → core 下载（SSRF 守卫）→ 既有附件投递 | 同左（同一投递链） |
+
+**真机验收（待用户验证）**：填入百炼 API Key 后，按 §验收锚点第 1 条执行；若文生图端点
+拒绝 `wan2.7-t2v`，按 DEV-124 只改 manifest `model`。
+
+### 12.5 Q1–Q5（被试点证实 / 仍未决）
+
+- **Q1 `host.secrets.set`**：试点未需要——API Key 由用户在实例表单填写、调用时注入，
+  插件无自轮换令牌场景。维持只读。
+- **Q2 并发池化**：未出现实测瓶颈（试点串行排队；轮询是等待不是 CPU）。维持串行。
+- **Q3 持久型插件**：未涉及。仍未决。
+- **Q4 community 执行型**：静态扫描管线已落地（P4），但只有两个第一方包跑过；维持 v1
+  拒绝，待 verified 试点积累后再评估。
+- **Q5 fs 能力**：试点未需要（产物按 URL 引用）。仍未决。
+
+### 12.6 验收锚点核对
+
+| 锚点 | 证据 |
+|---|---|
+| 执行型插件安装 → 披露 → 实例 Key → Bot 勾选 → 进度 → 产物 → 徽标 / 活动 | `plugin-host.test.ts` 试点用例（真实子进程 + 假 fetch）；**真机待用户验证** |
+| 白名单外域名 → `PLUGIN_NETWORK_DENIED`、插件卡可见 | `plugin-host.test.ts` / `plugin-bridge.test.ts` |
+| 死循环 → 看门狗击杀 → `PROVIDER_UNAVAILABLE` 人话、下次自动重启 | `plugin-host.test.ts`（心跳看门狗用例） |
+| 坏输出 → `PLUGIN_CONTRACT_VIOLATION` 无部分投递 | `plugin-host.test.ts`（合同违规用例） |
+| 卸载 → 进程终止 / storage / secrets 清除 / 条目残留静默跳过 | `plugin-host.test.ts`（卸载用例） |
+| 未安装执行型插件的环境行为不变 | `plugin-host.test.ts`（数据型插件不出现在运行时列表、无徽标）+ media 全目录回归 |
+
 ## 修订记录
 
 | 日期 | 修订 |
 |---|---|
 | 2026-11-15 | 初稿（D125）：双形态插件模型、PluginHost 运行时、Host API v1、media 能力契约、可观测闭环、信任矩阵；修订 D104（执行域）、D124（决策 1 与 Q1）；决策不引入 Cordis（评估结论内嵌 §0） |
+| 2026-11-16 | P1–P4 收口：补 §12 现状（实际落地 / 迁移 0076 / DEV-104–128 / 试点 A/B / Q1–Q5 / 验收锚点）；§2 增 `runtime.instanceFields`（DEV-114 方案 1）；invoke 上下文增可选 `instanceId` |
+| 2026-11-16 | P4 独立审查修正：`ready.features` 能力协商（旧 SDK 不收 `instanceId`）、静态扫描绕过加固（DEV-129）、`safeFetch` 改用与 Agent 同版本的 undici fetch、混合插件字段重名拒绝与域名去重；§7 / §12.1 / §12.3 同步 |

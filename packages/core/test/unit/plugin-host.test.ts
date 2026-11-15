@@ -28,7 +28,12 @@ import { resolvePaths } from '../../src/infra/paths.js';
 import { systemClock } from '../../src/infra/clock.js';
 import { createCapabilityModelMaterializer } from '../../src/plugins/materializers/capability-model.js';
 import { createMediaEntrySource } from '../../src/plugins/media-entry-source.js';
-import { PluginInstanceService, PluginInstanceStore, pluginSecretScope } from '../../src/plugins/instances.js';
+import {
+  PluginInstanceService,
+  PluginInstanceStore,
+  pluginInstanceSecretName,
+  pluginSecretScope,
+} from '../../src/plugins/instances.js';
 import { CapabilityModelsProjector } from '../../src/plugins/projectors/capability-models.js';
 import { PluginPackager } from '../../src/plugins/package.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
@@ -36,6 +41,7 @@ import { PluginStore } from '../../src/plugins/store.js';
 import { CapabilityBridge } from '../../src/plugins/runtime/bridge.js';
 import { PluginHost } from '../../src/plugins/runtime/host.js';
 import { PluginStorageStore } from '../../src/plugins/runtime/storage.js';
+import { dashscopeAdapter } from '../../src/media/adapters/dashscope.js';
 import { bindPluginsMethods } from '../../src/rpc/plugins-bindings.js';
 import {
   assertRuntimeInstallable,
@@ -60,18 +66,23 @@ import {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../../../..');
 const referencePluginDir = path.join(repoRoot, 'plugins', 'reference-media');
+const pilotPluginDir = path.join(repoRoot, 'plugins', 'dashscope-t2i');
 const probeFixtureDir = path.join(here, '../fixtures/plugin-runtime/probe');
 const REFERENCE_ID = 'io.kepcup/reference-media';
+const PILOT_ID = 'io.kepcup/dashscope-t2i';
+const PILOT_ENTRY_ID = 'wan-t2i';
 const PROBE_ID = 'io.test/runtime-probe';
 
 beforeAll(() => {
   // DEV-108：dist 缺失或无构建钩子 → 测试前显式构建（同时刷新 P2 版 SDK）。
-  execFileSync(process.execPath, [path.join(referencePluginDir, 'build.mjs')], {
-    cwd: repoRoot,
-    stdio: 'pipe',
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-  });
-}, 60_000);
+  for (const dir of [referencePluginDir, pilotPluginDir]) {
+    execFileSync(process.execPath, [path.join(dir, 'build.mjs')], {
+      cwd: repoRoot,
+      stdio: 'pipe',
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    });
+  }
+}, 120_000);
 
 const root = mkdtempSync(path.join(tmpdir(), 'plugin-host-'));
 afterAll(() => {
@@ -143,6 +154,8 @@ interface RigOptions {
   idleStopMs?: number;
   /** 子进程环境白名单的来源（缺省 process.env；测试用于注入一个宿主侧“秘密”）。 */
   baseEnv?: NodeJS.ProcessEnv;
+  /** RSS warn 阈值（测试调小触发观测日志；缺省 512MB）。 */
+  rssWarnBytes?: number;
 }
 
 function makeRig(options: RigOptions = {}) {
@@ -222,6 +235,7 @@ function makeRig(options: RigOptions = {}) {
       callTimeoutOverride: options.callTimeoutOverride ?? { 'media.generateImage': 300 },
     },
     ...(options.baseEnv !== undefined ? { baseEnv: options.baseEnv } : {}),
+    ...(options.rssWarnBytes !== undefined ? { rssWarnBytes: options.rssWarnBytes } : {}),
   });
   registry.attachRuntimeStop((pluginId) => host.dispose(pluginId));
   registry.attachRuntimeTeardown((pluginId) => {
@@ -306,6 +320,73 @@ function referenceSource(): string {
 
 function probeSource(): string {
   return stageSourceDir('probe', probeFixtureDir, ['plugin.json', 'main.mjs']);
+}
+
+/** 同一探针夹具的旧 SDK 形态：ready 帧不带 features（宿主不得发送 instanceId）。 */
+function legacyProbeSource(): string {
+  const dir = stageSourceDir('probe-legacy', probeFixtureDir, ['plugin.json', 'main.mjs']);
+  const main = path.join(dir, 'main.mjs');
+  writeFileSync(
+    main,
+    readFileSync(main, 'utf8').replace(
+      "const LEGACY_SDK = import.meta.url.includes('probe-legacy');",
+      'const LEGACY_SDK = true;',
+    ),
+  );
+  return dir;
+}
+
+/** 百炼文生图执行型试点（dist 由 beforeAll 构建）。 */
+function pilotSource(): string {
+  return stageSourceDir('dashscope-t2i', pilotPluginDir, [
+    'plugin.json',
+    'package.json',
+    'icon.svg',
+    'dist/main.js',
+  ]);
+}
+
+/**
+ * 扩权 diff 夹具（D125 P4）：在探针实例字段版本上改写 `runtime.network.allow` 与
+ * `instanceFields`，用于「更新能力清单扩大 → 重新同意」。
+ */
+function runtimeSourceWithCapabilities(options: {
+  networkAllow: string[];
+  extraFields?: Array<Record<string, unknown>>;
+  version?: string;
+}): string {
+  const dir = probeSourceWithInstanceFields();
+  const manifestPath = path.join(dir, 'plugin.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+    version: string;
+    runtime: { network: { allow: string[] }; instanceFields: Array<Record<string, unknown>> };
+  };
+  manifest.version = options.version ?? manifest.version;
+  manifest.runtime.network = { allow: options.networkAllow };
+  manifest.runtime.instanceFields = [
+    ...manifest.runtime.instanceFields,
+    ...(options.extraFields ?? []),
+  ];
+  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+  return dir;
+}
+
+/**
+ * DEV-114 方案 1 夹具：给探针清单加 `runtime.instanceFields`（apiKey 敏感必填 +
+ * region 非敏感默认值），验证「声明 → 实例表单 → secrets → credentials 注入」。
+ */
+function probeSourceWithInstanceFields(): string {
+  const dir = probeSource();
+  const manifestPath = path.join(dir, 'plugin.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+    runtime: Record<string, unknown>;
+  };
+  manifest.runtime.instanceFields = [
+    { key: 'apiKey', type: 'string', title: 'API Key', required: true, sensitive: true },
+    { key: 'region', type: 'string', title: 'Region', default: 'cn-beijing' },
+  ];
+  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+  return dir;
 }
 
 /** 数据型插件（无 runtime 段）：`plugins.runtime.list` 必须忽略它（P3 验收 4）。 */
@@ -450,6 +531,293 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     rig.host.disposeAll();
   }, 30_000);
 
+  it('百炼文生图执行型试点：MediaService 条目解析 → 子进程提交/轮询 → 产物 URL + 进度阶段（D125 P4）', async () => {
+    const requests: Array<{
+      url: string;
+      method: string;
+      authorization: string;
+      asyncHeader: string;
+      body: Record<string, unknown>;
+    }> = [];
+    let polls = 0;
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      const raw = typeof init?.body === 'string' ? init.body : '';
+      const body = raw.length > 0 ? (JSON.parse(raw) as Record<string, unknown>) : {};
+      requests.push({
+        url,
+        method: init?.method ?? 'GET',
+        authorization: headers['Authorization'] ?? '',
+        asyncHeader: headers['X-DashScope-Async'] ?? '',
+        body,
+      });
+      if (url.endsWith('/api/v1/services/aigc/text2image/image-synthesis')) {
+        expect(headers['X-DashScope-Async']).toBe('enable');
+        return new Response(
+          JSON.stringify({ output: { task_id: 'task-pilot-1', task_status: 'PENDING' } }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      polls += 1;
+      const status = polls === 1 ? 'PENDING' : polls === 2 ? 'RUNNING' : 'SUCCEEDED';
+      return new Response(
+        JSON.stringify({
+          output: {
+            task_id: 'task-pilot-1',
+            task_status: status,
+            ...(status === 'SUCCEEDED'
+              ? { results: [{ url: 'https://dashscope.aliyuncs.com/out/1.png' }] }
+              : {}),
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }) as typeof fetch;
+    const rig = makeRig({ fetchImpl, callTimeoutOverride: {} });
+    await rig.installSource(pilotSource());
+
+    // 实例字段声明面：apiKey 敏感必填 → 实例表单 + secrets（DEV-114 与试点同一条链）。
+    const summary = rig.registry.list().find((plugin) => plugin.id === PILOT_ID);
+    expect(summary?.instanceFields.map((field) => field.key)).toEqual(['apiKey']);
+    const instance = await rig.pluginInstances.create(
+      PILOT_ID,
+      { apiKey: 'sk-pilot' },
+      'capability-model',
+    );
+    expect(rig.secrets.getValue(pluginInstanceSecretName(PILOT_ID, instance.id, 'apiKey'))).toBe(
+      'sk-pilot',
+    );
+
+    // Bot 绑定执行型条目 → MediaService 解析到托管适配器。
+    const bot = rig.bots.create({ identity: { name: '百炼试点 Bot' } }, { skipDefaultAgent: true });
+    rig.bots.setPluginIds(bot.id, [PILOT_ID]);
+    rig.bots.setCapabilityEntries(bot.id, [{ plugin: PILOT_ID, entry: PILOT_ENTRY_ID }]);
+    const phases: string[] = [];
+    const image = await rig.media.generateImage(
+      { prompt: '一只在窗台上的橘猫' },
+      { loopType: 'task', botId: bot.id },
+      { botId: bot.id, onProgress: (payload) => phases.push(payload.phase ?? '') },
+    );
+    expect(image.images).toEqual([{ url: 'https://dashscope.aliyuncs.com/out/1.png' }]);
+    const submit = requests.find((request) => request.method === 'POST');
+    expect(submit?.authorization).toBe('Bearer sk-pilot');
+    expect(submit?.body).toMatchObject({
+      model: 'wan2.7-t2v',
+      input: { prompt: '一只在窗台上的橘猫' },
+      // 条目 params 的默认 size / n（工具不传时生效），原生分隔符为 *。
+      parameters: { size: '1024*1024', n: 1 },
+    });
+
+    // 进度阶段：提交 → 排队 → 生成中 → 取回。PENDING → RUNNING → SUCCEEDED 三个
+    // 轮询状态保证 queued / generating 都能观测到；downloading 是成功后的 100% 帧。
+    expect(phases[0]).toBe('submitting');
+    expect(phases).toContain('queued');
+    expect(phases).toContain('generating');
+    expect(phases).toContain('downloading');
+
+    expect(rig.host.statusOf(PILOT_ID).recent[0]).toMatchObject({
+      contract: 'media',
+      method: 'generateImage',
+      ok: true,
+    });
+    rig.host.disposeAll();
+  }, 30_000);
+
+  it('百炼试点错误映射：401 → PROVIDER_AUTH_FAILED；402 → PROVIDER_QUOTA；429 → PROVIDER_RATE_LIMITED', async () => {
+    const statusByModel: Record<string, number> = {
+      'auth-fail': 401,
+      'quota-fail': 402,
+      'rate-fail': 429,
+    };
+    const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
+      const raw = typeof init?.body === 'string' ? init.body : '{}';
+      const model = (JSON.parse(raw) as { model?: string }).model ?? '';
+      const status = statusByModel[model] ?? 500;
+      return new Response(
+        JSON.stringify({
+          code:
+            status === 401
+              ? 'InvalidApiKey'
+              : status === 402
+                ? 'Arrearage'
+                : status === 429
+                  ? 'Throttling'
+                  : 'InternalError',
+          message:
+            status === 402
+              ? '账户已欠费，请充值后重试'
+              : status === 429
+                ? '请求过于频繁'
+                : '鉴权失败',
+        }),
+        { status, headers: { 'content-type': 'application/json' } },
+      );
+    }) as typeof fetch;
+    const rig = makeRig({ fetchImpl, callTimeoutOverride: {} });
+    await rig.installSource(pilotSource());
+    const instance = await rig.pluginInstances.create(
+      PILOT_ID,
+      { apiKey: 'sk-pilot' },
+      'capability-model',
+    );
+    const call = (model: string) =>
+      rig.host.call(
+        PILOT_ID,
+        'media',
+        'generateImage',
+        { prompt: '错误映射' },
+        { entryId: PILOT_ENTRY_ID, model, instanceId: instance.id },
+      );
+    await expect(call('auth-fail')).rejects.toMatchObject({ code: 'PROVIDER_AUTH_FAILED' });
+    await expect(call('quota-fail')).rejects.toMatchObject({ code: 'PROVIDER_QUOTA' });
+    await expect(call('rate-fail')).rejects.toMatchObject({ code: 'PROVIDER_RATE_LIMITED' });
+    rig.host.disposeAll();
+  }, 20_000);
+
+  it('百炼试点取消：signal abort → cancel 帧 → 插件尽快返回（不删服务端任务）；活动历史标 CANCELLED', async () => {
+    const fetchImpl = (async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith('/text2image/image-synthesis')) {
+        return new Response(JSON.stringify({ output: { task_id: 'task-cancel-1' } }), {
+          status: 200,
+        });
+      }
+      return new Response(JSON.stringify({ output: { task_status: 'PENDING' } }), { status: 200 });
+    }) as typeof fetch;
+    const rig = makeRig({
+      fetchImpl,
+      callTimeoutOverride: { 'media.generateImage': 5_000 },
+    });
+    await rig.installSource(pilotSource());
+    const instance = await rig.pluginInstances.create(
+      PILOT_ID,
+      { apiKey: 'sk-pilot' },
+      'capability-model',
+    );
+    const controller = new AbortController();
+    const pending = rig.host.call(
+      PILOT_ID,
+      'media',
+      'generateImage',
+      { prompt: '取消' },
+      {
+        entryId: PILOT_ENTRY_ID,
+        model: 'wan2.7-t2v',
+        instanceId: instance.id,
+        signal: controller.signal,
+      },
+    );
+    // 等到第一次轮询（插件固定 2s 间隔）之后 abort，覆盖「轮询等待中取消」。
+    await new Promise((resolve) => setTimeout(resolve, 2_300));
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({
+      code: 'PROVIDER_UNAVAILABLE',
+      message: expect.stringContaining('调用已取消'),
+    });
+    expect(rig.host.statusOf(PILOT_ID).recent[0]).toMatchObject({
+      ok: false,
+      errorCode: 'CANCELLED',
+      message: '调用已取消',
+    });
+    // 插件进程仍 ready（取消不是崩溃），下次调用无需重启。
+    expect(rig.host.statusOf(PILOT_ID).status).toBe('ready');
+    rig.host.disposeAll();
+  }, 20_000);
+
+  it('A/B 对照（集成层）：同一 prompt/size 走执行型插件 vs 内置引擎 generateImage（无 Key 的真机差异见 61 §12）', async () => {
+    const prompt = '一只在窗台上的橘猫';
+    const size = '1024*1024';
+    // 内置引擎侧：dashscope 引擎的 image 是 qwen-image 同步 multimodal-generation
+    // （与 wan 异步协议不同源；异步提交/轮询的代码形状在内置引擎里属于视频三方法）。
+    const builtinRequests: string[] = [];
+    const builtinFetch = (async (input: string | URL | Request) => {
+      builtinRequests.push(String(input));
+      return new Response(
+        JSON.stringify({
+          output: {
+            choices: [
+              {
+                message: {
+                  content: [{ image: 'https://dashscope.aliyuncs.com/out/qwen-image.png' }],
+                },
+              },
+            ],
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }) as typeof fetch;
+    const builtinStarted = Date.now();
+    const builtin = await dashscopeAdapter.generateImage!(
+      {
+        vendor: 'dashscope',
+        baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        apiKey: 'sk-ab',
+        logger: makeLogger().logger as never,
+        fetchImpl: builtinFetch,
+      },
+      'qwen-image',
+      { prompt, size: '1024x1024' },
+    );
+    const builtinMs = Date.now() - builtinStarted;
+    expect(builtin.images).toEqual([{ url: 'https://dashscope.aliyuncs.com/out/qwen-image.png' }]);
+    expect(builtinRequests[0]).toContain('/api/v1/services/aigc/multimodal-generation/generation');
+
+    // 插件侧：同一 prompt/size 走 wan 异步提交 + 最少一次 2s 轮询。
+    let polls = 0;
+    const pluginFetch = (async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith('/text2image/image-synthesis')) {
+        return new Response(JSON.stringify({ output: { task_id: 'ab-1' } }), { status: 200 });
+      }
+      polls += 1;
+      return new Response(
+        JSON.stringify({
+          output: {
+            task_status: polls === 1 ? 'PENDING' : 'SUCCEEDED',
+            ...(polls > 1
+              ? { results: [{ url: 'https://dashscope.aliyuncs.com/out/wan.png' }] }
+              : {}),
+          },
+        }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+    const rig = makeRig({ fetchImpl: pluginFetch, callTimeoutOverride: {} });
+    await rig.installSource(pilotSource());
+    const instance = await rig.pluginInstances.create(
+      PILOT_ID,
+      { apiKey: 'sk-ab' },
+      'capability-model',
+    );
+    const pluginProgress: string[] = [];
+    const pluginStarted = Date.now();
+    const viaPlugin = (await rig.host.call(
+      PILOT_ID,
+      'media',
+      'generateImage',
+      { prompt, size },
+      {
+        entryId: PILOT_ENTRY_ID,
+        model: 'wan2.7-t2v',
+        instanceId: instance.id,
+        onProgress: (payload) => pluginProgress.push(payload.phase ?? ''),
+      },
+    )) as { images: Array<{ url: string }> };
+    const pluginMs = Date.now() - pluginStarted;
+    expect(viaPlugin.images).toEqual([{ url: 'https://dashscope.aliyuncs.com/out/wan.png' }]);
+
+    // 观测差异（61 §6 / 61 §12 A/B 记录的数据来源）：
+    // - 内置引擎单请求同步返回，无阶段进度、无插件活动记录；
+    // - 插件路径至少 2s（轮询节奏）、有阶段进度、有插件卡历史。
+    expect(builtinMs).toBeLessThan(pluginMs);
+    expect(pluginMs).toBeGreaterThanOrEqual(2_000);
+    expect(pluginProgress.length).toBeGreaterThan(0);
+    expect(rig.host.statusOf(PILOT_ID).recent[0]).toMatchObject({ ok: true });
+    rig.host.disposeAll();
+  }, 30_000);
+
   it('progress / log 事件：限速透传给 run 进度回调，log 进 core logger', async () => {
     const { rig, instanceId } = await withProbe();
     const phases: string[] = [];
@@ -498,11 +866,128 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
 
   it('credentials 注入：invoke.context 只带该实例的 sensitive 字段（host-api 不泄露）', async () => {
     const { rig, instanceId } = await withProbe();
-    rig.secrets.setValue(`${pluginSecretScope(PROBE_ID)}:instance:${instanceId}:apiKey`, 'sk-probe');
+    rig.secrets.setValue(
+      `${pluginSecretScope(PROBE_ID)}:instance:${instanceId}:apiKey`,
+      'sk-probe',
+    );
     const result = (await callProbe(rig, instanceId, 'creds')) as {
       images: Array<{ mimeType: string }>;
     };
     expect(result.images[0]?.mimeType).toBe('image/png+apiKey+sk-probe');
+    rig.host.disposeAll();
+  });
+
+  it('实例字段声明（DEV-114）：runtime.instanceFields → 实例表单 / secrets / 子进程 credentials + instanceId', async () => {
+    const rig = makeRig();
+    await rig.installSource(probeSourceWithInstanceFields());
+    const summary = rig.registry.list().find((plugin) => plugin.id === PROBE_ID);
+    expect(summary?.instanceFields.map((field) => field.key)).toEqual(['apiKey', 'region']);
+
+    const instance = await rig.pluginInstances.create(
+      PROBE_ID,
+      { apiKey: 'sk-from-form', region: 'cn-shanghai' },
+      'capability-model',
+    );
+    // 敏感字段值只进 secrets；实例摘要只报告「已设置」。
+    expect(rig.secrets.getValue(pluginInstanceSecretName(PROBE_ID, instance.id, 'apiKey'))).toBe(
+      'sk-from-form',
+    );
+    expect(instance.values['apiKey']).toBeUndefined();
+    expect(instance.storedSensitiveKeys).toContain('apiKey');
+    expect(instance.values['region']).toBe('cn-shanghai');
+
+    // 真实子进程：invoke.context.credentials 带敏感值，instanceId 可选字段可对齐实例。
+    const creds = (await callProbe(rig, instance.id, 'creds')) as {
+      images: Array<{ mimeType: string }>;
+    };
+    expect(creds.images[0]?.mimeType).toBe('image/png+apiKey+sk-from-form');
+    const ctx = (await callProbe(rig, instance.id, 'ctx')) as {
+      images: Array<{ mimeType: string }>;
+    };
+    expect(ctx.images[0]?.mimeType).toBe(`image/png+${instance.id}`);
+    rig.host.disposeAll();
+  });
+
+  it('旧 SDK 兼容（D125 P4）：ready 未声明 features → 宿主不发送 instanceId，调用仍成功', async () => {
+    const rig = makeRig();
+    await rig.installSource(legacyProbeSource());
+    const instance = await rig.pluginInstances.create(PROBE_ID, {}, 'capability-model');
+    const ctx = (await callProbe(rig, instance.id, 'ctx')) as {
+      images: Array<{ mimeType: string }>;
+    };
+    // 帧里没有 instanceId（旧 SDK 的 strict schema 不会因此丢弃整帧）。
+    expect(ctx.images[0]?.mimeType).toBe('image/png+');
+    // 凭据注入仍按实例工作（实例没有敏感字段 → 空凭据，旧帧 shape 不变）。
+    const creds = (await callProbe(rig, instance.id, 'creds')) as {
+      images: Array<{ mimeType: string }>;
+    };
+    expect(creds.images[0]?.mimeType).toBe('image/png++');
+    rig.host.disposeAll();
+  });
+
+  it('RSS 观测（61 §3.3）：心跳 pong 自报超过阈值 → 记一条 warn（每进程一次，不击杀）', async () => {
+    // 阈值调成 1 字节：探针在 pong 里自报真实 RSS，必然越过；只验观测日志。
+    const { rig, instanceId } = await withProbe({ rssWarnBytes: 1 });
+    await callProbe(rig, instanceId, 'ok');
+    for (let i = 0; i < 100; i += 1) {
+      if (
+        rig.logs.some((entry) => entry.message.includes('RSS exceeded the observation threshold'))
+      )
+        break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const warnings = rig.logs.filter((entry) =>
+      entry.message.includes('RSS exceeded the observation threshold'),
+    );
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.obj).toMatchObject({ plugin: PROBE_ID, thresholdBytes: 1 });
+    // 观测不是治理：进程仍 ready，随后的调用照常成功。
+    expect(rig.host.statusOf(PROBE_ID).status).toBe('ready');
+    const after = (await callProbe(rig, instanceId, 'ok')) as { images: unknown[] };
+    expect(after.images).toHaveLength(1);
+    rig.host.disposeAll();
+  });
+
+  it('更新扩权（D125 P4）：network.allow / 敏感实例字段扩大 → inspect 报差异、无 acknowledgeDiff 拒更新', async () => {
+    const rig = makeRig();
+    await rig.installSource(runtimeSourceWithCapabilities({ networkAllow: ['example.invalid'] }));
+    const v2 = runtimeSourceWithCapabilities({
+      networkAllow: ['example.invalid', 'api.example.com'],
+      extraFields: [
+        { key: 'secretKey', type: 'string', title: 'Secret Key', required: false, sensitive: true },
+      ],
+    });
+    const info = await rig.registry.inspect({ kind: 'folder', path: v2 });
+    expect(info.update).toMatchObject({ permissionsExpanded: true });
+    expect(info.update?.added).toContain('执行型插件新增可访问的网络域名 api.example.com');
+    expect(info.update?.added).toContain(
+      '执行型插件新增实例凭据字段 secretKey（只保存你填写的值）',
+    );
+
+    await expect(
+      rig.registry.install({
+        source: { kind: 'folder', path: v2 },
+        sha256: treeShaOf(v2),
+        userConfig: {},
+        via: 'folder',
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT', details: { permissionsExpanded: true } });
+
+    // 显式确认后才落盘（同 id 本地重装 = 更新流）。
+    const updated = await rig.registry.install({
+      source: { kind: 'folder', path: v2 },
+      sha256: treeShaOf(v2),
+      userConfig: {},
+      via: 'folder',
+      acknowledgeDiff: true,
+    });
+    expect(updated.id).toBe(PROBE_ID);
+    const summary = rig.registry.list().find((plugin) => plugin.id === PROBE_ID);
+    expect(summary?.instanceFields.map((field) => field.key)).toEqual([
+      'apiKey',
+      'region',
+      'secretKey',
+    ]);
     rig.host.disposeAll();
   });
 
@@ -576,11 +1061,7 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     // 已 abort 的 signal：直接拒绝，不创建进程。
     const preRig = makeRig();
     await preRig.installSource(probeSource());
-    const preInstance = await preRig.pluginInstances.create(
-      PROBE_ID,
-      {},
-      'capability-model',
-    );
+    const preInstance = await preRig.pluginInstances.create(PROBE_ID, {}, 'capability-model');
     const preAborted = new AbortController();
     preAborted.abort();
     await expect(
@@ -735,8 +1216,17 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     rig.host.disposeAll();
   });
 
-  it('Host API storage：set/get/list/delete 往返；卸载清空 plugin_storage', async () => {
-    const { rig, instanceId } = await withProbe();
+  it('Host API storage：set/get/list/delete 往返；卸载清空 plugin_storage / secrets / 进程（61 验收）', async () => {
+    const rig = makeRig();
+    await rig.installSource(probeSourceWithInstanceFields());
+    const instance = await rig.pluginInstances.create(
+      PROBE_ID,
+      { apiKey: 'sk-uninstall' },
+      'capability-model',
+    );
+    const instanceId = instance.id;
+    const secretName = pluginInstanceSecretName(PROBE_ID, instanceId, 'apiKey');
+    expect(rig.secrets.getValue(secretName)).toBe('sk-uninstall');
     const result = (await callProbe(rig, instanceId, 'storage')) as {
       images: Array<{ mimeType: string }>;
     };
@@ -746,7 +1236,12 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     expect(rig.storage.list(PROBE_ID)).toEqual(['leftover']);
     await rig.registry.uninstall(PROBE_ID);
     expect(rig.storage.list(PROBE_ID)).toEqual([]);
+    // 卸载清理：进程终止、实例行与 secrets 清除（61 验收「卸载清理」）。
     expect(rig.host.statusOf(PROBE_ID).status).toBe('stopped');
+    expect(rig.instanceStore.list(PROBE_ID)).toEqual([]);
+    expect(rig.secrets.getValue(secretName)).toBeNull();
+    // 条目残留静默跳过：执行型插件不再出现在运行时列表里。
+    expect((await rig.host.list()).some((row) => row.pluginId === PROBE_ID)).toBe(false);
     rig.host.disposeAll();
   });
 
@@ -874,7 +1369,9 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
   /** 建 Bot 并绑定探针条目（MediaService 的条目路径要求 botId + 条目）。 */
   const bindProbeBot = (
     rig: Rig,
-    entries: Array<{ plugin: string; entry: string }> = [{ plugin: PROBE_ID, entry: 'probe-image' }],
+    entries: Array<{ plugin: string; entry: string }> = [
+      { plugin: PROBE_ID, entry: 'probe-image' },
+    ],
   ): string => {
     const bot = rig.bots.create({ identity: { name: '探针 Bot' } }, { skipDefaultAgent: true });
     rig.bots.setPluginIds(bot.id, [PROBE_ID]);
@@ -970,15 +1467,64 @@ describe('执行型插件安装管线（D125 步骤 4：层级 / entry / 包防�
     await expect(rig.installSource(invalid)).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
   });
 
-  it('包内含 .node / 可执行位文件 → 拒装（PLUGIN_INVALID）', async () => {
+  it('包内含 .node / .wasm / .dll / .so / .exe / 可执行位文件 → 拒装（PLUGIN_INVALID）', async () => {
     const rig = makeRig();
-    const native = variantDir('native', null, [{ relative: 'lib/evil.node', text: 'x' }]);
-    await expect(rig.installSource(native)).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
+    for (const relative of [
+      'lib/evil.node',
+      'lib/evil.wasm',
+      'lib/evil.dll',
+      'lib/evil.so',
+      'lib/evil.exe',
+      'lib/evil.dylib',
+    ]) {
+      const dir = variantDir(`native-${relative.split('.').pop()}`, null, [
+        { relative, text: 'x' },
+      ]);
+      await expect(rig.installSource(dir), relative).rejects.toMatchObject({
+        code: 'PLUGIN_INVALID',
+      });
+    }
     const executable = variantDir('exec', null, [
       { relative: 'tools/run.sh', text: '#!/bin/sh\n', exec: true },
     ]);
     await expect(rig.installSource(executable)).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
     expect(rig.store.get(PROBE_ID)).toBeNull();
+  });
+
+  it('runtime.entry 必须是 ESM：.cjs / 无扩展名 / .js 缺 package.json type module / 嵌套 package.json → 拒装', async () => {
+    const rig = makeRig();
+    for (const relative of ['main.cjs', 'main']) {
+      const dir = variantDir(`entry-${relative.replace('.', '-')}`, { entry: relative }, [
+        { relative, text: 'globalThis.ok = 1;' },
+      ]);
+      await expect(rig.installSource(dir), relative).rejects.toMatchObject({
+        code: 'PLUGIN_INVALID',
+      });
+    }
+    const jsNoPackage = variantDir('entry-js-no-package', { entry: 'main.js' }, [
+      { relative: 'main.js', text: 'globalThis.ok = 1;' },
+    ]);
+    await expect(rig.installSource(jsNoPackage)).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
+    const jsCommonJs = variantDir('entry-js-cjs', { entry: 'main.js' }, [
+      { relative: 'main.js', text: 'globalThis.ok = 1;' },
+      { relative: 'package.json', text: '{"type":"commonjs"}' },
+    ]);
+    await expect(rig.installSource(jsCommonJs)).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
+    const nestedPackage = variantDir('entry-nested-package', { entry: 'main.js' }, [
+      { relative: 'main.js', text: 'globalThis.ok = 1;' },
+      { relative: 'package.json', text: '{"type":"module"}' },
+      { relative: 'nested/package.json', text: '{"type":"commonjs"}' },
+    ]);
+    await expect(rig.installSource(nestedPackage)).rejects.toMatchObject({
+      code: 'PLUGIN_INVALID',
+    });
+    const jsEsm = variantDir('entry-js-esm', { entry: 'main.js' }, [
+      { relative: 'main.js', text: 'globalThis.ok = 1;' },
+      { relative: 'package.json', text: '{"type":"module"}' },
+    ]);
+    await expect(rig.installSource(jsEsm)).resolves.toBeUndefined();
+    expect(rig.store.get(PROBE_ID)?.state).toBe('installed');
+    rig.host.disposeAll();
   });
 
   it('runtime.entry 指向包外 / 不存在 → 拒装（PLUGIN_INVALID）', async () => {
@@ -1043,6 +1589,28 @@ describe('执行型插件安装管线（D125 步骤 4：层级 / entry / 包防�
     ).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
   });
 
+  it('混合插件：runtime.instanceFields 与引擎凭据字段重名 → 拒装（避免非敏感声明覆盖 secrets 语义）', async () => {
+    const dir = variantDir('field-collision', null);
+    const raw = JSON.parse(readFileSync(path.join(dir, 'plugin.json'), 'utf8')) as {
+      runtime: Record<string, unknown>;
+      contributions: { capabilityModels: Array<Record<string, unknown>> };
+    };
+    raw.runtime.instanceFields = [
+      { key: 'apiKey', type: 'string', title: 'API Key', sensitive: false },
+    ];
+    raw.contributions.capabilityModels.push({
+      id: 'ds-image',
+      capability: 'image',
+      model: 'qwen-image',
+      engine: 'dashscope',
+    });
+    writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify(raw, null, 2));
+    const manifest = pluginManifestSchema.parse(raw);
+    await expect(
+      assertRuntimeInstallable(manifest, { dir, tier: 'developer' }),
+    ).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
+  });
+
   it('执行型条目只声明 embedding / rerank（v1 契约不开放）→ 拒装（PLUGIN_INVALID）', async () => {
     const dir = variantDir('embedding-only', null);
     const raw = JSON.parse(readFileSync(path.join(dir, 'plugin.json'), 'utf8')) as {
@@ -1069,6 +1637,34 @@ describe('执行型插件安装管线（D125 步骤 4：层级 / entry / 包防�
       storageQuotaBytes: 10 * 1024 * 1024,
     });
     expect(info.installable).toBe(true);
+  });
+
+  it('同意卡披露：runtime.instanceFields 的敏感键进入 credentialFields（DEV-114）', async () => {
+    const rig = makeRig();
+    const info = await rig.registry.inspect({
+      kind: 'folder',
+      path: probeSourceWithInstanceFields(),
+    });
+    expect(info.runtime).toMatchObject({
+      hostApi: '^1',
+      networkDomains: ['example.invalid'],
+      credentialFields: ['apiKey'],
+    });
+    expect(info.installable).toBe(true);
+  });
+
+  it('同意卡披露：network.allow 重复条目按声明序去重（渲染层 keyed each 不炸）', async () => {
+    const dir = variantDir('disclosure-dup', {
+      network: { allow: ['example.invalid', 'api.example.com', 'example.invalid'] },
+    });
+    const raw = JSON.parse(readFileSync(path.join(dir, 'plugin.json'), 'utf8')) as {
+      runtime: { network: { allow: string[] } };
+    };
+    raw.runtime.network.allow = ['example.invalid', 'api.example.com', 'example.invalid'];
+    writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify(raw, null, 2));
+    const manifest = pluginManifestSchema.parse(raw);
+    const disclosure = await runtimeDisclosureOf(manifest, { dir, tier: 'developer' });
+    expect(disclosure.runtime?.networkDomains).toEqual(['example.invalid', 'api.example.com']);
   });
 
   it('同意卡披露：network / storage 配额 / hostApi；检视阻断列表同源', async () => {

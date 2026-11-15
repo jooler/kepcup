@@ -1,4 +1,4 @@
-import { lstat, readdir } from 'node:fs/promises';
+import { lstat, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import {
   PLUGIN_RUNTIME_HOST_API_VERSION,
@@ -60,8 +60,22 @@ async function scanPackage(dir: string): Promise<string[]> {
       return;
     }
     if (!info.isFile()) return;
+    // 嵌套 package.json 会让 Node 对 `.js` entry 采用非根的 type 判定（CommonJS 加载面）。
+    if (relative !== 'package.json' && path.basename(relative).toLowerCase() === 'package.json') {
+      found.push(`${relative}（嵌套 package.json）`);
+      return;
+    }
     const lower = relative.toLowerCase();
-    if (lower.endsWith('.node') || lower.endsWith('.wasm')) {
+    // native / 二进制：Node 原生模块、WebAssembly 与平台动态库 / 可执行文件
+    // （P2 审查遗留：Windows 下 `.dll` / `.exe` 与 POSIX `.so` 此前漏拦）。
+    if (
+      lower.endsWith('.node') ||
+      lower.endsWith('.wasm') ||
+      lower.endsWith('.dll') ||
+      lower.endsWith('.so') ||
+      lower.endsWith('.dylib') ||
+      lower.endsWith('.exe')
+    ) {
       found.push(relative);
       return;
     }
@@ -120,10 +134,36 @@ function runtimeIssues(
       message: '执行型插件至少需要声明一条执行型能力条目（不填 engine，且不是 embedding / rerank）',
     });
   }
+  // 混合插件（runtime + 数据型 engine 条目）：runtime.instanceFields 与引擎凭据字段
+  // 重名时，合并顺序会让 runtime 声明覆盖引擎字段（DEV-123）——若 runtime 声明成
+  // 非敏感，用户填的引擎 Key 会落进 config_json 而不是 secrets。直接拒绝重名。
+  const engineFieldKeys = new Set<string>();
+  for (const entry of entries) {
+    if (entry.engine === undefined) continue;
+    for (const field of MEDIA_ENGINES[entry.engine]?.credentialFields ?? []) {
+      engineFieldKeys.add(field.key);
+    }
+  }
+  for (const field of runtime.instanceFields ?? []) {
+    if (engineFieldKeys.has(field.key)) {
+      issues.push({
+        code: 'PLUGIN_INVALID',
+        message: `实例字段 ${field.key} 与条目引擎的实例字段重名（合并顺序会让 runtime 声明覆盖引擎字段）`,
+      });
+    }
+  }
   return issues;
 }
 
-/** `runtime.entry` 存在性 + 包内路径复核。 */
+/**
+ * `runtime.entry` 存在性 + 包内路径 + ESM 格式复核。
+ *
+ * 61 §2 约定 entry 是**单文件 ESM**。Node 按「最近 package.json 的 type」决定 `.js`
+ * 的模块格式：没有 `"type":"module"` 时 `.js` 是 CommonJS，`module['require']` /
+ * `module.constructor._load` 之类的加载面会绕过静态扫描的 `require` 规则。因此这里
+ * 强制 entry ∈ {`.js`, `.mjs`}，且 `.js` 的根 package.json 必须 `type: module`；
+ * 嵌套 package.json 会让「最近」不是根，包扫描直接拒绝。
+ */
 async function entryIssue(manifest: PluginManifest, dir: string): Promise<string | null> {
   const entry = manifest.runtime?.entry;
   if (entry === undefined) return null;
@@ -138,6 +178,22 @@ async function entryIssue(manifest: PluginManifest, dir: string): Promise<string
     if (!info.isFile()) return `runtime.entry 不是文件：${entry}`;
   } catch {
     return `runtime.entry 指向的文件不存在：${entry}`;
+  }
+  const lower = entry.toLowerCase();
+  if (!lower.endsWith('.js') && !lower.endsWith('.mjs')) {
+    return `runtime.entry 必须是 .js / .mjs（ESM 单文件约定）：${entry}`;
+  }
+  if (lower.endsWith('.js')) {
+    try {
+      const raw = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')) as {
+        type?: unknown;
+      };
+      if (raw === null || typeof raw !== 'object' || raw.type !== 'module') {
+        return `runtime.entry 为 .js 时 package.json 必须声明 "type": "module"：${entry}`;
+      }
+    } catch {
+      return `runtime.entry 为 .js 时包内必须有 package.json（"type": "module"）：${entry}`;
+    }
   }
   return null;
 }
@@ -182,19 +238,31 @@ export async function runtimeDisclosureOf(
   if (offending.length > 0) {
     blockers.push(`执行型插件包内不允许 native / 可执行文件：${offending.slice(0, 3).join('、')}`);
   }
-  // 凭据字段名披露：v1 执行型插件没有实例字段声明面（runtime 段无 fields），数据型
-  // 条目（有 engine）的凭据字段照引擎声明列出——混合插件因此也能披露。
+  // 凭据字段名披露（D125 P4 / DEV-114）：执行型 `runtime.instanceFields` 里
+  // sensitive 的键名（声明序）∪ 数据型条目（有 engine）的引擎凭据字段——混合插件
+  // 两种来源都披露；不含值。同键只列一次（首个来源的声明为准）。
   const credentialFields: string[] = [];
+  for (const field of manifest.runtime?.instanceFields ?? []) {
+    if (field.sensitive && !credentialFields.includes(field.key)) {
+      credentialFields.push(field.key);
+    }
+  }
   for (const entryDefinition of manifest.contributions.capabilityModels ?? []) {
     if (entryDefinition.engine === undefined) continue;
     for (const field of MEDIA_ENGINES[entryDefinition.engine]?.credentialFields ?? []) {
       if (!credentialFields.includes(field.key)) credentialFields.push(field.key);
     }
   }
+  // 声明序去重：同意卡的 keyed each 以域名为键，重复条目会让渲染层直接抛错
+  // （schema 只限条数 / 形状，没有唯一性约束）。
+  const networkDomains: string[] = [];
+  for (const domain of runtime.network?.allow ?? []) {
+    if (!networkDomains.includes(domain)) networkDomains.push(domain);
+  }
   return {
     runtime: {
       hostApi: runtime.hostApi,
-      networkDomains: [...(runtime.network?.allow ?? [])],
+      networkDomains,
       credentialFields,
       storageQuotaBytes: PLUGIN_RUNTIME_STORAGE_QUOTA_BYTES,
     },

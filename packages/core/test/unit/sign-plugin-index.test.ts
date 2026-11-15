@@ -328,3 +328,151 @@ describe('sign-plugin-index.mjs', () => {
     ).rejects.toMatchObject({ message: expect.stringContaining('no curation entry') });
   });
 });
+
+/**
+ * D125 P4：执行型包在签名前跑静态扫描——通过 / warn 的包把结果写进索引条目
+ * `runtimeScan`，违规包直接拒签（fail 不出包）。
+ */
+describe('sign-plugin-index.mjs · runtime 静态扫描钩子（D125 P4）', () => {
+  const runtimeManifest = {
+    instances: ['capability-model'],
+    engines: { kepcup: '>=0.5.14' },
+    runtime: {
+      entry: 'dist/main.js',
+      hostApi: '^1',
+      network: { allow: ['api.example.com'] },
+    },
+    contributions: {
+      capabilityModels: [{ id: 'img', capability: 'image', model: 'm' }],
+    },
+  };
+
+  async function signRuntimeFixture(
+    code: string,
+    extraEntries: Array<{ name: string; data?: string; mode?: number; symlink?: boolean }> = [],
+    manifest: typeof runtimeManifest = runtimeManifest,
+  ): Promise<{ exit: number; errors: string[]; out: string[]; outDir: string; keysFile: string }> {
+    const outDir = path.join(root, `out-rt-${Math.random().toString(36).slice(2, 8)}`);
+    const keyDir = path.join(root, `key-rt-${Math.random().toString(36).slice(2, 8)}`);
+    script.generateDevKey(keyDir, 'rt-test');
+    const pem = readFileSync(path.join(keyDir, 'dev-key.pem'), 'utf8');
+    const keysFile = path.join(keyDir, 'dev-keys.json');
+    const packagesDir = path.join(root, `pkg-rt-${Math.random().toString(36).slice(2, 8)}`);
+    await buildPluginFixture({
+      dir: packagesDir,
+      fileName: 'runtime.kepcup',
+      manifest,
+      extraEntries: [
+        { name: 'dist/main.js', data: code },
+        { name: 'package.json', data: '{"type":"module"}' },
+        ...extraEntries,
+      ],
+    });
+    const catalog = path.join(root, `catalog-rt-${Math.random().toString(36).slice(2, 8)}.json`);
+    writeFileSync(
+      catalog,
+      JSON.stringify([
+        {
+          file: 'runtime.kepcup',
+          tier: 'verified',
+          summary: { name: 'Runtime Fixture', description: 'runtime scan fixture', author: 'T' },
+        },
+      ]),
+    );
+    const errors: string[] = [];
+    const out: string[] = [];
+    let exit = 0;
+    try {
+      exit = await script.run(
+        [
+          '--out',
+          outDir,
+          '--key-id',
+          'rt-test',
+          '--packages',
+          packagesDir,
+          '--catalog',
+          catalog,
+          '--download-base',
+          'https://pkg.test',
+          '--generated-at',
+          String(GENERATED_AT),
+          '--keys',
+          keysFile,
+        ],
+        { KEPCUP_PLUGIN_SIGNING_KEY: pem },
+        { out: (message) => out.push(message), err: (message) => errors.push(message) },
+      );
+    } catch (error) {
+      // `run()` throws SignError (the CLI wrapper turns it into exit 1): capture it as the
+      // failure evidence the real signing job prints.
+      errors.push(error instanceof Error ? error.message : String(error));
+      exit = 1;
+    }
+    return { exit, errors, out, outDir, keysFile };
+  }
+
+  it('passes a clean executable package and records runtimeScan in the index entry', async () => {
+    const run = await signRuntimeFixture("await fetch('https://api.example.com/v1');");
+    expect(run.exit).toBe(0);
+    const index = JSON.parse(
+      readFileSync(path.join(run.outDir, 'plugins', 'v1', 'index.json'), 'utf8'),
+    ) as { entries: Array<Record<string, unknown>> };
+    expect(index.entries).toHaveLength(1);
+    expect(index.entries[0]).toMatchObject({
+      categories: ['capability-model'],
+      runtimeScan: { status: 'pass', errors: [], warnings: [] },
+    });
+    expect(pluginIndexEntrySchema.safeParse(index.entries[0]).success).toBe(true);
+  });
+
+  it('records warn (unknown host) but still signs — manual review is the release gate', async () => {
+    const run = await signRuntimeFixture(
+      "await fetch('https://api.example.com'); await fetch('https://unknown.example.net');",
+    );
+    expect(run.exit).toBe(0);
+    const index = JSON.parse(
+      readFileSync(path.join(run.outDir, 'plugins', 'v1', 'index.json'), 'utf8'),
+    ) as { entries: Array<{ runtimeScan?: { status: string; warnings: string[] } }> };
+    expect(index.entries[0]?.runtimeScan?.status).toBe('warn');
+    expect(index.entries[0]?.runtimeScan?.warnings.join(' ')).toContain('unknown.example.net');
+  });
+
+  it('refuses to sign a package whose code fails the scan (eval / native)', async () => {
+    const evaled = await signRuntimeFixture('eval("1")');
+    expect(evaled.exit).toBe(1);
+    expect(evaled.errors.join(' ')).toMatch(/static scan failed/);
+    expect(existsSync(path.join(evaled.outDir, 'plugins', 'v1', 'index.json'))).toBe(false);
+
+    const native = await signRuntimeFixture('globalThis.ok = 1;', [
+      { name: 'lib/native.node', data: 'x' },
+    ]);
+    expect(native.exit).toBe(1);
+    expect(native.errors.join(' ')).toMatch(/native/);
+  });
+
+  it('scans the declared entry even when it has no JS extension', async () => {
+    const extensionless = await signRuntimeFixture(
+      'globalThis.unused = 1;',
+      [{ name: 'main', data: 'eval("1")' }],
+      {
+        ...runtimeManifest,
+        runtime: { ...runtimeManifest.runtime, entry: 'main' },
+      },
+    );
+    expect(extensionless.exit).toBe(1);
+    expect(extensionless.errors.join(' ')).toMatch(/static scan failed/);
+  });
+
+  it('refuses executable-bit and symlink entries before publish', async () => {
+    const executable = await signRuntimeFixture('globalThis.ok = 1;', [
+      { name: 'bin/run', data: '#!/bin/sh', mode: 0o755 },
+    ]);
+    expect(executable.exit).toBe(1);
+    const symlink = await signRuntimeFixture('globalThis.ok = 1;', [
+      { name: 'dist/link', data: '/etc/passwd', symlink: true },
+    ]);
+    expect(symlink.exit).toBe(1);
+    expect(symlink.errors.join(' ')).toMatch(/符号链接/);
+  });
+});

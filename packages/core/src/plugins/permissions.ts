@@ -5,6 +5,7 @@ import type {
   PluginConsentMail,
   PluginConsentMcp,
   PluginConsentSkill,
+  PluginRuntimeDisclosure,
 } from '@kepcup/shared';
 
 /**
@@ -57,13 +58,37 @@ export function permissionTokens(items: ConsentItems): Set<string> {
   return tokens;
 }
 
+/**
+ * D125 P4（61 §7）：执行型插件的能力披露也参与扩权 diff——更新后 `network.allow`
+ * 新增域名或实例表单新增敏感字段 = 重新同意（D104 P1-2 既有机制延伸）。数据型插件
+ * （runtime === null）不产生 token，行为不变。
+ */
+export function runtimePermissionTokens(
+  runtime: PluginRuntimeDisclosure | null | undefined,
+): Set<string> {
+  const tokens = new Set<string>();
+  if (runtime === null || runtime === undefined) return tokens;
+  for (const domain of runtime.networkDomains) {
+    tokens.add(`plugin-network:${domain.toLowerCase()}`);
+  }
+  for (const field of runtime.credentialFields) tokens.add(`plugin-credential:${field}`);
+  return tokens;
+}
+
+/** 合并 consent items 与运行时披露的 token 集合（两处 diff 的同一入口）。 */
+export function unionPermissionTokens(
+  items: Set<string>,
+  runtime: PluginRuntimeDisclosure | null | undefined,
+): Set<string> {
+  return new Set([...items, ...runtimePermissionTokens(runtime)]);
+}
+
 export interface PermissionDiff {
   /** The new set demands at least one token the old set did not. */
   expanded: boolean;
   /** Tokens only the new set has, sorted (stable for snapshots / tests). */
   added: string[];
 }
-
 /** `expanded` = tokens present in the new set but missing from the old one (只删不增 = 不扩大). */
 export function diffPermissions(
   oldTokens: ReadonlySet<string>,
@@ -112,6 +137,10 @@ export function describePermission(token: string): string {
       return `新增邮件模板 ${rest}`;
     case 'im':
       return `新增即时通讯通道 ${rest}`;
+    case 'plugin-network':
+      return `执行型插件新增可访问的网络域名 ${rest}`;
+    case 'plugin-credential':
+      return `执行型插件新增实例凭据字段 ${rest}（只保存你填写的值）`;
     default:
       return token;
   }

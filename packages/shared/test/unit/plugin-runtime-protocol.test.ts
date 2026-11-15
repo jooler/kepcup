@@ -8,6 +8,7 @@ import {
   pluginRuntimeHostToPluginFrameSchema,
   pluginRuntimePluginToHostFrameSchema,
   pluginRuntimeProgressPayloadSchema,
+  pluginRuntimeReadyFrameSchema,
   pluginRuntimeStateFrameSchema,
   safeParseFrame,
   type PluginRuntimeFrame,
@@ -45,7 +46,12 @@ const frames: PluginRuntimeFrame[] = [
   },
   { type: 'cancel', callId: 'call-1' },
   { type: 'shutdown' },
-  { type: 'ready', hostApiVersion: 1, contracts: ['media'] },
+  {
+    type: 'ready',
+    hostApiVersion: 1,
+    contracts: ['media'],
+    features: ['invoke.context.instanceId'],
+  },
   { type: 'result', callId: 'call-1', output: { images: [{ url: 'data:image/png;base64,x' }] } },
   { type: 'error', callId: 'call-1', code: 'PROVIDER_UNAVAILABLE', message: '厂商超时' },
   // 连接级错误（握手版本不匹配）：没有 callId 可回显。
@@ -145,6 +151,47 @@ describe('plugin runtime protocol frames (D125 P1)', () => {
         context: { entryId: 'e', model: 'm', locale: 'zh-CN', credentials: {}, params: {} },
       }).success,
     ).toBe(false);
+  });
+
+  it('ready.features is optional (old SDK omits it) and bounded when present', () => {
+    expect(
+      pluginRuntimeReadyFrameSchema.safeParse({
+        type: 'ready',
+        hostApiVersion: 1,
+        contracts: ['media'],
+      }).success,
+    ).toBe(true);
+    expect(
+      pluginRuntimeReadyFrameSchema.safeParse({
+        type: 'ready',
+        hostApiVersion: 1,
+        contracts: ['media'],
+        features: Array.from({ length: 17 }, (_, i) => `f${i}`),
+      }).success,
+    ).toBe(false);
+  });
+
+  it('accepts invoke.context.instanceId (D125 P4 / DEV-114) and rejects an empty value', () => {
+    const base = {
+      type: 'invoke',
+      callId: 'c',
+      contract: 'media',
+      method: 'generateImage',
+      params: {},
+      context: {
+        entryId: 'e',
+        model: 'm',
+        locale: 'zh-CN',
+        credentials: {},
+        params: {},
+      },
+    } as const;
+    expect(
+      safeParseFrame({ ...base, context: { ...base.context, instanceId: 'pli_abc' } }).success,
+    ).toBe(true);
+    expect(safeParseFrame({ ...base, context: { ...base.context, instanceId: '' } }).success).toBe(
+      false,
+    );
   });
 
   it('rejects invoke.context.credentials with non-string values (sensitive injection is string-only)', () => {

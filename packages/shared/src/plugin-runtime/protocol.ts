@@ -29,6 +29,13 @@ export const PLUGIN_RUNTIME_CONTRACTS = ['media'] as const;
 export type PluginRuntimeContract = (typeof PLUGIN_RUNTIME_CONTRACTS)[number];
 
 /**
+ * 可选协议能力（`ready.features`，D125 P4）：插件在握手时声明自己认识的增量字段，
+ * 宿主只对声明了的插件发送。这样新增 `invoke.context.instanceId` 不会让旧 SDK 打包的
+ * 插件（strict 帧校验会丢弃未知字段）在带实例的调用上静默挂起到超时。
+ */
+export const PLUGIN_RUNTIME_INSTANCE_ID_FEATURE = 'invoke.context.instanceId';
+
+/**
  * 插件运行时错误码（61 §5）：本阶段只定义 / 登记（shared `ERROR_CODES` 同步登记），
  * 运行时消费在 P2。版本不匹配复用既有 `PLUGIN_UPGRADE_REQUIRED`（61 §3.1）。
  * 插件也可回 `PROVIDER_*` 族显式映射（auth / quota 分家语义不变，c0bf9168）——
@@ -99,6 +106,12 @@ export const pluginRuntimeInvokeFrameSchema = z.strictObject({
     model: z.string().min(1).max(200),
     locale: z.string().min(1).max(35),
     credentials: z.record(z.string(), z.string()),
+    /**
+     * D125 P4（DEV-114）：本次调用所属实例 id。多实例插件用它与凭据对应的非敏感配置
+     * 对齐（`credentials` 只含 sensitive 字段；`host.secrets.get` 也按实例前缀裁决）。
+     * 可选：无实例的调用（如宿主内部探测）不带该字段。
+     */
+    instanceId: z.string().min(1).max(128).optional(),
     /** 条目 params 合并（引擎逐键白名单消费，60 §7 原则）。 */
     params: z.record(z.string(), z.unknown()),
   }),
@@ -126,6 +139,11 @@ export const pluginRuntimeReadyFrameSchema = z.strictObject({
   hostApiVersion: z.number().int().min(1),
   /** 开放字符串：老宿主忽略不认识的契约 id（前向兼容），只调用自己认识的。 */
   contracts: z.array(z.string().min(1).max(64)).max(16),
+  /**
+   * D125 P4：插件支持的可选协议能力（如 {@link PLUGIN_RUNTIME_INSTANCE_ID_FEATURE}）。
+   * 缺省 = 旧 SDK：宿主不发送任何该插件未声明的增量 invoke 字段。
+   */
+  features: z.array(z.string().min(1).max(64)).max(16).optional(),
 });
 export type PluginRuntimeReadyFrame = z.infer<typeof pluginRuntimeReadyFrameSchema>;
 
