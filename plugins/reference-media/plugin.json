@@ -29,6 +29,13 @@
         "model": "reference-image-1",
         "displayName": "参考图片生成（假实现）",
         "description": "总是返回一张内置的 1×1 PNG（data URL），带「已排队」「生成中」两个进度事件。用于验证运行链路，不产生真实图片。"
+      },
+      {
+        "id": "reference-video",
+        "capability": "video",
+        "model": "reference-video-1",
+        "displayName": "参考视频生成（假实现）",
+        "description": "提交即返回假任务 id，3 秒后 succeeded（videoUrl 指向不可达占位域名，仅用于验证异步三方法链路），不产生真实视频。"
       }
     ]
   }

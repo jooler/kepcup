@@ -1,0 +1,32 @@
+{
+  "format_version": 1,
+  "id": "io.test/runtime-probe",
+  "name": "运行时探针（测试夹具）",
+  "version": "1.0.0",
+  "description": "PluginHost 集成测试夹具：手写协议帧与 Host API 信封，按条目 model 切换行为（ok / slow / hang / spin / crash / bad-output / net / storage / error-auth）。不依赖 @kepcup/plugin-sdk 的打包产物。",
+  "usage": "测试专用：由 packages/core/test/unit/plugin-host.test.ts 安装与驱动。",
+  "instances": ["capability-model"],
+  "runtime": {
+    "entry": "main.mjs",
+    "hostApi": "^1",
+    "network": {
+      "allow": ["example.invalid"]
+    }
+  },
+  "contributions": {
+    "capabilityModels": [
+      {
+        "id": "probe-image",
+        "capability": "image",
+        "model": "ok",
+        "displayName": "探针图片"
+      },
+      {
+        "id": "probe-video",
+        "capability": "video",
+        "model": "ok",
+        "displayName": "探针视频"
+      }
+    ]
+  }
+}

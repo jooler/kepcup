@@ -21,8 +21,8 @@ export function createCapabilityModelMaterializer(): InstanceMaterializer {
       const engines = new Set(
         (ctx.manifest.contributions.capabilityModels ?? [])
           .map((entry) => entry.engine)
-          // D125 过渡：执行型条目不填 engine（61 §2），无第一方引擎可校验，跳过；
-          // 执行型管线校验由 D125-P2 接管。数据型条目（有 engine）行为不变。
+          // D125：执行型条目不填 engine（61 §2），无第一方引擎可校验——其执行体是
+          // PluginHost 子进程（安装期由 runtime 校验保证）；数据型条目（有 engine）不变。
           .filter((engine) => engine !== undefined),
       );
       for (const engine of engines) {

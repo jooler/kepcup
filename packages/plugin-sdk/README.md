@@ -40,17 +40,21 @@ runPluginRuntime(plugin); // 缺省挂到 Node fork 内置 IPC（宿主 PluginHo
 
 ## host 命名空间（Host API v1，61 §4）
 
-| 成员 | 语义 | P1 状态 |
+| 成员 | 语义 | 状态 |
 |---|---|---|
-| `host.net.fetch(url, init?)` | HTTP 客户端，白名单 / SSRF / 审计在宿主强制 | 类型就绪，实现由 P2 能力桥注入 |
-| `host.secrets.get(key)` | 本插件实例键只读读取 | 类型就绪，实现由 P2 能力桥注入 |
-| `host.storage.{get,set,delete,list}` | 插件 KV（配额 10MB，存非敏感数据） | 类型就绪，实现由 P2 能力桥注入 |
+| `host.net.fetch(url, init?)` | HTTP 客户端，白名单 / SSRF / 审计在宿主强制 | P2 已实现（`host-api` 信封 → core 能力桥） |
+| `host.secrets.get(key)` | 本插件实例键只读读取 | P2 已实现（键必须匹配 `plugin:{pluginId}:instance:*`） |
+| `host.storage.{get,set,delete,list}` | 插件 KV（配额 10MB，存非敏感数据） | P2 已实现（`plugin_storage` 表 + 配额） |
 | `host.log.{info,warn,error}` | 结构化日志（宿主限速 100 条/调用） | 已实现（event 帧 `kind:'log'`） |
 | `host.progress(p)` | 进度上报（SDK 限速 1 次/秒） | 已实现（event 帧 `kind:'progress'`） |
 | `host.signal` | 当前在途调用的 `AbortSignal` | 已实现（cancel 帧联动） |
 
-`net / secrets / storage` 在能力桥注入前调用抛 `HostApiNotConnectedError`；P2 的能力桥
-经 `wireHostApi()` 注入实现（运行时内部接口，插件代码不要调用）。
+`net / secrets / storage` 由 `host-api` 信封承载（与九帧调用协议并列，判别字段
+`type: 'host-api'` / `'host-api-response'`，见 DEV-113）：`runPluginRuntime(plugin)`
+的进程入口模式自动接线；显式传入测试通道时不会接线，调用这些成员抛
+`HostApiNotConnectedError`（可用 `wireHostApi()` 在测试里自行注入）。宿主发来的
+`ping`（看门狗心跳）由通道自动回 pong——**插件需用 P2 及以上的 SDK 重新打包**，
+否则约 30s 后会被看门狗击杀（DEV-116）。
 
 ## 打包约定（esbuild 单文件）
 

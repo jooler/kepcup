@@ -287,6 +287,8 @@ import {
   pluginsListCapabilityEntriesOutputSchema,
   pluginsSetBotCapabilityEntriesInputSchema,
   pluginsTestCapabilityEntryInputSchema,
+  pluginsRuntimeListOutputSchema,
+  pluginsRuntimeRestartInputSchema,
 } from '../domain/plugins.js';
 import {
   pairingOfferSchema,
@@ -3421,6 +3423,9 @@ export const rpcMethodSchemas = {
     input: pluginsTestCapabilityEntryInputSchema,
     output: okOutput,
   },
+  // D125 P2：执行型插件运行时状态（状态机 + 最近调用历史）与进程重启。
+  'plugins.runtime.list': { input: voidInput, output: pluginsRuntimeListOutputSchema },
+  'plugins.runtime.restart': { input: pluginsRuntimeRestartInputSchema, output: okOutput },
 } as const;
 
 export type RpcMethodName = keyof typeof rpcMethodSchemas;

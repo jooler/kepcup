@@ -18,6 +18,7 @@ import {
   type PluginToHostFrame,
 } from '@kepcup/shared';
 import { host, wireHostApi, type HostApiWiring } from './host.js';
+import { connectHostApiChannel, type HostApiChannel, type HostChannelIpc } from './host-channel.js';
 import {
   PluginInvokeError,
   type MediaCallContext,
@@ -60,7 +61,10 @@ export interface PluginIpcLike {
 }
 
 /** fork 内置 IPC（61 §3.1）适配：宿主 PluginHost `fork(entry, { serialization: 'advanced' })`。 */
-export function nodeProcessTransport(ipc: PluginIpcLike): PluginFrameTransport {
+export function nodeProcessTransport(
+  ipc: PluginIpcLike,
+  options: { skipMessage?: (message: unknown) => boolean } = {},
+): PluginFrameTransport {
   return {
     send(frame) {
       try {
@@ -71,6 +75,8 @@ export function nodeProcessTransport(ipc: PluginIpcLike): PluginFrameTransport {
     },
     onFrame(handler) {
       const listener = (message: unknown): void => {
+        // Host API 通道的信封（D125 P2 能力桥）不是调用协议帧：跳过，由通道自己处理。
+        if (options.skipMessage?.(message) === true) return;
         const parsed = pluginRuntimeHostToPluginFrameSchema.safeParse(message);
         if (!parsed.success) {
           // 宿主→插件方向校验失败 = 拒绝（61 §3.2）；帧可能没有 callId 可回，忽略并留痕。
@@ -241,12 +247,19 @@ export function runPluginRuntime(
   ipcOrTransport?: PluginIpcLike | PluginFrameTransport,
 ): PluginRuntimeController {
   const isProcessEntry = ipcOrTransport === undefined;
+  // 进程入口模式：自动接入宿主 API 通道（D125 P2 能力桥）。通道与调用协议共用同一
+  // fork IPC，用独立信封（`host-api` / `host-api-response`）互不干扰。
+  const processIpc: PluginIpcLike | null = isProcessEntry ? globalThisProcess() : null;
+  const hostChannel: HostApiChannel | null =
+    processIpc === null ? null : connectHostApiChannel(processIpc as HostChannelIpc);
   const transport =
-    ipcOrTransport === undefined
-      ? nodeProcessTransport(globalThisProcess())
-      : isTransport(ipcOrTransport)
-        ? ipcOrTransport
-        : nodeProcessTransport(ipcOrTransport);
+    processIpc !== null
+      ? nodeProcessTransport(processIpc, {
+          skipMessage: (message) => hostChannel?.isChannelMessage(message) === true,
+        })
+      : isTransport(ipcOrTransport as PluginIpcLike | PluginFrameTransport)
+        ? (ipcOrTransport as PluginFrameTransport)
+        : nodeProcessTransport(ipcOrTransport as PluginIpcLike);
 
   const media = spec.contracts?.media;
   const declaredContracts = media === undefined ? [] : ['media'];
@@ -260,6 +273,7 @@ export function runPluginRuntime(
       if (finished) return;
       finished = true;
       limiter.dispose();
+      hostChannel?.dispose();
       wireHostApi(null);
       resolve();
     };
@@ -271,8 +285,8 @@ export function runPluginRuntime(
     send({ type: 'event', callId: active.callId, kind: 'progress', payload });
   });
 
-  // Host API 接线（61 §4）：progress / log / signal 是协议自带能力，P1 完整实现；
-  // net / secrets / storage 由 P2 能力桥经 wireHostApi 补齐。
+  // Host API 接线（61 §4）：progress / log / signal 是协议自带能力；net / secrets /
+  // storage 由 P2 能力桥经 `host-api` 通道注入（进程入口模式自动接线）。
   const wiring: HostApiWiring = {
     progress: (payload) => limiter.send(payload),
     log: (level, message, data) => {
@@ -285,6 +299,13 @@ export function runPluginRuntime(
       });
     },
     signal: () => active?.abort.signal ?? new AbortController().signal,
+    ...(hostChannel !== null
+      ? {
+          net: hostChannel.net,
+          secrets: hostChannel.secrets,
+          storage: hostChannel.storage,
+        }
+      : {}),
   };
   wireHostApi(wiring);
 
@@ -421,6 +442,7 @@ export function runPluginRuntime(
       entryId: frame.context.entryId,
       model: frame.context.model,
       locale: frame.context.locale,
+      params: frame.context.params,
       credentials: frame.context.credentials,
       signal: abort.signal,
     };

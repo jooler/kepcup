@@ -93,8 +93,22 @@ export interface MediaEntrySource {
   ): string | null;
   /** 实例非敏感配置（config_json；无行 = null）。 */
   instanceConfig(pluginId: string, instanceId: string): Record<string, unknown> | null;
-  /** 实例 → 所属插件与引擎（generateVideo → videoStatus 的 provider 往返；null = 非插件实例）。 */
-  capabilityInstanceOf(instanceId: string): Promise<{ pluginId: string; engine: string } | null>;
+  /**
+   * 实例 → 所属插件与执行体来源（generateVideo → videoStatus 的 provider 往返；
+   * null = 非插件实例）。D125：`source` 区分第一方引擎与执行型插件（托管适配器）。
+   */
+  capabilityInstanceOf(instanceId: string): Promise<{
+    pluginId: string;
+    engine: string;
+    source: 'engine' | 'plugin';
+    entryId: string;
+    model: string;
+  } | null>;
+  /**
+   * D125：插件 → 托管适配器（所属插件含 `runtime` 段时非 null；数据型插件 = null）。
+   * 可选（单测夹具不装配运行时）：条目 `source: 'plugin'` 时缺失 = 运行时未装配。
+   */
+  hostedAdapterOf?(pluginId: string): Promise<VendorAdapter | null>;
 }
 
 /** 解析出的一个可用条目（60 号 §4 的 ① 分支）。 */
@@ -102,7 +116,13 @@ export interface ResolvedEntry {
   pluginId: string;
   entryId: string;
   model: string;
+  /** 数据型条目的引擎 id；执行型条目为 ''（`source:'plugin'`，无第一方引擎）。 */
   engine: string;
+  /**
+   * D125：执行体来源——'engine' = 第一方引擎注册表；'plugin' = 所属插件含 `runtime`
+   * 段，经 HostedAdapter 在插件子进程执行（61 §5）。
+   */
+  source: 'engine' | 'plugin';
   /** 条目展示名（displayName 缺省时实现侧回填 model，工具 model 参数匹配用）。 */
   displayName?: string;
   /** 条目级引擎参数覆盖（原样透传到 VendorCallContext.entryParams）。 */
@@ -412,10 +432,40 @@ export class MediaService {
     if (entry === null) {
       throw new AppError('NOT_FOUND', `插件 ${pluginId} 没有条目「${entryId}」`);
     }
-    // D125 过渡：执行型条目不填 engine（61 §2），PluginHost 未落地前不可测（不可消费），
-    // 视同不存在（与条目仓库 entryOf 的过滤同语义）；D125-P2 接管。
+    // 实例解析（入参 > 条目 instance > 唯一实例；多实例未指定拒绝）。
+    const resolveInstanceId = (): string => {
+      const explicit = options.instanceId ?? entry.instance;
+      if (explicit !== undefined) return explicit;
+      const rows = source.instancesOf(pluginId);
+      if (rows.length === 1) return rows[0]!;
+      if (rows.length > 1) {
+        throw new AppError(
+          'INSTANCE_AMBIGUOUS',
+          `插件有 ${rows.length} 个厂商账号实例，请指定要测试的实例`,
+          { pluginId, entryId, instances: rows },
+        );
+      }
+      throw this.#entryNotConfigured('该条目还没有可用的厂商账号实例，请先添加并填写凭据', {
+        pluginId,
+        entryId,
+      });
+    };
+    // D125：执行型条目（所属插件含 runtime 段）走托管适配器的同一 invoke 路径（探针
+    // 与真实调用同一入口，超时用契约默认）；数据型条目保持 D124 的引擎路径。
+    const hosted = (await source.hostedAdapterOf?.(pluginId)) ?? null;
+    if (hosted !== null) {
+      const instanceId = resolveInstanceId();
+      const resolved = this.#hostedProvider(pluginId, entryId, instanceId, entry.model, hosted);
+      resolved.entry = { pluginId, entryId, capability: entry.capability };
+      if (entry.params !== undefined) resolved.context.entryParams = entry.params;
+      return this.#runProbe(entry.capability, resolved);
+    }
+    // 数据型条目：先引擎、后实例——错误判定顺序与 D124 逐字节一致。
     if (entry.engine === undefined) {
-      throw new AppError('NOT_FOUND', `插件 ${pluginId} 没有条目「${entryId}」`);
+      throw new AppError(
+        'NOT_IMPLEMENTED',
+        `插件 ${pluginId} 的托管运行时未装配，无法探测执行型条目「${entryId}」`,
+      );
     }
     const engine = MEDIA_ENGINES[entry.engine];
     if (engine === undefined) {
@@ -424,23 +474,7 @@ export class MediaService {
         `条目「${entryId}」绑定的引擎「${entry.engine}」未注册`,
       );
     }
-    let instanceId = options.instanceId ?? entry.instance;
-    if (instanceId === undefined) {
-      const rows = source.instancesOf(pluginId);
-      if (rows.length === 1) instanceId = rows[0]!;
-      else if (rows.length > 1) {
-        throw new AppError(
-          'INSTANCE_AMBIGUOUS',
-          `插件有 ${rows.length} 个厂商账号实例，请指定要测试的实例`,
-          { pluginId, entryId, instances: rows },
-        );
-      } else {
-        throw this.#entryNotConfigured('该条目还没有可用的厂商账号实例，请先添加并填写凭据', {
-          pluginId,
-          entryId,
-        });
-      }
-    }
+    const instanceId = resolveInstanceId();
     const resolved = this.#resolvePluginInstance(pluginId, instanceId, engine, options.keyOverride);
     resolved.modelId = entry.model;
     // 引擎能力矩阵（安装期已保证引擎注册；这里防御引擎不支持条目声明的能力）。
@@ -596,7 +630,7 @@ export class MediaService {
     if (resolve?.botId != null && resolve.botId !== '' && this.#entrySource !== undefined) {
       const entries = await this.#entrySource.entriesFor(resolve.botId, capability);
       if (entries.length > 0) {
-        return this.#resolveEntry(capability, this.#selectEntry(entries, resolve.model));
+        return await this.#resolveEntry(capability, this.#selectEntry(entries, resolve.model));
       }
     }
     return this.#resolveGlobal(capability, modelId);
@@ -617,11 +651,32 @@ export class MediaService {
   }
 
   /**
-   * 条目 → 引擎 + 插件实例凭据。失败语义（60 号 §4）：多实例未指定 →
-   * INSTANCE_AMBIGUOUS；缺实例 / 缺凭据 → CAPABILITY_NOT_CONFIGURED（details 带
-   * {pluginId, entryId, instanceId?} 定位，orchestrator 据此出插件凭据卡）。
+   * 条目 → 执行体 + 插件实例凭据（D125：按 `source` 选第一方引擎或托管适配器）。
+   * 失败语义（60 号 §4）：多实例未指定 → INSTANCE_AMBIGUOUS；缺实例 / 缺凭据 →
+   * CAPABILITY_NOT_CONFIGURED（details 带 {pluginId, entryId, instanceId?} 定位，
+   * orchestrator 据此出插件凭据卡）。数据型条目（`source:'engine'`）路径与 D124
+   * 逐字节一致。
    */
-  #resolveEntry(capability: MediaCapability, entry: ResolvedEntry): ResolvedProvider {
+  async #resolveEntry(
+    capability: MediaCapability,
+    entry: ResolvedEntry,
+  ): Promise<ResolvedProvider> {
+    if (entry.source === 'plugin') {
+      const instanceId = this.#entryInstanceOf(entry);
+      const adapter = await this.#hostedAdapterOf(entry.pluginId);
+      const resolved = this.#hostedProvider(
+        entry.pluginId,
+        entry.entryId,
+        instanceId,
+        entry.model,
+        adapter,
+      );
+      resolved.entry = { pluginId: entry.pluginId, entryId: entry.entryId, capability };
+      if (entry.params !== undefined) resolved.context.entryParams = entry.params;
+      this.#requireAdapterCapability(resolved, capability);
+      return resolved;
+    }
+    // 数据型条目：错误判定顺序与 D124 逐字节一致（先引擎，再实例）。
     const engine = MEDIA_ENGINES[entry.engine];
     if (engine === undefined) {
       // 安装期已校验；这里兜底降级 / 数据异常（60 §7：引擎永远在第一方）。
@@ -630,27 +685,70 @@ export class MediaService {
         `条目 ${entry.entryId} 绑定的引擎「${entry.engine}」未注册`,
       );
     }
-    if (entry.instanceId === undefined) {
-      const candidates = entry.instances ?? [];
-      if (candidates.length > 1) {
-        throw new AppError(
-          'INSTANCE_AMBIGUOUS',
-          `插件有 ${candidates.length} 个厂商账号实例，条目「${entry.entryId}」未指定使用哪个；请在插件详情里指定实例`,
-          { pluginId: entry.pluginId, entryId: entry.entryId, instances: [...candidates] },
-        );
-      }
-      throw this.#entryNotConfigured(
-        `条目「${entry.entryId}」还没有可用的厂商账号实例，请先在插件详情里添加并填写凭据`,
-        { pluginId: entry.pluginId, entryId: entry.entryId },
-      );
-    }
-    const resolved = this.#resolvePluginInstance(entry.pluginId, entry.instanceId, engine);
+    const instanceId = this.#entryInstanceOf(entry);
+    const resolved = this.#resolvePluginInstance(entry.pluginId, instanceId, engine);
     resolved.modelId = entry.model;
     this.#requireAdapterCapability(resolved, capability);
     // 条目级参数覆盖：原样进调用上下文（适配器本期不读；引擎逐键白名单消费，60 §7）。
     if (entry.params !== undefined) resolved.context.entryParams = entry.params;
     resolved.entry = { pluginId: entry.pluginId, entryId: entry.entryId, capability };
     return resolved;
+  }
+
+  /** 条目实例解析（引擎 / 执行型共用，错误与文案保持 D124 语义）。 */
+  #entryInstanceOf(entry: ResolvedEntry): string {
+    if (entry.instanceId !== undefined) return entry.instanceId;
+    const candidates = entry.instances ?? [];
+    if (candidates.length > 1) {
+      throw new AppError(
+        'INSTANCE_AMBIGUOUS',
+        `插件有 ${candidates.length} 个厂商账号实例，条目「${entry.entryId}」未指定使用哪个；请在插件详情里指定实例`,
+        { pluginId: entry.pluginId, entryId: entry.entryId, instances: [...candidates] },
+      );
+    }
+    throw this.#entryNotConfigured(
+      `条目「${entry.entryId}」还没有可用的厂商账号实例，请先在插件详情里添加并填写凭据`,
+      { pluginId: entry.pluginId, entryId: entry.entryId },
+    );
+  }
+
+  /**
+   * 执行型条目的解析结果：托管适配器不需要厂商根 / Key（凭据在宿主侧按实例注入），
+   * 上下文只带条目与实例定位 + locale（46 号 §4 的 invoke.context）。
+   */
+  #hostedProvider(
+    pluginId: string,
+    entryId: string,
+    instanceId: string,
+    modelId: string,
+    adapter: VendorAdapter,
+  ): ResolvedProvider {
+    return {
+      vendor: 'custom',
+      instanceId,
+      modelId,
+      context: {
+        vendor: 'custom',
+        baseUrl: '',
+        apiKey: '',
+        logger: this.#logger,
+        entryRef: { pluginId, entryId },
+        instanceId,
+        locale: this.#settings.get().appLanguage,
+        ...(this.#fetchImpl !== undefined ? { fetchImpl: this.#fetchImpl } : {}),
+      },
+      adapter,
+    };
+  }
+
+  /** 托管适配器（条目 `source:'plugin'`）：运行时未装配 = 明确 NOT_IMPLEMENTED。 */
+  async #hostedAdapterOf(pluginId: string): Promise<VendorAdapter> {
+    const source = this.#requireEntrySource();
+    const adapter = (await source.hostedAdapterOf?.(pluginId)) ?? null;
+    if (adapter === null) {
+      throw new AppError('NOT_IMPLEMENTED', `插件 ${pluginId} 的托管运行时未装配，无法执行该条目`);
+    }
+    return adapter;
   }
 
   /** 条目路径的 CAPABILITY_NOT_CONFIGURED：payload 携带插件 / 条目 / 实例定位。 */
@@ -796,6 +894,26 @@ export class MediaService {
         this.#entrySource !== undefined
       ) {
         const pluginInstance = await this.#entrySource.capabilityInstanceOf(provider);
+        if (pluginInstance !== null && pluginInstance.source === 'plugin') {
+          // D125 执行型条目：轮询 / 取消走托管适配器（凭据由宿主按实例注入）。
+          const adapter =
+            (await this.#entrySource.hostedAdapterOf?.(pluginInstance.pluginId)) ?? null;
+          if (adapter !== null) {
+            const resolved = this.#hostedProvider(
+              pluginInstance.pluginId,
+              pluginInstance.entryId,
+              provider,
+              pluginInstance.model,
+              adapter,
+            );
+            resolved.entry = {
+              pluginId: pluginInstance.pluginId,
+              entryId: pluginInstance.entryId,
+              capability: 'video',
+            };
+            return resolved;
+          }
+        }
         const engine = pluginInstance === null ? undefined : MEDIA_ENGINES[pluginInstance.engine];
         if (pluginInstance !== null && engine !== undefined) {
           return this.#resolvePluginInstance(pluginInstance.pluginId, provider, engine);

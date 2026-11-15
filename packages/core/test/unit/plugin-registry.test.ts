@@ -1252,6 +1252,8 @@ describe('PluginRegistry updates (P1-2)', () => {
       summary: { name: 'M', description: '', author: null, iconUrl: null },
       updatedAt: 1,
     });
+    const stops: string[] = [];
+    registry.attachRuntimeStop((pluginId) => void stops.push(pluginId));
     const summary = await registry.update({
       id: MARKET_ID,
       sha256: next.sha256,
@@ -1259,6 +1261,8 @@ describe('PluginRegistry updates (P1-2)', () => {
       acknowledgeDiff: true,
       via: 'marketplace',
     });
+    // D125：更新事务写 journal 后、替换目录前终止执行型进程（下次调用懒启动新版本）。
+    expect(stops).toEqual([MARKET_ID]);
     expect(summary).toMatchObject({ version: '3.0.0', origin: 'marketplace', tier: 'community' });
     expect(rig.store.get(MARKET_ID)).toMatchObject({
       version: '3.0.0',

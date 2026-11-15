@@ -85,6 +85,50 @@ node scripts/run-tests.mjs run packages/core/test/unit/plugins
 
 ## 6 实施记录
 
-- 分支 / 提交：
-- PluginHost 组装根落点与 MediaService late-wire 方式：
-- DEV 偏差：
+- 分支 / 提交：`feat/plugin-platform`（单集成分支；提交由主代理负责，本阶段未 commit）
+- PluginHost 组装根落点与 MediaService late-wire 方式：`packages/core/src/start.ts`
+  `createCoreServices` 内、`PluginInstanceService` 构造与 capability-model
+  materializer 注册之后、`Orchestrator` 之前：先建 `PluginStorageStore`（main.db）与
+  `CapabilityBridge`（registry + instanceStore + secrets + storage），再建 `PluginHost`
+  （registry + bridge + events + logger）并赋 `services.pluginRuntime`；注册表侧
+  `attachRuntimeStop`（停用 = kill switch）与 `attachRuntimeTeardown`（卸载 = kill +
+  clearStorage）两条窄接口钩子就地接线。MediaService 的 late-wire 沿用 attachXxx：
+  随后的 `media.attachEntrySource(createMediaEntrySource({..., hostedAdapterOf: (id) =>
+  pluginRuntime.adapterFor(id)}))` 把「插件 → 托管适配器」注入条目仓库；MediaService
+  本身不 import 插件运行时模块（media → plugins 反向依赖仍只经 `MediaEntrySource`）。
+- 实现落点：
+  - `plugins/runtime/contracts.ts`（`CAPABILITY_CONTRACTS` v1 = media；七方法 schema 取
+    shared `MEDIA_CONTRACT_METHOD_WIRE`，超时 image/tts 120s、asr 300s、video 900s）；
+  - `plugins/runtime/host.ts`（fork 懒启 / 握手 / 状态机 / 心跳 ×2 / 空闲 5 分钟 /
+    串行队列 / 调用级超时 cancel→2s→kill / 崩溃重启 / 50 条环形历史 /
+    `plugin.runtime` 广播 / stderr 限速截断 / host-api 信封路由）；
+  - `plugins/runtime/bridge.ts`（net 白名单 + 复用 `infra/safe-dispatcher` 的 SSRF 守卫 +
+    逐跳重定向 + 20MB + 二进制 base64 + 每插件每域审计；credentials 前缀注入；
+    secrets 前缀只读；storage 配额；progress 限速器）；
+  - `plugins/runtime/hosted-adapter.ts`（VendorAdapter 七方法 → invoke；PLUGIN_* →
+    PROVIDER_UNAVAILABLE，PROVIDER_* / NOT_IMPLEMENTED 透传）；
+  - `plugins/runtime/storage.ts`（迁移 0076 `plugin_storage` 的 CRUD + 10MB 聚合配额）；
+  - `plugins/runtime/version.ts`（`runtime.hostApi` semver 范围：^ / ~ / 比较符序列 /
+    裸版本 / *）；
+  - `plugins/runtime/install.ts`（层级限制 / entry 存在与包内 / `.node`·`.wasm`·可执行位
+    扫描 / hostApi 匹配 / 同意卡披露数据）；
+  - `plugins/media-entry-source.ts`（`ResolvedEntry.source`、`hostedAdapterOf`、
+    `capabilityInstanceOf` 增 source/entryId/model、去掉 engine-less 过滤）；
+  - `media/service.ts`（`#resolveEntry` 按 source 分支 + `#hostedProvider` + 受管
+    `testCapabilityEntry` / `videoStatus` 分支）；`media/types.ts` 的
+    `VendorCallContext` 增可选 `entryRef / instanceId / locale`（仅托管路径携带）；
+  - `plugins/registry.ts`（安装 / 更新前置执行型校验、inspect 披露、两条 runtime 钩子、
+    公开 `runtimeDirOf`）；
+  - shared：`plugin.runtime` 事件 + `plugins.runtime.{list,restart}` RPC 契约 +
+    capability entry `source` + inspect `runtime` 披露 + host-api 信封 schema；
+  - SDK：`host-channel.ts` + `client.ts` 进程入口自动接线（DEV-113/116）。
+- 测试：`packages/core/test/unit/plugin-host.test.ts`（参考插件真实 fork 全链路 +
+  手写协议探针 `test/fixtures/plugin-runtime/probe`：串行 / 超时击杀 / 心跳击杀 /
+  崩溃重启 / 契约违规 / Provider 透传 / 白名单拒绝与命中 / storage / 50 条历史 /
+  restart / list / kill switch / 安装管线 / 同意卡披露 / 条目 RPC）；
+  `plugin-bridge.test.ts`（白名单、SSRF、重定向、20MB、credentials、secrets 前缀、
+  配额）；`plugin-sdk/test/host-channel.test.ts`；`media-entry-resolution.test.ts`
+  插件条目分支扩展。
+- DEV 偏差：DEV-113（host-api 独立信封）、DEV-114（执行型实例字段声明面缺失，待
+  P4 决定）、DEV-115（参考插件补 video 条目）、DEV-116（心跳要求 P2 版 SDK）、
+  DEV-117（新字段 optional 以兼容 P3 前渲染端）。

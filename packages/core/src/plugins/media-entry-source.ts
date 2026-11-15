@@ -1,8 +1,13 @@
 import type { BotProfile, CapabilityModelEntry, PluginFieldValue } from '@kepcup/shared';
-import { pluginInstanceSecretName, type PluginInstanceRow, type PluginInstanceStore } from './instances.js';
+import {
+  pluginInstanceSecretName,
+  type PluginInstanceRow,
+  type PluginInstanceStore,
+} from './instances.js';
 import { effectivePluginIds } from './effective.js';
 import type { PluginRegistry } from './registry.js';
 import type { MediaEntrySource, ResolvedEntry } from '../media/service.js';
+import type { VendorAdapter } from '../media/types.js';
 import type { SecretsService } from '../domain/secrets.js';
 import type { CoreLogger } from '../infra/logger.js';
 
@@ -28,6 +33,11 @@ export function createMediaEntrySource(deps: {
   /** Bot 的 runtime 读取（botId → profile.runtime；null = Bot 不存在）。 */
   botRuntimeOf: (botId: string) => BotProfile['runtime'] | null;
   logger: CoreLogger;
+  /**
+   * D125：执行型插件的托管适配器（PluginHost.adapterFor）。可选——未装配运行时
+   * （单测 / 旧装配）时条目仍按 source 分类，但调用会得到「运行时未装配」。
+   */
+  hostedAdapterOf?: ((pluginId: string) => VendorAdapter) | undefined;
 }): MediaEntrySource {
   /** 插件的 capability-model 实例行（创建序，保序）。 */
   const instanceRowsOf = (pluginId: string): PluginInstanceRow[] =>
@@ -63,7 +73,11 @@ export function createMediaEntrySource(deps: {
       const resolved: ResolvedEntry[] = [];
       for (const [pluginId, refs] of refsByPlugin) {
         const rows = instanceRowsOf(pluginId);
-        const manifestEntries = await entriesOf(pluginId);
+        const manifest = await deps.registry.manifestOf(pluginId);
+        const manifestEntries = manifest?.contributions.capabilityModels ?? [];
+        // D125：清单含 runtime 段 = 执行型插件，其条目解析到托管适配器（61 §5）。
+        // 数据型条目（有 engine）语义不变（安装期校验 MEDIA_ENGINES，D124）。
+        const source: 'engine' | 'plugin' = manifest?.runtime !== undefined ? 'plugin' : 'engine';
         // ① 内排序（60 §4）：插件内按条目声明序——回退默认条目 = 声明序首个。
         const matched = refs
           .map((refEntry) => {
@@ -74,16 +88,17 @@ export function createMediaEntrySource(deps: {
               ? { entry: manifestEntries[declarationIndex]!, declarationIndex }
               : null;
           })
-          .filter((hit): hit is { entry: CapabilityModelEntry; declarationIndex: number } => hit !== null)
+          .filter(
+            (hit): hit is { entry: CapabilityModelEntry; declarationIndex: number } => hit !== null,
+          )
           .sort((a, b) => a.declarationIndex - b.declarationIndex);
         for (const { entry } of matched) {
-          // D125 过渡：执行型条目不填 engine（61 §2），PluginHost 未落地前不可消费
-          // ——返回也无法解析执行体，这里跳过（D125-P2 接管为 HostedAdapter 分支）。
-          if (entry.engine === undefined) continue;
           // embedding / rerank 条目本期不消费（60 §10 Q4：记忆管线绑定全局槽位）；
           // media 网关不会用这两个能力调 entriesFor，这里再挡一层（防御直调）。
           if (entry.capability === 'embedding' || entry.capability === 'rerank') continue;
           if (entry.capability !== capability) continue;
+          // 数据型条目必须绑定引擎（安装期已校验）；执行型条目执行体来自插件代码。
+          if (source === 'engine' && entry.engine === undefined) continue;
           const explicit =
             entry.instance !== undefined
               ? (rows.find((row) => row.id === entry.instance)?.id ?? undefined)
@@ -92,7 +107,8 @@ export function createMediaEntrySource(deps: {
             pluginId,
             entryId: entry.id,
             model: entry.model,
-            engine: entry.engine,
+            engine: entry.engine ?? '',
+            source,
             displayName: entry.displayName ?? entry.model,
             ...(entry.params !== undefined ? { params: entry.params } : {}),
             ...(explicit !== undefined
@@ -109,11 +125,8 @@ export function createMediaEntrySource(deps: {
 
     async entryOf(pluginId, entryId) {
       const entries = await entriesOf(pluginId);
-      // D125 过渡：engine-less（执行型）条目不可消费（PluginHost 未落地），视同不存在
-      // ——testCapabilityEntry 对其报 NOT_FOUND；D125-P2 接管。
-      return (
-        entries.find((entry) => entry.id === entryId && entry.engine !== undefined) ?? null
-      );
+      // D125：执行型条目（不填 engine）照常返回——探测经托管适配器同一 invoke 路径。
+      return entries.find((entry) => entry.id === entryId) ?? null;
     },
 
     instancesOf(pluginId) {
@@ -139,10 +152,29 @@ export function createMediaEntrySource(deps: {
     async capabilityInstanceOf(instanceId) {
       const row = deps.instances.get(instanceId);
       if (row === null || row.kind !== 'capability-model') return null;
-      // 插件粒度 = 平台协议族（60 号 §术语）：引擎取条目声明的首个。混绑多引擎
-      // 的清单不是预期形态；videoStatus 往返只认提交任务的引擎，这里按声明序兜底。
+      // 插件粒度 = 平台协议族（60 号 §术语）：videoStatus 往返只认提交任务的插件。
+      // 数据型条目保持 D124 口径（引擎取声明序首个）；执行型条目需要 video 条目的
+      // entryId / model 才能走托管适配器，优先取首个视频条目，无视频条目则首个。
       const entries = await entriesOf(row.pluginId);
-      return { pluginId: row.pluginId, engine: entries[0]?.engine ?? '' };
+      const manifest = await deps.registry.manifestOf(row.pluginId);
+      const source: 'engine' | 'plugin' = manifest?.runtime !== undefined ? 'plugin' : 'engine';
+      const entry =
+        source === 'plugin'
+          ? (entries.find((candidate) => candidate.capability === 'video') ?? entries[0])
+          : entries[0];
+      return {
+        pluginId: row.pluginId,
+        engine: entry?.engine ?? '',
+        source,
+        entryId: entry?.id ?? 'unknown',
+        model: entry?.model ?? 'unknown',
+      };
+    },
+
+    async hostedAdapterOf(pluginId) {
+      const manifest = await deps.registry.manifestOf(pluginId);
+      if (manifest?.runtime === undefined) return null;
+      return deps.hostedAdapterOf?.(pluginId) ?? null;
     },
   };
 }

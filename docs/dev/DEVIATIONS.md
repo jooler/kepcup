@@ -1725,3 +1725,117 @@
   `origin: 'builtin'` 不渲染账号实例表单，只显示「从市场安装后可添加账号」的说明。
 - 已更新的文档：本条；60 号 §11；plugins/dashscope/README.md §4、
   plugins/volcengine-ark/README.md §4（边界声明）；P4 任务书「实施记录」。
+
+### DEV-113 Host API 通道以独立信封复用 fork IPC（九帧调用协议不动）（D125 P2）
+
+- 状态：已落实
+- 阶段：D125 P2（2026-11-16）
+- 是否阻塞：否
+- 问题：61 §4 的 `host.net.fetch / host.secrets.get / host.storage.*` 是插件进程发起、
+  宿主裁决的服务面，但 §3.2 的固定协议只有九帧（init/invoke/cancel/shutdown 与
+  ready/result/error/event/state），没有宿主 API 的请求 / 应答帧。若不新增通道，
+  P2 的能力桥只能作为 core 内部函数存在，插件侧 `host.net` 永远抛
+  `HostApiNotConnectedError`，P4 试点（百炼文生图）无法落地。
+- 影响范围：shared `plugin-runtime/protocol.ts`（新增独立信封
+  `pluginHostApiRequestSchema` / `pluginHostApiResponseSchema` / `pluginHostNetResponseSchema`
+  + `PLUGIN_HOST_API_METHODS` 与两个上限常量）、`packages/plugin-sdk/src/host-channel.ts`
+  （插件侧代理 + 看门狗 ping 应答）、SDK `client.ts`（进程入口模式自动接线）、core
+  `plugins/runtime/host.ts`（信封路由）与 `bridge.ts`（逐方法裁决）。
+- 决定：新增**独立信封**（判别 `type: 'host-api'` / `'host-api-response'`），与
+  `PluginRuntimeFrame` 九帧判别联合并列，**九帧的成员、名字与语义均未改动**；
+  `host-api` 信封只承载 §4 的能力面 + 内部 `ping`（61 §3.1 心跳）。信封同样
+  `strictObject`，宿主对未知 api / 非法信封一律忽略并留痕；插件侧
+  `nodeProcessTransport` 用 `skipMessage` 跳过信封，避免被当成非法调用帧。
+  依据 README「协议帧字段在满足固定契约的前提下可增补（只能增不能改语义）」。
+- 已更新的文档：本条；P2 任务书「实施记录」；`packages/shared/src/plugin-runtime/protocol.ts`
+  文件头注释（Host API 通道落点）。
+
+### DEV-114 执行型插件没有实例字段声明面（v1 runtime 段无 fields）（D125 P2）
+
+- 状态：待决定
+- 阶段：D125 P2（2026-11-16）
+- 是否阻塞：否（P2 验收用参考插件；阻塞 P4 真机试点）
+- 问题：61 §4 的 `context.credentials` 语义是「实例 sensitive 字段注入」，而
+  capability-model 实例表单字段来自引擎 `credentialFields`（D124）。执行型条目不填
+  `engine`（61 §2），`runtime` 段（固定契约为 `entry / hostApi / network.allow? /
+  maxConcurrent`）也没有实例字段声明——执行型插件因此**无法声明**它需要哪些凭据，
+  实例表单恒为空，能力桥注入的 `credentials` 恒为 `{}`。参考插件是零凭据形态
+  （验收锚点 1 成立），但百炼试点需要 API Key。
+- 影响范围：shared `pluginRuntimeSectionSchema`、core `capabilityModelInstanceFields`
+  （执行型条目不贡献字段）、P4 试点插件与同意卡披露的 `credentialFields`（当前恒空）。
+- 可选方案：
+  1. `runtime.instanceFields: pluginFieldSchema[]`（与 `im` 的实例字段同形）——优点：数据
+     声明式、materializer / 表单 / 披露三处一处读取；缺点：manifest 增量段扩面，旧应用
+     读新包会因 strictObject 判 `PLUGIN_UPGRADE_REQUIRED`（符合既有增量字段规则）。
+  2. 复用 `instances: ['capability-model']` + 新建顶层 `instanceFields`——与 54 号文档
+     既有形态一致，但会与 `runtime` 段语义分离。
+  3. P4 试点把 Key 放进插件 `config.fields`（敏感字段走 secrets）——改动最小，但凭据
+     不在实例维度（多账号无法区分），偏离 D124「实例 = 厂商账号」。
+- 推荐：方案 1（`runtime.instanceFields`），P4 落试点时补；本阶段不自行扩 manifest 契约。
+- 决定：（由人工填写）
+- 已更新的文档：本条；P2 任务书「实施记录」。
+
+### DEV-115 参考插件清单新增 video 条目（参考图片之外的第二条验收面）（D125 P2）
+
+- 状态：已落实
+- 阶段：D125 P2（2026-11-16）
+- 是否阻塞：否
+- 问题：P1 参考插件实现了 `submitVideo / videoStatus / cancelVideo`，但清单只声明了
+  `reference-image` 一条能力条目。验收锚点 1 要求「假视频任务轮询成功」，而条目链路
+  （Bot 勾选条目 → `media.generateVideo` → `videoStatus` 往返）必须有 video 条目才会
+  被条目仓库投影。这是 P1 产物的缺口，不是 P2 新增语义。
+- 影响范围：`plugins/reference-media/plugin.json`（新增 `reference-video`，capability
+  `video`，model `reference-video-1`）。
+- 决定：原地补条目（插件实现早已就绪）；不新增任何运行时语义。`plugin.json` 的
+  `engines.kepcup` 不变。
+- 已更新的文档：本条；P2 任务书「实施记录」；参考插件 README（若仍只描述图片，下个
+  触及该文件的阶段顺带补）。
+
+### DEV-116 心跳与 Host API 通道要求插件侧 SDK 为 P2 版本（D125 P2）
+
+- 状态：已落实
+- 阶段：D125 P2（2026-11-16）
+- 是否阻塞：否
+- 问题：61 §3.1「每 15s ping、2 次无响应击杀」需要插件进程应答，而调用协议没有 ping
+  帧（见 DEV-113）。P2 把 ping 放进 host-api 信封，由 P2 版 `@kepcup/plugin-sdk` 的
+  `connectHostApiChannel` 自动应答；**P1 版 SDK 打包的插件不会应答**，会在约 30s 后被
+  看门狗击杀（表现 = `PLUGIN_TIMEOUT` / error 状态）。
+- 影响范围：`packages/plugin-sdk`（P2 起插件需重新打包）、`plugins/reference-media/dist`
+  （DEV-108 构建钩子保证测试前重建）。
+- 决定：接受。D125 尚未发布，插件与 SDK 同步升级是预期路径；`engines.kepcup` /
+  `runtime.hostApi` 仍能挡住版本不匹配。集成测试的 beforeAll 显式重跑
+  `build.mjs`（DEV-108），避免陈旧 dist 造成假阴性。
+- 已更新的文档：本条；`packages/plugin-sdk/README.md` 的 host 命名空间表（P2 状态）。
+
+### DEV-117 条目 `source` / 同意卡 `runtime` 披露字段在该阶段为 optional（D125 P2）
+
+- 状态：已落实
+- 阶段：D125 P2（2026-11-16）
+- 是否阻塞：否
+- 问题：新增 `pluginCapabilityEntryGroupSchema.entries[].source` 与
+  `pluginInspectOutputSchema.runtime` 是 P3 渲染端消费的数据；若设为必填，P3 之前的
+  renderer 测试夹具（`bot-plugins.test.ts` / `plugin-install.test.ts`）会因缺字段
+  typecheck 失败——那是 P3 的 UI 工作，本阶段不做 UI。
+- 影响范围：shared `domain/plugins.ts` 两处字段、core 输出（恒提供）。
+- 决定：字段类型设为 `.optional()`（core 恒写；旧载荷 / 旧渲染端兼容），P3 消费时
+  按可选处理。语义与数据面不受影响。
+- 已更新的文档：本条。
+
+### DEV-118 托管适配器的调用级取消尚未接入工具的 AbortSignal（D125 P2）
+
+- 状态：待 P3/P4 接线
+- 阶段：D125 P2（2026-11-16）
+- 是否阻塞：否
+- 问题：61 §4 的 `signal`（用户取消任务 / 工具超时 → 插件 `cancel` 帧）在运行时层
+  已实现并有真实子进程测试（`PluginHost.call` 的 `ctx.signal` → `cancel` 帧；已 abort
+  的调用不发 invoke），但生产媒体调用链没有信号面：`MediaService` 的
+  `MediaResolveOptions` / `VendorCallContext` 不带 `signal`，工具（image/speech）也不
+  把 `ctx.signal` 传给 facade——托管适配器因此无法转发取消。用户取消只能等能力契约
+  超时（image 120s / video 900s）由看门狗收尾。
+- 影响范围：`packages/core/src/media/{service,types}.ts`、`tools/image-tools.ts` /
+  `speech-tools.ts` 的 facade 调用、`HostedAdapter`（传 `signal`）。
+- 决定：P2 保持 D124 媒体方法签名与行为零变化（硬约束），不在本阶段改工具 / facade
+  结构；P3/P4 打通取消与进度 UI 时，在 `MediaResolveOptions` / `VendorCallContext`
+  加可选 `signal`，由工具传 `ctx.signal`，`HostedAdapter` 原样转给 `PluginHost.call`。
+  运行时与测试已就绪，届时只需接线。
+- 已更新的文档：本条。

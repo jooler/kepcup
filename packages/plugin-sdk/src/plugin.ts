@@ -37,6 +37,11 @@ export interface MediaCallContext {
   model: string;
   /** 调用方 locale（如 'zh-CN'）。 */
   locale: string;
+  /**
+   * 条目 params 合并（manifest `contributions.capabilityModels[].params`，宿主原样
+   * 注入；插件自行决定消费哪些键，61 §3.2）。
+   */
+  params: Record<string, unknown>;
   /** 该实例 sensitive 字段键值（宿主调用时注入；进程内存活，永不落盘、永不入日志）。 */
   credentials: Record<string, string>;
   /** 取消信号（宿主 cancel 帧 / 用户取消 / 超时的联动；abort 后应尽快返回）。 */

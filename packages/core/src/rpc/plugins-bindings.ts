@@ -18,6 +18,8 @@ import {
   pluginsListOutputSchema,
   pluginsMarketplaceListOutputSchema,
   pluginsMarketplaceRefreshOutputSchema,
+  pluginsRuntimeListOutputSchema,
+  pluginsRuntimeRestartInputSchema,
   pluginsSetBotCapabilityEntriesInputSchema,
   pluginsSetBotPluginsInputSchema,
   pluginsEnableForBotsInputSchema,
@@ -67,6 +69,10 @@ export function bindPluginsMethods(services: CoreServices): Record<string, RpcMe
   const instances = () => {
     if (services.pluginInstances === null) throw new AppError('NOT_IMPLEMENTED', '插件模块未就绪');
     return services.pluginInstances;
+  };
+  const runtime = () => {
+    if (services.pluginRuntime === null) throw new AppError('NOT_IMPLEMENTED', '插件运行时未就绪');
+    return services.pluginRuntime;
   };
   const assertLocalSource = (source: PluginSource): void => {
     // P0a only has file / folder; P1 adds `marketplace` additively (allowed from remote).
@@ -269,7 +275,11 @@ export function bindPluginsMethods(services: CoreServices): Record<string, RpcMe
           const manifest = await pluginRegistry.manifestOf(summary.id);
           const entries = manifest?.contributions.capabilityModels ?? [];
           if (manifest === null || entries.length === 0) continue;
-          const instanceRows = instances().list(summary.id).filter((row) => row.kind === 'capability-model');
+          const instanceRows = instances()
+            .list(summary.id)
+            .filter((row) => row.kind === 'capability-model');
+          // D125：清单含 runtime 段 = 执行型插件，条目执行体是托管适配器（61 §5）。
+          const source: 'engine' | 'plugin' = manifest.runtime !== undefined ? 'plugin' : 'engine';
           const requiredOf = (engine: string) =>
             (MEDIA_ENGINES[engine]?.credentialFields ?? []).filter((field) => field.required);
           groups.push({
@@ -277,10 +287,13 @@ export function bindPluginsMethods(services: CoreServices): Record<string, RpcMe
             pluginName: summary.name,
             tier: summary.tier,
             entries: entries.map((entry) => {
-              // D125 过渡：执行型条目不填 engine（61 §2），无第一方引擎凭据（required 空，
-              // configured 只看实例存在性）；凭据语义由 D125-P2 接管。
-              const required = requiredOf(entry.engine ?? '');
-              const configured = (row?: { values: Record<string, unknown>; storedSensitiveKeys: string[] }): boolean =>
+              // D125：执行型条目的执行体是插件自身（source 'plugin'），没有第一方引擎的
+              // 声明式必填凭据——configured 只看实例是否存在（参考插件的零凭据形态）。
+              const required = source === 'plugin' ? [] : requiredOf(entry.engine ?? '');
+              const configured = (row?: {
+                values: Record<string, unknown>;
+                storedSensitiveKeys: string[];
+              }): boolean =>
                 row === undefined
                   ? false
                   : required.every((field) =>
@@ -293,18 +306,15 @@ export function bindPluginsMethods(services: CoreServices): Record<string, RpcMe
                   ? instanceRows.find((row) => row.id === entry.instance)
                   : undefined;
               const instanceState =
-                instanceRows.length === 0
-                  ? 'none'
-                  : instanceRows.length === 1
-                    ? 'single'
-                    : 'multi';
+                instanceRows.length === 0 ? 'none' : instanceRows.length === 1 ? 'single' : 'multi';
               return {
                 entryId: entry.id,
                 capability: entry.capability,
                 model: entry.model,
                 displayName: entry.displayName ?? null,
-                // D125 过渡：执行型条目 engine 为 null（61 §2）；D125-P2 接管。
-                engine: entry.engine ?? null,
+                // D125：执行型条目 engine 恒 null（执行体来自插件代码，61 §2）。
+                engine: source === 'plugin' ? null : (entry.engine ?? null),
+                source,
                 instanceState,
                 configured:
                   explicit !== undefined
@@ -361,17 +371,14 @@ export function bindPluginsMethods(services: CoreServices): Record<string, RpcMe
           });
         }
         const bot = domain.bots.get(input.botId);
-        const before = new Set((bot?.profile.runtime.capability_entries ?? []).map((r) => r.plugin));
+        const before = new Set(
+          (bot?.profile.runtime.capability_entries ?? []).map((r) => r.plugin),
+        );
         domain.bots.setCapabilityEntries(input.botId, input.entries);
         const updated = domain.bots.getOrThrow(input.botId);
         services.events.emit('bot.updated', { bot: updated });
         services.events.emit('plugins.changed', {
-          ids: [
-            ...new Set([
-              ...before,
-              ...input.entries.map((ref) => ref.plugin),
-            ]),
-          ],
+          ids: [...new Set([...before, ...input.entries.map((ref) => ref.plugin)])],
         });
         return { ok: true as const };
       },
@@ -387,6 +394,20 @@ export function bindPluginsMethods(services: CoreServices): Record<string, RpcMe
           ...(input.instanceId !== undefined ? { instanceId: input.instanceId } : {}),
           ...(input.keyOverride !== undefined ? { keyOverride: input.keyOverride } : {}),
         });
+        return { ok: true as const };
+      },
+    ),
+    // --- D125 P2 插件运行时 -------------------------------------------------
+    /** 全部执行型插件：状态机 + 最近错误 + 每次调用历史（环形 50 条，最新在前）。 */
+    'plugins.runtime.list': method(voidInput, pluginsRuntimeListOutputSchema, async () => ({
+      plugins: await runtime().list(),
+    })),
+    /** 终止并重新拉起进程（kill switch / 调试）；失败按插件错误码上抛。 */
+    'plugins.runtime.restart': method(
+      pluginsRuntimeRestartInputSchema,
+      okOutputSchema,
+      async (input) => {
+        await runtime().restart(input.pluginId);
         return { ok: true as const };
       },
     ),
