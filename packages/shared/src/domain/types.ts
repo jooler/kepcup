@@ -60,6 +60,17 @@ export const botRoleSchema = z.object({
 export const networkPolicySchema = z.enum(['none', 'allowlist', 'open']);
 export type NetworkPolicyMode = z.infer<typeof networkPolicySchema>;
 
+/**
+ * D124 能力模型插件（docs/design/60-capability-model-plugins.md §3）：Bot 运行时启用的
+ * 模型条目引用——软引用（`plugin` = 插件 id，`entry` = 清单条目 id），无外键、无迁移。
+ * 插件卸载后残留引用由解析侧静默跳过（与 `plugin_ids` 现状一致）。
+ */
+export const capabilityEntryRefSchema = z.strictObject({
+  plugin: z.string().min(1),
+  entry: z.string().min(1),
+});
+export type CapabilityEntryRef = z.infer<typeof capabilityEntryRefSchema>;
+
 export const botRuntimeSchema = z.object({
   /** Main model ref; empty means "use the settings default". */
   model: z.string().default(''),
@@ -102,6 +113,13 @@ export const botRuntimeSchema = z.object({
    * 缺失 / 空 = 未启用任何插件（显式添加制）；项目会话内再并上 project_plugins 的授权。
    */
   plugin_ids: z.array(z.string().min(1).max(200)).max(200).optional(),
+  /**
+   * D124 能力模型插件：该 Bot 勾选启用的模型条目（{plugin, entry} 软引用，≤16）。
+   * 缺失 / 空 = 未启用条目（媒体工具回退全局槽位，现状不变）；`.default([])` 保证
+   * 旧 profile_json 读出即合法（Profile JSON，无迁移）。有效集 = 插件已装启用 ∩
+   * effectivePluginIds ∩ 本字段（解析在 core MediaService，P2）。
+   */
+  capability_entries: z.array(capabilityEntryRefSchema).max(16).default([]),
   /**
    * 外部智能体引擎（D72，docs/design/28-external-agents-acp.md §3）：`id` 为
    * 空 = 内置 pi 引擎（其余字段忽略）；非空 = 由目录中该 Agent 驱动。D75
