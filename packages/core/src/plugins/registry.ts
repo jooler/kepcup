@@ -1317,6 +1317,9 @@ export class PluginRegistry {
   #assertEnginesKnown(manifest: PluginManifest): void {
     const unknown = new Set<string>();
     for (const entry of manifest.contributions.capabilityModels ?? []) {
+      // D125 过渡：执行型条目不填 engine（61 §2，与 manifest 的 runtime 段配对），
+      // 其安装期校验归 D125-P2 执行型管线；这里只校验数据型条目（有 engine）。
+      if (entry.engine === undefined) continue;
       if (MEDIA_ENGINES[entry.engine] === undefined) unknown.add(entry.engine);
     }
     if (unknown.size > 0) {

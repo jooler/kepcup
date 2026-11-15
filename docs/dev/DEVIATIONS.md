@@ -1527,3 +1527,148 @@
   `media-entry-resolution.test.ts`（命中三分支）与
   `plugin-capability-model.test.ts`（声明序回退）锁定行为。
 - 已更新的文档：本条；P2 任务书「实施记录」。
+
+### DEV-100 「插件提供」入口行落在 ModelConfigDetail 而非任务书点名的 CapabilityModelSection（D124 P3）
+
+- 状态：已落实
+- 阶段：D124 P3（2026-11-15）
+- 是否阻塞：否
+- 问题：P3 任务书步骤 2.3 点名 `CapabilityModelSection.svelte` 加「插件提供」入口行，
+  但该组件现仅服务对话内设置卡（`SettingCardEmbed` 唯一消费），设置页能力槽位卡
+  实际在 `ModelConfigDetail.svelte` 的 `settings-capability-slots` 区（CURRENT-STATE §5
+  的组件描述与代码现状有漂移）。
+- 决定：入口行落 `ModelConfigDetail.svelte`（真实设置页面），`CapabilityModelSection`
+  原样不动（60 §决策 10「全局七槽位卡不动」优先）。
+- 已更新的文档：本条；P3 任务书「实施记录」。
+
+### DEV-101 deepLink 新增 shell.extensionCenterPluginFocus 状态；「去配置」落插件详情页顶部（D124 P3）
+
+- 状态：已落实
+- 阶段：D124 P3（2026-11-15，审查修正深链冷启动竞态后定案）
+- 是否阻塞：否
+- 问题：① 任务书要求设置页入口行「deepLink 插件详情」，但既有机制（tab/anchor）
+  无「直达某插件详情视图」的原语，实现仿 `extensionCenterSystemCardFocus` 先例新增
+  `shell.extensionCenterPluginFocus` 状态（消费即复位）；审查补修了冷启动竞态
+  （清单未 loaded 不消费，`tabs.ts#pluginFocusContentView` 纯函数 + 4 用例锁定）。
+  ② 「去配置」跳转落在插件详情页顶部（模型条目区在前、账号实例区在后），
+  未滚动定位到实例区。
+- 决定：① 按先例模式新增状态，属任务书自由度；② 接受现状——详情页信息架构里
+  条目区在前更合理，滚动定位为锦上添花，留待用户反馈。
+- 已更新的文档：本条；P3 任务书「实施记录」。
+
+### DEV-102 Bot 条目保存前渲染端剔除残留 ref（「卸载后 core 忽略」不成立）（D124 P3）
+
+- 状态：已落实
+- 阶段：D124 P3（2026-11-15，审查核实后定案）
+- 是否阻塞：否
+- 问题：60 §决策 5 写「卸载插件后残留引用……保存时由 core 忽略」，但 P2 落地的
+  `plugins.setBotCapabilityEntries` 对未知 ref 是**整批拒绝 `INVALID_INPUT`**
+  （一次列出全部违规项），并非静默忽略——照字面实现会让「带残留 ref 保存」永远失败。
+- 决定：渲染端保存前剔除残留 ref（`bot-plugins.ts#saveableEntryRefs`，注释说明合成
+  语义）；「已卸载」灰行不可勾选照 60 决策 5 保留。core 整批拒绝语义保持不变
+  （对真实误用仍是 fail-fast）。
+- 已更新的文档：本条；P3 任务书「实施记录」。
+
+### DEV-103 条目分组常量放 bot-panel/bot-plugins.ts，extension-center 反向引用（D124 P3）
+
+- 状态：已落实
+- 阶段：D124 P3（2026-11-15）
+- 是否阻塞：否
+- 问题：`ENTRY_GROUP_LABEL_KEYS` / `ENTRY_GROUP_ORDER`（七能力分组）被 bot-panel 与
+  extension-center 两处消费，任务书未指定落点；放 bot-panel 则 extension-center 反向
+  import（bot-panel↔extension-center 双向 import 已有先例：BotPluginsSection 引
+  BotImBindings）。
+- 决定：维持现状不另立共享模块（两处语义本就同源：同一套能力分组）。
+- 已更新的文档：本条。
+
+### DEV-104 shared 新增 media/schema.ts（media 契约 wire schema + 双向漂移断言）（D125 P1）
+
+- 状态：已落实
+- 阶段：D125 P1（2026-11-15）
+- 是否阻塞：否
+- 问题：任务书步骤 1/2 未明列 wire schema 落点；61 §决策 6 要求「schema 定义在
+  shared，两侧共用」。若不落 shared，P2 的 core `contracts.ts` 必然复刻第二份。
+- 决定：shared `media/schema.ts`：全 strictObject wire schema + `MEDIA_CONTRACT_METHOD_WIRE`
+  注册表 + 底部 schema↔types.ts 双向赋值断言（漂移即 shared typecheck 失败）。
+  61 决策 6 的直接落实。
+- 已更新的文档：本条；P1 任务书「实施记录」。
+
+### DEV-105 vitest.config.ts 加 plugin-sdk 项目（D125 P1）
+
+- 状态：已落实
+- 阶段：D125 P1（2026-11-15）
+- 是否阻塞：否
+- 问题：任务书指定跑 `packages/plugin-sdk` 测试，但 monorepo vitest 项目表未含新包。
+- 决定：加两行项目条目（跨包公共配置最小增量；未跑全量，按测试纪律只跑了定向）。
+- 已更新的文档：本条。
+
+### DEV-106 SDK 客户端行为语义三则：并发防御拒绝 / progress 尾随合并 / 进程入口 exit(0)（D125 P1）
+
+- 状态：已落实
+- 阶段：D125 P1（2026-11-15）
+- 是否阻塞：否
+- 问题：任务书步骤 2.3 的三个行为点需要具体化：
+  ①「调用并发=1」实现为防御性拒绝（回 `PLUGIN_CONTRACT_VIOLATION`）而非客户端内排队
+  ——61 §3.1 明确串行排队在宿主侧，插件只防御；
+  ② progress 限速「1 次/秒」具体化为首条立即发 + 窗口内合并最新一条尾随发送 +
+  调用结束丢弃（discardPending 在 finally，无跨调用定时器残留）；
+  ③ shutdown 后谁退出进程任务书未指定——进程入口（缺省 IPC 通道）模式自动 `exit(0)`
+  （61 §3.1「插件应尽快退出」），显式传通道（测试/嵌入）不接管。
+- 决定：三点均按上述语义落地，各有专项用例锁定。
+- 已更新的文档：本条；P1 任务书「实施记录」。
+
+### DEV-107 esbuild 经 createRequire 复用 apps/desktop 0.28.2；参考插件目录含 type:module package.json（D125 P1）
+
+- 状态：已落实
+- 阶段：D125 P1（2026-11-15）
+- 是否阻塞：否
+- 问题：① 参考插件打包需要 esbuild——仓库已有（apps/desktop 0.28.2），按任务书
+  「若仓库已有则复用」经 `createRequire` 引用，零新依赖（lockfile 单实例确认）。
+  ② `plugins/reference-media/` 不是 workspace 包但 `dist/main.js` 是 ESM——fork 的
+  模块类型按最近 package.json 判定，故目录内放一个仅含 `"type":"module"` 的
+  package.json（非 workspace 包，无副作用）。
+- 决定：均按最小面落地。
+- 已更新的文档：本条。
+
+### DEV-108 reference-media dist 产物不入库且暂无自动构建钩子（风险项，D125-P2 须处理）（D125 P1）
+
+- 状态：待处理（移交 D125-P2）
+- 阶段：D125 P1（2026-11-15，审查确认）
+- 是否阻塞：否（P2 前必须解决）
+- 问题：`plugins/reference-media/dist/main.js` 受根 `.gitignore`（`dist/`）既有规则保护
+  不入库；`plugins/` 非 workspace 目录（`pnpm -r build` 不覆盖）、CI 与任何测试都不引用
+  `build.mjs`——全新 clone 上产物静默缺失，而 P2 端到端/fork 冒烟都依赖它。
+  产物本身可复现（审查代理重建后真 fork 冒烟 SMOKE PASS）。
+- 决定：产物不提交（遵守 ignore 既有规则）；**D125-P2 必须把产物构建钩进测试或 CI**
+  （如 checked-in fork 冒烟测试在 dist 缺失时先跑 `node plugins/reference-media/build.mjs`）。
+- 已更新的文档：本条；D125-P2 派工时列入硬要求。
+
+### DEV-109 错误码帧级选择与 engines.kepcup 版本对齐（D125 P1）
+
+- 状态：已落实
+- 阶段：D125 P1（2026-11-15）
+- 是否阻塞：否
+- 问题：① error 帧的 code 字段：若枚举锁死 4 个新码，会挡住 61 §5 允许的「插件显式
+  声明 `PROVIDER_AUTH_FAILED`/`PROVIDER_QUOTA` 映射」——故帧级 code 开放为 string，
+  宿主侧产生的 4 码（`PLUGIN_CRASHED` 等）在 shared 另册登记
+  （`PLUGIN_RUNTIME_ERROR_CODES`）供内部使用。
+  ② 参考插件 `engines.kepcup: ">=0.5.14"` 与当前应用版本对齐；runtime 段真正的最低
+  支持版本在 P2 发版时按需抬高（插件 README 已注明）。
+- 决定：均按上述口径；61 §5 的映射语义不受影响。
+- 已更新的文档：本条。
+
+### DEV-110 engine 可选化（61 §2 执行型条目）的 core 过渡适配（D125 P1）
+
+- 状态：已落实（过渡语义，D125-P2 接管）
+- 阶段：D125 P1（2026-11-15）
+- 是否阻塞：否
+- 问题：`CapabilityModelEntry.engine` 改可选后，core 6 文件 8 处 typecheck 错误
+  （基线把 engine 当必填消费）。PluginHost 未落地，engine-less 条目暂无解析来源。
+- 决定：最小适配 + 过渡语义「engine-less 条目不可消费、跳过」——
+  `capabilityModelInstanceFields` 空贡献、materializer 与 `#assertEnginesKnown` 跳过
+  （执行型安装校验归 D125-P2 管线）、`entriesFor`/`entryOf` 过滤、
+  `testCapabilityEntry` 视同不存在、`listCapabilityEntries` 条目行 engine 映射 null
+  （shared 该字段 `.nullable()`）。数据型条目（engine 恒有值）行为零变化
+  （既有 continue/filter 分支对其不可达，语义与原 `MEDIA_ENGINES[undefined]` 兜底等价）。
+  D125-P2 落 `HostedAdapter` 分支时替换这些过渡点。
+- 已更新的文档：本条；P1 任务书「实施记录」。

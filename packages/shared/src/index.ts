@@ -40,6 +40,11 @@ export * from './domain/watches.js';
 export * from './domain/mail.js';
 export * from './domain/im.js';
 export * from './domain/plugin-manifest.js';
+// 媒体能力契约类型源（D125 P1，61 §5）、wire schema（61 决策 6，两侧共用）与插件
+// 运行时 IPC 协议（61 §3.2）——宿主与插件 SDK 两侧共用同一包，无第二份类型。
+export * from './media/types.js';
+export * from './media/schema.js';
+export * from './plugin-runtime/protocol.js';
 export * from './domain/mcp-header.js';
 export * from './domain/plugins.js';
 export * from './domain/plugin-index.js';

@@ -39,6 +39,8 @@ export default defineConfig({
     pool: 'forks',
     projects: [
       { test: { name: 'shared', include: ['packages/shared/test/**/*.test.ts'] } },
+      // D125 P1: @kepcup/plugin-sdk 插件侧运行时客户端（帧 dispatch / cancel / 限速）。
+      { test: { name: 'plugin-sdk', include: ['packages/plugin-sdk/test/**/*.test.ts'] } },
       {
         test: {
           name: 'core',

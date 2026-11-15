@@ -244,6 +244,17 @@ export const ERROR_CODES = [
   'PLUGIN_ENGINE_UNKNOWN',
   /** 能力模型条目指向的插件有多个实例且条目未指定 instance（D124 运行期）。 */
   'INSTANCE_AMBIGUOUS',
+  // 插件运行时（D125，docs/design/61-plugin-runtime-platform.md §5）：协议 error 帧与
+  // 托管适配器错误归一的插件侧错误码。P1 只定义 / 登记；运行时消费（崩溃 / 超时 /
+  // 契约违规 / 网络拒绝的判定与映射）在 P2。
+  /** 插件进程崩溃或被看门狗击杀（一插件一进程，崩溃即整个运行时不可用）。 */
+  'PLUGIN_CRASHED',
+  /** 调用超出能力契约超时（cancel + 击杀），见 61 §3.1 看门狗。 */
+  'PLUGIN_TIMEOUT',
+  /** 插件输入 / 输出违反协议或能力契约 schema（不重试、不部分投递）。 */
+  'PLUGIN_CONTRACT_VIOLATION',
+  /** host.net.fetch 命中清单白名单之外（或 SSRF 守卫拒绝），见 61 §3.3。 */
+  'PLUGIN_NETWORK_DENIED',
   // 微应用运行时（D112，设计 55）
   /** 微应用清单 micro-app.json 校验失败（字段 / 闭合枚举外的能力 / 未实现的能力）。 */
   'MICRO_APP_MANIFEST_INVALID',

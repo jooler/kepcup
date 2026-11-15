@@ -18,6 +18,10 @@ import { sanitizeDisplayText } from './text-sanitize.js';
  * capability-model contribution (`contributions.capabilityModels`：一个模型一条) and the
  * `'capability-model'` instance kind — the mail / mcp / im recipe: the contribution is
  * the supply spec, instances are user-added, execution stays in first-party engines.
+ *
+ * D125 (docs/design/61-plugin-runtime-platform.md §2) adds the optional `runtime`
+ * section (形态 B 执行型插件)：包内带代码、宿主外子进程按 IPC 协议执行。分级与存在性
+ * 校验在 P2 安装管线；旧应用读到该段即 `PLUGIN_UPGRADE_REQUIRED`。
  */
 
 export const PLUGIN_FORMAT_VERSION = 1;
@@ -718,6 +722,65 @@ export type PluginImContribution = z.infer<typeof pluginImContributionSchema>;
 export const PLUGIN_IM_BUILTIN_INSTANCE_FIELD_KEYS: readonly string[] = ['bot_token'] as const;
 
 /**
+ * `runtime.network.allow` 条目形状（61 §2 注）：精确 host 或 `*.domain` 通配。
+ * 形状校验只挡明显笔误（空串 / 带协议前缀 / 路径 / 端口）；匹配语义（大小写、
+ * 通配边界、SSRF）在 P2 宿主侧强制。
+ */
+const PLUGIN_RUNTIME_NETWORK_ALLOW_PATTERN =
+  /^(?:\*\.)?[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$/i;
+
+/**
+ * 执行型插件清单增量段（D125，docs/design/61-plugin-runtime-platform.md §2）：manifest
+ * 含 `runtime` 即执行型（形态 B）——包内携带代码、由宿主外子进程按 61 §3.2 协议执行，
+ * 条目解析落到托管适配器（HostedAdapter）。形状按 61 §2 原样；声明校验的分级执行
+ * （`runtime` 仅 builtin / verified / developer 层级允许、有 `runtime` ⇒ 至少一条执行型
+ * 可消费的贡献、entry 文件存在性与 hostApi 解析）是 P2 安装管线的事——schema 层只做
+ * 形状与路径安全。旧应用读到本段即 `PLUGIN_UPGRADE_REQUIRED`（既有增量字段规则）。
+ */
+export const pluginRuntimeSectionSchema = z
+  .strictObject({
+    /** 包内相对路径，打包单文件 JS（ESM），如 'dist/main.js'。 */
+    entry: z.string().min(1).max(300),
+    /** 期望的 Host API semver 范围，如 '^1'；语义解析与不匹配拒绝在 P2 宿主握手。 */
+    hostApi: z.string().min(1).max(32),
+    /** 域名白名单：精确 host 或 '*.domain'；缺省 = 该插件不得用 host.net。 */
+    network: z
+      .strictObject({
+        allow: z
+          .array(
+            z.string().min(1).max(253).regex(PLUGIN_RUNTIME_NETWORK_ALLOW_PATTERN, {
+              message: '必须是精确 host 或 *.domain 通配',
+            }),
+          )
+          .max(32),
+      })
+      .optional(),
+    /** 每插件进程内调用并发上限（v1 运行时恒串行排队，本字段预留）。 */
+    maxConcurrent: z.number().int().min(1).max(4).default(1),
+  })
+  .superRefine((runtime, ctx) => {
+    // Trim 纪律同 mail/im host：空白填充的路径不能当合法 entry 通过（否则 P2 到
+    // 安装管线才以令人困惑的方式失败）。
+    if (runtime.entry.trim() !== runtime.entry) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['entry'],
+        message: 'entry must not have leading/trailing whitespace',
+      });
+    }
+    // 包内相对路径（禁 `..`、绝对路径、反斜杠 / 控制字符）——复用既有
+    // `isSafePluginRelPath` 单一事实来源（与 icon / 贡献 dir / file 同规则）。
+    if (!isSafePluginRelPath(runtime.entry)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['entry'],
+        message: 'runtime.entry 必须是包内相对路径（禁 .. 与绝对路径）',
+      });
+    }
+  });
+export type PluginRuntimeSection = z.infer<typeof pluginRuntimeSectionSchema>;
+
+/**
  * 能力模型条目（D124，docs/design/60-capability-model-plugins.md §2）：插件声明的一个
  * 可调用媒体模型——用户视角「一个模型一条」，插件粒度 = 平台协议族。执行逻辑不住在
  * 插件里：`engine` 绑定 core 内置引擎注册表（安装期校验未知引擎拒绝），插件永远只是
@@ -733,8 +796,13 @@ export const capabilityModelEntrySchema = z.strictObject({
   capability: z.enum(['image', 'video', 'tts', 'asr', 'embedding', 'rerank', 'multimodal']),
   /** 厂商模型 id，如 'qwen-image-2.0'。 */
   model: z.string().min(1).max(200),
-  /** MEDIA_ENGINES 键，安装期校验（PLUGIN_ENGINE_UNKNOWN）。 */
-  engine: z.string().min(1).max(64),
+  /**
+   * MEDIA_ENGINES 键，安装期校验（PLUGIN_ENGINE_UNKNOWN）。**可省略**（D125，61 §2）：
+   * 执行型插件（manifest 含 `runtime` 段）的条目不填 `engine`——执行逻辑来自插件自身
+   * 代码，条目解析落到托管适配器（HostedAdapter）；省略时必须声明 `runtime`
+   * （enforced in `pluginManifestSchema`），数据型条目（有 engine）语义不变。
+   */
+  engine: z.string().min(1).max(64).optional(),
   /** 缺省用 model。 */
   displayName: z.string().max(100).optional(),
   /** 呈现给用户与模型的能力说明。 */
@@ -805,6 +873,8 @@ export const pluginManifestSchema = z
       .optional(),
     /** Pure-instance capability kinds this plugin provides (no contributions needed). */
     instances: z.array(pluginInstanceKindSchema).max(PLUGIN_MAX_INSTANCES).optional(),
+    // D125：执行型插件增量段（形态 B，61 §2）——含本段即带代码插件，宿主外子进程执行。
+    runtime: pluginRuntimeSectionSchema.optional(),
   })
   .superRefine((manifest, ctx) => {
     const { skills, connectors, mcp, mail, im, capabilityModels = [] } = manifest.contributions;
@@ -933,6 +1003,19 @@ export const pluginManifestSchema = z
         message: "声明能力模型条目时必须同时声明 instances: ['capability-model']",
       });
     }
+    // D125：执行型条目（不填 engine）必须与 `runtime` 段配对——条目解析落到本插件的
+    // 托管适配器（HostedAdapter），没有 runtime 就没有执行体；数据型条目（有 engine）
+    // 语义不变（安装期校验 MEDIA_ENGINES，D124）。反向（有 runtime ⇒ 至少一条执行型
+    // 可消费的贡献）与层级限制归 P2 安装管线。
+    capabilityModels.forEach((entry, index) => {
+      if (entry.engine === undefined && manifest.runtime === undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['contributions', 'capabilityModels', index, 'engine'],
+          message: '不填 engine 的执行型条目必须同时声明 runtime 段',
+        });
+      }
+    });
     // P4-M2 mcp instance templates: an `mcpb` contribution is a bundled server and is
     // never instantiable; an `http` contribution is a per-instance TEMPLATE only when
     // the manifest declares `instances: ['mcp']` (at most one — a pure-instance generic

@@ -395,7 +395,8 @@ export const pluginCapabilityEntryGroupSchema = z.object({
       capability: z.enum(['image', 'video', 'tts', 'asr', 'embedding', 'rerank', 'multimodal']),
       model: z.string(),
       displayName: z.string().nullable(),
-      engine: z.string(),
+      /** 数据型条目的绑定引擎 id；执行型条目不填 engine（61 §2），过渡期为 null。 */
+      engine: z.string().nullable(),
       /** 该插件当前 capability-model 实例数口径：0 / 1 / 多。 */
       instanceState: z.enum(['none', 'single', 'multi']),
       /** 条目生效实例的必填凭据是否齐备（未配齐 = 置灰 + 「去配置」）。 */

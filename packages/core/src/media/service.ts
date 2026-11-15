@@ -385,6 +385,11 @@ export class MediaService {
     if (entry === null) {
       throw new AppError('NOT_FOUND', `插件 ${pluginId} 没有条目「${entryId}」`);
     }
+    // D125 过渡：执行型条目不填 engine（61 §2），PluginHost 未落地前不可测（不可消费），
+    // 视同不存在（与条目仓库 entryOf 的过滤同语义）；D125-P2 接管。
+    if (entry.engine === undefined) {
+      throw new AppError('NOT_FOUND', `插件 ${pluginId} 没有条目「${entryId}」`);
+    }
     const engine = MEDIA_ENGINES[entry.engine];
     if (engine === undefined) {
       throw new AppError(
