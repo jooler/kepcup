@@ -1958,9 +1958,11 @@
 - 已更新的文档：本条；61 §2 / §3.2 runtime 固定段、`todo/plugin-runtime/README.md`
   固定契约、`packages/plugin-sdk/README.md`（ctx 与实例字段）。
 
-### DEV-124 百炼试点模型选择：wan 视频 id 被真机拒绝 → 改用 qwen-image-3.0 同步协议（D125 P4）
+### DEV-124 百炼试点模型选择：wan 视频 id 被真机拒绝 → 改用 qwen-image-3.0（协议后被 DEV-130 改回异步）（D125 P4）
 
-- 状态：已修正（真机确认根因）
+- 状态：已修正（真机确认根因）；协议部分**已被 DEV-130 修订**——同步单请求在真机
+  60s 网络上限失败，试点最终采用异步任务 + 轮询（本条的模型选择与 `params.model`
+  覆盖仍然有效，只有「同步协议」的决定作废）
 - 阶段：D125 P4（2026-11-16）
 - 是否阻塞：否
 - 问题：任务书步骤 3 要求条目 `model` 取「16 号 wan 系列预置 id」。16 号当前登记的
@@ -2204,3 +2206,81 @@
 - 已更新的文档：本条；61 §3.1 / §3.3 / §10 Q5 / §12；51 §5；11 数据目录；16（Bot
   消费入口）；20 §4；28（外部 Agent）；`docs/dev/04-agent-runtime.md` 工具表；
   `packages/plugin-sdk/README.md`。
+
+### DEV-132 D125 收口独立审查修复（跨阶段集成 / 回归）
+
+- 状态：已落实
+- 阶段：D125 收口审查（2026-11-16）
+- 是否阻塞：否
+- 问题（按严重度）：审查 `v0.5.14...HEAD` 的插件系统全部改动时发现以下跨阶段问题：
+  1. **混合插件执行体来源按插件整体判定**：清单含 `runtime` 时 `entriesFor` /
+     `listCapabilityEntries` / `testCapabilityEntry` / `capabilityInstanceOf` 把所有条目
+     都标成 `source:'plugin'`，而 60 §2 / manifest 注解明确「数据型条目（有 engine）语义
+     不变」、安装管线也显式支持 runtime + engine 混合清单（重名凭据拒绝）——混合插件的
+     engine 条目会被错误送进插件子进程，engine 绑定静默失效。
+  2. **握手 `init.instances` 误用清单常量 `PLUGIN_MAX_INSTANCES`（=4）**：该常量是清单
+     可声明的**实例 kind 数**上限，不是账号数；用户添加第 5 个厂商账号实例后 init 帧
+     schema 校验失败 → `#failLive` → 插件永远起不来（`PLUGIN_CRASHED`）。账号实例数在
+     实例服务里本来就不设限（mail / mcp / im 同口径）。
+  3. **执行型产物下载没有字节上限**：`imageBytes` 对插件返回的 URL 直接
+     `arrayBuffer()`（图片无任何上限）；视频只预检 `content-length`，chunked / 谎报的
+     响应仍会整份读进内存——不可信 URL 可打爆宿主内存。
+  4. **条目级「未保存先测」对执行型条目静默忽略 `keyOverride`**：数据型条目走
+     `#resolvePluginInstance(..., keyOverride)`，托管路径不读它——用户在实例表单改 Key
+     后点「测试连接」实际测的是已存 Key（误导），新增实例未保存时也无从测试。
+  5. **Bot 条目 16 条上限计入不可达引用**：插件被移出 Bot / 卸载 / **更新删掉条目**后
+     `capability_entries` 残留不生效却占上限，且卡上没有可取消的勾选框（勾满后新条目
+     永久置灰）；后两种情况还会让下一次条目保存因「条目不存在」整批拒绝。
+  6. **签名前静态扫描不校验 `runtime.entry` 是否存在，也不拦 community 执行型**：前者的
+     包会被安装管线拒绝，后者在客户端必被 `PLUGIN_INCOMPATIBLE` 拒绝——市场都会发布
+     「永远装不上」的版本。
+  7. **Electron utilityProcess 里 fork 插件未显式 `ELECTRON_RUN_AS_NODE`**：macOS 的
+     Helper 二进制实测可按 Node 执行；不同平台 / Electron 版本的 `process.execPath`
+     行为并不一致，缺该标志时子进程可能按 Electron 应用启动而不是执行插件入口。
+  8. **`hostApi` semver 解析偏差**：完整版本 `1.2.3` 被当成「>=1.2.3 无上界」（会接受
+     2.x），`~1` 被当成 `<1.1.0`（过窄）；该函数此前零测试。
+  9. **卸载 / 安装回滚不清插件级 config 敏感字段**：实例 teardown 只按
+     `plugin:{scope}:instance:*` 清实例 secrets，`plugin:{scope}:config:*`（D105
+     `config.fields` 的 sensitive 值）永久留在密钥库——61 验收锚点却声称「卸载插件
+     … secrets 清除」。
+  10. 其余小项：条目 displayName/model 进工具描述前未清洗（控制字符 / 双向控制可直接进
+      系统提示词）；扩展中心条目行对执行型条目的 `engine: null` 渲染出字面「null」；取消
+      信号在 `isAborted` 检查与 `addEventListener` 之间触发会永久丢取消（只能等超时）；
+      空闲回收路径未取消宿主代发的在途 `net.fetch`（fire-and-forget 请求会挂到 15 分钟
+      上限）；`plugins.setBotCapabilityEntries` 对未安装插件的违规文案误报「条目不存在」；
+      试点 `src/main.ts` 头注释 / 测试注释 / P4 步骤仍写「同步协议」。
+- 决定：逐项修复，不改变 D125 的对外契约：
+  - 执行体来源**逐条判定**（`entry.engine !== undefined ? 'engine' : 'plugin'`）；混合
+    插件的 engine 条目继续走 `MEDIA_ENGINES`，托管路径只接不填 engine 的条目。
+  - 新增 `PLUGIN_RUNTIME_MAX_INIT_INSTANCES = 64`（协议安全界），宿主按此截断 init
+    列表；超出的实例仍可在调用时经 `context.credentials` 取得凭据。
+  - 新增 `readBodyCapped(response, maxBytes)`：`content-length` 预检 + 流式累计，超限
+    `cancel()` 并返回 null；图片 30MB（附件上限同量级）、视频沿用 200MB。
+  - `MediaEntrySource.sensitiveFieldKeysOf` + `VendorCallContext.credentialOverrides` +
+    `PluginCallContext.credentialOverrides`：仅 `testCapabilityEntry` 携带，宿主在实例
+    secrets 之后同名覆盖；真实调用路径不经过。
+  - Bot 条目上限与保存只认「已添加（`plugin_ids`）、已安装、且条目仍在当前清单投影里」
+    的引用；残留引用在下次保存时清理（core 的软引用语义不变）。
+  - 静态扫描补 `runtime.entry` 存在性（缺失 / 符号链接 = fail）；签名侧拒绝
+    community 层级的执行型包（市场只有 verified 可装）。
+  - `PluginRegistry.#teardown` 在实例 teardown 之后按 `plugin:{scope}:` 前缀兜底清理
+    该插件全部 secrets（config + 实例 + 清单改名残留）；作用域编码单射、前缀带结尾
+    冒号，不会误伤命名空间相近的其它插件；失败只 warn。
+  - `minimalPluginEnv` 在 Electron 宿主追加 `ELECTRON_RUN_AS_NODE=1`（纯 Node 宿主不变，
+    有单测）。
+  - semver 解析按 npm 语义修正（`^0.x` caret、`~1`、完整版本精确匹配），补
+    `plugin-runtime-version.test.ts`（此前无覆盖）。
+  - 工具描述条目名经 `sanitizeDisplayText`；条目行文案 `entryDetailText`（engine null
+    不显示）；取消在注册监听后复查 `aborted`；未安装插件的违规文案分开；试点文档 /
+    注释统一为异步任务实现（DEV-124 标注被 DEV-130 修订）。
+- 测试证据：定向测试（`node scripts/run-tests.mjs run`）覆盖 plugin-registry / plugin-host /
+  plugin-bridge / media-entry-resolution / media-tools / media-delivery / gateway-read-only /
+  scan-plugin-runtime / sign-plugin-index / plugin-capability-model / plugin-runtime-version /
+  plugin-sdk client + host-channel / shared protocol / paths / usage / migrations / safe-dispatcher
+  ——**26 个文件 / 463 个用例通过 / 0 失败**；renderer（bot-panel / plugins / extension-center /
+  chats / i18n）+ locales ——**63 个文件 / 590 个用例通过 / 0 失败**（2026-11-16）。
+  `pnpm --filter @kepcup/core typecheck`、`@kepcup/shared` / `@kepcup/plugin-sdk` /
+  `@kepcup/desktop`（svelte-check 0 error / 0 warning）通过。全量 `pnpm test` 收口：
+  **804 个文件通过 / 3 跳过，8721 passed / 44 skipped / 0 failed**（2026-11-16）。
+- 已更新的文档：本条；61 §12.3 / 验收锚点；`todo/plugin-runtime/P4-governance-pilot.md`；
+  `plugins/dashscope-t2i/src/main.ts` 头注释。

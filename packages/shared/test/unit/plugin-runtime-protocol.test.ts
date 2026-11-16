@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  PLUGIN_MAX_INSTANCES,
   PLUGIN_RUNTIME_ERROR_CODES,
   PLUGIN_RUNTIME_HOST_API_VERSION,
+  PLUGIN_RUNTIME_MAX_INIT_INSTANCES,
   isPluginHostApiRequest,
   pluginManifestSchema,
   pluginRuntimeEventFrameSchema,
@@ -127,12 +127,25 @@ describe('plugin runtime protocol frames (D125 P1)', () => {
         },
       }).success,
     ).toBe(false);
+    // 清单的 PLUGIN_MAX_INSTANCES（4）是实例 kind 上限，不是账号数：5 个账号实例是
+    // 合法握手（D125 收口审查修复——旧 schema 复用清单常量会让第 5 个实例起不来）。
     expect(
       safeParseFrame({
         type: 'init',
         hostApiVersion: 1,
         manifestDigest: digest,
-        instances: Array.from({ length: PLUGIN_MAX_INSTANCES + 1 }, () => ({
+        instances: Array.from({ length: 5 }, (_, index) => ({
+          instanceId: `pli_${index}`,
+          fields: {},
+        })),
+      }).success,
+    ).toBe(true);
+    expect(
+      safeParseFrame({
+        type: 'init',
+        hostApiVersion: 1,
+        manifestDigest: digest,
+        instances: Array.from({ length: PLUGIN_RUNTIME_MAX_INIT_INSTANCES + 1 }, () => ({
           instanceId: 'x',
           fields: {},
         })),
@@ -349,10 +362,9 @@ describe('plugin manifest runtime section (D125 P1, 61 §2)', () => {
     };
     expect(isPluginHostApiRequest(frame)).toBe(true);
     for (const bad of [500, 900_001, 1.5]) {
-      expect(
-        isPluginHostApiRequest({ ...frame, init: { timeoutMs: bad } }),
-        String(bad),
-      ).toBe(false);
+      expect(isPluginHostApiRequest({ ...frame, init: { timeoutMs: bad } }), String(bad)).toBe(
+        false,
+      );
     }
   });
 

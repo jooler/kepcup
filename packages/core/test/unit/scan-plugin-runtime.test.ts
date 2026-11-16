@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -83,8 +83,18 @@ function scan(
   const hasPackageJson = files.some(
     (file) => String(file.path).replace(/^\.\//, '') === 'package.json',
   );
+  // 代码规则用例不关心 entry 是否存在：清单声明的 entry 缺省时补一个空文件（专门测
+  // 「entry 缺失」的用例直接调用 scanRuntimePackage，不走本包装）。
+  const declaredEntry = (manifest as { runtime?: { entry?: unknown } } | null)?.runtime?.entry;
+  const withEntry =
+    typeof declaredEntry === 'string' &&
+    !files.some((file) => String(file.path).replace(/^\.\//, '') === declaredEntry)
+      ? [{ path: declaredEntry, data: '' }, ...files]
+      : files;
   return scanner.scanRuntimePackage({
-    files: hasPackageJson ? files : [{ path: 'package.json', data: '{"type":"module"}' }, ...files],
+    files: hasPackageJson
+      ? withEntry
+      : [{ path: 'package.json', data: '{"type":"module"}' }, ...withEntry],
     manifest,
   });
 }
@@ -290,6 +300,28 @@ describe('runtime 静态扫描（D125 P4 步骤 2）', () => {
     expect(
       raw([{ path: 'dist/main.js', data: 'eval("1")' }], withEntry('dist/main.js'))?.status,
     ).toBe('fail');
+  });
+
+  it('runtime.entry 缺失 / 是符号链接 → fail（签名的包必须能通过安装管线）', () => {
+    // 安装管线 entryIssue 会拒绝缺失 / 符号链接；签名侧若不拦，会发布永远装不上的版本。
+    const missing = scanner.scanRuntimePackage({
+      files: [
+        { path: 'package.json', data: '{"type":"module"}' },
+        { path: 'dist/other.js', data: 'globalThis.ok = 1;' },
+      ],
+      manifest: runtimeManifest,
+    });
+    expect(missing?.status).toBe('fail');
+    expect(missing?.errors.join('\n')).toContain('runtime.entry 指向的文件不存在');
+    const linked = scanner.scanRuntimePackage({
+      files: [
+        { path: 'package.json', data: '{"type":"module"}' },
+        { path: 'dist/main.js', data: '', isSymlink: true },
+      ],
+      manifest: runtimeManifest,
+    });
+    expect(linked?.status).toBe('fail');
+    expect(linked?.errors.join('\n')).toContain('runtime.entry 指向的文件不存在');
   });
 
   it('目录扫描尊重 .kepcup-ignore（构建脚本不随包发布，扫描与 pack 同一排除口径）', async () => {

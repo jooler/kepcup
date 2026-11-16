@@ -198,3 +198,32 @@ export async function safeFetch(url: string, init: RequestInit = {}): Promise<Re
     dispatcher: sharedSafeDispatcher(),
   } as never) as unknown as Promise<Response>;
 }
+
+/**
+ * Read a response body with a hard byte cap (D125 补丁): `content-length` only rejects
+ * early; a chunked / lying response is counted as it streams and cancelled the moment it
+ * exceeds `maxBytes`, so an untrusted URL (execution-plugin output) cannot balloon the
+ * host's memory. Returns null when the cap is hit (the caller decides the error text).
+ */
+export async function readBodyCapped(response: Response, maxBytes: number): Promise<Buffer | null> {
+  const declared = Number(response.headers.get('content-length') ?? '0');
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    return null;
+  }
+  if (response.body === null) return Buffer.alloc(0);
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks);
+}

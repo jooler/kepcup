@@ -137,24 +137,52 @@ export const ENTRY_GROUP_ORDER = [
 ] as const;
 
 /** 能力 → 分组标题文案键（图片生成 / 视频生成 / 语音合成 / 语音识别 / 图文理解…）。 */
-export const ENTRY_GROUP_LABEL_KEYS: Readonly<Record<(typeof ENTRY_GROUP_ORDER)[number], MessageKey>> =
-  {
-    image: 'botPanel.plugins.entryGroup.image',
-    video: 'botPanel.plugins.entryGroup.video',
-    tts: 'botPanel.plugins.entryGroup.tts',
-    asr: 'botPanel.plugins.entryGroup.asr',
-    multimodal: 'botPanel.plugins.entryGroup.multimodal',
-    embedding: 'botPanel.plugins.entryGroup.embedding',
-    rerank: 'botPanel.plugins.entryGroup.rerank',
-  };
+export const ENTRY_GROUP_LABEL_KEYS: Readonly<
+  Record<(typeof ENTRY_GROUP_ORDER)[number], MessageKey>
+> = {
+  image: 'botPanel.plugins.entryGroup.image',
+  video: 'botPanel.plugins.entryGroup.video',
+  tts: 'botPanel.plugins.entryGroup.tts',
+  asr: 'botPanel.plugins.entryGroup.asr',
+  multimodal: 'botPanel.plugins.entryGroup.multimodal',
+  embedding: 'botPanel.plugins.entryGroup.embedding',
+  rerank: 'botPanel.plugins.entryGroup.rerank',
+};
 
 /** 去重（保序）：`capability_entries` 与 `plugin_ids` 同一套整集写入前的出口。 */
 export function dedupeEntryRefs(refs: readonly CapabilityEntryRef[]): CapabilityEntryRef[] {
   return refs.filter(
     (ref, index) =>
-      refs.findIndex((candidate) => candidate.plugin === ref.plugin && candidate.entry === ref.entry) ===
-      index,
+      refs.findIndex(
+        (candidate) => candidate.plugin === ref.plugin && candidate.entry === ref.entry,
+      ) === index,
   );
+}
+
+/** 条目引用的稳定键（plugin + entry；`\0` 不会出现在任一字段里）。 */
+export function entryRefKey(ref: CapabilityEntryRef): string {
+  return `${ref.plugin}\u0000${ref.entry}`;
+}
+
+/** 已装插件的当前条目集合（`plugins.listCapabilityEntries` 投影）→ 可引用的键集合。 */
+export function knownEntryRefKeys(groups: readonly PluginCapabilityEntryGroup[]): Set<string> {
+  const keys = new Set<string>();
+  for (const group of groups) {
+    for (const entry of group.entries) keys.add(`${group.pluginId}\u0000${entry.entryId}`);
+  }
+  return keys;
+}
+
+/**
+ * 只保留条目仍存在的引用（插件更新删掉条目后，Bot profile 里的残留引用会让
+ * `setBotCapabilityEntries` 整批拒绝，而卡上已没有可取消的勾选框——保存 / 上限计数
+ * 前剪掉）。调用方只在条目清单已成功加载时使用；未加载时不能把未知当不存在。
+ */
+export function entryRefsStillKnown(
+  refs: readonly CapabilityEntryRef[],
+  knownKeys: ReadonlySet<string>,
+): CapabilityEntryRef[] {
+  return refs.filter((ref) => knownKeys.has(entryRefKey(ref)));
 }
 
 /**
@@ -192,18 +220,43 @@ export function groupEntriesByCapability(
 }
 
 /**
- * 保存（整集替换）前剔除已卸载插件的残留引用：core 的 `setBotCapabilityEntries`
- * 对未知 ref 整批拒绝（INVALID_INPUT），「卸载残留由 core 忽略」在渲染端落地为
- * 不发送（60 §决策 5 与 P2 校验语义的合成，见 P3 实施记录）。
+ * 只保留来源插件仍在「该 Bot 的启用集」里的引用（去重、保序）。`capability_entries`
+ * 的有效集 = 本字段 ∩ `plugin_ids`（core `entriesFor`）：插件被移出 Bot / 已卸载的
+ * 引用永不生效，但会占满 shared 契约的 16 条上限且卡上没有可取消的勾选框（死路）。
+ * 因此上限计数与保存都以启用集为准——移出 Bot 的插件条目在下次条目保存时清理。
+ */
+export function entryRefsOfEnabledPlugins(
+  refs: readonly CapabilityEntryRef[] | undefined,
+  pluginIds: readonly string[],
+): CapabilityEntryRef[] {
+  const enabled = new Set(pluginIds);
+  return dedupeEntryRefs(refs ?? []).filter((ref) => enabled.has(ref.plugin));
+}
+
+/**
+ * 保存（整集替换）前剔除不生效的残留引用：插件已卸载 / 已移出本 Bot。core 的
+ * `setBotCapabilityEntries` 对未知 ref 整批拒绝（INVALID_INPUT），渲染端不发送；
+ * 传入 Bot 的 `plugin_ids`（启用集）而不是全部已装插件——已装但不在本 Bot 的插件
+ * 条目同属不可达，留在字段里只会占上限（见 {@link entryRefsOfEnabledPlugins}）。
  */
 export function saveableEntryRefs(
   current: readonly CapabilityEntryRef[] | undefined,
-  installedIds: readonly string[],
+  activePluginIds: readonly string[],
 ): CapabilityEntryRef[] {
-  const installed = new Set(installedIds);
-  return dedupeEntryRefs(current ?? []).filter((ref) => installed.has(ref.plugin));
+  return entryRefsOfEnabledPlugins(current, activePluginIds);
+}
+
+/**
+ * 条目行的次级文案（`model · engine`）。执行型条目（不填 engine，`source:'plugin'`）
+ * 没有第一方引擎——不能把 `null` 拼进文案；只显示 model（所属插件卡已表明执行型）。
+ */
+export function entryDetailText(
+  entry: Pick<PluginCapabilityEntryGroup['entries'][number], 'model' | 'engine'>,
+): string {
+  return entry.engine === null || entry.engine === ''
+    ? entry.model
+    : `${entry.model} · ${entry.engine}`;
 }
 
 /** `capability_entries` 上限（shared 契约 ≤16）：超出时勾选不再追加。 */
 export const CAPABILITY_ENTRIES_MAX = 16;
-

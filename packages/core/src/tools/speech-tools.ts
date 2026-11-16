@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { untrustedBlock } from '../infra/data-boundary.js';
-import { safeFetch } from '../infra/safe-dispatcher.js';
+import { readBodyCapped, safeFetch } from '../infra/safe-dispatcher.js';
 import path from 'node:path';
 import { Type } from 'typebox';
 import { AppError, TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
@@ -16,7 +16,11 @@ import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js'
 import type { AttachmentsService } from '../domain/attachments.js';
 import type { ToolGateway } from '../gateway/index.js';
 import { readOnlyRefusal } from './read-only.js';
-import { ENTRY_CAPABILITY_LABELS, appendEntryHint, type MediaEntryHints } from './media-entry-hints.js';
+import {
+  ENTRY_CAPABILITY_LABELS,
+  appendEntryHint,
+  type MediaEntryHints,
+} from './media-entry-hints.js';
 
 /**
  * 语音合成、语音转写与视频生成的 Bot 工具（docs/design/20-conversation-media.md、
@@ -374,11 +378,13 @@ export function buildSpeechTools(input: {
                 errorCode: 'PROVIDER_UNAVAILABLE',
               };
             }
-            const buffer = Buffer.from(await response.arrayBuffer());
-            if (buffer.length > VIDEO_MAX_BYTES) {
+            // D125 补丁：chunked / 谎报 content-length 的响应按流累计上限（执行型插件
+            // 返回的 URL 不可信，无上限的 arrayBuffer() 会打爆宿主内存）。
+            const buffer = await readBodyCapped(response, VIDEO_MAX_BYTES);
+            if (buffer === null) {
               return {
                 ok: false,
-                content: `生成的视频过大（${Math.round(buffer.length / 1024 / 1024)}MB），已放弃保存`,
+                content: `生成的视频过大（超过 ${Math.round(VIDEO_MAX_BYTES / 1024 / 1024)}MB），已放弃下载`,
                 errorCode: 'PROVIDER_UNAVAILABLE',
               };
             }

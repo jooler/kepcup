@@ -12,7 +12,12 @@ import {
   dedupeEntryRefs,
   dedupePluginIds,
   enabledPluginCount,
+  entryDetailText,
+  entryRefKey,
+  entryRefsOfEnabledPlugins,
+  entryRefsStillKnown,
   groupEntriesByCapability,
+  knownEntryRefKeys,
   manualToolServers,
   matchesPluginQuery,
   pluginKindBadges,
@@ -250,6 +255,74 @@ describe('saveableEntryRefs（保存前剔除已卸载插件的残留引用）',
       { plugin: 'q', entry: 'f1' },
     ]);
     expect(saveableEntryRefs(undefined, ['p'])).toEqual([]);
+  });
+
+  it('已装但不在本 Bot 启用集里的引用同样不发送（否则只会占 16 条上限）', () => {
+    const current = [
+      { plugin: 'p', entry: 'e1' },
+      { plugin: 'installed-not-in-bot', entry: 'e2' },
+    ];
+    expect(saveableEntryRefs(current, ['p'])).toEqual([{ plugin: 'p', entry: 'e1' }]);
+  });
+});
+
+describe('entryRefsOfEnabledPlugins（16 条上限只计有效引用）', () => {
+  it('只算来源插件在当前启用集里的引用；去重保序', () => {
+    const refs = [
+      { plugin: 'p', entry: 'e1' },
+      { plugin: 'gone', entry: 'z' },
+      { plugin: 'p', entry: 'e1' },
+      { plugin: 'q', entry: 'f1' },
+    ];
+    expect(entryRefsOfEnabledPlugins(refs, ['p'])).toEqual([{ plugin: 'p', entry: 'e1' }]);
+    expect(entryRefsOfEnabledPlugins(refs, ['p', 'q'])).toEqual([
+      { plugin: 'p', entry: 'e1' },
+      { plugin: 'q', entry: 'f1' },
+    ]);
+    // 16 条全来自已移出 Bot 的插件 → 有效计数为 0（新条目可继续勾选）。
+    const stale = Array.from({ length: CAPABILITY_ENTRIES_MAX }, (_, index) => ({
+      plugin: 'removed',
+      entry: `e${index}`,
+    }));
+    expect(entryRefsOfEnabledPlugins(stale, ['p'])).toHaveLength(0);
+    expect(entryRefsOfEnabledPlugins(undefined, ['p'])).toEqual([]);
+  });
+});
+
+describe('entryDetailText（条目行次级文案）', () => {
+  it('数据型条目 = model · engine；执行型条目（engine null）只显示 model，不出现 null', () => {
+    expect(entryDetailText({ model: 'qwen-image-2.0', engine: 'dashscope' })).toBe(
+      'qwen-image-2.0 · dashscope',
+    );
+    expect(entryDetailText({ model: 'reference-image-1', engine: null })).toBe('reference-image-1');
+  });
+});
+
+describe('knownEntryRefKeys / entryRefsStillKnown（插件更新删条目后的残留引用）', () => {
+  it('键按 plugin + entry 组合；只保留仍存在于当前清单投影里的引用', () => {
+    const groups = [
+      {
+        pluginId: 'p',
+        pluginName: 'P',
+        tier: 'developer' as const,
+        entries: [entry('p', 'e1', 'image')],
+      },
+    ];
+    const keys = knownEntryRefKeys(groups);
+    expect(keys.has(entryRefKey({ plugin: 'p', entry: 'e1' }))).toBe(true);
+    expect(entryRefKey({ plugin: 'p', entry: 'e1' })).not.toBe(
+      entryRefKey({ plugin: 'p2', entry: 'e1' }),
+    );
+    expect(
+      entryRefsStillKnown(
+        [
+          { plugin: 'p', entry: 'e1' },
+          { plugin: 'p', entry: 'removed-by-update' },
+          { plugin: 'q', entry: 'e1' },
+        ],
+        keys,
+      ),
+    ).toEqual([{ plugin: 'p', entry: 'e1' }]);
   });
 });
 

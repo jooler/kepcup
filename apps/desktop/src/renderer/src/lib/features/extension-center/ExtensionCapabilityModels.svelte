@@ -1,12 +1,16 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { AppError, type PluginCapabilityEntryGroup, type PluginInstanceSummary } from '@kepcup/shared';
+  import {
+    AppError,
+    type PluginCapabilityEntryGroup,
+    type PluginInstanceSummary,
+  } from '@kepcup/shared';
   import { toast } from 'svelte-sonner';
   import { t, errorText } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { plugins } from '$lib/features/plugins/plugins.svelte';
   import { capabilityEntries } from '$lib/features/plugins/capability-entries.svelte';
-  import { ENTRY_GROUP_LABEL_KEYS } from '$lib/features/bot-panel/bot-plugins';
+  import { ENTRY_GROUP_LABEL_KEYS, entryDetailText } from '$lib/features/bot-panel/bot-plugins';
   import CapabilityInstanceForm from '$lib/features/plugins/CapabilityInstanceForm.svelte';
   import PluginRuntimeStatus from '$lib/features/plugins/PluginRuntimeStatus.svelte';
   import { pluginRuntime } from '$lib/features/plugins/plugin-runtime.svelte';
@@ -130,7 +134,9 @@
       </p>
     {:else if entries.length === 0}
       <p class="text-xs text-muted-foreground" data-testid="capability-entries-empty">
-        {capabilityEntries.loading ? t('apps.catalog.loading') : t('plugins.capabilityModels.noEntries')}
+        {capabilityEntries.loading
+          ? t('apps.catalog.loading')
+          : t('plugins.capabilityModels.noEntries')}
       </p>
     {:else}
       <ul class="space-y-2">
@@ -151,7 +157,7 @@
                   >{entry.displayName ?? entry.model}</span
                 >
                 <span class="block truncate text-xs text-muted-foreground"
-                  >{entry.model} · {entry.engine}</span
+                  >{entryDetailText(entry)}</span
                 >
               </span>
               <Button
@@ -183,7 +189,9 @@
             {/if}
             {#if !entry.configured}
               <p class="mt-1 text-xs text-amber-700 dark:text-amber-400">
-                {t('botPanel.plugins.entryNotConfigured')}：{t('plugins.capabilityModels.notConfiguredHint')}
+                {t('botPanel.plugins.entryNotConfigured')}：{t(
+                  'plugins.capabilityModels.notConfiguredHint',
+                )}
               </p>
             {:else if entry.instanceState === 'multi'}
               <p

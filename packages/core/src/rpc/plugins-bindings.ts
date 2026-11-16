@@ -278,18 +278,23 @@ export function bindPluginsMethods(services: CoreServices): Record<string, RpcMe
           const instanceRows = instances()
             .list(summary.id)
             .filter((row) => row.kind === 'capability-model');
-          // D125：清单含 runtime 段 = 执行型插件，条目执行体是托管适配器（61 §5）。
-          const source: 'engine' | 'plugin' = manifest.runtime !== undefined ? 'plugin' : 'engine';
           const requiredOf = (engine: string) =>
             (MEDIA_ENGINES[engine]?.credentialFields ?? []).filter((field) => field.required);
+          // D125 P4：执行型条目的必填凭据来自 `runtime.instanceFields`（DEV-123）——
+          // 与数据型条目的引擎凭据同一口径（required + 已存 secret / 非敏感值），
+          // 否则实例行存在但 Key 被删 / 更新新增必填字段时仍显示「已配置」。
+          const runtimeRequired = (manifest?.runtime?.instanceFields ?? []).filter(
+            (field) => field.required,
+          );
           groups.push({
             pluginId: summary.id,
             pluginName: summary.name,
             tier: summary.tier,
             entries: entries.map((entry) => {
-              // D125：执行型条目的执行体是插件自身（source 'plugin'），没有第一方引擎的
-              // 声明式必填凭据——configured 只看实例是否存在（参考插件的零凭据形态）。
-              const required = source === 'plugin' ? [] : requiredOf(entry.engine ?? '');
+              // 执行体来源逐条判定（混合插件：有 engine 的条目仍由第一方引擎执行）。
+              const source: 'engine' | 'plugin' = entry.engine !== undefined ? 'engine' : 'plugin';
+              const required =
+                source === 'plugin' ? runtimeRequired : requiredOf(entry.engine ?? '');
               const configured = (row?: {
                 values: Record<string, unknown>;
                 storedSensitiveKeys: string[];
@@ -312,8 +317,8 @@ export function bindPluginsMethods(services: CoreServices): Record<string, RpcMe
                 capability: entry.capability,
                 model: entry.model,
                 displayName: entry.displayName ?? null,
-                // D125：执行型条目 engine 恒 null（执行体来自插件代码，61 §2）。
-                engine: source === 'plugin' ? null : (entry.engine ?? null),
+                // 执行型条目（不填 engine）engine 恒 null（执行体来自插件代码，61 §2）。
+                engine: entry.engine ?? null,
                 source,
                 instanceState,
                 configured:
@@ -345,23 +350,27 @@ export function bindPluginsMethods(services: CoreServices): Record<string, RpcMe
         if (domain === null) throw new AppError('NOT_IMPLEMENTED', '插件模块未就绪');
         const pluginRegistry = registry();
         // 整批预检在任何写入之前：按插件聚合条目声明，未知 ref 一次性列出。
-        const byPlugin = new Map<string, Set<string>>();
+        // `null` = 清单不可读 / 未安装（与「已装但无该条目」区分，违规项文案才准确）。
+        const byPlugin = new Map<string, Set<string> | null>();
         for (const ref of input.entries) {
           if (!byPlugin.has(ref.plugin)) {
             const manifest = await pluginRegistry.manifestOf(ref.plugin);
             byPlugin.set(
               ref.plugin,
-              new Set((manifest?.contributions.capabilityModels ?? []).map((entry) => entry.id)),
+              manifest === null
+                ? null
+                : new Set(manifest.contributions.capabilityModels?.map((entry) => entry.id) ?? []),
             );
           }
         }
         const invalid: string[] = [];
         for (const ref of input.entries) {
-          if (byPlugin.get(ref.plugin) === undefined) {
+          const known = byPlugin.get(ref.plugin);
+          if (known === undefined || known === null) {
             invalid.push(`${ref.plugin}/${ref.entry}（插件未安装）`);
             continue;
           }
-          if (!byPlugin.get(ref.plugin)!.has(ref.entry)) {
+          if (!known.has(ref.entry)) {
             invalid.push(`${ref.plugin}/${ref.entry}（条目不存在）`);
           }
         }

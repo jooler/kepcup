@@ -247,7 +247,8 @@ describe('MediaService 条目解析链（D124：条目 > 全局槽位 > 未配�
     });
   });
 
-  it('② 条目仓库返回空 → 原全局槽位路径生效（settings 实例 + 全局模型）', async () => {    const service = makeService(okArkImage, fakeSource([]));
+  it('② 条目仓库返回空 → 原全局槽位路径生效（settings 实例 + 全局模型）', async () => {
+    const service = makeService(okArkImage, fakeSource([]));
     const result = await service.generateImage(
       { prompt: '图' },
       { loopType: 'task', botId: 'bot_1' },
@@ -648,5 +649,33 @@ describe('onResolved 来源回调（D125 补丁）', () => {
       },
     );
     expect(result.images).toHaveLength(1);
+  });
+});
+
+describe('entrySummariesFor（D124 P3 工具描述注入的数据面）', () => {
+  it('按能力分组去重；清单文本经 sanitizeDisplayText（换行 / 双向控制 / 零宽不进系统提示词）', async () => {
+    const entries: ResolvedEntry[] = [
+      { ...ENTRIES[0]!, displayName: '水\n墨\u202e\u200b', model: 'ink' },
+      // displayName 与 model 相同 → 只留 model（避免「ink（ink）」）。
+      { ...ENTRIES[0]!, entryId: 'b', displayName: 'ink', model: 'ink' },
+      { ...ENTRIES[0]!, entryId: 'c', displayName: undefined, model: 'plain' },
+      // 重复名只留一份。
+      { ...ENTRIES[0]!, entryId: 'd', displayName: undefined, model: 'plain' },
+    ];
+    const summaries = await makeService(okDashscopeImage, fakeSource(entries)).entrySummariesFor(
+      'bot_1',
+    );
+    expect(summaries.image).toEqual(['水 墨（ink）', 'ink', 'plain']);
+    expect(summaries.tts).toEqual([]);
+    expect(summaries.video).toEqual([]);
+  });
+
+  it('条目仓库未装配 / botId 为空 → 三个能力恒空（工具描述与从前逐字节一致）', async () => {
+    const detached = await makeService(okDashscopeImage, null).entrySummariesFor('bot_1');
+    expect(detached).toEqual({ image: [], tts: [], video: [] });
+    const emptyBot = await makeService(okDashscopeImage, fakeSource(ENTRIES)).entrySummariesFor(
+      undefined,
+    );
+    expect(emptyBot).toEqual({ image: [], tts: [], video: [] });
   });
 });

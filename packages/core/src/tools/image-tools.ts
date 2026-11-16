@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { untrustedBlock } from '../infra/data-boundary.js';
-import { safeFetch } from '../infra/safe-dispatcher.js';
+import { readBodyCapped, safeFetch } from '../infra/safe-dispatcher.js';
 import path from 'node:path';
 import { Type } from 'typebox';
 import { AppError, TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
@@ -18,7 +18,11 @@ import {
 } from './media-delivery.js';
 import { resolveMediaSource } from './media-source.js';
 import { readOnlyRefusal } from './read-only.js';
-import { ENTRY_CAPABILITY_LABELS, appendEntryHint, type MediaEntryHints } from './media-entry-hints.js';
+import {
+  ENTRY_CAPABILITY_LABELS,
+  appendEntryHint,
+  type MediaEntryHints,
+} from './media-entry-hints.js';
 
 /**
  * 图像生成的 Bot 工具（docs/design/18-inline-setup.md）：图像能力在
@@ -36,6 +40,13 @@ import { ENTRY_CAPABILITY_LABELS, appendEntryHint, type MediaEntryHints } from '
 
 /** 单张理解图片的字节上限（与 docs/design/20-conversation-media.md 视觉注入对齐）。 */
 const UNDERSTAND_IMAGE_MAX_BYTES = 5_000_000;
+
+/**
+ * 单张生成图片的下载上限（D125 补丁）：执行型插件返回的 URL 是不可信输入，
+ * 原先 `arrayBuffer()` 无上限——一个公网大文件就能把宿主内存打爆。与附件上限
+ * 同量级（30MB）：更大的图既无法作为附件投递，也无必要落盘。
+ */
+const GENERATED_IMAGE_MAX_BYTES = 30_000_000;
 
 /**
  * The slice of MediaService the media-generation tools consume (P15/P17/P25).
@@ -313,7 +324,11 @@ export function buildImageTools(input: {
         saved.push(target);
       }
       if (saved.length === 0) {
-        return { ok: false, content: '图片生成失败：未能保存任何图片文件', errorCode: 'INTERNAL' };
+        return {
+          ok: false,
+          content: '图片生成失败：未能保存任何图片文件（下载失败或单张超过 30MB 上限）',
+          errorCode: 'INTERNAL',
+        };
       }
       const paths = truncateToBudget(saved.join('\n'), TOOL_OUTPUT_MAX_CHARS).text;
       if (input.delivery !== undefined) {
@@ -456,6 +471,14 @@ function sanitizeFileName(name: string): string {
   return cleaned.length > 0 ? cleaned.slice(0, 80) : 'image';
 }
 
+/**
+ * 上限内的下载读取（超过即取消流并返回 null，不把整份大响应读进内存）。
+ * 实现与视频下载共用 `readBodyCapped`（content-length 预检 + 流式累计）。
+ */
+async function readCappedImage(response: Response): Promise<Buffer | null> {
+  return readBodyCapped(response, GENERATED_IMAGE_MAX_BYTES);
+}
+
 /** 适配器返回 b64 或 url 二选一；url 需要拉取字节。 */
 async function imageBytes(image: { b64?: string; url?: string }): Promise<Buffer | null> {
   if (image.b64 !== undefined && image.b64.length > 0) {
@@ -463,10 +486,14 @@ async function imageBytes(image: { b64?: string; url?: string }): Promise<Buffer
   }
   if (image.url !== undefined && image.url.length > 0) {
     // D125 P4：产物 URL 可能来自执行型插件——统一走 SSRF 守卫（私网 / 元数据拒绝，
-    // 重定向逐跳复检）；公网厂商 URL 行为不变。
-    const response = await safeFetch(image.url);
-    if (!response.ok) return null;
-    return Buffer.from(await response.arrayBuffer());
+    // 重定向逐跳复检）；公网厂商 URL 行为不变。D125 补丁：字节数同样设上限。
+    try {
+      const response = await safeFetch(image.url);
+      if (!response.ok) return null;
+      return await readCappedImage(response);
+    } catch {
+      return null;
+    }
   }
   return null;
 }

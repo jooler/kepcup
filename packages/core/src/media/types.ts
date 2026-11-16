@@ -44,6 +44,12 @@ export interface VendorCallContext {
    * （对话内状态行 D55 / 任务详情页 D93）。仅托管路径携带。
    */
   onProgress?: (payload: PluginRuntimeProgressPayload) => void;
+  /**
+   * D125：仅条目级「未保存先测」（`plugins.testCapabilityEntry` 的 keyOverride）携带。
+   * 键 = 实例敏感字段名，值 = 用户表单里尚未保存的输入；宿主在注入实例 secrets 后
+   * 用这些值覆盖同名键（其余凭据仍取已存值）。真实调用路径不填。
+   */
+  credentialOverrides?: Readonly<Record<string, string>>;
 }
 
 /**

@@ -9,13 +9,14 @@ import {
 /**
  * 百炼 Qwen-Image 执行型试点（D125 P4，todo/plugin-runtime/P4-governance-pilot.md 步骤 3）。
  *
- * 协议与内置 dashscope 引擎的图片生成同源，但**在插件内重新实现**（A/B dogfood 执行型
- * 运行时）：qwen-image 系列**异步**接口
+ * 与内置 dashscope 引擎使用同一厂商与 qwen-image 模型，但协议不同：内置引擎走同步
+ * `multimodal-generation/generation`，本插件**在插件内重新实现**异步任务协议（A/B
+ * dogfood 执行型运行时）：qwen-image 系列**异步**接口
  * `POST /api/v1/services/aigc/image-generation/generation`（`X-DashScope-Async: enable`，
  * prompt 在 `input.messages[0].content[].text`，参考图作为同数组的 `{ image }` 项 → 即编辑）
  * 拿 `task_id` → `GET /api/v1/tasks/{task_id}` 轮询；成功后取
- * `output.choices[0].message.content[].image`。产物只返回厂商 URL（24h 有效）；下载与
- * 落附件永远在 core 侧（61 §3.2）。
+ * `output.choices[0].message.content[].image`。产物只返回厂商 URL（厂商任务数据含
+ * URL 保留 24h，应用会立即下载并落附件）；下载与落附件永远在 core 侧（61 §3.2）。
  *
  * 为什么用异步而不是同步：同步接口要求单条 HTTP 连接挂到出图完成（含 prompt_extend
  * 常 60s+），任何网络抖动 / 代理超时都会让整次调用失败，且插件无法在等待中上报阶段或
@@ -228,7 +229,11 @@ const plugin = definePlugin({
         });
         const taskId = submitted.output?.task_id;
         if (taskId === undefined || taskId.length === 0) {
-          providerError(200, submitted.code ?? submitted.output?.code, submitted.message ?? '百炼未返回 task_id');
+          providerError(
+            200,
+            submitted.code ?? submitted.output?.code,
+            submitted.message ?? '百炼未返回 task_id',
+          );
         }
         host.log.info('百炼文生图任务已提交', { taskId, model, size, n });
 

@@ -7,6 +7,7 @@ import {
   PLUGIN_RUNTIME_HOST_API_VERSION,
   PLUGIN_RUNTIME_INSTANCE_ID_FEATURE,
   PLUGIN_RUNTIME_MAX_CALL_TIMEOUT_MS,
+  PLUGIN_RUNTIME_MAX_INIT_INSTANCES,
   isPluginHostApiRequest,
   isPluginHostApiResponse,
   pluginRuntimeInitFrameSchema,
@@ -92,6 +93,12 @@ export interface PluginCallContext {
   onProgress?: (payload: PluginRuntimeProgressPayload) => void;
   /** 用户取消 / 工具超时的联动：abort → 发 cancel 帧；到点强杀。 */
   signal?: AbortSignal;
+  /**
+   * D125：条目级「未保存先测」的凭据覆盖（键 = 实例敏感字段名）。宿主在实例
+   * secrets 之后合并同名键，只用于 `plugins.testCapabilityEntry` 的诊断调用；
+   * 真实调用路径不填。值只进 invoke 帧，不落日志 / 历史 / 错误。
+   */
+  credentialOverrides?: Readonly<Record<string, string>>;
 }
 
 /** 运行时阈值（可注入以便测试调小；生产用 {@link DEFAULT_PLUGIN_HOST_TIMINGS}）。 */
@@ -214,8 +221,18 @@ interface PluginStateRecord {
 
 const HISTORY_MAX = PLUGIN_RUNTIME_HISTORY_LIMIT;
 
-/** 子进程最小 env 白名单（61 §3.1：PATH / TEMP / locale，不传透宿主环境）。 */
-export function minimalPluginEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+/**
+ * 子进程最小 env 白名单（61 §3.1：PATH / TEMP / locale，不传透宿主环境）。
+ *
+ * Electron 宿主（desktop 的 utilityProcess）里 `process.execPath` 指向 Electron
+ * 二进制：`fork` 出的子进程显式声明 `ELECTRON_RUN_AS_NODE=1` 才保证入口脚本按 Node
+ * 执行（macOS 的 Helper 二进制实测可省略该标志；不同平台 / Electron 版本的 execPath
+ * 行为并不一致，显式声明是跨平台安全的做法）。纯 Node 宿主（headless server）不加。
+ */
+export function minimalPluginEnv(
+  base: NodeJS.ProcessEnv,
+  hostIsElectron: boolean = (process.versions as { electron?: string }).electron !== undefined,
+): NodeJS.ProcessEnv {
   const keys = [
     'PATH',
     'Path',
@@ -234,6 +251,7 @@ export function minimalPluginEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     const value = base[key];
     if (value !== undefined && value !== '') env[key] = value;
   }
+  if (hostIsElectron) env['ELECTRON_RUN_AS_NODE'] = '1';
   return env;
 }
 
@@ -499,6 +517,18 @@ export class PluginHost {
         };
         ctx.signal.addEventListener('abort', onAbort, { once: true });
         pending.abortCleanup = () => ctx.signal?.removeEventListener('abort', onAbort);
+        // AbortSignal 不重放已发生的事件：检查与注册之间取消的调用会永远收不到
+        // onAbort（不标 cancelled、也不发 cancel 帧，只能等超时白烧一次厂商调用）。
+        if (ctx.signal.aborted) onAbort();
+      }
+      // 凭据只进帧：不写日志、不进历史、不进错误消息（61 §4）。条目级「未保存
+      // 先测」的覆盖值在实例 secrets 之后合并（同名键以用户刚输入的值优先）。
+      const credentials =
+        ctx.instanceId === '' ? {} : this.#deps.bridge.credentialsFor(pluginId, ctx.instanceId);
+      if (ctx.credentialOverrides !== undefined) {
+        for (const [key, value] of Object.entries(ctx.credentialOverrides)) {
+          credentials[key] = value;
+        }
       }
       const frame = pluginRuntimeInvokeFrameSchema.parse({
         type: 'invoke' as const,
@@ -510,9 +540,7 @@ export class PluginHost {
           entryId: ctx.entryId.length > 0 ? ctx.entryId : 'unknown',
           model: ctx.model.length > 0 ? ctx.model : 'unknown',
           locale: ctx.locale ?? 'zh-CN',
-          // 凭据只进帧：不写日志、不进历史、不进错误消息（61 §4）。
-          credentials:
-            ctx.instanceId === '' ? {} : this.#deps.bridge.credentialsFor(pluginId, ctx.instanceId),
+          credentials,
           // D125 P4（DEV-114）：多实例插件用 instanceId 把凭据与实例的非敏感配置对齐。
           // 旧 SDK 没有该字段且帧 schema 是 strictObject——只发给在 ready.features 里
           // 声明认识它的插件，否则旧插件会丢弃整帧、调用挂到超时（兼容面）。
@@ -822,7 +850,11 @@ export class PluginHost {
           type: 'init',
           hostApiVersion: PLUGIN_RUNTIME_HOST_API_VERSION,
           manifestDigest: descriptor.manifestDigest,
-          instances: this.#deps.bridge.instancesFor(pluginId),
+          // 协议安全界（不是账号数限制）：实例 row 数由用户决定，这里只截断握手
+          // 列表；超出的实例在调用时仍经 context.credentials 注入（见协议常量注释）。
+          instances: this.#deps.bridge
+            .instancesFor(pluginId)
+            .slice(0, PLUGIN_RUNTIME_MAX_INIT_INSTANCES),
         }),
       );
     } catch (error) {
@@ -1096,14 +1128,27 @@ export class PluginHost {
           return;
         }
         pending.logCount += 1;
-        this.#deps.logger[frame.payload.level](
-          {
-            plugin: live.descriptor.pluginId,
-            callId: frame.callId,
-            data: frame.payload.data,
-          },
-          `plugin: ${frame.payload.message}`,
-        );
+        // 插件可控的 `data` 进宿主 logger：序列化失败（BigInt / 环 / 异常 getter 经
+        // advanced IPC 传来的宿主侧形状）不能让 IPC message handler 抛错拖垮核心。
+        try {
+          this.#deps.logger[frame.payload.level](
+            {
+              plugin: live.descriptor.pluginId,
+              callId: frame.callId,
+              data: frame.payload.data,
+            },
+            `plugin: ${frame.payload.message}`,
+          );
+        } catch (error) {
+          this.#deps.logger.warn(
+            {
+              plugin: live.descriptor.pluginId,
+              callId: frame.callId,
+              error: error instanceof Error ? error.message : String(error),
+            },
+            'plugin log payload could not be serialized（已丢弃）',
+          );
+        }
         return;
       }
       case 'state': {
@@ -1248,6 +1293,11 @@ export class PluginHost {
       // 下次调用重新读清单 / 入口（开发目录热更新后不沿用旧描述符）。
       this.#descriptorCache.delete(live.descriptor.pluginId);
       this.#clearTimers(live);
+      // 宿主代发的 net.fetch 不随进程停止：插件可以 fire-and-forget 一个请求后立刻
+      // 返回（调用收尾 → pending 为空 → 空闲回收）。DEV-130 的承诺是「进程退出时
+      // 取消在途请求」，dispose / 崩溃路径已做，空闲回收同样要取消，否则连接会挂到
+      // 自己的 15 分钟上限。
+      this.#deps.bridge.abortFor(live.descriptor.pluginId);
       try {
         if (live.child.connected) live.child.send({ type: 'shutdown' });
       } catch {

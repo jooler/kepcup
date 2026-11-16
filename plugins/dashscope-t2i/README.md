@@ -5,8 +5,9 @@ manifest 带 `runtime` 段、包内带打包后的 JS（`dist/main.js`），由�
 按 IPC 协议执行。能力条目是 `image`，**不填 `engine`**——条目解析落到托管适配器
 （HostedAdapter），协议在插件内自带实现。
 
-定位：协议与内置 `dashscope` 引擎的图片生成**同源**（qwen-image 系列同步
-`multimodal-generation`），试点有意重新实现，用于 A/B dogfood 执行型运行时的全路径
+定位：与内置 `dashscope` 引擎使用同一厂商与 qwen-image 模型，但内置引擎走同步
+`multimodal-generation`，本插件走异步提交 + 轮询（`image-generation` +
+`GET /api/v1/tasks/{id}`）。试点有意重新实现，用于 A/B dogfood 执行型运行时的全路径
 （请求组装 / 参考图 / 进度 / 取消 / 错误映射 / 产物落附件），不补能力空白。
 
 ## 协议
@@ -17,7 +18,8 @@ manifest 带 `runtime` 段、包内带打包后的 JS（`dist/main.js`），由�
   - 纯文生图只放 `text`；带参考图（`images`）即编辑（3.0 系列最多 3 张）。
   - 返回 `output.task_id`（秒级，不等出图）。
 - 轮询：`GET /api/v1/tasks/{task_id}`，3s 间隔；`PENDING / RUNNING` 继续，`SUCCEEDED` 取
-  `output.choices[0].message.content[].image`（PNG 直链，24h 有效），`FAILED / CANCELED` 映射错误。
+  `output.choices[0].message.content[].image`（PNG 直链；厂商任务数据含 URL 保留 24h，
+  应用会立即下载并落附件），`FAILED / CANCELED` 映射错误。
 - **为什么异步而非同步**：同步接口要求单条 HTTP 连接挂到出图完成（含 `prompt_extend`
   常 60s+），任何网络抖动 / 代理超时都会让整次调用失败，且无法上报阶段或响应取消；
   异步提交是秒级短请求，轮询失败可重试，进度与取消都有自然的介入点。

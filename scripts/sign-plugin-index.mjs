@@ -304,6 +304,14 @@ export async function collectPluginEntries({
     // pass / warn 结果写进索引条目 `runtimeScan`（warn = 待人工复审）。
     let runtimeScan = null;
     if (manifest.runtime !== undefined) {
+      // 执行型插件只开放 builtin / verified / developer（60/61 信任矩阵）；市场只有
+      // verified / community 两档，community 执行型在客户端必被 PLUGIN_INCOMPATIBLE
+      // 拒绝装机——签名侧直接拒，避免发布「市场可见但永远装不上」的版本。
+      if (item.tier !== 'verified') {
+        throw new SignError(
+          `${name}: executable plugins must be curated as tier "verified" (community runtime is rejected at install)`,
+        );
+      }
       const scan = scanRuntimePackage({ files: runtimeScanFiles ?? [], manifest });
       if (scan === null) {
         throw new SignError(`${name}: runtime manifest was not scanned (internal error)`);

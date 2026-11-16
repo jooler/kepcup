@@ -115,6 +115,10 @@ export class HostedAdapter implements VendorAdapter {
         // 帧 → 工具的 ctx.progress（对话内状态行 / 任务详情页）。
         ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}),
         ...(ctx.onProgress !== undefined ? { onProgress: ctx.onProgress } : {}),
+        // D125：条目级「未保存先测」的凭据覆盖（宿主在实例 secrets 之后合并）。
+        ...(ctx.credentialOverrides !== undefined
+          ? { credentialOverrides: ctx.credentialOverrides }
+          : {}),
       });
       return output as T;
     } catch (error) {

@@ -183,7 +183,7 @@ package.json）；签名扫描归档本身，不应用 `.kepcup-ignore`。
 
 ## 验收锚点
 
-- 安装一个执行型插件（百炼 Qwen-Image 试点或参考插件）→ 同意卡显示能力披露 → 添加实例填 Key → Bot 勾选条目 → 任务里 `generate_image` 走插件：对话内可见进度阶段（同步试点只报「提交」，参考插件报排队/生成中）→ 产物落附件 → 插件卡显示 busy→ready、活动抽屉有调用记录。
+- 安装一个执行型插件（百炼 Qwen-Image 试点或参考插件）→ 同意卡显示能力披露 → 添加实例填 Key → Bot 勾选条目 → 任务里 `generate_image` 走插件：对话内可见进度阶段（异步试点报 submitting / queued / generating / downloading，参考插件报排队 / 生成中）→ 产物落附件 → 插件卡显示 busy→ready、活动抽屉有调用记录。
 - 拔网线/断网：插件 `net.fetch` 出白名单域被拒，插件卡活动可见 `PLUGIN_NETWORK_DENIED`。
 - 插件代码死循环：看门狗超时击杀，工具收 `PROVIDER_UNAVAILABLE` 人话错误，内核与其它插件无感，插件卡标 error、下次调用自动重启。
 - 插件返回不合 schema 的输出：`PLUGIN_CONTRACT_VIOLATION`，无部分投递。
@@ -231,7 +231,8 @@ package.json）；签名扫描归档本身，不应用 `.kepcup-ignore`。
 - P4：**DEV-123** `runtime.instanceFields` + `invoke.context.instanceId`（落实 DEV-114；
   兼容面用 `ready.features` 握手，旧 SDK 不收到新字段）；
   **DEV-124** 试点模型：首版 `wan2.7-t2v`（视频模型）被真机以 `url error` 拒绝 →
-  改为用户指定的 `qwen-image-3.0` + 同步协议（`params.model` 可覆盖）；
+  改为用户指定的 `qwen-image-3.0`（`params.model` 可覆盖；协议先同步、后按 DEV-130
+  改异步，见下）；
   **DEV-125** RSS 观测用插件心跳自报；**DEV-126** 静态扫描掩码与域名豁免；
   **DEV-127** 产物下载 SSRF 加固对所有来源生效（http(s) 使用与 Agent 同版本的 undici fetch）；
   **DEV-128** native 扩展名补 `.dll/.so/.exe/.dylib`；
@@ -247,6 +248,11 @@ package.json）；签名扫描归档本身，不应用 `.kepcup-ignore`。
   `{home}/plugin-data/{ns}/{name}/`（进程 cwd、安装初始化、卸载删除）；core 落插件产物
   不再受任务写域门槛，生成工具新增 `output_dir` 且预检在付费生成之前；投递新增
   `hostOwned` 显式读取根。**不是 Q5 fs 能力**：不新增 `host.files`，扫描约束不变。
+- 收口独立审查（2026-11-16）：**DEV-132** 混合插件条目执行体逐条判定、握手实例数不再
+  误用清单 kind 上限（`PLUGIN_RUNTIME_MAX_INIT_INSTANCES`）、产物下载字节上限
+  （`readBodyCapped`）、执行型条目「未保存先测」凭据覆盖、Bot 条目上限只计有效引用、
+  签名前校验 `runtime.entry` 存在、Electron fork `ELECTRON_RUN_AS_NODE`、hostApi semver
+  修正与单测；其余小项见该条。
 
 ### 12.4 试点 A/B 结论（百炼 Qwen-Image，`plugins/dashscope-t2i/`）
 

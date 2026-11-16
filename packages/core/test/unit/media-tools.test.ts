@@ -12,6 +12,7 @@ import {
 import type { AttachmentsService } from '../../src/domain/attachments.js';
 import type { ToolGateway } from '../../src/gateway/index.js';
 import type { RunIdentity, ToolContext, ToolDefinition } from '../../src/agent/types.js';
+import type * as UndiciModule from 'undici';
 
 /**
  * D125 P4：产物下载经 `safeFetch`，它用 undici 自身的 fetch（与 SSRF Agent 同版本）。
@@ -19,7 +20,7 @@ import type { RunIdentity, ToolContext, ToolDefinition } from '../../src/agent/t
  */
 const undiciFetchMock = vi.hoisted(() => vi.fn());
 vi.mock('undici', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('undici')>();
+  const actual = await importOriginal<typeof UndiciModule>();
   return { ...actual, fetch: undiciFetchMock };
 });
 
@@ -147,9 +148,7 @@ function speechTools(
     ...(opts.videoPollIntervalMs !== undefined
       ? { videoPollIntervalMs: opts.videoPollIntervalMs }
       : {}),
-    ...(opts.pluginArtifactDir !== undefined
-      ? { pluginArtifactDir: opts.pluginArtifactDir }
-      : {}),
+    ...(opts.pluginArtifactDir !== undefined ? { pluginArtifactDir: opts.pluginArtifactDir } : {}),
     ...(opts.resolveWritableTarget !== undefined
       ? { resolveWritableTarget: opts.resolveWritableTarget }
       : {}),
@@ -336,6 +335,40 @@ describe('生成产物的确定性投递（GeneratedMediaDelivery）', () => {
     ]);
     expect(result.content).toContain('已作为消息附件显示在用户的对话界面中');
     expect(result.content).not.toContain(workspace);
+  });
+});
+
+describe('generate_image 的 URL 产物下载（D125 补丁：不可信 URL + 字节上限）', () => {
+  it('content-length 超过 30MB → 取消响应体、不落盘，明确失败', async () => {
+    // 流永不 close：旧实现的无上限 `arrayBuffer()` 会挂死；content-length 预检必须
+    // 在读流之前拒绝（`cancel()`）。
+    undiciFetchMock.mockImplementation(async () => {
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.enqueue(new Uint8Array(1));
+        },
+      });
+      return new Response(body, {
+        status: 200,
+        headers: { 'content-type': 'image/png', 'content-length': '31000000' },
+      });
+    });
+    const workspace = path.join(root, 'ws-image-too-large');
+    const tools = buildImageTools({
+      identity,
+      media: facade({
+        generateImage: async () => ({ images: [{ url: 'https://example.invalid/huge.png' }] }),
+      }),
+      workspacePath: workspace,
+      attachments: attachmentsFake({}),
+      gateway: gatewayFake(root),
+    });
+    const image = tools.find((tool) => tool.name === 'generate_image')!;
+    const result = await image.execute({ prompt: 'x', file_name: 'huge' }, ctx());
+    expect(result.ok).toBe(false);
+    expect(result.errorCode).toBe('INTERNAL');
+    expect(result.content).toContain('30MB');
+    expect(existsSync(path.join(workspace, '.generated', 'huge.png'))).toBe(false);
   });
 });
 
@@ -757,10 +790,7 @@ describe('插件进度与取消接线（D125 P3）', () => {
       { workspace, videoPollIntervalMs: 5 },
     );
     const video = tools.find((tool) => tool.name === 'generate_video')!;
-    const result = await video.execute(
-      { prompt: '一只猫', file_name: 'cat' },
-      progressCtx(lines),
-    );
+    const result = await video.execute({ prompt: '一只猫', file_name: 'cat' }, progressCtx(lines));
     expect(result.ok).toBe(true);
     expect(lines).toEqual(['任务已排队 5%', '生成中 60%']);
   });
@@ -783,10 +813,7 @@ describe('插件进度与取消接线（D125 P3）', () => {
       { workspace, videoPollIntervalMs: 5 },
     );
     const video = tools.find((tool) => tool.name === 'generate_video')!;
-    const result = await video.execute(
-      { prompt: '一只猫', file_name: 'cat' },
-      progressCtx(lines),
-    );
+    const result = await video.execute({ prompt: '一只猫', file_name: 'cat' }, progressCtx(lines));
     expect(result.ok).toBe(true);
     expect(lines).toEqual([
       '视频任务已提交（task_engine），等待生成…',
@@ -795,7 +822,6 @@ describe('插件进度与取消接线（D125 P3）', () => {
     ]);
   });
 });
-
 
 /**
  * D125 补丁：生成产物的默认落点与 `output_dir`（真机写域丢失产物的修复）。

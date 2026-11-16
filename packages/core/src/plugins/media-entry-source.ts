@@ -75,9 +75,6 @@ export function createMediaEntrySource(deps: {
         const rows = instanceRowsOf(pluginId);
         const manifest = await deps.registry.manifestOf(pluginId);
         const manifestEntries = manifest?.contributions.capabilityModels ?? [];
-        // D125：清单含 runtime 段 = 执行型插件，其条目解析到托管适配器（61 §5）。
-        // 数据型条目（有 engine）语义不变（安装期校验 MEDIA_ENGINES，D124）。
-        const source: 'engine' | 'plugin' = manifest?.runtime !== undefined ? 'plugin' : 'engine';
         // ① 内排序（60 §4）：插件内按条目声明序——回退默认条目 = 声明序首个。
         const matched = refs
           .map((refEntry) => {
@@ -97,8 +94,11 @@ export function createMediaEntrySource(deps: {
           // media 网关不会用这两个能力调 entriesFor，这里再挡一层（防御直调）。
           if (entry.capability === 'embedding' || entry.capability === 'rerank') continue;
           if (entry.capability !== capability) continue;
-          // 数据型条目必须绑定引擎（安装期已校验）；执行型条目执行体来自插件代码。
-          if (source === 'engine' && entry.engine === undefined) continue;
+          // D125：执行体来源**逐条判定**（61 §5 / 60 §2「数据型条目（有 engine）语义
+          // 不变」）——执行型插件里的数据型条目仍绑定第一方引擎（混合插件），只有
+          // 不填 engine 的条目才解析到托管适配器。按插件整体判定会把混合插件的
+          // engine 条目错误送进插件子进程，engine 绑定被静默忽略。
+          const source: 'engine' | 'plugin' = entry.engine !== undefined ? 'engine' : 'plugin';
           const explicit =
             entry.instance !== undefined
               ? (rows.find((row) => row.id === entry.instance)?.id ?? undefined)
@@ -133,6 +133,16 @@ export function createMediaEntrySource(deps: {
       return instanceRowsOf(pluginId).map((row) => row.id);
     },
 
+    async sensitiveFieldKeysOf(pluginId) {
+      // D125：执行型实例的敏感字段声明（`runtime.instanceFields`，DEV-123）——条目级
+      // 「未保存先测」把 keyOverride 映射到这些键。数据型插件的引擎凭据键由
+      // `#resolvePluginInstance` 从引擎声明读取，不经过这里。
+      const manifest = await deps.registry.manifestOf(pluginId);
+      return (manifest?.runtime?.instanceFields ?? [])
+        .filter((field) => field.sensitive)
+        .map((field) => field.key);
+    },
+
     instanceCredential(pluginId, instanceId, key, keyOverride) {
       // 未保存先测：覆盖值优先（与 providers.test 的 keyOverride 同语义）。
       if (keyOverride !== undefined) return keyOverride;
@@ -153,15 +163,16 @@ export function createMediaEntrySource(deps: {
       const row = deps.instances.get(instanceId);
       if (row === null || row.kind !== 'capability-model') return null;
       // 插件粒度 = 平台协议族（60 号 §术语）：videoStatus 往返只认提交任务的插件。
-      // 数据型条目保持 D124 口径（引擎取声明序首个）；执行型条目需要 video 条目的
-      // entryId / model 才能走托管适配器，优先取首个视频条目，无视频条目则首个。
+      // 数据型插件保持 D124 口径（条目取声明序首个，不因 video 条目改道）；含 runtime
+      // 段的插件优先取首个视频条目（执行型 videoStatus 需要 video 条目的 entryId /
+      // model），无视频条目则首个。来源按选中条目自身是否绑定 engine 判定。
       const entries = await entriesOf(row.pluginId);
       const manifest = await deps.registry.manifestOf(row.pluginId);
-      const source: 'engine' | 'plugin' = manifest?.runtime !== undefined ? 'plugin' : 'engine';
       const entry =
-        source === 'plugin'
+        manifest?.runtime !== undefined
           ? (entries.find((candidate) => candidate.capability === 'video') ?? entries[0])
           : entries[0];
+      const source: 'engine' | 'plugin' = entry?.engine !== undefined ? 'engine' : 'plugin';
       return {
         pluginId: row.pluginId,
         engine: entry?.engine ?? '',

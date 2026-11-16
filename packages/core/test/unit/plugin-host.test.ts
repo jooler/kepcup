@@ -39,7 +39,7 @@ import { PluginPackager } from '../../src/plugins/package.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
 import { PluginStore } from '../../src/plugins/store.js';
 import { CapabilityBridge } from '../../src/plugins/runtime/bridge.js';
-import { PluginHost } from '../../src/plugins/runtime/host.js';
+import { minimalPluginEnv, PluginHost } from '../../src/plugins/runtime/host.js';
 import { PluginStorageStore } from '../../src/plugins/runtime/storage.js';
 import { dashscopeAdapter } from '../../src/media/adapters/dashscope.js';
 import { bindPluginsMethods } from '../../src/rpc/plugins-bindings.js';
@@ -71,7 +71,11 @@ const probeFixtureDir = path.join(here, '../fixtures/plugin-runtime/probe');
 const REFERENCE_ID = 'io.kepcup/reference-media';
 const PILOT_ID = 'io.kepcup/dashscope-t2i';
 const PILOT_ENTRY_ID = 'qwen-image-3';
-/** 试点条目 `qwen-image-3` 的 model：必须是 qwen-image 系列（同步 multimodal-generation）。 */
+/**
+ * 试点条目 `qwen-image-3` 的 model：必须是 qwen-image 系列。试点走**异步**
+ * `image-generation/generation` + 轮询（DEV-130）；内置引擎侧是同步
+ * `multimodal-generation`（A/B 对照时分别断言端点）。
+ */
 const PILOT_MODEL = 'qwen-image-3.0';
 const PROBE_ID = 'io.test/runtime-probe';
 
@@ -89,6 +93,34 @@ beforeAll(() => {
 const root = mkdtempSync(path.join(tmpdir(), 'plugin-host-'));
 afterAll(() => {
   rmSync(root, { recursive: true, force: true });
+});
+
+describe('minimalPluginEnv（fork 子进程的最小 env 白名单）', () => {
+  it('只透传白名单键，宿主的其它环境变量（含密钥类）不进入插件进程', () => {
+    const env = minimalPluginEnv(
+      {
+        PATH: '/usr/bin',
+        LANG: 'en_US.UTF-8',
+        HOME: '/secret/home',
+        KEPCUP_PLUGIN_SIGNING_KEY: 'leak',
+        ELECTRON_RUN_AS_NODE: '0',
+      } as NodeJS.ProcessEnv,
+      false,
+    );
+    expect(env).toEqual({ PATH: '/usr/bin', LANG: 'en_US.UTF-8' });
+  });
+
+  it('Electron 宿主追加 ELECTRON_RUN_AS_NODE=1（fork 按 Node 执行入口脚本）', () => {
+    // 纯 Node 宿主：不添加（headless server 行为不变）。
+    expect(minimalPluginEnv({ PATH: '/usr/bin' } as NodeJS.ProcessEnv, false)).toEqual({
+      PATH: '/usr/bin',
+    });
+    // Electron（desktop utilityProcess）：execPath 指向 Electron 二进制，显式声明
+    // run-as-node 保证入口脚本按 Node 执行（跨平台 / 版本行为一致）。
+    expect(
+      minimalPluginEnv({ PATH: '/usr/bin' } as NodeJS.ProcessEnv, true)['ELECTRON_RUN_AS_NODE'],
+    ).toBe('1');
+  });
 });
 
 function makeLogger() {
@@ -677,7 +709,10 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
       'quota-fail': 402,
       'rate-fail': 429,
     };
+    const authorizations: string[] = [];
     const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      authorizations.push(headers['Authorization'] ?? '');
       const raw = typeof init?.body === 'string' ? init.body : '{}';
       const model = (JSON.parse(raw) as { model?: string }).model ?? '';
       const status = statusByModel[model] ?? 500;
@@ -708,17 +743,28 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
       { apiKey: 'sk-pilot' },
       'capability-model',
     );
-    const call = (model: string) =>
+    const call = (model: string, credentialOverrides?: Record<string, string>) =>
       rig.host.call(
         PILOT_ID,
         'media',
         'generateImage',
         { prompt: '错误映射' },
-        { entryId: PILOT_ENTRY_ID, model, instanceId: instance.id },
+        {
+          entryId: PILOT_ENTRY_ID,
+          model,
+          instanceId: instance.id,
+          ...(credentialOverrides !== undefined ? { credentialOverrides } : {}),
+        },
       );
     await expect(call('auth-fail')).rejects.toMatchObject({ code: 'PROVIDER_AUTH_FAILED' });
     await expect(call('quota-fail')).rejects.toMatchObject({ code: 'PROVIDER_QUOTA' });
     await expect(call('rate-fail')).rejects.toMatchObject({ code: 'PROVIDER_RATE_LIMITED' });
+    expect(authorizations).toEqual(['Bearer sk-pilot', 'Bearer sk-pilot', 'Bearer sk-pilot']);
+    // D125：条目级「未保存先测」的 credentialOverrides 在实例 secrets 之后合并。
+    await expect(call('auth-fail', { apiKey: 'sk-override' })).rejects.toMatchObject({
+      code: 'PROVIDER_AUTH_FAILED',
+    });
+    expect(authorizations.at(-1)).toBe('Bearer sk-override');
     rig.host.disposeAll();
   }, 20_000);
 
@@ -776,8 +822,9 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
   it('A/B 对照（集成层）：同一 prompt/size 走执行型插件 vs 内置引擎 generateImage（无 Key 的真机差异见 61 §12）', async () => {
     const prompt = '一只在窗台上的橘猫';
     const size = '1024*1024';
-    // 两侧现在同协议（qwen-image 同步 multimodal-generation）：A/B 对照的是
-    // **执行引擎**——进程内适配器 vs 子进程插件，而不是两套厂商协议。
+    // 两侧同厂商 / 同模型，但协议不同：内置引擎同步 `multimodal-generation`，插件走
+    // 异步提交 + 轮询（DEV-130）。A/B 对照的是**执行引擎与观测面**（进程内适配器 vs
+    // 子进程插件；活动记录 / 阶段进度 / 取消链只在插件侧）。
     const builtinRequests: Array<{ url: string; body: Record<string, unknown> }> = [];
     const builtinFetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const raw = typeof init?.body === 'string' ? init.body : '{}';
@@ -921,6 +968,23 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     rig.host.disposeAll();
   });
 
+  it('实例数超过清单的 4 个 kind 上限仍能握手（账号数不受 PLUGIN_MAX_INSTANCES 限制）', async () => {
+    const { rig } = await withProbe();
+    // 用户可为一个插件添加多个厂商账号实例（D124）：清单的 PLUGIN_MAX_INSTANCES（4）
+    // 是 **实例 kind 数**上限，不是账号数。旧实现把它当 init 帧数组上限，第 5 个实例
+    // 会让握手 schema 校验失败、插件永远起不来。
+    const instanceIds: string[] = [];
+    for (let index = 0; index < 4; index += 1) {
+      instanceIds.push((await rig.pluginInstances.create(PROBE_ID, {}, 'capability-model')).id);
+    }
+    const result = (await callProbe(rig, instanceIds.at(-1)!, 'ok')) as {
+      images: Array<{ url: string }>;
+    };
+    expect(result.images[0]?.url.startsWith('data:image/png')).toBe(true);
+    expect(rig.host.statusOf(PROBE_ID).status).toBe('ready');
+    rig.host.disposeAll();
+  });
+
   it('进程边界：env 白名单不透传宿主秘密；cwd = 插件数据目录；execArgv 为空', async () => {
     const { rig, instanceId } = await withProbe({
       baseEnv: { ...process.env, PLUGIN_TEST_SECRET: 'top-secret' },
@@ -954,11 +1018,7 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     rmSync(dataDir, { recursive: true, force: true });
     writeFileSync(dataDir, 'not-a-directory');
     await expect(
-      rig.media.generateImage(
-        { prompt: '目录不可用' },
-        { loopType: 'task', botId },
-        { botId },
-      ),
+      rig.media.generateImage({ prompt: '目录不可用' }, { loopType: 'task', botId }, { botId }),
     ).rejects.toMatchObject({
       code: 'PROVIDER_UNAVAILABLE',
       details: { pluginId: PROBE_ID, code: 'PLUGIN_CRASHED' },

@@ -14,7 +14,11 @@ import { migrationsUrl } from '../../src/start.js';
 import { resolvePaths } from '../../src/infra/paths.js';
 import { createCapabilityModelMaterializer } from '../../src/plugins/materializers/capability-model.js';
 import { createMediaEntrySource } from '../../src/plugins/media-entry-source.js';
-import { PluginInstanceService, PluginInstanceStore } from '../../src/plugins/instances.js';
+import {
+  PluginInstanceService,
+  PluginInstanceStore,
+  pluginInstanceSecretName,
+} from '../../src/plugins/instances.js';
 import { CapabilityModelsProjector } from '../../src/plugins/projectors/capability-models.js';
 import { PluginPackager } from '../../src/plugins/package.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
@@ -209,15 +213,53 @@ const MIXED_MANIFEST = {
   },
 };
 
+/**
+ * 混合插件（D125 §2 过渡面：runtime 段 + 数据型 engine 条目并存）。执行体来源必须
+ * 逐条判定：engine 条目仍由第一方引擎执行，只有不填 engine 的条目走托管适配器。
+ * `pluginKey` 与引擎凭据（apiKey / baseUrl）不重名（安装管线拒绝重名）。
+ */
+const MIXED_RUNTIME_ID = 'io.test/mixed-runtime';
+const MIXED_RUNTIME_MANIFEST = {
+  id: MIXED_RUNTIME_ID,
+  name: '混合执行型测试包',
+  instances: ['capability-model'],
+  runtime: {
+    entry: 'main.mjs',
+    hostApi: '^1',
+    instanceFields: [
+      {
+        key: 'pluginKey',
+        type: 'string',
+        title: '插件凭据',
+        required: true,
+        sensitive: true,
+      },
+    ],
+  },
+  contributions: {
+    capabilityModels: [
+      {
+        id: 'engine-img',
+        capability: 'image',
+        model: 'engine-model',
+        engine: 'volcengine-ark',
+      },
+      { id: 'plugin-img', capability: 'image', model: 'plugin-model' },
+    ],
+  },
+};
+
 async function installPlugin(
   rig: Awaited<ReturnType<typeof makeRig>>,
   manifest: Record<string, unknown>,
+  extraEntries?: Array<{ name: string; data: Buffer | string }>,
 ): Promise<void> {
   const fixture = await buildPluginFixture({
     dir: path.join(rig.home, `pkg-${Math.random().toString(36).slice(2, 8)}`),
     id: String(manifest['id']),
     name: String(manifest['name']),
     manifest: manifest as never,
+    ...(extraEntries !== undefined ? { extraEntries } : {}),
   });
   await rig.registry.install({
     source: { kind: 'file', path: fixture.path },
@@ -483,19 +525,20 @@ describe('plugins.* 能力模型条目 RPC（D124）', () => {
     const rig = makeRig();
     await installArk(rig);
     const bot = rig.bots.create({ identity: { name: '测试 Bot' } }, { skipDefaultAgent: true });
-    // 未知插件 + 已装插件的未知条目：一次性列出。
-    await expect(
-      rig.bindings['plugins.setBotCapabilityEntries']!.handle({
-        botId: bot.id,
-        entries: [
-          { plugin: 'io.test/ghost', entry: 'm' },
-          { plugin: 'io.test/ark', entry: 'ghost-entry' },
-        ],
-      }),
-    ).rejects.toMatchObject({
-      code: 'INVALID_INPUT',
-      message: expect.stringContaining('io.test/ghost/m'),
-    });
+    // 未知插件 + 已装插件的未知条目：一次性列出，且两种原因分开（未安装 ≠ 条目不存在）。
+    const rejection = await rig.bindings['plugins.setBotCapabilityEntries']!.handle({
+      botId: bot.id,
+      entries: [
+        { plugin: 'io.test/ghost', entry: 'm' },
+        { plugin: 'io.test/ark', entry: 'ghost-entry' },
+      ],
+    }).then(
+      () => null,
+      (error: unknown) => error as { code?: string; message?: string },
+    );
+    expect(rejection?.code).toBe('INVALID_INPUT');
+    expect(rejection?.message).toContain('io.test/ghost/m（插件未安装）');
+    expect(rejection?.message).toContain('io.test/ark/ghost-entry（条目不存在）');
     // 合法整集替换 + 事件广播（bot.updated + plugins.changed）。
     rig.events.length = 0;
     await rig.bindings['plugins.setBotCapabilityEntries']!.handle({
@@ -612,5 +655,108 @@ describe('plugins.* 能力模型条目 RPC（D124）', () => {
       entryId: 'img',
       model: 'model-img',
     });
+  });
+
+  it('混合插件（runtime + 数据型条目）：执行体来源逐条判定，engine 条目不被送进插件进程', async () => {
+    const rig = makeRig();
+    await installPlugin(rig, MIXED_RUNTIME_MANIFEST, [{ name: 'main.mjs', data: 'export {};\n' }]);
+    const bot = rig.bots.create({ identity: { name: '测试 Bot' } }, { skipDefaultAgent: true });
+    rig.bots.setPluginIds(bot.id, [MIXED_RUNTIME_ID]);
+    await rig.bindings['plugins.setBotCapabilityEntries']!.handle({
+      botId: bot.id,
+      entries: [
+        { plugin: MIXED_RUNTIME_ID, entry: 'engine-img' },
+        { plugin: MIXED_RUNTIME_ID, entry: 'plugin-img' },
+      ],
+    });
+    const instance = await rig.pluginInstances.create(
+      MIXED_RUNTIME_ID,
+      { apiKey: 'sk-ark', pluginKey: 'pk-plugin' },
+      'capability-model',
+    );
+    const source = entrySourceOf(rig);
+    // 本条即是回归点：按插件整体判定时两条都会被标成 source:'plugin'。
+    expect(await source.entriesFor(bot.id, 'image')).toMatchObject([
+      { entryId: 'engine-img', engine: 'volcengine-ark', source: 'engine' },
+      { entryId: 'plugin-img', engine: '', source: 'plugin' },
+    ]);
+    // 视频往返同口径（无 video 条目 → 声明序首个；这里是 engine 条目）。
+    expect(await source.capabilityInstanceOf(instance.id)).toMatchObject({
+      engine: 'volcengine-ark',
+      source: 'engine',
+      entryId: 'engine-img',
+    });
+
+    // 同意 / 勾选视图：source / engine 逐条，configured 按各自必填凭据判定。
+    const listed = (await rig.bindings['plugins.listCapabilityEntries']!.handle(undefined)) as {
+      plugins: Array<{
+        pluginId: string;
+        entries: Array<{
+          entryId: string;
+          engine: string | null;
+          source?: string;
+          configured: boolean;
+        }>;
+      }>;
+    };
+    const group = listed.plugins.find((row) => row.pluginId === MIXED_RUNTIME_ID);
+    expect(group?.entries).toMatchObject([
+      { entryId: 'engine-img', engine: 'volcengine-ark', source: 'engine', configured: true },
+      { entryId: 'plugin-img', engine: null, source: 'plugin', configured: true },
+    ]);
+    // 删掉插件条目的必填凭据：只有 plugin-img 变「未配置」，引擎条目的 apiKey 不受影响。
+    rig.secrets.removeValue(pluginInstanceSecretName(MIXED_RUNTIME_ID, instance.id, 'pluginKey'));
+    const afterRemoval = (await rig.bindings['plugins.listCapabilityEntries']!.handle(
+      undefined,
+    )) as typeof listed;
+    expect(
+      afterRemoval.plugins
+        .find((row) => row.pluginId === MIXED_RUNTIME_ID)
+        ?.entries.map((entry) => [entry.entryId, entry.configured]),
+    ).toEqual([
+      ['engine-img', true],
+      ['plugin-img', false],
+    ]);
+
+    // 条目级探测：engine 条目走第一方引擎（fetch seam），plugin 条目走托管适配器。
+    const hostedProbes: string[] = [];
+    const hostedOverrides: Array<Record<string, string> | undefined> = [];
+    const media = new MediaService({
+      settings: {
+        get: () => ({ appLanguage: 'zh-CN', modelProviders: [], capabilityModels: {} }),
+      } as never,
+      secrets: rig.secrets as never,
+      logger: noopLogger,
+      fetchImpl: okArkImage,
+    });
+    media.attachEntrySource(
+      createMediaEntrySource({
+        registry: rig.registry,
+        instances: rig.instanceStore,
+        secrets: { getValue: rig.secrets.getValue },
+        botRuntimeOf: (botId) => rig.bots.get(botId)?.profile.runtime ?? null,
+        logger: noopLogger,
+        hostedAdapterOf: () =>
+          ({
+            generateImage: async (ctx: { credentialOverrides?: Record<string, string> }) => {
+              hostedProbes.push('plugin-img');
+              hostedOverrides.push(ctx.credentialOverrides);
+              return { images: [{ url: 'https://out.example/plugin.png' }] };
+            },
+          }) as never,
+      }),
+    );
+    // 未保存先测：keyOverride 映射到 runtime.instanceFields 的敏感键（pluginKey）。
+    expect(
+      await media.testCapabilityEntry(MIXED_RUNTIME_ID, 'engine-img', {
+        keyOverride: 'sk-ark-unsaved',
+      }),
+    ).toBeUndefined();
+    expect(hostedProbes).toEqual([]);
+    await expect(
+      media.testCapabilityEntry(MIXED_RUNTIME_ID, 'plugin-img', { keyOverride: 'pk-unsaved' }),
+    ).resolves.toBeUndefined();
+    expect(hostedProbes).toEqual(['plugin-img']);
+    expect(hostedOverrides).toEqual([{ pluginKey: 'pk-unsaved' }]);
   });
 });

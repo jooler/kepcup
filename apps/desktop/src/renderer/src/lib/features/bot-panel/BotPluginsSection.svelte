@@ -57,7 +57,10 @@
     addedPlugins,
     dedupeEntryRefs,
     enabledPluginCount,
+    entryRefsOfEnabledPlugins,
+    entryRefsStillKnown,
     groupEntriesByCapability,
+    knownEntryRefKeys,
     manualToolServers,
     matchesPluginQuery,
     pluginKindBadges,
@@ -117,14 +120,29 @@
   const enabledIds = $derived(new Set(profile.runtime.plugin_ids ?? []));
   /** 这个 Bot 已添加的插件（只列这些；未添加的能力对它不可见）。 */
   const added = $derived(addedPlugins(plugins.plugins, profile.runtime.plugin_ids));
+  /** 已添加且仍在已装清单里的插件 id（有效条目的边界：既在 plugin_ids 又已安装）。 */
+  const addedIds = $derived(added.map((plugin) => plugin.id));
 
   // --- 模型条目勾选（D124，capability_entries 整集写入） ---------------------
   /** Bot 已勾选的条目引用（去重；缺失视作空集）。 */
   const entryRefs = $derived(dedupeEntryRefs(profile.runtime.capability_entries));
-  /** 残留引用（来源插件已不在已装清单）：灰行展示，保存时不发送。 */
-  const uninstalledEntryRefs = $derived(
-    entryRefs.filter((ref) => !plugins.has(ref.plugin)),
+  /** 已装插件的当前条目键集合（清单加载成功后才可信）。 */
+  const knownEntryKeys = $derived(knownEntryRefKeys(capabilityEntries.groups));
+  /**
+   * 仍可写的引用：条目清单已加载时，插件更新删掉条目的残留引用一并剔除（否则
+   * `setBotCapabilityEntries` 会因「条目不存在」整批拒绝，而卡上已无勾选框可取消）。
+   */
+  const liveEntryRefs = $derived(
+    capabilityEntries.loaded ? entryRefsStillKnown(entryRefs, knownEntryKeys) : entryRefs,
   );
+  /**
+   * 计入 16 条上限的引用：只算来源插件仍「已添加 + 已安装」的条目。插件被移出 Bot /
+   * 卸载后其引用永不生效（core `entriesFor` 与 plugin_ids 求交），却会占满上限且
+   * 卡上没有可取消的勾选框——上限按有效引用计，下一次条目保存时残留引用被清掉。
+   */
+  const activeEntryRefs = $derived(entryRefsOfEnabledPlugins(liveEntryRefs, addedIds));
+  /** 残留引用（来源插件已不在已装清单）：灰行展示，保存时不发送。 */
+  const uninstalledEntryRefs = $derived(entryRefs.filter((ref) => !plugins.has(ref.plugin)));
   /** 展开区按能力分组的条目（每插件）。 */
   function entryGroupsOf(pluginId: string) {
     return groupEntriesByCapability(capabilityEntries.entriesOf(pluginId));
@@ -133,7 +151,7 @@
     return entryRefs.some((ref) => ref.plugin === pluginId && ref.entry === entryId);
   }
   function canCheckMoreEntries(): boolean {
-    return entryRefs.length < CAPABILITY_ENTRIES_MAX;
+    return activeEntryRefs.length < CAPABILITY_ENTRIES_MAX;
   }
   /** 「去配置」：跳扩展中心该插件的详情（模型条目 + 账号实例）。 */
   function openEntryConfig(pluginId: string): void {
@@ -144,13 +162,14 @@
   /**
    * 条目勾选（与 `togglePlugin` 同交互）：有 Bot 即整集替换 RPC（失败 toast、
    * 本地不变＝回滚；成功后本地对齐避免回声窗口闪烁）；新建表单直接写草稿。
-   * 已卸载插件的残留引用不发送（core 对未知 ref 整批拒绝，60 §决策 5 的落地）。
+   * 不生效的残留引用（插件已卸载 / 已移出本 Bot / 插件更新删掉了该条目）不发送
+   * （core 对未知 ref 整批拒绝，60 §决策 5 的落地）——有效边界 = 已添加 + 已安装 +
+   * 当前清单里仍存在的条目。
    */
   async function toggleEntry(pluginId: string, entryId: string, on: boolean): Promise<void> {
-    const next = saveableEntryRefs(
-      toggleEntryRef(profile.runtime.capability_entries, pluginId, entryId, on),
-      plugins.plugins.map((plugin) => plugin.id),
-    );
+    const kept = toggleEntryRef(profile.runtime.capability_entries, pluginId, entryId, on);
+    const known = capabilityEntries.loaded ? entryRefsStillKnown(kept, knownEntryKeys) : kept;
+    const next = saveableEntryRefs(known, addedIds);
     if (botId === undefined) {
       profile.runtime.capability_entries = next;
       return;
@@ -746,11 +765,15 @@
                   <p class="text-xs text-muted-foreground">{t('botPanel.plugins.entriesHint')}</p>
                   {#if capabilityEntries.loadError !== null}
                     <p class="text-xs text-destructive">
-                      {t('plugins.capabilityModels.loadFailed', { reason: capabilityEntries.loadError })}
+                      {t('plugins.capabilityModels.loadFailed', {
+                        reason: capabilityEntries.loadError,
+                      })}
                     </p>
                   {:else if capabilityEntries.entriesOf(plugin.id).length === 0}
                     <p class="text-xs text-muted-foreground">
-                      {capabilityEntries.loading ? t('apps.catalog.loading') : t('plugins.capabilityModels.noEntries')}
+                      {capabilityEntries.loading
+                        ? t('apps.catalog.loading')
+                        : t('plugins.capabilityModels.noEntries')}
                     </p>
                   {:else}
                     {#each entryGroupsOf(plugin.id) as group (group.capability)}
@@ -774,7 +797,9 @@
                                 data-testid={`bot-plugins-entry-check-${plugin.id}-${entry.entryId}`}
                               />
                               <span class="min-w-0">
-                                <span class="block truncate">{entry.displayName ?? entry.model}</span>
+                                <span class="block truncate"
+                                  >{entry.displayName ?? entry.model}</span
+                                >
                                 <span class="block truncate text-xs text-muted-foreground"
                                   >{entry.model}</span
                                 >
@@ -792,7 +817,9 @@
                                 onclick={() => openEntryConfig(plugin.id)}
                                 data-testid={`bot-plugins-entry-configure-${plugin.id}-${entry.entryId}`}
                               >
-                                {t('botPanel.plugins.entryNotConfigured')} · {t('botPanel.plugins.entryConfigure')}
+                                {t('botPanel.plugins.entryNotConfigured')} · {t(
+                                  'botPanel.plugins.entryConfigure',
+                                )}
                               </Button>
                             {/if}
                           </div>
@@ -811,10 +838,7 @@
               {#if plugin.providesInstances.includes('mcp')}
                 <!-- P4-M2：实例型插件 = 工具服务逐个勾选授权（写入 `mcp_server_ids`）；
                      注入 = 插件启用 ∧ 本 Bot 勾选，与 mail/im 的账号绑定同语义。 -->
-                <div
-                  class="grid gap-1.5"
-                  data-testid={`bot-plugins-mcp-instances-${plugin.id}`}
-                >
+                <div class="grid gap-1.5" data-testid={`bot-plugins-mcp-instances-${plugin.id}`}>
                   {#if instancesOf(plugin.id).length === 0}
                     <p class="text-xs text-muted-foreground">
                       {t('botPanel.plugins.instanceServersEmpty')}
@@ -941,7 +965,10 @@
       <Label class="text-xs">{t('botPanel.plugins.uninstalledEntries')}</Label>
       <p class="text-xs text-muted-foreground">{t('botPanel.plugins.uninstalledEntriesHint')}</p>
       {#each uninstalledEntryRefs as ref (ref.plugin + '/' + ref.entry)}
-        <div class="flex items-center gap-2 text-sm" data-testid={`bot-plugins-entry-stale-${ref.plugin}-${ref.entry}`}>
+        <div
+          class="flex items-center gap-2 text-sm"
+          data-testid={`bot-plugins-entry-stale-${ref.plugin}-${ref.entry}`}
+        >
           <Checkbox disabled checked={false} />
           <span class="min-w-0 flex-1 truncate text-muted-foreground">
             {capabilityEntries.pluginNameOf(ref.plugin)} · {ref.entry}

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type * as UndiciModule from 'undici';
 
 /**
  * 产物 URL 下载的 SSRF 加固（D125 P4，P2 审查遗留）：执行型插件返回的任意 URL 不得
@@ -12,11 +13,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const fetchMock = vi.hoisted(() => vi.fn());
 
 vi.mock('undici', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('undici')>();
+  const actual = await importOriginal<typeof UndiciModule>();
   return { ...actual, fetch: fetchMock };
 });
 
-const { connectRejectionText, safeFetch, sharedSafeDispatcher } =
+const { connectRejectionText, readBodyCapped, safeFetch, sharedSafeDispatcher } =
   await import('../../src/infra/safe-dispatcher.js');
 
 const originalFetch = globalThis.fetch;
@@ -86,5 +87,40 @@ describe('safeFetch（产物下载 SSRF 守卫）', () => {
       inner.message,
     );
     expect(connectRejectionText(new Error('其他'))).toBeNull();
+  });
+});
+
+describe('readBodyCapped（不可信产物 URL 的字节上限）', () => {
+  it('content-length 超过上限 → 取消响应体并返回 null', async () => {
+    const response = new Response(new Uint8Array([1, 2, 3]), {
+      status: 200,
+      headers: { 'content-length': '10' },
+    });
+    expect(await readBodyCapped(response, 4)).toBeNull();
+  });
+
+  it('未声明 content-length：按流累计，超过上限即取消并返回 null', async () => {
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          controller.enqueue(new Uint8Array([4, 5]));
+          controller.close();
+        },
+      }),
+      { status: 200 },
+    );
+    expect(await readBodyCapped(response, 4)).toBeNull();
+  });
+
+  it('上限内完整读出（等于上限也允许）', async () => {
+    const response = new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 });
+    const bytes = await readBodyCapped(response, 4);
+    expect(bytes).not.toBeNull();
+    expect([...bytes!]).toEqual([1, 2, 3, 4]);
+  });
+
+  it('无响应体 → 空 Buffer', async () => {
+    expect((await readBodyCapped(new Response(null, { status: 204 }), 4))?.length).toBe(0);
   });
 });

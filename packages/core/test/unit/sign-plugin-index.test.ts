@@ -351,6 +351,7 @@ describe('sign-plugin-index.mjs · runtime 静态扫描钩子（D125 P4）', () 
     code: string,
     extraEntries: Array<{ name: string; data?: string; mode?: number; symlink?: boolean }> = [],
     manifest: typeof runtimeManifest = runtimeManifest,
+    tier: 'verified' | 'community' = 'verified',
   ): Promise<{ exit: number; errors: string[]; out: string[]; outDir: string; keysFile: string }> {
     const outDir = path.join(root, `out-rt-${Math.random().toString(36).slice(2, 8)}`);
     const keyDir = path.join(root, `key-rt-${Math.random().toString(36).slice(2, 8)}`);
@@ -374,14 +375,14 @@ describe('sign-plugin-index.mjs · runtime 静态扫描钩子（D125 P4）', () 
       JSON.stringify([
         {
           file: 'runtime.kepcup',
-          tier: 'verified',
+          tier,
           summary: { name: 'Runtime Fixture', description: 'runtime scan fixture', author: 'T' },
         },
       ]),
     );
     const errors: string[] = [];
     const out: string[] = [];
-    let exit = 0;
+    let exit: number;
     try {
       exit = await script.run(
         [
@@ -436,6 +437,17 @@ describe('sign-plugin-index.mjs · runtime 静态扫描钩子（D125 P4）', () 
     ) as { entries: Array<{ runtimeScan?: { status: string; warnings: string[] } }> };
     expect(index.entries[0]?.runtimeScan?.status).toBe('warn');
     expect(index.entries[0]?.runtimeScan?.warnings.join(' ')).toContain('unknown.example.net');
+  });
+
+  it('refuses to sign a community-tier executable package（客户端必拒装，别发布装不上的版本）', async () => {
+    const run = await signRuntimeFixture(
+      "await fetch('https://api.example.com/v1');",
+      [],
+      undefined,
+      'community',
+    );
+    expect(run.exit).toBe(1);
+    expect(run.errors.join(' ')).toContain('tier "verified"');
   });
 
   it('refuses to sign a package whose code fails the scan (eval / native)', async () => {

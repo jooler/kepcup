@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { PLUGIN_MAX_INSTANCES } from '../domain/plugin-manifest.js';
 
 /**
  * 插件运行时 IPC 协议（D125 P1，docs/design/61-plugin-runtime-platform.md §3.2）。
@@ -70,6 +69,17 @@ const manifestDigestSchema = z.string().regex(/^[0-9a-f]{64}$/, 'must be lowerca
 
 // --- host → plugin ------------------------------------------------------------
 
+/**
+ * 握手 `init.instances` 的条数上限（安全界，不是产品的账号数限制）。
+ *
+ * 注意与清单的 `PLUGIN_MAX_INSTANCES`（= 4，**实例 kind 数**上限）区分：用户可以为
+ * 一个插件添加任意多个厂商账号实例（D124/D105 语义）。把清单常量当账号数上限会让
+ * 第 5 个实例直接让握手帧校验失败、插件永远起不来（D125 收口审查修复）。这里用
+ * 宽松的协议界；宿主按此截断发送，超出的实例仍可在调用时经 `context.credentials`
+ * 拿到凭据（`ready()` 只用于长期持有，不参与逐次鉴权）。
+ */
+export const PLUGIN_RUNTIME_MAX_INIT_INSTANCES = 64;
+
 /** 握手：宿主告知 Host API 版本、清单摘要与已供给的实例（含敏感字段键值）。 */
 export const pluginRuntimeInitFrameSchema = z.strictObject({
   type: z.literal('init'),
@@ -83,7 +93,7 @@ export const pluginRuntimeInitFrameSchema = z.strictObject({
         fields: z.record(z.string(), z.string()),
       }),
     )
-    .max(PLUGIN_MAX_INSTANCES),
+    .max(PLUGIN_RUNTIME_MAX_INIT_INSTANCES),
 });
 export type PluginRuntimeInitFrame = z.infer<typeof pluginRuntimeInitFrameSchema>;
 
