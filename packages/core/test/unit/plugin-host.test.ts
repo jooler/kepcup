@@ -1658,10 +1658,13 @@ describe('执行型插件安装管线（D125 步骤 4：层级 / entry / 包防�
         code: 'PLUGIN_INVALID',
       });
     }
-    const executable = variantDir('exec', null, [
-      { relative: 'tools/run.sh', text: '#!/bin/sh\n', exec: true },
-    ]);
-    await expect(rig.installSource(executable)).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
+    // Windows 没有可执行位语义（scanPackage 在 win32 上不检查 mode），此断言只在 POSIX 上成立。
+    if (process.platform !== 'win32') {
+      const executable = variantDir('exec', null, [
+        { relative: 'tools/run.sh', text: '#!/bin/sh\n', exec: true },
+      ]);
+      await expect(rig.installSource(executable)).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
+    }
     expect(rig.store.get(PROBE_ID)).toBeNull();
   });
 
