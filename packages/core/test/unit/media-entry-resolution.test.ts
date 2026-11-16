@@ -570,3 +570,83 @@ describe('D125 P2 执行型条目（source: plugin → HostedAdapter 分支）',
     expect(seen?.signal).not.toBe(controller.signal);
   });
 });
+
+/**
+ * D125 补丁：`onResolved` 来源回调——只有执行型插件条目带 pluginId；数据型条目 /
+ * 全局槽位恒为 `{}`（工具据此决定产物默认落点，不能把数据型条目误判成插件产物）。
+ */
+describe('onResolved 来源回调（D125 补丁）', () => {
+  const hostedEntry: ResolvedEntry = {
+    pluginId: 'io.test/hosted-cb',
+    entryId: 'hosted-image-cb',
+    model: 'hosted-model-cb',
+    engine: '',
+    source: 'plugin',
+    instanceId: 'pli_h',
+    instances: ['pli_h'],
+  };
+
+  it('执行型插件条目 → { pluginId }', async () => {
+    const origins: Array<{ pluginId?: string }> = [];
+    const adapter = {
+      embed: async () => [],
+      generateImage: async () => ({ images: [{ url: 'https://hosted.example/out.png' }] }),
+    };
+    const service = makeService(
+      okArkImage,
+      fakeSource([hostedEntry], { hostedAdapterOf: async () => adapter as never }),
+    );
+    await service.generateImage(
+      { prompt: '托管图' },
+      { loopType: 'task', botId: 'bot_1' },
+      { botId: 'bot_1', onResolved: (origin) => origins.push(origin) },
+    );
+    expect(origins).toEqual([{ pluginId: hostedEntry.pluginId }]);
+  });
+
+  it('数据型条目（source=engine）→ {}（绝不带 pluginId）', async () => {
+    const origins: Array<{ pluginId?: string }> = [];
+    const service = makeService(okDashscopeImage, fakeSource(ENTRIES));
+    await service.generateImage(
+      { prompt: '图' },
+      { loopType: 'task', botId: 'bot_1' },
+      { botId: 'bot_1', onResolved: (origin) => origins.push(origin) },
+    );
+    expect(origins).toEqual([{}]);
+  });
+
+  it('全局槽位（无条目 / 无条目仓库）→ {}', async () => {
+    const fromEmptyEntries: Array<{ pluginId?: string }> = [];
+    const viaEmpty = makeService(okArkImage, fakeSource([]));
+    await viaEmpty.generateImage(
+      { prompt: '图' },
+      { loopType: 'task', botId: 'bot_1' },
+      { botId: 'bot_1', onResolved: (origin) => fromEmptyEntries.push(origin) },
+    );
+    expect(fromEmptyEntries).toEqual([{}]);
+
+    const fromGlobal: Array<{ pluginId?: string }> = [];
+    const viaGlobal = makeService(okArkImage, null);
+    await viaGlobal.generateImage(
+      { prompt: '图' },
+      { loopType: 'task', botId: 'bot_1' },
+      { botId: 'bot_1', onResolved: (origin) => fromGlobal.push(origin) },
+    );
+    expect(fromGlobal).toEqual([{}]);
+  });
+
+  it('回调抛错被记录并忽略，不破坏媒体调用', async () => {
+    const service = makeService(okArkImage, fakeSource([]));
+    const result = await service.generateImage(
+      { prompt: '图' },
+      { loopType: 'task', botId: 'bot_1' },
+      {
+        botId: 'bot_1',
+        onResolved: () => {
+          throw new Error('callback boom');
+        },
+      },
+    );
+    expect(result.images).toHaveLength(1);
+  });
+});

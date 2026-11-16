@@ -23,8 +23,10 @@ import { ENTRY_CAPABILITY_LABELS, appendEntryHint, type MediaEntryHints } from '
 /**
  * 图像生成的 Bot 工具（docs/design/18-inline-setup.md）：图像能力在
  * settings.capabilityModels.image 按厂商配置（MediaService 解析适配器）。
- * 生成的图片落盘到 workspace 的 .generated/ 后由 delivery **立即作为消息
- * 附件发进对话**（确定性投递，不再依赖模型记得调 send_message）。
+ * 生成的图片按来源落盘：执行型插件条目 → 该插件私有目录的 `artifacts/`；
+ * 内置引擎 / 全局槽位 → workspace 的 `.generated/`（显式 `output_dir` 优先）。
+ * 落盘后由 delivery **立即作为消息附件发进对话**（确定性投递，不再依赖模型
+ * 记得调 send_message）。
  *
  * 未配置（能力缺失或厂商缺 Key）时返回 SETUP_REQUIRED 错误码——它对模型
  * 只是普通的失败结果，但 orchestrator 监听该错误码中断 run 并以结构化
@@ -112,10 +114,13 @@ export interface MediaToolFacade {
 /**
  * D125 P3：工具 → facade 的取消 / 进度桥。插件 progress 帧收成一行状态行文案
  * （空文案跳过，不覆盖状态行）；`ctx.signal` 原样下传（托管适配器转 cancel 帧）。
+ * D125 补丁：第三参透传 `onResolved`（工具据此知道本次是否由执行型插件出产物，
+ * 决定默认落点）。
  */
 export function mediaCallControls(
   ctx: Pick<ToolContext, 'signal' | 'progress'>,
   onPluginProgress?: () => void,
+  onResolved?: (origin: { pluginId?: string }) => void,
 ): MediaCallControls {
   return {
     signal: ctx.signal,
@@ -125,6 +130,7 @@ export function mediaCallControls(
       onPluginProgress?.();
       ctx.progress(text);
     },
+    ...(onResolved !== undefined ? { onResolved } : {}),
   };
 }
 
@@ -144,6 +150,17 @@ export function buildImageTools(input: {
   recordFile?: ((target: string) => void) | undefined;
   /** D123: front gate before saving a generated artifact (throws WRITE_OUT_OF_DOMAIN). */
   checkWritable?: ((target: string) => void) | undefined;
+  /**
+   * D125 补丁：执行型插件 id → 该插件的产物目录（私有数据目录下的
+   * `artifacts/`）。提供且本次解析命中插件条目时，未显式指定 `output_dir` 的
+   * 产物默认落这里（宿主管理，不经过任务写域门槛）。
+   */
+  pluginArtifactDir?: ((pluginId: string) => string) | undefined;
+  /**
+   * D125 补丁：`output_dir` 的写权限预检（调用厂商 / 插件之前）。返回解析后的
+   * 绝对目录；无权 / 越界抛 AppError（错误码原样回给模型）。
+   */
+  resolveWritableTarget?: ((target: string) => string) | undefined;
   /** D124 P3：Bot 已勾选条目摘要（注入 generate_image 描述；缺省 / 空清单 = 描述逐字节不变）。 */
   entryHints?: MediaEntryHints | undefined;
 }): ToolDefinition[] {
@@ -152,13 +169,14 @@ export function buildImageTools(input: {
   const generateImage: ToolDefinition<{
     prompt: string;
     file_name?: string;
+    output_dir?: string;
     n?: number;
     model?: string;
   }> = {
     name: 'generate_image',
     // D124 P3：Bot 绑定了模型条目时在描述尾部追加条目清单（appendEntryHint 空清单原样返回）。
     description: appendEntryHint(
-      '生成图片（文生图）。用户要图片、图标、插画、海报等真实图片文件时必须调用本工具产出，不要用文字描述或字符画代替；图片保存到 workspace 后会自动作为消息附件发给用户，无需再调 send_message。未配置图像生成模型时本工具会返回「需要设置」，由系统引导用户完成配置并自动继续，不要因此改用文字方案或推荐外部工具。',
+      '生成图片（文生图）。用户要图片、图标、插画、海报等真实图片文件时必须调用本工具产出，不要用文字描述或字符画代替；图片保存后会自动作为消息附件发给用户，无需再调 send_message。可用 output_dir 指定保存目录（相对 workspace 或工作目录）；不指定时，执行型插件生成的图片保存到该插件的私有产物目录，内置引擎保存到 workspace 的 .generated/。未配置图像生成模型时本工具会返回「需要设置」，由系统引导用户完成配置并自动继续，不要因此改用文字方案或推荐外部工具。',
       ENTRY_CAPABILITY_LABELS.image,
       input.entryHints?.image,
     ),
@@ -166,6 +184,13 @@ export function buildImageTools(input: {
       prompt: Type.String({ description: '图片描述（提示词），尽量具体：主体、风格、构图' }),
       file_name: Type.Optional(
         Type.String({ description: '保存的文件名（不含扩展名），缺省按时间戳命名' }),
+      ),
+      output_dir: Type.Optional(
+        Type.String({
+          description:
+            '保存目录（相对 workspace 或工作目录；绝对路径需在可写范围内），可留空用默认落点',
+          maxLength: 1000,
+        }),
       ),
       n: Type.Optional(Type.Number({ description: '生成张数，默认 1' })),
       model: Type.Optional(
@@ -187,9 +212,33 @@ export function buildImageTools(input: {
       const readOnly = readOnlyRefusal(
         input.gateway,
         identity,
-        '生成的图片要保存到 workspace，本次执行不能生成图片',
+        '生成的图片需要落盘，本次执行不能生成图片',
       );
       if (readOnly !== null) return readOnly;
+      // D125 补丁：显式 output_dir 在**付费生成之前**解析并预检写权限——否则要等
+      // 厂商出图后才发现目录不可写，图片字节只能丢弃。相对路径按网关规则解析
+      // （绑定的工作目录 / workspace 为基准）。
+      const outputDir = params.output_dir?.trim();
+      let explicitDir: string | undefined;
+      if (outputDir !== undefined && outputDir.length > 0) {
+        try {
+          explicitDir =
+            input.resolveWritableTarget !== undefined
+              ? input.resolveWritableTarget(outputDir)
+              : path.resolve(workspacePath, outputDir);
+        } catch (error) {
+          if (error instanceof AppError) {
+            return { ok: false, content: error.message, errorCode: error.code };
+          }
+          return {
+            ok: false,
+            content: `保存目录不可用：${error instanceof Error ? error.message : String(error)}`,
+            errorCode: 'INVALID_INPUT',
+          };
+        }
+      }
+      // D125 补丁：捕获本次解析的实际来源（执行型插件条目 → 产物默认落插件目录）。
+      let artifactPluginId: string | undefined;
       // 未配置（能力缺失 / 厂商缺 Key）由 MediaService 抛
       // CAPABILITY_NOT_CONFIGURED / PROVIDER_AUTH_FAILED——orchestrator 的
       // facade 借这两个错误码记下 setup 需求后原样抛回，这里转 SETUP_REQUIRED。
@@ -203,7 +252,9 @@ export function buildImageTools(input: {
           },
           undefined,
           undefined,
-          mediaCallControls(ctx),
+          mediaCallControls(ctx, undefined, (origin) => {
+            artifactPluginId = origin.pluginId;
+          }),
         );
       } catch (error) {
         if (error instanceof AppError) {
@@ -226,12 +277,29 @@ export function buildImageTools(input: {
           errorCode: 'PROVIDER_UNAVAILABLE',
         };
       }
-      const dir = path.join(workspacePath, '.generated');
-      // Gate before creating the directory: a domain-scoped task must not
-      // create `<workspace>/.generated` outside its domain (a pre-existing
-      // symlink there would otherwise be followed).
-      input.checkWritable?.(dir);
-      mkdirSync(dir, { recursive: true });
+      // 保存目录选择（D125 补丁）：显式 output_dir → 预检过的目录；执行型插件条目
+      // → 该插件的私有产物目录（宿主管理，不经过任务写域门槛）；否则维持
+      // workspace/.generated（原 checkWritable 行为逐字节不变）。
+      const usePluginDir =
+        explicitDir === undefined &&
+        artifactPluginId !== undefined &&
+        input.pluginArtifactDir !== undefined;
+      const dir =
+        explicitDir ??
+        (usePluginDir
+          ? input.pluginArtifactDir!(artifactPluginId!)
+          : path.join(workspacePath, '.generated'));
+      if (!usePluginDir) {
+        // Gate before creating the directory: a domain-scoped task must not
+        // create a directory outside its domain (a pre-existing symlink there
+        // would otherwise be followed). The explicit output_dir was resolved
+        // before paying, but it is re-checked here and every target is gated
+        // below: a pre-existing symlink at `<file_name>.png` must not become a
+        // write-domain bypass for the fixed file name.
+        input.checkWritable?.(dir);
+      }
+      if (usePluginDir) mkdirSync(dir, { recursive: true, mode: 0o700 });
+      else mkdirSync(dir, { recursive: true });
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
       const base = sanitizeFileName(params.file_name?.trim() || `image-${stamp}`);
       const saved: string[] = [];
@@ -240,7 +308,7 @@ export function buildImageTools(input: {
         if (bytes === null) continue;
         const fileName = images.length > 1 ? `${base}-${index + 1}.png` : `${base}.png`;
         const target = path.join(dir, fileName);
-        input.checkWritable?.(target);
+        if (!usePluginDir) input.checkWritable?.(target);
         writeFileSync(target, bytes);
         saved.push(target);
       }
@@ -251,18 +319,28 @@ export function buildImageTools(input: {
       if (input.delivery !== undefined) {
         // 确定性投递：图片立即作为消息附件发进对话（任务内为进度消息），
         // 不依赖模型再调 send_message。全部送达才不回路径（模型只会向用户复述
-        // 绝对路径）；有失败则把未送达的路径与原因交还模型补救。
-        const outcome = input.delivery.send(saved, '');
+        // 绝对路径）；有失败则把未送达的路径与原因交还模型补救。插件目录对网关
+        // 不可读，用 hostOwned 显式放行该数据根。
+        const outcome = input.delivery.send(saved, '', { hostOwned: usePluginDir });
         // 已贴进对话的不登记文件卡（附件是持久副本，workspace 源文件是临时产物）。
-        recordUndeliveredFiles(saved, outcome, input.recordFile);
+        // 插件私有目录的文件同样不登记：任务的文件卡打不开应用数据目录，投递失败
+        // 也不是任务能用 send_message 补救的（见 mediaDeliveryResult 的私有产物文案）。
+        if (!usePluginDir) recordUndeliveredFiles(saved, outcome, input.recordFile);
         return mediaDeliveryResult({
           generated: `${saved.length} 张图片`,
           saved,
           outcome,
+          privateArtifacts: usePluginDir,
           successHint: '只需用一句话向用户确认生成结果。',
         });
       }
-      recordUndeliveredFiles(saved, null, input.recordFile);
+      if (!usePluginDir) recordUndeliveredFiles(saved, null, input.recordFile);
+      if (usePluginDir) {
+        return {
+          ok: true,
+          content: `已生成 ${saved.length} 张图片并保存到执行型插件的私有产物目录（由宿主投递，任务无需也不能用 send_message 读取）。`,
+        };
+      }
       return {
         ok: true,
         content: `已生成 ${saved.length} 张图片并保存到 workspace：\n${paths}\n请用 send_message 的 attachment_paths 把这些文件发给用户。`,

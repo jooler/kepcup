@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
@@ -116,6 +116,9 @@ function speechTools(
     workspace?: string;
     attachments?: Record<string, FakeAttachment>;
     videoPollIntervalMs?: number;
+    pluginArtifactDir?: (pluginId: string) => string;
+    resolveWritableTarget?: (target: string) => string;
+    checkWritable?: (target: string) => void;
   } = {},
 ) {
   return buildSpeechTools({
@@ -144,6 +147,13 @@ function speechTools(
     ...(opts.videoPollIntervalMs !== undefined
       ? { videoPollIntervalMs: opts.videoPollIntervalMs }
       : {}),
+    ...(opts.pluginArtifactDir !== undefined
+      ? { pluginArtifactDir: opts.pluginArtifactDir }
+      : {}),
+    ...(opts.resolveWritableTarget !== undefined
+      ? { resolveWritableTarget: opts.resolveWritableTarget }
+      : {}),
+    ...(opts.checkWritable !== undefined ? { checkWritable: opts.checkWritable } : {}),
   });
 }
 
@@ -153,11 +163,11 @@ function speechTools(
  */
 describe('生成工具描述的条目清单注入（D124 P3）', () => {
   const BASE_IMAGE_DESCRIPTION =
-    '生成图片（文生图）。用户要图片、图标、插画、海报等真实图片文件时必须调用本工具产出，不要用文字描述或字符画代替；图片保存到 workspace 后会自动作为消息附件发给用户，无需再调 send_message。未配置图像生成模型时本工具会返回「需要设置」，由系统引导用户完成配置并自动继续，不要因此改用文字方案或推荐外部工具。';
+    '生成图片（文生图）。用户要图片、图标、插画、海报等真实图片文件时必须调用本工具产出，不要用文字描述或字符画代替；图片保存后会自动作为消息附件发给用户，无需再调 send_message。可用 output_dir 指定保存目录（相对 workspace 或工作目录）；不指定时，执行型插件生成的图片保存到该插件的私有产物目录，内置引擎保存到 workspace 的 .generated/。未配置图像生成模型时本工具会返回「需要设置」，由系统引导用户完成配置并自动继续，不要因此改用文字方案或推荐外部工具。';
   const BASE_SPEECH_DESCRIPTION =
-    '把文本合成为语音（TTS）。用户要配音、朗读、语音消息等真实音频文件时必须调用本工具产出，不要只给文字稿；音频保存到 workspace 后会自动作为消息附件发给用户，无需再调 send_message。未配置语音合成模型时本工具会返回「需要设置」，由系统引导用户完成配置并自动继续。';
+    '把文本合成为语音（TTS）。用户要配音、朗读、语音消息等真实音频文件时必须调用本工具产出，不要只给文字稿；音频保存后会自动作为消息附件发给用户，无需再调 send_message。可用 output_dir 指定保存目录（相对 workspace 或工作目录）；不指定时，执行型插件生成的音频保存到该插件的私有产物目录，内置引擎保存到 workspace 的 .generated/。未配置语音合成模型时本工具会返回「需要设置」，由系统引导用户完成配置并自动继续。';
   const BASE_VIDEO_DESCRIPTION =
-    '根据文字描述生成一段短视频（文生视频，异步任务，通常需要几十秒到几分钟）。用户要真实视频文件时必须调用本工具产出，不要只给分镜脚本；视频保存到 workspace 后会自动作为消息附件发给用户，无需再调 send_message。未配置视频生成模型时本工具会返回「需要设置」，由系统引导用户完成配置并自动继续。';
+    '根据文字描述生成一段短视频（文生视频，异步任务，通常需要几十秒到几分钟）。用户要真实视频文件时必须调用本工具产出，不要只给分镜脚本；视频保存后会自动作为消息附件发给用户，无需再调 send_message。可用 output_dir 指定保存目录（相对 workspace 或工作目录）；不指定时，执行型插件生成的视频保存到该插件的私有产物目录，内置引擎保存到 workspace 的 .generated/。未配置视频生成模型时本工具会返回「需要设置」，由系统引导用户完成配置并自动继续。';
 
   function imageToolWithHints(hints?: { image?: string[] }): ToolDefinition {
     return buildImageTools({
@@ -783,5 +793,292 @@ describe('插件进度与取消接线（D125 P3）', () => {
       '视频排队中…',
       '视频生成中…',
     ]);
+  });
+});
+
+
+/**
+ * D125 补丁：生成产物的默认落点与 `output_dir`（真机写域丢失产物的修复）。
+ *
+ * - 执行型插件条目 → 插件私有产物目录（宿主管理；投递 hostOwned=true）；
+ * - 显式 output_dir → 预检后的目录（投递仍按普通读权限，hostOwned=false）；
+ * - output_dir 预检被拒 → 付费生成之前就返回错误。
+ */
+describe('执行型插件产物落点与 output_dir（D125 补丁）', () => {
+  const pluginDataRoot = path.join(root, 'plugin-data');
+  const pluginArtifacts = (pluginId: string): string =>
+    path.join(pluginDataRoot, ...pluginId.split('/'), 'artifacts');
+
+  type Sent = Array<{ files: string[]; caption: string; options?: { hostOwned?: boolean } }>;
+  const deliveryRecorder = (sent: Sent) => ({
+    send: (files: string[], caption: string, options?: { hostOwned?: boolean }) => {
+      sent.push({ files, caption, options });
+      return { delivered: files, failed: [] };
+    },
+  });
+
+  it('generate_image：插件来源默认落插件 artifacts（不建 workspace/.generated，投递 hostOwned）', async () => {
+    const workspace = path.join(root, 'ws-plugin-default');
+    const sent: Sent = [];
+    const gated: string[] = [];
+    const tools = buildImageTools({
+      identity,
+      media: facade({
+        generateImage: async (_input, _usage, _resolve, controls) => {
+          controls?.onResolved?.({ pluginId: 'io.test/img-plugin' });
+          return { images: [{ b64: Buffer.from('plugin-png').toString('base64') }] };
+        },
+      }),
+      workspacePath: workspace,
+      attachments: attachmentsFake({}),
+      gateway: gatewayFake(root),
+      pluginArtifactDir: pluginArtifacts,
+      resolveWritableTarget: (target) => path.resolve(workspace, target),
+      checkWritable: (target) => gated.push(target),
+      delivery: deliveryRecorder(sent),
+    });
+    const result = await tools
+      .find((tool) => tool.name === 'generate_image')!
+      .execute({ prompt: '一只猫', file_name: 'cat' }, ctx());
+    expect(result.ok).toBe(true);
+    const expected = path.join(pluginArtifacts('io.test/img-plugin'), 'cat.png');
+    expect(sent).toEqual([{ files: [expected], caption: '', options: { hostOwned: true } }]);
+    expect(readFileSync(expected).toString()).toBe('plugin-png');
+    expect(existsSync(path.join(workspace, '.generated'))).toBe(false);
+    // 宿主管理的插件产物不经过任务写域门槛（路径在应用数据目录，网关恒拒绝）。
+    expect(gated).toEqual([]);
+  });
+
+  it('generate_image：显式 output_dir 落 workspace/tmp，投递 hostOwned=false；目录与目标仍逐个过写权限门', async () => {
+    const workspace = path.join(root, 'ws-explicit-outdir');
+    const sent: Sent = [];
+    const gated: string[] = [];
+    const tools = buildImageTools({
+      identity,
+      media: facade({
+        generateImage: async (_input, _usage, _resolve, controls) => {
+          controls?.onResolved?.({ pluginId: 'io.test/img-plugin' });
+          return { images: [{ b64: Buffer.from('png').toString('base64') }] };
+        },
+      }),
+      workspacePath: workspace,
+      attachments: attachmentsFake({}),
+      gateway: gatewayFake(root),
+      pluginArtifactDir: pluginArtifacts,
+      resolveWritableTarget: (target) => path.resolve(workspace, target),
+      checkWritable: (target) => gated.push(target),
+      delivery: deliveryRecorder(sent),
+    });
+    const result = await tools
+      .find((tool) => tool.name === 'generate_image')!
+      .execute({ prompt: '一只猫', file_name: 'cat', output_dir: 'tmp' }, ctx());
+    expect(result.ok).toBe(true);
+    const expected = path.join(workspace, 'tmp', 'cat.png');
+    expect(sent).toEqual([{ files: [expected], caption: '', options: { hostOwned: false } }]);
+    expect(readFileSync(expected).toString()).toBe('png');
+    // 付费前预检已判目录，写文件前目录与目标仍各判一次（预先放好的符号链接不能绕过写域）。
+    expect(gated).toEqual([path.join(workspace, 'tmp'), expected]);
+  });
+
+  it('generate_image：插件产物投递失败 → 不登记文件卡、不引导 send_message 补发', async () => {
+    const workspace = path.join(root, 'ws-plugin-failed');
+    const recorded: string[] = [];
+    const tools = buildImageTools({
+      identity,
+      media: facade({
+        generateImage: async (_input, _usage, _resolve, controls) => {
+          controls?.onResolved?.({ pluginId: 'io.test/img-plugin' });
+          return { images: [{ b64: Buffer.from('png').toString('base64') }] };
+        },
+      }),
+      workspacePath: workspace,
+      attachments: attachmentsFake({}),
+      gateway: gatewayFake(root),
+      pluginArtifactDir: pluginArtifacts,
+      resolveWritableTarget: (target) => path.resolve(workspace, target),
+      delivery: {
+        send: (files) => ({
+          delivered: [],
+          failed: files.map((file) => ({ path: file, reason: '文件过大（30.0MB）' })),
+        }),
+      },
+      recordFile: (target) => recorded.push(target),
+    });
+    const result = await tools
+      .find((tool) => tool.name === 'generate_image')!
+      .execute({ prompt: '一只猫', file_name: 'cat' }, ctx());
+    expect(result.ok).toBe(true);
+    // 插件私有目录的文件卡打不开（应用数据目录对任务不可读），且 send_message 也补发不了。
+    expect(recorded).toEqual([]);
+    expect(result.content).toContain('私有数据目录');
+    expect(result.content).not.toContain('attachment_paths');
+    expect(result.content).not.toContain(pluginDataRoot);
+  });
+
+  it('generate_image：output_dir 预检被拒 → 不调用插件，错误码原样返回', async () => {
+    let calls = 0;
+    const tools = buildImageTools({
+      identity,
+      media: facade({
+        generateImage: async () => {
+          calls += 1;
+          return { images: [{ b64: Buffer.from('x').toString('base64') }] };
+        },
+      }),
+      workspacePath: path.join(root, 'ws-denied'),
+      attachments: attachmentsFake({}),
+      gateway: gatewayFake(root),
+      resolveWritableTarget: () => {
+        throw new AppError('WRITE_OUT_OF_DOMAIN', '写域之外');
+      },
+    });
+    const result = await tools
+      .find((tool) => tool.name === 'generate_image')!
+      .execute({ prompt: 'x', output_dir: 'outside' }, ctx());
+    expect(result).toMatchObject({ ok: false, errorCode: 'WRITE_OUT_OF_DOMAIN' });
+    expect(calls).toBe(0);
+  });
+
+  it('generate_speech：显式 output_dir 优先于插件默认落点；目录与目标仍逐个过写权限门', async () => {
+    const workspace = path.join(root, 'ws-speech-outdir');
+    const sent: Sent = [];
+    const gated: string[] = [];
+    const tools = buildSpeechTools({
+      identity,
+      media: facade({
+        synthesizeSpeech: async (_input, _usage, _resolve, controls) => {
+          controls?.onResolved?.({ pluginId: 'io.test/tts-plugin' });
+          return {
+            audioBase64: Buffer.from('speech-bytes').toString('base64'),
+            mimeType: 'audio/mpeg',
+          };
+        },
+      }),
+      workspacePath: workspace,
+      attachments: attachmentsFake({}),
+      gateway: gatewayFake(root),
+      pluginArtifactDir: pluginArtifacts,
+      resolveWritableTarget: (target) => path.resolve(workspace, target),
+      checkWritable: (target) => gated.push(target),
+      delivery: deliveryRecorder(sent),
+    });
+    const result = await tools
+      .find((tool) => tool.name === 'generate_speech')!
+      .execute({ text: '你好', file_name: 'greeting', output_dir: 'audio' }, ctx());
+    expect(result.ok).toBe(true);
+    const expected = path.join(workspace, 'audio', 'greeting.mp3');
+    expect(sent).toEqual([{ files: [expected], caption: '', options: { hostOwned: false } }]);
+    expect(readFileSync(expected).toString()).toBe('speech-bytes');
+    expect(gated).toEqual([path.join(workspace, 'audio'), expected]);
+  });
+
+  it('generate_speech：output_dir 预检被拒 → 不调用合成', async () => {
+    let calls = 0;
+    const tools = speechTools(
+      {
+        synthesizeSpeech: async () => {
+          calls += 1;
+          return { audioBase64: '', mimeType: 'audio/mpeg' };
+        },
+      },
+      {
+        workspace: path.join(root, 'ws-speech-denied'),
+        resolveWritableTarget: () => {
+          throw new AppError('WRITE_OUT_OF_DOMAIN', '写域之外');
+        },
+      },
+    );
+    const result = await tools
+      .find((tool) => tool.name === 'generate_speech')!
+      .execute({ text: '你好', output_dir: 'outside' }, ctx());
+    expect(result).toMatchObject({ ok: false, errorCode: 'WRITE_OUT_OF_DOMAIN' });
+    expect(calls).toBe(0);
+  });
+
+  it('generate_video：output_dir 预检被拒 → 不提交任务（计费之前）', async () => {
+    let submits = 0;
+    const tools = speechTools(
+      {
+        generateVideo: async () => {
+          submits += 1;
+          return { provider: 'volcengine', taskId: 'task_1' };
+        },
+      },
+      {
+        workspace: path.join(root, 'ws-video-denied'),
+        resolveWritableTarget: () => {
+          throw new AppError('WRITE_OUT_OF_DOMAIN', '写域之外');
+        },
+      },
+    );
+    const result = await tools
+      .find((tool) => tool.name === 'generate_video')!
+      .execute({ prompt: '一段视频', output_dir: 'outside' }, ctx());
+    expect(result).toMatchObject({ ok: false, errorCode: 'WRITE_OUT_OF_DOMAIN' });
+    expect(submits).toBe(0);
+  });
+
+  it('generate_video：插件来源默认落插件 artifacts（投递 hostOwned；不过任务写域门槛）', async () => {
+    stubDownload([1, 2, 3]);
+    const workspace = path.join(root, 'ws-video-plugin');
+    const sent: Sent = [];
+    const gated: string[] = [];
+    const tools = buildSpeechTools({
+      identity,
+      media: facade({
+        generateVideo: async (_input, _usage, _resolve, controls) => {
+          controls?.onResolved?.({ pluginId: 'io.test/video-plugin' });
+          return { provider: 'volcengine', taskId: 'task_1' };
+        },
+      }),
+      workspacePath: workspace,
+      attachments: attachmentsFake({}),
+      gateway: gatewayFake(root),
+      pluginArtifactDir: pluginArtifacts,
+      videoPollIntervalMs: 1,
+      checkWritable: (target) => gated.push(target),
+      delivery: deliveryRecorder(sent),
+    });
+    const result = await tools
+      .find((tool) => tool.name === 'generate_video')!
+      .execute({ prompt: '一段视频', file_name: 'clip' }, ctx());
+    expect(result.ok).toBe(true);
+    const expected = path.join(pluginArtifacts('io.test/video-plugin'), 'clip.mp4');
+    expect(sent).toEqual([{ files: [expected], caption: '', options: { hostOwned: true } }]);
+    expect(readFileSync(expected)).toEqual(Buffer.from([1, 2, 3]));
+    expect(existsSync(path.join(workspace, '.generated'))).toBe(false);
+    expect(gated).toEqual([]);
+  });
+
+  it('generate_video：插件来源 + 显式 output_dir → 落显式目录且投递 hostOwned=false', async () => {
+    stubDownload([4, 5]);
+    const workspace = path.join(root, 'ws-video-explicit');
+    const sent: Sent = [];
+    const gated: string[] = [];
+    const tools = buildSpeechTools({
+      identity,
+      media: facade({
+        generateVideo: async (_input, _usage, _resolve, controls) => {
+          controls?.onResolved?.({ pluginId: 'io.test/video-plugin' });
+          return { provider: 'volcengine', taskId: 'task_1' };
+        },
+      }),
+      workspacePath: workspace,
+      attachments: attachmentsFake({}),
+      gateway: gatewayFake(root),
+      pluginArtifactDir: pluginArtifacts,
+      resolveWritableTarget: (target) => path.resolve(workspace, target),
+      videoPollIntervalMs: 1,
+      checkWritable: (target) => gated.push(target),
+      delivery: deliveryRecorder(sent),
+    });
+    const result = await tools
+      .find((tool) => tool.name === 'generate_video')!
+      .execute({ prompt: '一段视频', file_name: 'clip', output_dir: 'tmp' }, ctx());
+    expect(result.ok).toBe(true);
+    const expected = path.join(workspace, 'tmp', 'clip.mp4');
+    expect(sent).toEqual([{ files: [expected], caption: '', options: { hostOwned: false } }]);
+    expect(readFileSync(expected)).toEqual(Buffer.from([4, 5]));
+    expect(gated).toEqual([path.join(workspace, 'tmp'), expected]);
   });
 });

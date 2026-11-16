@@ -25,6 +25,7 @@ import {
 import { compareConnectorVersions } from '../apps/connector-utils.js';
 import { validateUserConfig } from '../apps/mcpb/manifest.js';
 import { MEDIA_ENGINES } from '../media/engines.js';
+import { ensurePluginDataDir, pluginDataDirFor } from '../infra/paths.js';
 import { assertRuntimeInstallable, runtimeDisclosureOf } from './runtime/install.js';
 import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
@@ -114,6 +115,12 @@ export interface PluginRegistryDeps {
    */
   mailInstanceCount?: ((pluginId: string) => number) | undefined;
   pluginsDir: string;
+  /**
+   * Private writable data root of execution-type plugins (D125 补丁):
+   * `{home}/plugin-data/`. Install / update-of-runtime ensure the plugin's
+   * directory; `#teardown` removes it. Version-independent.
+   */
+  pluginDataDir: string;
   /** App version for marketplace compatibility (`engines`); core `0.0.0` skips the check. */
   appVersion?: string;
   platform?: NodeJS.Platform;
@@ -293,6 +300,19 @@ export class PluginRegistry {
       if (manifest === null) {
         this.#deps.logger.warn({ plugin: row.id }, 'plugin startup skipped: manifest unreadable');
         continue;
+      }
+      // D125 补丁：应用重启即补齐既有执行型安装的数据目录（改动前安装的行没有经过
+      // install 的初始化；PluginHost 首次调用也会懒创建，但安装后第一时间初始化是
+      // 约定）。失败只告警、不阻断启动；下次首次调用仍会重试。
+      if (manifest.runtime !== undefined) {
+        try {
+          ensurePluginDataDir(this.#deps.pluginDataDir, row.id);
+        } catch (error) {
+          this.#deps.logger.warn(
+            { plugin: row.id, error: error instanceof Error ? error.message : String(error) },
+            'plugin startup: data dir init failed',
+          );
+        }
       }
       // Disabled rows only needed the manifest for the summary list; nothing to activate.
       if (!row.enabled) continue;
@@ -822,6 +842,11 @@ export class PluginRegistry {
       const insertedRow = this.#deps.store.get(id)!;
       const ctx = await this.#contextFor(insertedRow, manifest, input.userConfig);
       try {
+        // D125 补丁：执行型插件安装后第一时间初始化私有数据目录（0700，版本无关）。
+        // 与投影同段：创建失败走下面的回滚（含目录清理），不留半装状态。
+        if (manifest.runtime !== undefined) {
+          ensurePluginDataDir(this.#deps.pluginDataDir, id);
+        }
         for (const projector of this.#projectors) {
           if (!capabilityKindOf(projector.kind).hasContribution(manifest)) continue;
           await projector.project(ctx);
@@ -997,6 +1022,13 @@ export class PluginRegistry {
         permissionsExpanded: true,
         added: diff.added,
       });
+    }
+
+    // D125 补丁：更新时确保私有数据目录存在（版本无关，安装树才换）。放在所有
+    // 校验与授权差异门之后、journal / 文件替换之前：创建失败直接失败，无需补偿；
+    // 被拒的更新也不会留下空目录。更新失败 / 补偿不删这个目录（旧版本仍在使用）。
+    if (manifest.runtime !== undefined) {
+      ensurePluginDataDir(this.#deps.pluginDataDir, row.id);
     }
 
     // ④ journal — from here on a crash rolls back on the next start
@@ -1692,6 +1724,16 @@ export class PluginRegistry {
       this.#deps.logger.warn(
         { plugin: identity.id, error: error instanceof Error ? error.message : String(error) },
         'plugin teardown: dir removal failed',
+      );
+    }
+    // D125 补丁：卸载 / 安装回滚清掉私有数据目录（版本无关）。尽力而为：失败只记
+    // 日志，不掩盖卸载本身的错误（数据目录残留已无行引用，不影响再次安装）。
+    try {
+      await rm(pluginDataDirFor(this.#deps.pluginDataDir, id), { recursive: true, force: true });
+    } catch (error) {
+      this.#deps.logger.warn(
+        { plugin: id, error: error instanceof Error ? error.message : String(error) },
+        'plugin teardown: data dir removal failed',
       );
     }
     this.#deps.store.delete(id);

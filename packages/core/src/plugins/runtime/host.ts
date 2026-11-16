@@ -18,6 +18,7 @@ import {
   type PluginToHostFrame,
 } from '@kepcup/shared';
 import type { CoreLogger } from '../../infra/logger.js';
+import { ensurePluginDataDir } from '../../infra/paths.js';
 import type { PluginRegistry } from '../registry.js';
 import type { CapabilityBridge } from './bridge.js';
 import { ProgressRelay } from './bridge.js';
@@ -32,7 +33,8 @@ import { HostedAdapter } from './hosted-adapter.js';
  * 插件运行时宿主（D125 P2，docs/design/61-plugin-runtime-platform.md §3）。
  *
  * 一插件一进程（`child_process.fork`，`serialization:'advanced'`、`execArgv:[]`、
- * cwd = 插件安装目录、最小 env 白名单）；状态机
+ * cwd = 插件私有数据目录 `{home}/plugin-data/{ns}/{name}/`（D125 补丁；相对路径
+ * 写入落在那里，安装树只读且随更新替换）、最小 env 白名单）；状态机
  * `stopped → starting → ready ⇄ busy → error`，懒启动、空闲 5 分钟优雅停、崩溃后
  * 下次调用自动重启。调用级看门狗（能力契约超时，超时 = cancel → 宽限 → 击杀 →
  * `PLUGIN_TIMEOUT`）与进程心跳（15s ping ×2 无响应击杀）双线；每插件串行队列
@@ -137,6 +139,12 @@ export interface PluginRuntimeDescriptor {
 export interface PluginHostDeps {
   registry: Pick<PluginRegistry, 'manifestOf' | 'isConsumable' | 'list' | 'runtimeDirOf'>;
   bridge: CapabilityBridge;
+  /**
+   * 执行型插件私有数据根（D125 补丁）：`{home}/plugin-data/`。每次拉进程前确保
+   * `{root}/{ns}/{name}/` 存在（0700）并作为 fork 的 cwd；builtin 执行型插件
+   * （store 无行）在首次拉起时按需创建。
+   */
+  pluginDataDir: string;
   events: {
     emit(
       name: 'plugin.runtime',
@@ -739,13 +747,25 @@ export class PluginHost {
   async #startProcess(descriptor: PluginRuntimeDescriptor): Promise<LiveProcess> {
     const pluginId = descriptor.pluginId;
     this.#setStatus(pluginId, 'starting');
+    // D125 补丁：cwd 是插件私有数据目录（不是安装目录——更新会替换它、目录只读语义
+    // 也要求相对路径写入落在用户数据区）。创建失败 = 进程无法以安全 cwd 启动。
+    let dataDir: string;
+    try {
+      dataDir = ensurePluginDataDir(this.#deps.pluginDataDir, pluginId);
+    } catch (error) {
+      this.#setStatus(pluginId, 'error', '插件数据目录不可用');
+      throw new AppError(
+        'PLUGIN_CRASHED',
+        `插件 ${descriptor.name} 的数据目录不可用：${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     const forkImpl = this.#deps.forkImpl ?? fork;
     let child: ChildProcess;
     try {
       child = forkImpl(descriptor.entryPath, [], {
         serialization: 'advanced',
         execArgv: [],
-        cwd: descriptor.pluginDir,
+        cwd: dataDir,
         env: minimalPluginEnv(this.#deps.baseEnv ?? process.env),
         stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
         windowsHide: true,

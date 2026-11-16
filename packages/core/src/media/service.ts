@@ -146,6 +146,12 @@ export interface MediaResolveOptions {
    */
   signal?: AbortSignal | undefined;
   onProgress?: ((payload: PluginRuntimeProgressPayload) => void) | undefined;
+  /**
+   * D125 补丁：解析完成后的来源回调（工具据此决定产物的默认落点）。执行型插件
+   * 条目回调 `{ pluginId }`；数据型条目 / 全局槽位回调 `{}`。回调抛错会被记录并
+   * 忽略，不影响媒体调用。
+   */
+  onResolved?: ((origin: { pluginId?: string }) => void) | undefined;
 }
 
 interface ResolvedProvider {
@@ -158,6 +164,12 @@ interface ResolvedProvider {
   adapter: VendorAdapter;
   /** 条目命中时携带（用量记账写 capability / model_entry_id，provider 记插件 id）。 */
   entry?: { pluginId: string; entryId: string; capability: MediaCapability } | undefined;
+  /**
+   * D125 补丁：仅托管路径（`#hostedProvider`）设置——执行型插件 id。工具据此把
+   * 产物默认写进该插件的数据目录（不是任务写域门槛能覆盖的位置）；数据型条目 /
+   * 全局槽位不填。不进任何 wire 结果类型。
+   */
+  artifactPluginId?: string | undefined;
 }
 
 export class MediaService {
@@ -638,13 +650,36 @@ export class MediaService {
     modelId?: string,
     resolve?: MediaResolveOptions,
   ): Promise<ResolvedProvider> {
+    let resolved: ResolvedProvider;
     if (resolve?.botId != null && resolve.botId !== '' && this.#entrySource !== undefined) {
       const entries = await this.#entrySource.entriesFor(resolve.botId, capability);
       if (entries.length > 0) {
-        return await this.#resolveEntry(capability, this.#selectEntry(entries, resolve.model), resolve);
+        resolved = await this.#resolveEntry(
+          capability,
+          this.#selectEntry(entries, resolve.model),
+          resolve,
+        );
+      } else {
+        resolved = this.#resolveGlobal(capability, modelId);
       }
+    } else {
+      resolved = this.#resolveGlobal(capability, modelId);
     }
-    return this.#resolveGlobal(capability, modelId);
+    // D125 补丁：来源回调（entry 的托管分支带 artifactPluginId；数据型 / 全局不带）。
+    // 回调只用于工具的落点选择，抛错不能破坏一次已成型的媒体调用（日志 + 忽略）。
+    try {
+      resolve?.onResolved?.({
+        ...(resolved.artifactPluginId !== undefined
+          ? { pluginId: resolved.artifactPluginId }
+          : {}),
+      });
+    } catch (error) {
+      this.#logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'media resolve onResolved callback failed (ignored)',
+      );
+    }
+    return resolved;
   }
 
   /** 条目挑选：显式 model 依次命中条目 model / displayName / entryId 才生效，否则用首个（声明序）。 */
@@ -741,6 +776,7 @@ export class MediaService {
       vendor: 'custom',
       instanceId,
       modelId,
+      artifactPluginId: pluginId,
       context: {
         vendor: 'custom',
         baseUrl: '',

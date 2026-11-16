@@ -1210,7 +1210,7 @@ export function buildAgentToolPolicy(tools: AgentPromptTools): string {
   }
   if (tools.toolNames.some((name) => GENERATION_TOOLS.includes(name))) {
     supplementLines.push(
-      '- 生成类工具的产物保存在 workspace 的 .generated/ 下：可用你自己的工具读取，或经 send_message 的 attachment_paths 发给用户。',
+      '- 生成类工具产物由宿主落盘并自动作为消息附件发出；执行型插件条目默认落插件私有目录（外部 Agent 的工具读不到），内置引擎落 workspace 的 .generated/；需要自己读取/再发送时用 output_dir 指定 workspace / 工作目录内的目录。',
     );
   }
   const hostLines = HOST_POLICY_LINES.flatMap((line) => {

@@ -2127,3 +2127,80 @@
   的插件声明；新协议（长轮询 / 大文件 / 慢模型）接入不需要应用改常量发版。
 - 已更新的文档：本条；61 §2 / §3.1 / §3.3 / §4 / §12.4；`plugins/dashscope-t2i/README.md`；
   P4 任务书实施记录。
+
+### DEV-131 执行型插件可写数据目录与生成产物默认落点（D125 补丁）
+
+- 状态：已落实
+- 阶段：D125 补丁（2026-11-16，真机反馈后）
+- 是否阻塞：否
+- 问题：真机任务里 Bot 绑定的是执行型插件 dashscope-t2i，任务按 `start_task` 声明写域
+  `tmp/**`；`generate_image` 走 `packages/core/src/tools/image-tools.ts` 把产物保存到
+  `<workspace>/.generated/`，被 `gateway.assertWritableArtifact` 判为「写域之外的路径」，
+  **在写文件之前抛出**——插件已经生成的两张图片字节被直接丢弃，用户期望的
+  `tmp/ai-thinking.png` 未产出。根因有两条：①执行型插件没有任何自己的可写目录，产物只能
+  落 workspace；②写域门槛在付费生成之后才触发，失败时无法补救。
+- 影响范围：`packages/core/src/infra/paths.ts`、`start.ts`、`plugins/registry.ts`、
+  `plugins/runtime/host.ts`、`media/types.ts`、`media/service.ts`、`gateway/index.ts`、
+  `tools/{media-delivery,image-tools,speech-tools,index}.ts`、`dispatch/orchestrator.ts`；
+  文档 61 / 51 / 11 / 20、`docs/dev/04-agent-runtime.md`、`packages/plugin-sdk/README.md`。
+- 决定：
+  1. **新增数据目录根** `{home}/plugin-data/`（`AppPaths.pluginDataDir`），每个执行型插件
+     一个与版本无关的私有目录 `{home}/plugin-data/{ns}/{name}/`（0700，plugin id 小写化）。
+     路径用 shared `pluginIdSchema` 严格校验且必须恰好两段，越界抛
+     `AppError('PLUGIN_INVALID')`。产物默认落 `.../artifacts/`。
+  2. **安装期初始化**：manifest 含 `runtime` 时，安装在 `store.insert` 之后、投影之前
+     `ensurePluginDataDir`（失败随安装回滚）；更新时在一切持久化写入前确保存在（更新失败 /
+     补偿**不**删数据目录——版本无关，旧版本仍在使用）；卸载 / 安装回滚在 `#teardown` 内
+     best-effort 删除（只 warn，不掩盖原错误）。`PluginRegistry.start()` 对已装执行型行
+     也补齐数据目录（改动前安装的行没有经过安装期初始化；失败只 warn、不阻断启动，首次
+     调用时 PluginHost 仍会重试）。内置执行型插件（builtin，无 store 行）由 PluginHost
+     首次拉起时按需创建。
+  3. **进程 cwd**：`PluginHost` fork 的 cwd 从插件安装目录改为该插件数据目录，启动前
+     `mkdirSync(..., {recursive:true, mode:0o700})`；失败置 `error`（「插件数据目录不可用」）
+     并抛 `PLUGIN_CRASHED`。插件沿相对路径写入即落在自己的目录（安装树只读、更新会替换）。
+  4. **core 保存插件产物不走任务写域门槛**：插件产物是宿主管理的产物，不是任务写文件。
+     投递（`GeneratedMediaDelivery`）新增显式 `hostOwned` 模式：`send(files, caption,
+     { hostOwned: true })` 只在 `pluginDataDir` 根内（`canonicalPath` + `isInsidePath`，
+     符号链接按 realpath 判定）直接 `readFileSync`，否则该文件记失败；其余情况维持原
+     `gateway.checkPath` 读检查。插件私有目录的投递失败**不登记文件卡**（任务打不开应用
+     数据目录），结果文案只要求模型如实说明，不引导 `attachment_paths` 补发。
+  5. **`output_dir` 参数**：`generate_image` / `generate_speech` / `generate_video` 新增
+     可选 `output_dir`（TypeBox string，maxLength 1000；相对 workspace 或工作目录）。显式
+     指定时在调用厂商 / 插件**之前**经 `gateway.resolveArtifactTarget` 解析并预检写权限
+     （避免付费生成后才发现写不了）。未指定时：执行型插件条目 → 插件 `artifacts/`；
+     内置引擎 / 全局槽位 → 现有 `<workspace>/.generated/`（行为逐字节不变）。
+  6. **来源回调不改 wire 类型**：`MediaResolveOptions` / `MediaCallControls` 增加可选
+     `onResolved?: (origin: { pluginId?: string }) => void`；`ResolvedProvider` 内部
+     `artifactPluginId` 仅由 `#hostedProvider` 设置，`#resolve` 完成后回调。数据型条目 /
+     全局槽位不填。RPC 结果类型（`ImageGenerationResult` 等 strict schema）零改动。
+  7. **新增 gateway 方法** `resolveArtifactTarget(identity, inputPath)`：`checkPath` 写判定
+     — `allowed` 返回 resolvedPath；`outOfDomain` → `WRITE_OUT_OF_DOMAIN`；`claimed` →
+     `WRITE_CLAIMED`；其余（needs_grant / needs_lease / 数据目录 / 只读 run 等）→
+     `PATH_OUT_OF_SCOPE`（带原 reason）。只读 run **不沿用** D75 宿主产物豁免：D75 的
+     豁免只覆盖宿主固定的 `<workspace>/.generated`（`assertWritableArtifact`），
+     `output_dir` 是模型选的路径，不能借豁免写任意位置；三个生成工具本就在最前面用
+     `readOnlyRefusal` 拒绝只读 run，行为无变化。
+  8. **写路径安全**：插件 artifacts 目录写入前 `mkdirSync(dir, {recursive:true, mode:0o700})`；
+     文件名沿用 `sanitizeFileName`；写入保持同步；零新依赖。显式 `output_dir` 即使已在
+     付费前预检，写文件前仍对目录与**每个目标文件**再过 `assertWritableArtifact`——预检
+     只解析目录，预先放好的 `file_name.png` 符号链接不能成为写域绕过。该门同步改为
+     fail-closed：除 `allowed` 与只读 run 的 D75 固定 workspace 产物豁免外，其余判定
+     （needs_grant / needs_lease / 应用数据 / 技能目录 / 外部硬链接 / 保护规则）一律
+     `PATH_OUT_OF_SCOPE`，宿主写不再跟随指向范围外的符号链接 / 硬链接。
+  9. **明确不是 Q5 fs 能力**：本次不新增 `host.files`、不放开 fs / secrets / env Host API；
+     插件进程只是以数据目录为 cwd。需要如实说明的是：插件进程仍以用户权限运行，市场
+     静态扫描（禁 `fs` / 子进程 / 网络直连等）是代码审查层，**不是 OS 沙箱**——本次不
+     声称插件「不能读取任意本地文件」，只声称 Host API 不提供文件读写通道、扫描约束不变。
+     插件通过 `process.cwd()` 能知道自己的数据目录绝对路径；生成产物仍由 core 下载并按
+     `artifacts/` 默认落盘 + 投递，插件不参与投递语义。
+- 测试证据：定向测试 `node scripts/run-tests.mjs run` 的 10 个文件（paths / plugin-registry /
+  plugin-host / plugin-builtin-capability-models / plugin-capability-model / media-tools /
+  media-delivery / gateway-read-only / plugin-bridge / media-entry-resolution）共
+  **247 个用例通过 / 0 失败**（2026-11-16）；`pnpm --filter @kepcup/core typecheck` 通过。
+  全量 `pnpm test` 收口：803 个文件通过 / 3 跳过，**8693 passed / 44 skipped / 0 failed**。
+  另：三个 `output_dir` 参数使工具 schema 估算 +328 token（14,770 → 15,098），
+  `task-context-compaction` 的 20k 窗口原本只剩 230 token 可用，因此把该测试的 mock
+  上下文窗口调到 26k（只调整测试窗口；压缩实现与工具 schema 不变）。
+- 已更新的文档：本条；61 §3.1 / §3.3 / §10 Q5 / §12；51 §5；11 数据目录；16（Bot
+  消费入口）；20 §4；28（外部 Agent）；`docs/dev/04-agent-runtime.md` 工具表；
+  `packages/plugin-sdk/README.md`。

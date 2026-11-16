@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync } from 'node:fs';
 import { rmSync } from './infra/fs-rm.js';
 import { Buffer } from 'node:buffer';
 import os from 'node:os';
@@ -816,6 +816,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
   }
   mkdirSync(paths.toolchainsDir, { recursive: true });
   mkdirSync(paths.pluginsDir, { recursive: true });
+  // D125 补丁：执行型插件的私有可写数据根（0700）。每个插件的
+  // `{home}/plugin-data/{ns}/{name}/` 由安装 / 首次拉起时创建。
+  mkdirSync(paths.pluginDataDir, { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32') chmodSync(paths.pluginDataDir, 0o700);
 
   const logger = await createLogger({ logsDir: paths.logsDir, dev: options.dev === true });
   // 单聊 conversation.updated 出核前补 bot（见 conversation-events.ts）；
@@ -2639,6 +2643,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       // P3：instanceCounts.mail 的口径是 mail_accounts 里的活跃账号（软删 / 无主不算）。
       mailInstanceCount: (pluginId) => mailService?.store.countActiveForPlugin(pluginId) ?? 0,
       pluginsDir: paths.pluginsDir,
+      pluginDataDir: paths.pluginDataDir,
       appVersion: options.appVersion ?? '0.0.0',
       ...(options.platform !== undefined ? { platform: options.platform as NodeJS.Platform } : {}),
       clock,
@@ -2702,6 +2707,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       bridge: pluginBridge,
       events,
       logger,
+      pluginDataDir: paths.pluginDataDir,
     });
     services.pluginRuntime = pluginRuntime;
     // 停用 = kill switch 即时生效；卸载 / 回滚 = kill + 清 plugin_storage（61 §7）。

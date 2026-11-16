@@ -205,6 +205,13 @@ export interface ResponseToolDeps {
    */
   mediaEntryHints?: MediaEntryHints | undefined;
   /**
+   * D125 补丁：执行型插件 id → 私有产物目录（`{plugin-data}/{ns}/{name}/artifacts`）。
+   * 未显式指定 output_dir 的插件产物默认落这里。
+   */
+  pluginArtifactDir?: ((pluginId: string) => string) | undefined;
+  /** D125 补丁：插件数据根（投递时 hostOwned 读取的白名单根）。 */
+  pluginDataDir?: string | undefined;
+  /**
    * 联网检索网关（docs/design/21-web-search.md）：present 时注册
    * web_search / web_fetch 工具；web_search 缺配置返回 SETUP_REQUIRED。
    */
@@ -1172,6 +1179,7 @@ export function buildResponseTools(input: {
     onBotMessage: deps.onBotMessage,
     logger: deps.logger,
     guessMime,
+    ...(deps.pluginDataDir !== undefined ? { hostArtifactRoot: deps.pluginDataDir } : {}),
   });
 
   // 图像/语音/视频生成与理解（docs/design/18-inline-setup.md、
@@ -1200,6 +1208,10 @@ export function buildResponseTools(input: {
           delivery: generatedMediaDelivery,
           recordFile: recordGenerated,
           checkWritable: (target) => gateway.assertWritableArtifact(identity, target),
+          ...(deps.pluginArtifactDir !== undefined
+            ? { pluginArtifactDir: deps.pluginArtifactDir }
+            : {}),
+          resolveWritableTarget: (target) => gateway.resolveArtifactTarget(identity, target),
           ...(deps.mediaEntryHints !== undefined ? { entryHints: deps.mediaEntryHints } : {}),
         })
       : [];
@@ -1214,6 +1226,10 @@ export function buildResponseTools(input: {
           delivery: generatedMediaDelivery,
           recordFile: recordGenerated,
           checkWritable: (target) => gateway.assertWritableArtifact(identity, target),
+          ...(deps.pluginArtifactDir !== undefined
+            ? { pluginArtifactDir: deps.pluginArtifactDir }
+            : {}),
+          resolveWritableTarget: (target) => gateway.resolveArtifactTarget(identity, target),
           ...(deps.mediaEntryHints !== undefined ? { entryHints: deps.mediaEntryHints } : {}),
         })
       : [];

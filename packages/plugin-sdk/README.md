@@ -62,6 +62,24 @@ runPluginRuntime(plugin); // 缺省挂到 Node fork 内置 IPC（宿主 PluginHo
 `ping`（看门狗心跳）由通道自动回 pong——**插件需用 P2 及以上的 SDK 重新打包**，
 否则约 30s 后会被看门狗击杀（DEV-116）。
 
+## 进程 cwd 与私有数据目录（D125 补丁 / DEV-131）
+
+- 插件进程的 **cwd 是宿主管理的私有数据目录** `{home}/plugin-data/{ns}/{name}/`（0700，
+  与插件版本无关）：宿主在安装执行型插件时创建、更新时确保存在（更新失败不删）、
+  builtin 执行型插件在首次拉起时创建，卸载 / 安装回滚时删除。插件沿**相对路径**写入
+  即落在该目录。注意 cwd **不再是安装目录**：读取包内相对资产请用 `import.meta.url`
+  解析绝对路径（或打包时内联），不要用 `process.cwd()`。
+- 这**不是 Host API 的 fs 能力**：没有 `host.files`，也不放开 fs / secrets / env；
+  市场静态扫描对 `fs` / 子进程 / 网络的限制完全不变。需要如实理解：扫描是代码审查层，
+  **不是 OS 沙箱**——插件进程仍以用户权限运行，本次改动不把「不能读任意本地文件」当成
+  安全承诺；Host API 只是不提供文件读写通道。
+- **生成产物由 core 下载并落盘**：执行型插件条目的 `generate_image` /
+  `generate_speech` / `generate_video` 默认写入 `{cwd}/artifacts/`（宿主管理，不受任务
+  写域门槛约束），随后由 `GeneratedMediaDelivery` 作为消息附件投递；任务可用
+  `output_dir` 让产物改落自己的 workspace 写域（付费前预检，写文件前仍逐个文件过写域
+  检查）。生成结果的契约只含引用（URL / base64）；落盘与投递由宿主完成，插件不参与
+  投递语义。
+
 ## 打包约定（esbuild 单文件）
 
 执行型插件是**单文件 ESM JS**，包内自包含（无 `node_modules`）：

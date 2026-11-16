@@ -53,6 +53,13 @@ export interface VendorCallContext {
 export interface MediaCallControls {
   signal?: AbortSignal;
   onProgress?: (payload: PluginRuntimeProgressPayload) => void;
+  /**
+   * D125 补丁：本次解析命中的执行体来源。执行型插件条目回调
+   * `{ pluginId }`（工具据此把产物默认落到该插件的数据目录）；数据型条目 /
+   * 全局槽位不回调 `pluginId`（`{}`）。`#resolve` 解析完成后调用一次。
+   * 回调抛错会被记录并忽略，不影响媒体调用。
+   */
+  onResolved?: (origin: { pluginId?: string }) => void;
 }
 
 export interface ImageGenerationParams {

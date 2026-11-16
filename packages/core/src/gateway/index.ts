@@ -385,18 +385,57 @@ export class ToolGateway {
    * D123: front gate for a host-saved artifact (generated media, attachment
    * copies): the write-domain and claim verdicts apply before the host creates
    * any directory or file. A read-only run keeps the D75 exemption for
-   * host-owned artifacts.
+   * host-owned artifacts. Every other denial (needs_grant / needs_lease /
+   * app-data / skill dirs / a hard link with entries outside the workspace /
+   * protect rules) is fail-closed: the artifact target was resolved by the
+   * gateway, so a pre-existing symlink or hard link must not turn the host's
+   * write into an out-of-scope write.
    */
   assertWritableArtifact(identity: RunIdentity, inputPath: string): void {
     const decision = this.checkPath(identity, inputPath, 'write');
-    if (decision.kind !== 'forbidden') return;
-    if (decision.outOfDomain === true) {
-      throw new AppError('WRITE_OUT_OF_DOMAIN', `${decision.reason}：${inputPath}`);
+    if (decision.kind === 'allowed') return;
+    if (decision.kind === 'forbidden') {
+      if (decision.outOfDomain === true) {
+        throw new AppError('WRITE_OUT_OF_DOMAIN', `${decision.reason}：${inputPath}`);
+      }
+      if (decision.claimed === true) {
+        throw new AppError('WRITE_CLAIMED', `${decision.reason}：${inputPath}`);
+      }
+      // Read-only runs keep the D75 exemption for host-saved artifacts.
+      if (decision.readOnlyRun === true) return;
     }
-    if (decision.claimed === true) {
-      throw new AppError('WRITE_CLAIMED', `${decision.reason}：${inputPath}`);
+    throw new AppError('PATH_OUT_OF_SCOPE', `${decision.reason}：${inputPath}`);
+  }
+
+  /**
+   * D125 补丁：resolve a user-specified generated-artifact target
+   * (`generate_image` / `generate_speech` / `generate_video` 的 `output_dir`)
+   * BEFORE paying for the generation — a relative path resolves against the
+   * bound workdir or the workspace exactly like every other tool path
+   * (`checkPath`). D123 / D75 verdicts keep their codes: an out-of-domain
+   * target is `WRITE_OUT_OF_DOMAIN`, a peer claim `WRITE_CLAIMED`; everything
+   * else (needs a grant / a write lease, app data, skill dirs, …) is
+   * `PATH_OUT_OF_SCOPE` with the gateway's own reason: generation tools never
+   * raise access approvals mid-run.
+   *
+   * A read-only run gets no exemption here: `output_dir` is model-chosen, so
+   * the D75 host-saved-artifact exemption (which stays on the fixed
+   * `<workspace>/.generated` path via `assertWritableArtifact`) must not turn
+   * into an arbitrary write. The generation tools already refuse a read-only
+   * run before reaching this resolver (`readOnlyRefusal`).
+   */
+  resolveArtifactTarget(identity: RunIdentity, inputPath: string): string {
+    const decision = this.checkPath(identity, inputPath, 'write');
+    if (decision.kind === 'allowed') return decision.resolvedPath;
+    if (decision.kind === 'forbidden') {
+      if (decision.outOfDomain === true) {
+        throw new AppError('WRITE_OUT_OF_DOMAIN', `${decision.reason}：${inputPath}`);
+      }
+      if (decision.claimed === true) {
+        throw new AppError('WRITE_CLAIMED', `${decision.reason}：${inputPath}`);
+      }
     }
-    // Read-only runs keep the D75 exemption for host-saved artifacts.
+    throw new AppError('PATH_OUT_OF_SCOPE', `${decision.reason}：${inputPath}`);
   }
 
   /**

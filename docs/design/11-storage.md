@@ -13,6 +13,10 @@
     embedding-model/{version}/             -- 本地向量模型（model.onnx + vocab.json + merges.txt + config.json）
     onnxruntime/{version}/                 -- ONNX Runtime Node 包（含 node_modules/onnxruntime-common）
   cache/                                   -- 依赖包缓存，按内容寻址，多个 workspace 共享
+  plugins/{ns}/{name}@{version}/           -- 已安装插件树，只读（更新时整体替换）
+  plugins/.staging/                        -- 插件安装暂存（解包 / 目录复制）
+  plugin-data/{ns}/{name}/                 -- 执行型插件私有可写数据（0700，版本无关）
+    artifacts/                             -- 插件生成产物默认落点（DEV-131）
   logs/                                    -- 运行日志（敏感字段脱敏）
   sandbox/                                 -- 沙箱运行时（例如 Windows 的 WSL2 发行版）
   projects/{project_id}/checkpoints/       -- project 的影子 git 仓库

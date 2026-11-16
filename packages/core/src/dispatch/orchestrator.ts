@@ -234,6 +234,7 @@ import type { WidgetToolFacade } from '../tools/widget-tools.js';
 import { FileReadState, RUN_FILE_CHANGES_MAX } from '../tools/fs-state.js';
 import type { ToolGateway } from '../gateway/index.js';
 import type { AppPaths } from '../infra/paths.js';
+import { pluginArtifactDirFor } from '../infra/paths.js';
 import { workspacePathFor } from '../infra/paths.js';
 import { neutralizeUntrusted } from '../infra/data-boundary.js';
 import {
@@ -4432,6 +4433,11 @@ export class Orchestrator {
         ...(await this.#computerToolDeps(identity, loopType)),
         ...(this.#deps.media !== undefined ? { media: this.#mediaFacade(setupHit, identity) } : {}),
         ...(mediaEntryHints !== undefined ? { mediaEntryHints } : {}),
+        // D125 补丁：执行型插件生成产物的默认落点 = 该插件私有数据目录下的
+        // `artifacts/`；投递 hostOwned 的白名单根 = plugin-data 根。
+        pluginArtifactDir: (pluginId: string) =>
+          pluginArtifactDirFor(this.#deps.paths.pluginDataDir, pluginId),
+        pluginDataDir: this.#deps.paths.pluginDataDir,
         ...(this.#deps.search !== undefined ? { search: this.#searchFacade(setupHit) } : {}),
         ...(appFacade !== undefined ? { apps: appFacade } : {}),
         ...(pluginFacade !== undefined ? { pluginInstall: pluginFacade } : {}),
