@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "es2023",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": ["es2023"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "paths": {
+      "@kepcup/plugin-sdk": ["../../packages/plugin-sdk/src/index.ts"]
+    }
+  },
+  "include": ["src"]
+}

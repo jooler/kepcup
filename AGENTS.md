@@ -2,6 +2,10 @@
 
 开发流程与规范见 [docs/dev/README.md](docs/dev/README.md)；测试细则见 [docs/dev/05-testing.md](docs/dev/05-testing.md#开发中如何跑测试)。
 
+## 执行型插件（D125）
+
+- 给插件加 `runtime` 段或编写携带代码的插件时，开发约定见 [packages/plugin-sdk/README.md](packages/plugin-sdk/README.md)（SDK / esbuild 单文件打包 / `host` 命名空间 / 实例字段与凭据注入 / 静态扫描约束）；设计与现状见 [docs/design/61-plugin-runtime-platform.md](docs/design/61-plugin-runtime-platform.md)。
+
 ## 测试：先定向、后全量
 
 - 迭代中只跑与改动相关的测试：`node scripts/run-tests.mjs run <测试文件或目录>`（可加 `-t "用例名"`），或单包 `pnpm --filter @kepcup/<包> test`；类型检查同理用 `pnpm --filter @kepcup/<包> typecheck`。

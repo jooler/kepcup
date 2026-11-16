@@ -219,7 +219,9 @@
           reason:
             code === 'PROVIDER_AUTH_FAILED'
               ? t('chats.errorCode.PROVIDER_AUTH_FAILED')
-              : String((error as Error).message ?? ''),
+              : code === 'PROVIDER_QUOTA'
+                ? t('chats.errorCode.PROVIDER_QUOTA')
+                : String((error as Error).message ?? ''),
         }),
       );
     } finally {
@@ -318,9 +320,9 @@
           id={`${testid}-key`}
           class="h-9"
           type="password"
-          placeholder={
-            providerHasKey ? t('settings.providerKeySet') : t('settings.providerKeyPlaceholder')
-          }
+          placeholder={providerHasKey
+            ? t('settings.providerKeySet')
+            : t('settings.providerKeyPlaceholder')}
           bind:value={key}
           onblur={() => void commitKey()}
           onkeydown={onKeyKeydown}

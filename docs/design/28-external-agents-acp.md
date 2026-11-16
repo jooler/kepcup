@@ -183,7 +183,7 @@ interface AgentCatalogEntry {
 
 - 注入的工具集合决定 ACP 版 `<platform_rules>` 与 `<tool_policy>` 中出现哪些规则（如未注入 `memory`，则不出现「用户要求记住时调用 remember」；未注入 `collaboration` 则不提委派）。
 - **上下文段与工具解耦**：`<relevant_memories>`、`<user_profile>`、`<wiki_topics>`、`<skills>` 等只读上下文照常注入（即使未注入对应工具），后台反思 / 画像整理照常写入。用户若不希望 Bot 看到某类上下文，用既有的 Bot 级开关，而不是能力包。
-- 生成类工具的产物落 workspace `.generated/`，Agent 可用其原生工具读取，或经 `send_message(attachment_paths)` 发出。
+- 生成类工具的产物由宿主落盘并自动作为消息附件发出：执行型插件条目默认落插件私有目录 `plugin-data/{ns}/{name}/artifacts/`（DEV-131；外部 Agent 的本地工具读不到），内置引擎落 workspace `.generated/`。需要自己读取 / 再次发送时用 `output_dir` 指定 workspace / 工作目录内的目录，再用原生工具读取或经 `send_message(attachment_paths)` 发出。
 
 
 

@@ -13,6 +13,15 @@ import { sanitizeDisplayText } from './text-sanitize.js';
  * checks `format_version` / byte budget and runs the schema; every unknown field is a
  * rejection (`strictObject`), so a manifest can never self-declare trust (`tier`,
  * `permissions`, …).
+ *
+ * D124 (docs/design/60-capability-model-plugins.md §2) adds the declarative
+ * capability-model contribution (`contributions.capabilityModels`：一个模型一条) and the
+ * `'capability-model'` instance kind — the mail / mcp / im recipe: the contribution is
+ * the supply spec, instances are user-added, execution stays in first-party engines.
+ *
+ * D125 (docs/design/61-plugin-runtime-platform.md §2) adds the optional `runtime`
+ * section (形态 B 执行型插件)：包内带代码、宿主外子进程按 IPC 协议执行。分级与存在性
+ * 校验在 P2 安装管线；旧应用读到该段即 `PLUGIN_UPGRADE_REQUIRED`。
  */
 
 export const PLUGIN_FORMAT_VERSION = 1;
@@ -28,9 +37,23 @@ export const PLUGIN_MAX_CONNECTORS = 20;
 export const PLUGIN_MAX_MCP = 10;
 export const PLUGIN_MAX_MAIL = 10;
 export const PLUGIN_MAX_IM = 10;
+export const PLUGIN_MAX_CAPABILITY_MODELS = 32;
 
 /** Contribution kinds (defined here so plugin-manifest.ts stays dependency-free; plugins.ts re-exports). */
-export const pluginContributionKindSchema = z.enum(['skill', 'connector', 'mcp', 'mail', 'im']);
+/**
+ * 贡献 / 投影类别（市场索引 categories、摘要回退与账本 ref 共用）。D124 追加
+ * `'capability-model'`（能力模型条目，60 号文档 §2）——随包不含 capabilityModels
+ * 贡献的旧宿主在逐条校验的索引层跳过含该类别的条目（plugin-index.ts 的条目级
+ * 校验语义），整份索引不受影响。
+ */
+export const pluginContributionKindSchema = z.enum([
+  'skill',
+  'connector',
+  'mcp',
+  'mail',
+  'im',
+  'capability-model',
+]);
 export type PluginContributionKind = z.infer<typeof pluginContributionKindSchema>;
 
 // --- declarative fields / instances (D105, todo/plugin-platform README §2.2–2.3) ---------
@@ -42,7 +65,7 @@ export type PluginContributionKind = z.infer<typeof pluginContributionKindSchema
 export const PLUGIN_FIELD_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
 /** Instantiable capability kinds a pure-instance manifest may declare. */
-export const PLUGIN_INSTANCE_KINDS = ['mail', 'mcp', 'im'] as const;
+export const PLUGIN_INSTANCE_KINDS = ['mail', 'mcp', 'im', 'capability-model'] as const;
 export const pluginInstanceKindSchema = z.enum(PLUGIN_INSTANCE_KINDS);
 export type PluginInstanceKind = z.infer<typeof pluginInstanceKindSchema>;
 export const PLUGIN_MAX_INSTANCES = 4;
@@ -275,6 +298,8 @@ export interface PluginCapabilityFacts {
   mcp: number;
   mail: number;
   im: number;
+  /** D124：能力模型条目数（一个模型一条）。 */
+  capabilityModels: number;
   instances: readonly PluginInstanceKind[];
   /** Up to two skill display names from the manifest (shown in parentheses). */
   skillNames: readonly string[];
@@ -287,6 +312,7 @@ export function capabilityFactsOf(manifest: PluginManifest): PluginCapabilityFac
     mcp: manifest.contributions.mcp.length,
     mail: manifest.contributions.mail.length,
     im: manifest.contributions.im.length,
+    capabilityModels: (manifest.contributions.capabilityModels ?? []).length,
     instances: manifest.instances ?? [],
     skillNames: manifest.contributions.skills
       .map((skill) => skill.displayName ?? skill.dir.split('/').pop() ?? skill.dir)
@@ -311,12 +337,16 @@ export function pluginCapabilitySummary(facts: PluginCapabilityFacts): string {
   }
   if (facts.connectors > 0) parts.push(`${facts.connectors} 个连接`);
   if (facts.mcp > 0) parts.push(`${facts.mcp} 个工具`);
+  // D124：能力模型条目 = 「一个模型一条」的模型清单（用户在 Bot 详情勾选启用）。
+  if (facts.capabilityModels > 0) parts.push(`${facts.capabilityModels} 个模型`);
   // P3: a mail contribution is the instance provisioning spec, not a capability unit —
   // the instances tail below is the user-facing line for it. D107: im is the same shape.
+  // D124: capability-model 同配方（厂商账号实例，凭据入 secrets）。
   const tail: string[] = [];
   if (facts.instances.includes('mail')) tail.push('可添加多个邮箱账号');
   if (facts.instances.includes('mcp')) tail.push('可添加自定义工具');
   if (facts.instances.includes('im')) tail.push('可添加 IM 账号（如微信），收发消息');
+  if (facts.instances.includes('capability-model')) tail.push('可添加多个厂商账号');
   const head =
     parts.length > 0
       ? `提供 ${parts.slice(0, -1).join('、')}${parts.length > 1 ? ' 与 ' : ''}${parts[parts.length - 1]!}`
@@ -340,6 +370,7 @@ export function pluginCapabilitySummaryFromCategories(
   if (categories.includes('mcp')) labels.push('工具');
   if (categories.includes('mail')) labels.push('邮件');
   if (categories.includes('im')) labels.push('即时通讯');
+  if (categories.includes('capability-model')) labels.push('模型');
   return sanitizeDisplayText(
     labels.length === 0 ? '提供扩展能力' : `提供${labels.join('、')}能力`,
     200,
@@ -711,6 +742,148 @@ export type PluginImContribution = z.infer<typeof pluginImContributionSchema>;
  */
 export const PLUGIN_IM_BUILTIN_INSTANCE_FIELD_KEYS: readonly string[] = ['bot_token'] as const;
 
+/**
+ * `runtime.network.allow` 条目形状（61 §2 注）：精确 host 或 `*.domain` 通配。
+ * 形状校验只挡明显笔误（空串 / 带协议前缀 / 路径 / 端口）；匹配语义（大小写、
+ * 通配边界、SSRF）在 P2 宿主侧强制。
+ */
+const PLUGIN_RUNTIME_NETWORK_ALLOW_PATTERN =
+  /^(?:\*\.)?[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$/i;
+
+/** `runtime.timeouts` 的键形状：`<contract>.<method>`，如 `media.generateImage`。 */
+const PLUGIN_RUNTIME_TIMEOUT_KEY_PATTERN = /^[a-z][a-z0-9-]*\.[A-Za-z][A-Za-z0-9]*$/;
+
+/**
+ * 插件可声明的单次调用超时上限（15 分钟，与视频契约对齐）。
+ *
+ * 调用级超时**由插件按自己的厂商协议声明**（`runtime.timeouts`），宿主只钳制上限——
+ * 同步出图、异步排队、视频生成的合理时长差异很大，应用不用一个固定值干涉插件实现。
+ * 未声明时用契约默认（`capabilityContractTimeout`）；看门狗击杀阈值即该值。
+ */
+export const PLUGIN_RUNTIME_MAX_CALL_TIMEOUT_MS = 15 * 60_000;
+
+/**
+ * 执行型插件清单增量段（D125，docs/design/61-plugin-runtime-platform.md §2）：manifest
+ * 含 `runtime` 即执行型（形态 B）——包内携带代码、由宿主外子进程按 61 §3.2 协议执行，
+ * 条目解析落到托管适配器（HostedAdapter）。形状按 61 §2 原样；声明校验的分级执行
+ * （`runtime` 仅 builtin / verified / developer 层级允许、有 `runtime` ⇒ 至少一条执行型
+ * 可消费的贡献、entry 文件存在性与 hostApi 解析）是 P2 安装管线的事——schema 层只做
+ * 形状与路径安全。旧应用读到本段即 `PLUGIN_UPGRADE_REQUIRED`（既有增量字段规则）。
+ */
+export const pluginRuntimeSectionSchema = z
+  .strictObject({
+    /** 包内相对路径，打包单文件 JS（ESM），如 'dist/main.js'。 */
+    entry: z.string().min(1).max(300),
+    /** 期望的 Host API semver 范围，如 '^1'；语义解析与不匹配拒绝在 P2 宿主握手。 */
+    hostApi: z.string().min(1).max(32),
+    /** 域名白名单：精确 host 或 '*.domain'；缺省 = 该插件不得用 host.net。 */
+    network: z
+      .strictObject({
+        allow: z
+          .array(
+            z.string().min(1).max(253).regex(PLUGIN_RUNTIME_NETWORK_ALLOW_PATTERN, {
+              message: '必须是精确 host 或 *.domain 通配',
+            }),
+          )
+          .max(32),
+      })
+      .optional(),
+    /**
+     * D125 P4（DEV-114 方案 1）：执行型插件的实例字段声明面——复用 D105 的
+     * `pluginFieldSchema`（表单 / 校验 / secrets 管线全部沿用），`sensitive: true`
+     * 的值走实例 secrets（`plugin:{pluginId}:instance:{instanceId}:{key}`），调用时
+     * 经 `invoke.context.credentials` 注入。声明序去重；与数据型条目的引擎凭据字段
+     * 并集构成实例表单（core `capabilityModelInstanceFields`）。
+     */
+    instanceFields: z.array(pluginFieldSchema).max(16).optional(),
+    /**
+     * 方法级调用超时覆盖（毫秒）：key = `<contract>.<method>`（如 `media.generateImage`）。
+     * 插件按自己的厂商协议声明合理时长（同步出图 / 异步排队差异大），宿主只钳制上限
+     * {@link PLUGIN_RUNTIME_MAX_CALL_TIMEOUT_MS}；未声明的方走契约默认（`contracts.ts`）。
+     * 键形状在此校验；方法是否属于已注册契约由安装管线校验（core）。
+     */
+    timeouts: z
+      .record(
+        z
+          .string()
+          .min(3)
+          .max(64)
+          .regex(PLUGIN_RUNTIME_TIMEOUT_KEY_PATTERN, {
+            message: '必须是 <contract>.<method> 形式，如 media.generateImage',
+          }),
+        z.number().int().min(1_000).max(PLUGIN_RUNTIME_MAX_CALL_TIMEOUT_MS),
+      )
+      .optional(),
+    /** 每插件进程内调用并发上限（v1 运行时恒串行排队，本字段预留）。 */
+    maxConcurrent: z.number().int().min(1).max(4).default(1),
+  })
+  .superRefine((runtime, ctx) => {
+    const seenFields = new Set<string>();
+    (runtime.instanceFields ?? []).forEach((field, index) => {
+      if (seenFields.has(field.key)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['instanceFields', index, 'key'],
+          message: `实例字段重复：${field.key}`,
+        });
+      }
+      seenFields.add(field.key);
+    });
+    // Trim 纪律同 mail/im host：空白填充的路径不能当合法 entry 通过（否则 P2 到
+    // 安装管线才以令人困惑的方式失败）。
+    if (runtime.entry.trim() !== runtime.entry) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['entry'],
+        message: 'entry must not have leading/trailing whitespace',
+      });
+    }
+    // 包内相对路径（禁 `..`、绝对路径、反斜杠 / 控制字符）——复用既有
+    // `isSafePluginRelPath` 单一事实来源（与 icon / 贡献 dir / file 同规则）。
+    if (!isSafePluginRelPath(runtime.entry)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['entry'],
+        message: 'runtime.entry 必须是包内相对路径（禁 .. 与绝对路径）',
+      });
+    }
+  });
+export type PluginRuntimeSection = z.infer<typeof pluginRuntimeSectionSchema>;
+
+/**
+ * 能力模型条目（D124，docs/design/60-capability-model-plugins.md §2）：插件声明的一个
+ * 可调用媒体模型——用户视角「一个模型一条」，插件粒度 = 平台协议族。执行逻辑不住在
+ * 插件里：`engine` 绑定 core 内置引擎注册表（安装期校验未知引擎拒绝），插件永远只是
+ * 数据。`capability` 用独立七值枚举（既有 `ModelCapability` 去掉 `'chat'`，不引入跨
+ * 文件耦合）；`params` 是引擎参数默认/覆盖（引擎逐键白名单消费，未知键忽略）；
+ * `instance` 在插件多实例时显式指定，缺省用唯一实例。`id` 复用既有贡献 id 规则
+ * （`PLUGIN_MCP_KEY_PATTERN`，mcp / mail / im 同款），插件内唯一性交给
+ * `pluginManifestSchema` 的 superRefine；声明条目必须同时
+ * `instances: ['capability-model']`（enforced in `pluginManifestSchema`）。
+ */
+export const capabilityModelEntrySchema = z.strictObject({
+  id: pluginMcpIdSchema,
+  capability: z.enum(['image', 'video', 'tts', 'asr', 'embedding', 'rerank', 'multimodal']),
+  /** 厂商模型 id，如 'qwen-image-2.0'。 */
+  model: z.string().min(1).max(200),
+  /**
+   * MEDIA_ENGINES 键，安装期校验（PLUGIN_ENGINE_UNKNOWN）。**可省略**（D125，61 §2）：
+   * 执行型插件（manifest 含 `runtime` 段）的条目不填 `engine`——执行逻辑来自插件自身
+   * 代码，条目解析落到托管适配器（HostedAdapter）；省略时必须声明 `runtime`
+   * （enforced in `pluginManifestSchema`），数据型条目（有 engine）语义不变。
+   */
+  engine: z.string().min(1).max(64).optional(),
+  /** 缺省用 model。 */
+  displayName: z.string().max(100).optional(),
+  /** 呈现给用户与模型的能力说明。 */
+  description: z.string().max(500).optional(),
+  /** 引擎参数默认/覆盖（如 size 档位），键为引擎白名单消费。 */
+  params: z.record(z.string(), z.unknown()).optional(),
+  /** 多实例时显式指定实例 id，缺省用插件唯一实例。 */
+  instance: z.string().optional(),
+});
+export type CapabilityModelEntry = z.infer<typeof capabilityModelEntrySchema>;
+
 // --- manifest ----------------------------------------------------------------
 
 export const pluginManifestSchema = z
@@ -756,6 +929,11 @@ export const pluginManifestSchema = z
         mcp: z.array(pluginMcpContributionSchema).max(PLUGIN_MAX_MCP).default([]),
         mail: z.array(pluginMailContributionSchema).max(PLUGIN_MAX_MAIL).default([]),
         im: z.array(pluginImContributionSchema).max(PLUGIN_MAX_IM).default([]),
+        // D124：能力模型条目可选声明（其余贡献缺省空数组；这里省略 = 未声明，兼容旧清单）。
+        capabilityModels: z
+          .array(capabilityModelEntrySchema)
+          .max(PLUGIN_MAX_CAPABILITY_MODELS)
+          .optional(),
       })
       // D105：纯实例插件（只声明 `instances`）可以整个省略 contributions；解析输出恒为完整对象。
       .prefault({}),
@@ -765,9 +943,11 @@ export const pluginManifestSchema = z
       .optional(),
     /** Pure-instance capability kinds this plugin provides (no contributions needed). */
     instances: z.array(pluginInstanceKindSchema).max(PLUGIN_MAX_INSTANCES).optional(),
+    // D125：执行型插件增量段（形态 B，61 §2）——含本段即带代码插件，宿主外子进程执行。
+    runtime: pluginRuntimeSectionSchema.optional(),
   })
   .superRefine((manifest, ctx) => {
-    const { skills, connectors, mcp, mail, im } = manifest.contributions;
+    const { skills, connectors, mcp, mail, im, capabilityModels = [] } = manifest.contributions;
     if (
       skills.length +
         connectors.length +
@@ -830,6 +1010,12 @@ export const pluginManifestSchema = z
       ['contributions', 'mail'],
       'id',
     );
+    // D124：能力模型条目 id 插件内查重（id 是 plugin_items 账本 ref 与 Bot 勾选键）。
+    dup(
+      capabilityModels.map((entry, index) => [entry.id, index] as const),
+      ['contributions', 'capabilityModels'],
+      'id',
+    );
     // D105 P3: a mail contribution IS the mail-instance provisioning spec — exactly one
     // per manifest, and ONLY together with the `instances: ['mail']` declaration. The
     // reverse holds too (review P2-1): a declared mail instance kind without its
@@ -877,6 +1063,29 @@ export const pluginManifestSchema = z
         message: "声明 instances: ['im'] 时必须同时声明一份 IM 贡献",
       });
     }
+    // D124：能力模型条目 = 'capability-model' 实例的供给规范——声明条目就必须声明该
+    // 实例 kind（实例表单由引擎 credentialFields 生成，没有条目就没有引擎可指向）。
+    // 反向不强制（instances: ['capability-model'] 可先于条目声明，语义归 P2 安装管线）。
+    if (capabilityModels.length > 0 && !manifest.instances?.includes('capability-model')) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['contributions', 'capabilityModels'],
+        message: "声明能力模型条目时必须同时声明 instances: ['capability-model']",
+      });
+    }
+    // D125：执行型条目（不填 engine）必须与 `runtime` 段配对——条目解析落到本插件的
+    // 托管适配器（HostedAdapter），没有 runtime 就没有执行体；数据型条目（有 engine）
+    // 语义不变（安装期校验 MEDIA_ENGINES，D124）。反向（有 runtime ⇒ 至少一条执行型
+    // 可消费的贡献）与层级限制归 P2 安装管线。
+    capabilityModels.forEach((entry, index) => {
+      if (entry.engine === undefined && manifest.runtime === undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['contributions', 'capabilityModels', index, 'engine'],
+          message: '不填 engine 的执行型条目必须同时声明 runtime 段',
+        });
+      }
+    });
     // P4-M2 mcp instance templates: an `mcpb` contribution is a bundled server and is
     // never instantiable; an `http` contribution is a per-instance TEMPLATE only when
     // the manifest declares `instances: ['mcp']` (at most one — a pure-instance generic

@@ -3,11 +3,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   PLUGIN_MANIFEST_FILE,
+  pluginFieldSummaryOf,
   sanitizeDisplayText,
   type PluginManifest,
   type PluginSummary,
 } from '@kepcup/shared';
 import type { CoreLogger } from '../infra/logger.js';
+import { capabilityKindOf } from './kinds.js';
 import { parsePluginManifestText } from './manifest-loader.js';
 import { pluginIconDataUri } from './icon.js';
 
@@ -275,6 +277,14 @@ export class BuiltinPlugins {
   summaries(): PluginSummary[] {
     return this.list().map((plugin) => {
       const { manifest } = plugin;
+      // D124 P4：实例供给声明与实例表单按清单派生（与 store 行的 `#summaryOf` 同一
+      // 口径），能力模型类 builtin 插件（阿里云百炼 / 火山方舟）才能在渲染层出
+      // 「模型」管理入口（条目 + 账号实例）。instanceCounts 恒 0：该字段只覆盖
+      // mail / mcp / im 三类行数，且 builtin 目录是 dev / e2e 面，行数以实例列表为准。
+      const providesInstances = manifest.instances ?? [];
+      const instanceFields = providesInstances.flatMap((kind) =>
+        capabilityKindOf(kind).instanceFields(manifest).map(pluginFieldSummaryOf),
+      );
       return {
         id: manifest.id,
         name: manifest.name,
@@ -301,10 +311,10 @@ export class BuiltinPlugins {
         items: [],
         updateAvailable: null,
         revoked: null,
-        configFields: [],
-        instanceFields: [],
+        configFields: (manifest.config?.fields ?? []).map(pluginFieldSummaryOf),
+        instanceFields,
         instanceCounts: { mail: 0, mcp: 0, im: 0 },
-        providesInstances: [],
+        providesInstances,
       };
     });
   }

@@ -1,0 +1,128 @@
+{
+  "format_version": 1,
+  "id": "io.kepcup/dashscope",
+  "name": "阿里云百炼",
+  "icon": "icon.png",
+  "version": "1.0.1",
+  "description": "阿里云百炼（DashScope）官方模型条目包：语音合成 / 语音识别 / 图文理解 / 向量 / 重排共 13 个预置模型，一个模型一条，勾选即用；凭据只保存在本机。（DEV-133：图片 / 视频生成由执行型插件提供，如 dashscope-t2i）",
+  "usage": "安装后在插件详情「账号实例」添加阿里云百炼账号并填入 API Key（百炼控制台 bailian.console.aliyun.com 获取），再到 Bot 详情展开本插件卡片勾选要启用的模型条目；勾选后该 Bot 即可用所选模型，未填 Key 时调用会引导补配。",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "homepage": "https://kepcup.com",
+  "engines": {
+    "kepcup": ">=0.5.14"
+  },
+  "instances": [
+    "capability-model"
+  ],
+  "contributions": {
+    "capabilityModels": [
+      {
+        "id": "text-embedding-v4",
+        "capability": "embedding",
+        "model": "text-embedding-v4",
+        "engine": "dashscope",
+        "displayName": "通用文本向量 V4",
+        "description": "OpenAI 兼容 embeddings 端点的通用文本向量模型。"
+      },
+      {
+        "id": "text-embedding-v3",
+        "capability": "embedding",
+        "model": "text-embedding-v3",
+        "engine": "dashscope",
+        "displayName": "通用文本向量 V3",
+        "description": "OpenAI 兼容 embeddings 端点的上一代通用文本向量模型。"
+      },
+      {
+        "id": "tongyi-embedding-vision",
+        "capability": "embedding",
+        "model": "tongyi-embedding-vision-plus-2026-03-06",
+        "engine": "dashscope",
+        "displayName": "通义多模态向量",
+        "description": "图文多模态向量；兼容模式不支持，引擎走原生 multimodal-embedding 端点。"
+      },
+      {
+        "id": "gte-rerank-v2",
+        "capability": "rerank",
+        "model": "gte-rerank-v2",
+        "engine": "dashscope",
+        "displayName": "GTE 文本重排 V2",
+        "description": "原生 text-rerank 端点的文本重排模型。"
+      },
+      {
+        "id": "qwen3-7-text-rerank",
+        "capability": "rerank",
+        "model": "qwen3.7-text-rerank",
+        "engine": "dashscope",
+        "displayName": "Qwen3.7 文本重排",
+        "description": "原生 text-rerank 端点的 Qwen 文本重排模型。"
+      },
+      {
+        "id": "qwen3-vl-plus",
+        "capability": "multimodal",
+        "model": "qwen3-vl-plus",
+        "engine": "dashscope",
+        "displayName": "Qwen3-VL 图文理解（Plus）",
+        "description": "图片理解走兼容根 chat + image_url 内容块的 Qwen3-VL 模型。"
+      },
+      {
+        "id": "qwen-vl-plus",
+        "capability": "multimodal",
+        "model": "qwen-vl-plus",
+        "engine": "dashscope",
+        "displayName": "Qwen-VL 图文理解（Plus）",
+        "description": "长期在售的 Qwen-VL 图片理解模型。"
+      },
+      {
+        "id": "qwen-audio-3-1-tts-next",
+        "capability": "tts",
+        "model": "qwen-audio-3.1-tts-next",
+        "engine": "dashscope",
+        "displayName": "Qwen 音频语音生成",
+        "description": "音频生成系模型（无音色参数），HTTP 非实时通道实测可用。"
+      },
+      {
+        "id": "qwen3-tts-flash",
+        "capability": "tts",
+        "model": "qwen3-tts-flash",
+        "engine": "dashscope",
+        "displayName": "Qwen3-TTS 语音合成（Flash）",
+        "description": "音色驱动的语音合成，默认音色 Cherry。"
+      },
+      {
+        "id": "qwen3-tts-instruct-flash",
+        "capability": "tts",
+        "model": "qwen3-tts-instruct-flash",
+        "engine": "dashscope",
+        "displayName": "Qwen3-TTS 指令语音合成（Flash）",
+        "description": "支持指令控制语气的音色驱动语音合成。"
+      },
+      {
+        "id": "cosyvoice-v3-flash",
+        "capability": "tts",
+        "model": "cosyvoice-v3-flash",
+        "engine": "dashscope",
+        "displayName": "CosyVoice 语音合成（v3 Flash）",
+        "description": "CosyVoice v3 快速版语音合成（HTTP 非实时通道）。"
+      },
+      {
+        "id": "cosyvoice-v2",
+        "capability": "tts",
+        "model": "cosyvoice-v2",
+        "engine": "dashscope",
+        "displayName": "CosyVoice 语音合成（v2）",
+        "description": "CosyVoice v2 语音合成（HTTP 非实时通道）。"
+      },
+      {
+        "id": "qwen3-asr-flash",
+        "capability": "asr",
+        "model": "qwen3-asr-flash",
+        "engine": "dashscope",
+        "displayName": "Qwen3-ASR 语音识别（Flash）",
+        "description": "录音文件识别的快速版语音转文本模型。"
+      }
+    ]
+  }
+}

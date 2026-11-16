@@ -1,10 +1,13 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import type { CapabilityModelKey, ModelCapability } from '@kepcup/shared';
+  import { ChevronRight } from '@lucide/svelte';
   import { CAPABILITY_MODEL_KEYS } from './capability-keys';
   import { t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { settingsStore } from '$lib/stores/settings.svelte';
+  import { shell } from '$lib/stores/shell.svelte';
+  import { capabilityEntries } from '$lib/features/plugins/capability-entries.svelte';
   import {
     capabilityModelChoices,
     capabilityProviderCandidates,
@@ -23,6 +26,24 @@
    * （EmbeddingSection）。深链锚点 `default-models` / `embedding` 落在这里。
    */
   let { onOpenProvider }: { onOpenProvider?: (instanceId: string) => void } = $props();
+
+  // D124：插件提供的模型条目（只读入口行）：数量按能力过滤条目清单，点击 deepLink
+  // 扩展中心对应插件详情（多插件时取首个，其余在插件网格可寻）。
+  $effect(() => {
+    capabilityEntries.start();
+    void capabilityEntries.load().catch(() => undefined);
+  });
+
+  function pluginProvidedCount(capability: CapabilityModelKey): number {
+    return capabilityEntries.countByCapability(capability);
+  }
+
+  function openPluginEntries(capability: CapabilityModelKey): void {
+    const pluginId = capabilityEntries.pluginIdsOf(capability)[0];
+    if (pluginId === undefined) return;
+    shell.extensionCenterPluginFocus = pluginId;
+    shell.openExtensionCenter('installed');
+  }
 
   // --- 默认模型 / 并发（沿用原 ModelsSection 的草稿同步与即改即存） ----------
   let mainModel = $state('');
@@ -342,6 +363,19 @@
               </p>
             {:else}
               <p class="text-xs text-muted-foreground">{t(`settings.capabilityHint.${capability}`)}</p>
+            {/if}
+            {#if pluginProvidedCount(capability) > 0}
+              <!-- D124：插件提供的条目只读入口（决策 10：条目不进设置目录，入口行不挂锚点） -->
+              <button
+                type="button"
+                class="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                onclick={() => openPluginEntries(capability)}
+                data-testid={`capability-slot-plugin-provided-${capability}`}
+              >
+                {t('settings.capabilityPluginProvided', { count: pluginProvidedCount(capability) })}
+                · {t('settings.capabilityPluginProvidedHint')}
+                <ChevronRight class="size-3" aria-hidden="true" />
+              </button>
             {/if}
           </div>
           <div class="flex items-center gap-2">

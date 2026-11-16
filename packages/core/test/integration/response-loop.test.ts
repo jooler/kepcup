@@ -223,23 +223,25 @@ describe('response loop', () => {
     expect(completed.triggerMessageIds).toEqual(failed.triggerMessageIds);
   });
 
-  // D75 W2: media generation is a task's work (a turn has no generate_image);
+  // D75 W2: media generation is a task's work (a turn has no generate_speech);
   // the task fails with the structured setup and the retry (setup card) starts
-  // a task continuing it.
-  it('generate_image (in a task) without a configured image capability fails the task into a capability-model setup failure', async () => {
+  // a task continuing it. DEV-133：image / video 无全局槽位（生成能力走插件
+  // 条目），槽位「配置 → 自动续跑」链路用保留的 tts 验证（失败形态同源：
+  // MediaService CAPABILITY_NOT_CONFIGURED → 工具 SETUP_REQUIRED）。
+  it('generate_speech (in a task) without a configured tts capability fails the task into a capability-model setup failure', async () => {
     const { core, llm } = await start();
     llm.script('mock-main', [
       ...viaTask({
-        taskSteps: [step().replyToolCall('generate_image', { prompt: '一只在窗台晒太阳的猫' })],
-        relay: '画图前需要先配置图像模型',
+        taskSteps: [step().replyToolCall('generate_speech', { text: '把这句话读出来' })],
+        relay: '朗读前需要先配置语音合成模型',
       }),
     ]);
     const bot = await makeBot(core, '画师');
     const conv = await openDirect(core, bot.id);
 
-    await sendBatch(core, conv.id, ['帮我画一张图']);
+    await sendBatch(core, conv.id, ['帮我读一段话']);
     const failed = await waitForRun(core, conv.id, 'failed', { loopType: 'task' });
-    expect(failed.setup).toEqual({ kind: 'capability-model', capability: 'image' });
+    expect(failed.setup).toEqual({ kind: 'capability-model', capability: 'tts' });
 
     // 失败条目带确定性指引：Bot 等卡片、勿代产（配置完成后任务自动继续）。
     // task_event 条目是内部行（用户可见列表只渲染任务卡），走 domain 级列表。
@@ -249,7 +251,7 @@ describe('response loop', () => {
     );
     expect((failureEntry?.content as { text?: string }).text ?? '').toContain('自动继续');
 
-    // 设置卡片完成图像模型配置后重试：工具不再报 SETUP_REQUIRED，对话继续。
+    // 设置卡片完成语音合成模型配置后重试：工具不再报 SETUP_REQUIRED，对话继续。
     const settings = (await core.rpc.call('settings.get')) as {
       capabilityModels: Record<string, unknown>;
       modelProviders: unknown[];
@@ -257,7 +259,7 @@ describe('response loop', () => {
     await core.rpc.call('settings.update', {
       capabilityModels: {
         ...settings.capabilityModels,
-        image: { provider: 'dashscope', model: 'qwen-image' },
+        tts: { provider: 'dashscope', model: 'qwen3-tts-flash' },
       },
       // 能力引用必须指向已存在的实例（读路径会把悬空引用置空）。
       modelProviders: [
@@ -268,13 +270,13 @@ describe('response loop', () => {
           name: '阿里云百炼',
           baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
           enabled: true,
-          models: [{ id: 'qwen-image', contextWindow: 128_000, capabilities: ['image'] }],
+          models: [{ id: 'qwen3-tts-flash', contextWindow: 128_000, capabilities: ['tts'] }],
         },
       ],
     });
     llm.script('mock-main', [
-      step().inTask().replyText('图像能力已就绪'),
-      step().inTurn().replyText('画好了'),
+      step().inTask().replyText('语音能力已就绪'),
+      step().inTurn().replyText('读好了'),
     ]);
     const retried = (await core.rpc.call('runs.retry', { runId: failed.id })) as {
       run: { id: string; loopType: string } | null;
@@ -324,10 +326,12 @@ describe('response loop', () => {
     expect(second.notified).toBe(false);
   }, 30_000);
 
-  // 生成产物的确定性投递：generate_image 落盘后由工具本身把图片作为消息
+  // 生成产物的确定性投递：generate_speech 落盘后由工具本身把音频作为消息
   // 附件发出（任务内 = 进度消息），不再依赖模型记得调 send_message——漏发
-  // 会让「已生成」的报告无图可看。
-  it('generate_image delivers the image as a message attachment without send_message', async () => {
+  // 会让「已生成」的报告无声可听。DEV-133：image 的内置引擎已移除（条目
+  // 通道的产物交付由 plugin-host / media-tools 单测覆盖），投递链路用保留
+  // 的 tts 全局槽位端到端验证。
+  it('generate_speech delivers the audio as a message attachment without send_message', async () => {
     const { core, llm } = await start();
     // 能力配置 + 厂商 key（#resolveProvider 读密钥表，缺 key 会在厂商请求前失败）。
     // 能力引用指向已存在的厂商实例；媒体调用按实例 baseUrl + 原生适配器路由。
@@ -337,30 +341,30 @@ describe('response loop', () => {
     };
     await core.rpc.call('settings.update', {
       capabilityModels: {
-        image: { provider: 'volcengine', model: 'doubao-seedream-4-0-250828' },
+        tts: { provider: 'dashscope', model: 'qwen3-tts-flash' },
       },
       modelProviders: [
-        ...before.modelProviders.filter((p) => p.id !== 'volcengine'),
+        ...before.modelProviders.filter((p) => p.id !== 'dashscope'),
         {
-          id: 'volcengine',
-          vendor: 'volcengine',
-          name: '火山方舟',
-          baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+          id: 'dashscope',
+          vendor: 'dashscope',
+          name: '阿里云百炼',
+          baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
           enabled: true,
           models: [],
         },
       ],
     });
-    await core.rpc.call('providers.setKey', { provider: 'volcengine', key: 'sk-test' });
-    // 1x1 PNG：厂商端点返回 b64，其余请求（mock LLM 等）透传真实 fetch。
-    const png = Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-      'base64',
-    );
+    await core.rpc.call('providers.setKey', { provider: 'dashscope', key: 'sk-test' });
+    // 厂商端点返回 b64 音频（qwen3-tts 走 multimodal-generation 端点，
+    // output.audio.data）；其余请求（mock LLM 等）透传真实 fetch。
+    const mp3 = Buffer.from('fake-mp3-bytes');
     const realFetch = globalThis.fetch;
     vi.stubGlobal('fetch', async (url: RequestInfo | URL, init?: RequestInit) => {
-      if (String(url).includes('/images/generations')) {
-        return new Response(JSON.stringify({ data: [{ b64_json: png.toString('base64') }] }));
+      if (String(url).includes('/services/aigc/multimodal-generation/generation')) {
+        return new Response(
+          JSON.stringify({ output: { audio: { data: mp3.toString('base64') } } }),
+        );
       }
       return realFetch(url, init);
     });
@@ -372,32 +376,58 @@ describe('response loop', () => {
         'message.created',
         (payload) => payload.message.attachments.length > 0,
       );
+      // 唤醒轮的触发段必须带「已投递附件」宿主备注：投递消息是任务自己的行，
+      // 不进对话轮的上下文——没有备注，对话轮只知道报告里的路径，容易把同一
+      // 份音频用 send_message 再发一遍（同一文件出现两条消息）。
+      let wakeTriggerText = '';
       llm.script('mock-main', [
         ...viaTask({
           taskSteps: [
-            step().replyToolCall('generate_image', { prompt: '一只猫' }),
-            step().replyText('图片已经生成好了'),
+            step().replyToolCall('generate_speech', { text: '读一下这段话', file_name: 'pelican-bicycle' }),
+            step().replyText('音频已经生成好了'),
           ],
-          relay: '画好了，图片已经发给你了',
         }),
+        step()
+          .inTurn()
+          .expect((req) => {
+            const text = req.lastUserText();
+            if (!text.includes('<trigger reason="task"')) return false;
+            wakeTriggerText = text;
+            return true;
+          })
+          .replyText('读好了，语音已经发给你了'),
       ]);
       const bot = await makeBot(core, '画师');
       const conv = await openDirect(core, bot.id);
 
-      await sendBatch(core, conv.id, ['帮我画一张图']);
+      await sendBatch(core, conv.id, ['帮我读一段话']);
       const created = await createdPromise;
       expect(created.message.attachments).toHaveLength(1);
       await waitForRun(core, conv.id, 'completed', { loopType: 'task' });
-      const withImage = await waitFor(async () => {
+      const withAudio = await waitFor(async () => {
         const all = await listAllMessages(core, conv.id);
         return all.find((m) => m.senderBotId === bot.id && m.attachments.length > 0) ?? null;
-      }, { label: 'bot message with image attachment' });
-      expect(withImage?.attachments[0]?.mime).toBe('image/png');
-      // 媒体工具调用记入所在 task run 的用量：一行、归属 Bot / 对话 / run、token 为 0。
+      }, { label: 'bot message with audio attachment' });
+      expect(withAudio?.attachments[0]?.mime).toBe('audio/mpeg');
+      // 唤醒触发段带宿主备注：文件已随投递消息展示，不必重发。wake 轮的模型
+      // 请求可能在 run 置 completed 之后才落地——等 .expect 回调捕获到触发段
+      // 再断言，否则是竞态（负载高时偶发）。
+      const wakeText = await waitFor(
+        async () => (wakeTriggerText.includes('<trigger reason="task"') ? wakeTriggerText : null),
+        { label: 'wake trigger carrying the shown-attachments note' },
+      );
+      expect(wakeText).toContain('宿主备注：任务执行中已把 pelican-bicycle.mp3');
+      expect(wakeText).toContain('无需再用 send_message 发送这些文件');
+      // 终态条目记录已投递附件的文件名（执行报告的正文不受影响）。
       const taskRun = (await listRuns(core, conv.id)).find((r) => r.loopType === 'task')!;
+      const terminal = core.services.mainDb!.prepare(
+        "select content_json from messages where task_id = ? and kind = 'task_event' and json_extract(content_json, '$.phase') = 'result'",
+      ).get(taskRun.id) as { content_json: string };
+      expect(JSON.parse(terminal.content_json).shownAttachments).toEqual(['pelican-bicycle.mp3']);
+      // 媒体工具调用记入所在 task run 的用量：一行、归属 Bot / 对话 / run、token 为 0。
       const rows = core.services
         .mainDb!.prepare(
-          "select run_id, bot_id, conversation_id, loop_type, provider, model, input_tokens, output_tokens, cost_usd from usage_ledger where provider = 'volcengine'",
+          "select run_id, bot_id, conversation_id, loop_type, provider, model, input_tokens, output_tokens, cost_usd from usage_ledger where provider = 'dashscope'",
         )
         .all();
       expect(rows).toEqual([
@@ -406,8 +436,8 @@ describe('response loop', () => {
           bot_id: bot.id,
           conversation_id: conv.id,
           loop_type: 'task',
-          provider: 'volcengine',
-          model: 'doubao-seedream-4-0-250828',
+          provider: 'dashscope',
+          model: 'qwen3-tts-flash',
           input_tokens: 0,
           output_tokens: 0,
           cost_usd: null,

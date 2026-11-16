@@ -1,4 +1,12 @@
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
@@ -93,6 +101,8 @@ function delivery(
     /** 在 append 真正执行前改动现场（模拟绑定附件时出错）。 */
     beforeAppend?: (input: AppendMessageInput) => void;
     id?: RunIdentity;
+    /** D125 补丁：hostOwned 投递的白名单根。 */
+    hostOwnedRoot?: string;
   } = {},
 ) {
   return createGeneratedMediaDelivery({
@@ -113,6 +123,9 @@ function delivery(
     },
     logger: { warn: (_fields, msg) => warnings.push(msg) },
     guessMime: () => 'application/octet-stream',
+    ...(options.hostOwnedRoot !== undefined
+      ? { hostArtifactRoot: options.hostOwnedRoot }
+      : {}),
   });
 }
 
@@ -225,6 +238,66 @@ describe('createGeneratedMediaDelivery', () => {
   });
 });
 
+/**
+ * D125 补丁：执行型插件产物在 `{home}/plugin-data/` 下（对网关不可读）。
+ * hostOwned 投递只在显式配置的数据根内直接读文件，绝不回落成任意读。
+ */
+describe('hostOwned 插件产物投递（D125 补丁）', () => {
+  it('数据根内的文件直接读取并投递（不走 gateway.checkPath）', () => {
+    const pluginRoot = path.join(root, 'plugin-data-hosted');
+    const artifactDir = path.join(pluginRoot, 'io.test', 'img', 'artifacts');
+    mkdirSync(artifactDir, { recursive: true });
+    const file = path.join(artifactDir, 'cat.png');
+    writeFileSync(file, 'plugin-png');
+    // gateway 对应用数据目录恒拒绝——hostOwned 不应调用它。
+    const outcome = delivery({ denied: [file], hostOwnedRoot: pluginRoot }).send([file], '', {
+      hostOwned: true,
+    });
+    expect(outcome).toEqual({ delivered: [file], failed: [] });
+    expect(published).toHaveLength(1);
+  });
+
+  it('数据根之外的文件被拒绝，原因说明不是插件产物', () => {
+    const pluginRoot = path.join(root, 'plugin-data-outside');
+    mkdirSync(pluginRoot, { recursive: true });
+    const file = write('outside.png', 'not-a-plugin-artifact');
+    const outcome = delivery({ hostOwnedRoot: pluginRoot }).send([file], '', {
+      hostOwned: true,
+    });
+    expect(outcome.delivered).toEqual([]);
+    expect(outcome.failed[0]?.path).toBe(file);
+    expect(outcome.failed[0]?.reason).toContain('插件产物');
+    expect(attachmentRows()).toBe(0);
+  });
+
+  it('未配置数据根：hostOwned 投递失败（拒绝任意读）', () => {
+    const pluginRoot = path.join(root, 'plugin-data-unconfigured');
+    const file = path.join(pluginRoot, 'io.test', 'img', 'artifacts', 'a.png');
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, 'x');
+    const outcome = delivery().send([file], '', { hostOwned: true });
+    expect(outcome.delivered).toEqual([]);
+    expect(outcome.failed[0]?.reason).toContain('插件产物目录未配置');
+  });
+
+  it('数据根内指向根外的符号链接被拒绝（canonicalPath 解析后再判根）', () => {
+    const pluginRoot = path.join(root, 'plugin-data-symlink');
+    const artifactDir = path.join(pluginRoot, 'io.test', 'img', 'artifacts');
+    mkdirSync(artifactDir, { recursive: true });
+    const secret = path.join(root, 'plugin-data-symlink-secret.txt');
+    writeFileSync(secret, 'outside-the-root');
+    const link = path.join(artifactDir, 'leak.png');
+    symlinkSync(secret, link);
+    const outcome = delivery({ hostOwnedRoot: pluginRoot }).send([link], '', {
+      hostOwned: true,
+    });
+    expect(outcome.delivered).toEqual([]);
+    expect(outcome.failed[0]?.path).toBe(link);
+    expect(outcome.failed[0]?.reason).toContain('插件产物');
+    expect(attachmentRows()).toBe(0);
+  });
+});
+
 describe('mediaDeliveryResult', () => {
   it('全部送达：不回路径', () => {
     const result = mediaDeliveryResult({
@@ -245,5 +318,28 @@ describe('mediaDeliveryResult', () => {
     });
     expect(result.content).toContain('/ws/2.png');
     expect(result.content).not.toContain('已作为消息附件显示在用户的对话界面中。无需');
+  });
+
+  it('插件私有产物投递失败：不回不可读路径、不引导 attachment_paths 补发', () => {
+    const result = mediaDeliveryResult({
+      generated: '语音',
+      saved: ['/home/plugin-data/io.test/tts/artifacts/a.mp3'],
+      outcome: {
+        delivered: [],
+        failed: [
+          {
+            path: '/home/plugin-data/io.test/tts/artifacts/a.mp3',
+            reason: '文件过大（30.0MB，附件上限 25.0MB）',
+          },
+        ],
+      },
+      privateArtifacts: true,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.content).toContain('私有数据目录');
+    expect(result.content).toContain('文件过大');
+    expect(result.content).not.toContain('/home/plugin-data');
+    expect(result.content).not.toContain('attachment_paths');
+    expect(result.content).not.toContain('保存在 workspace');
   });
 });

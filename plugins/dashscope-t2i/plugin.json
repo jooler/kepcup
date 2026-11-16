@@ -1,0 +1,55 @@
+{
+  "format_version": 1,
+  "id": "io.kepcup/dashscope-t2i",
+  "name": "百炼文生图（执行型试点）",
+  "icon": "icon.svg",
+  "version": "1.2.0",
+  "description": "阿里云百炼 Qwen-Image 执行型官方插件试点：插件内自带异步提交 / 轮询 / 进度 / 错误映射实现（经宿主网络白名单访问 dashscope.aliyuncs.com），产物下载与落附件在应用侧完成。",
+  "usage": "安装后在插件详情「账号实例」添加百炼账号并填入 API Key（百炼控制台 bailian.console.aliyun.com 创建），再到 Bot 详情展开本插件卡片勾选「百炼 Qwen-Image 3.0」条目；勾选后该 Bot 的 generate_image 即可走本插件。未填 Key 时调用会提示补配。若条目报 url error，说明该 model 不在本端点支持列表里，可在插件清单的条目 params.model 覆盖为在售 qwen-image 模型。",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "homepage": "https://kepcup.com",
+  "engines": {
+    "kepcup": ">=0.5.14"
+  },
+  "instances": ["capability-model"],
+  "runtime": {
+    "entry": "dist/main.js",
+    "hostApi": "^1",
+    "network": {
+      "allow": ["dashscope.aliyuncs.com"]
+    },
+    "timeouts": {
+      "media.generateImage": 300000
+    },
+    "instanceFields": [
+      {
+        "key": "apiKey",
+        "type": "string",
+        "title": "百炼 API Key",
+        "description": "阿里云百炼控制台（bailian.console.aliyun.com）创建的 API Key；只保存在本机，调用时由应用注入插件进程",
+        "required": true,
+        "sensitive": true
+      }
+    ]
+  },
+  "contributions": {
+    "capabilityModels": [
+      {
+        "id": "qwen-image-3",
+        "capability": "image",
+        "model": "qwen-image-3.0",
+        "displayName": "百炼 Qwen-Image 3.0（文生图）",
+        "description": "百炼 qwen-image 系列异步文生图：提交任务后轮询结果（可上报排队 / 生成中阶段并响应取消）；带参考图即编辑（3.0 系列最多 3 张）。支持尺寸 / 张数 / 种子 / 提示词扩写 / 水印参数；厂商任务数据（含图片 URL）保留 24 小时，应用会立即下载保存。",
+        "params": {
+          "size": "1024*1024",
+          "n": 1,
+          "prompt_extend": true,
+          "watermark": false
+        }
+      }
+    ]
+  }
+}

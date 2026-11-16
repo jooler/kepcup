@@ -19,6 +19,7 @@ import {
   type BotProfile,
   type AgentPermissionTier,
   type BotSystemRole,
+  type CapabilityEntryRef,
 } from '@kepcup/shared';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
@@ -78,6 +79,7 @@ function emptyProfile(): BotProfile {
       browser_profile: '',
       message_transport: '',
       inkcop_agent_keys: [],
+      capability_entries: [],
       agent: { ...BUILTIN_AGENT_RUNTIME },
     },
     behavior: { proactive: true, quiet_hours: null, max_proactive_per_day: null },
@@ -309,6 +311,35 @@ export class BotsService {
     const profile = botProfileSchema.parse({
       ...bot.profile,
       runtime: { ...bot.profile.runtime, plugin_ids: unique },
+    });
+    this.db
+      .prepare('update bots set profile_json = ?, updated_at = ? where id = ?')
+      .run(JSON.stringify(profile), this.clock.now(), botId);
+    return this.getOrThrow(botId);
+  }
+
+  /**
+   * D124：整体替换 Bot 的启用条目集（`profile_json.runtime.capability_entries`，
+   * ≤16 软引用——沿用 `setPluginIds` 的 Profile-JSON 单字段写先例）。插件已装 +
+   * 条目存在由调用方（`plugins.setBotCapabilityEntries`）先校验；这里只做 Bot
+   * 状态与去重（同 plugin+entry 重复勾选折叠为一条，保首见序）。
+   */
+  setCapabilityEntries(botId: string, entries: readonly CapabilityEntryRef[]): Bot {
+    const bot = this.getOrThrow(botId);
+    if (bot.status !== 'active') {
+      throw new AppError('CONVERSATION_READ_ONLY', `Bot ${botId} has been deleted`);
+    }
+    const unique: CapabilityEntryRef[] = [];
+    const seen = new Set<string>();
+    for (const ref of entries) {
+      const key = `${ref.plugin}\u0000${ref.entry}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push({ plugin: ref.plugin, entry: ref.entry });
+    }
+    const profile = botProfileSchema.parse({
+      ...bot.profile,
+      runtime: { ...bot.profile.runtime, capability_entries: unique },
     });
     this.db
       .prepare('update bots set profile_json = ?, updated_at = ? where id = ?')

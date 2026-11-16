@@ -11,6 +11,7 @@
   import { isVoiceMessage, voiceAttachmentOf } from './voice-message';
   import { buildLocalPathMentionTargets, buildMentionTargets } from './composer-text';
   import { composerTextToMarkdown } from './user-markdown';
+  import { messageBubbleStyle, uiConfig } from '$lib/uiConfig';
 
   /**
    * 消息气泡本体（气泡槽位的内容渲染）：已撤回文案 / 用户 markdown 气泡 /
@@ -18,11 +19,12 @@
    * markdown 管线（streamdown/shiki/katex）懒加载也挂在这里——它是 markdown
    * 的消费方。后续新增内容形态（图片、音频、视频等多模态消息）在 MessageContent
    * 联合类型上加成员并在这里加分支即可，不涉及消息行布局与操作层。
-   * 圆角规律（参考 Grok）：半径取单行气泡高度的一半——text-sm 行高 20px +
-   * py-2（上下各 8px）＝36px → 18px，用户气泡与 Bot 气泡单行都成药丸形；
-   * merge 标记上/下相邻条目是否同一发送者（MessageList 计算），连排时把
-   * 对齐侧的两个角缩到约 1/3（用户在右减右角、Bot 在左减左角），同方连发
-   * 在对齐侧看上去是一整块。
+   * 气泡的圆角 / 内边距 / 字号集中在 $lib/uiConfig 的 messageBubble（单聊 /
+   * 项目组 / Bot 间交换会话三处视图共用），可手调。圆角规律（参考 Grok）：
+   * 常规半径由行高与上下内边距自动推导（单行气泡高度的一半），单行都成
+   * 药丸形；merge 标记上/下相邻条目是否同一发送者（MessageList 计算），
+   * 连排时把对齐侧的两个角缩到约 1/3（用户在右减右角、Bot 在左减左角），
+   * 同方连发在对齐侧看上去是一整块。
    */
   let {
     message,
@@ -119,9 +121,8 @@
   {#if !('text' in message.content) || message.content.text.length > 0}
     <!-- 纯附件消息（docs/design/20-conversation-media.md）没有文本气泡，附件行即消息体。 -->
     <div
-      class="my-2 rounded-[18px] px-4 py-2 text-sm
-        {merge.above ? 'rounded-tr-[6px]' : ''} {merge.below ? 'rounded-br-[6px]' : ''}
-        {userBubbleAccent ? '' : 'bg-primary text-primary-foreground'}"
+      class="my-2 {userBubbleAccent ? '' : 'bg-primary text-primary-foreground'}"
+      style={messageBubbleStyle(uiConfig.messageBubble.user, merge, 'right')}
       style:background={userBubbleAccent?.hex}
       style:color={userBubbleAccent ? avatarOnFillForeground(userBubbleAccent) : undefined}
       data-testid="user-bubble"
@@ -138,8 +139,8 @@
   {/if}
 {:else if hasBotText}
   <div
-    class="max-w-full min-w-0 rounded-[1.625rem] bg-muted p-4 text-sm
-      {merge.above ? 'rounded-tl-[0.5rem]' : ''} {merge.below ? 'rounded-bl-[0.5rem]' : ''}"
+    class="max-w-full min-w-0 bg-muted"
+    style={messageBubbleStyle(uiConfig.messageBubble.bot, merge, 'left')}
     data-testid="bot-bubble"
   >
     <div class="streamdown-wrap min-w-0 [&_pre]:rounded-md">

@@ -281,7 +281,7 @@ describe('effectiveMode: individual rules', () => {
       acceptValues: true,
       rules: ['sensitive-input'],
     });
-    expect(effectiveMode(item('capability.image'), ctx({ needsSensitiveInput: true })).mode).toBe(
+    expect(effectiveMode(item('capability.tts'), ctx({ needsSensitiveInput: true })).mode).toBe(
       'form',
     );
     expect(effectiveMode(item('search.provider'), ctx({ needsSensitiveInput: false })).mode).toBe(

@@ -1,6 +1,6 @@
 import dns from 'node:dns/promises';
 import net from 'node:net';
-import { Agent } from 'undici';
+import { Agent, fetch as undiciFetch } from 'undici';
 
 /**
  * SSRF 连接防线（从 `search/service.ts` 抽出，供 web_fetch 与 OAuth 发现 / 令牌请求共用）。
@@ -162,8 +162,68 @@ export function createSafeDispatcher(
 
 let shared: Agent | undefined;
 
-/** 进程内共享的守卫 Agent（搜索 / OAuth 共用连接池）。 */
+/** 进程内共享的守卫 Agent（搜索 / OAuth / 产物下载共用连接池）。 */
 export function sharedSafeDispatcher(): Agent {
   shared ??= createSafeDispatcher();
   return shared;
+}
+
+/**
+ * SSRF 加固的 fetch（D125 P4，P2 审查遗留）：产物 URL 下载（图片 / 视频）此前是裸
+ * `fetch`，执行型插件返回的任意 URL 都能把宿主带进内网。这里：
+ * - http(s) 请求挂 {@link sharedSafeDispatcher}，连接时逐跳校验解析地址（重定向也走）；
+ * - IP 字面量不经 `lookup`，先经 {@link assertNoPrivateAddress} 拒绝私网 / 元数据地址；
+ * - 其它协议（data: 等）无网络面，原样交给 fetch。
+ *
+ * 只加连接防线，不改语义：公网厂商 URL（DashScope / 方舟 / CDN）行为不变。
+ */
+export async function safeFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`无效的下载地址：${url.slice(0, 200)}`);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return fetch(url, init);
+  }
+  const host = parsed.hostname.replace(/^\[|\]$/g, '');
+  if (net.isIP(host) !== 0) assertNoPrivateAddress([{ address: host }]);
+  // Use undici's fetch (the same package as the dispatcher). Global fetch in Electron /
+  // Node is a DIFFERENT undici version, and mixing an external Agent into it fails with
+  // `UND_ERR_INVALID_ARG` (handler interface drift) — not a theoretical concern: it makes
+  // every public image/video download fail.
+  return undiciFetch(url, {
+    ...init,
+    dispatcher: sharedSafeDispatcher(),
+  } as never) as unknown as Promise<Response>;
+}
+
+/**
+ * Read a response body with a hard byte cap (D125 补丁): `content-length` only rejects
+ * early; a chunked / lying response is counted as it streams and cancelled the moment it
+ * exceeds `maxBytes`, so an untrusted URL (execution-plugin output) cannot balloon the
+ * host's memory. Returns null when the cap is hit (the caller decides the error text).
+ */
+export async function readBodyCapped(response: Response, maxBytes: number): Promise<Buffer | null> {
+  const declared = Number(response.headers.get('content-length') ?? '0');
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    return null;
+  }
+  if (response.body === null) return Buffer.alloc(0);
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks);
 }

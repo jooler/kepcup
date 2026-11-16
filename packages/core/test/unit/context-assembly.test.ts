@@ -620,6 +620,88 @@ describe('voice 消息标注（53 号修订 v2 V2-1）', () => {
   });
 });
 
+describe('任务终态条目的「已投递附件」宿主备注', () => {
+  const taskEvent = (overrides: Record<string, unknown>) =>
+    makeMessage({
+      id: 'msg_t',
+      seq: 1,
+      senderType: 'system',
+      kind: 'task_event',
+      ownerBotId: 'bot_1',
+      taskId: 'run_task',
+      content: {
+        taskId: 'run_task',
+        phase: 'result',
+        text: '图片已生成完毕。',
+        ...overrides,
+      } as Message['content'],
+    });
+
+  it('result 条目带 shownAttachments：宿主备注列出文件名并告知无需重发', () => {
+    const line = renderMessageLine(
+      taskEvent({ shownAttachments: ['pelican-bicycle.png'] }),
+      renderOptions,
+    );
+    expect(line).toContain('图片已生成完毕。');
+    expect(line).toContain(
+      '（宿主备注：任务执行中已把 pelican-bicycle.png 作为消息附件直接发进本对话，用户已经看到，无需再用 send_message 发送这些文件',
+    );
+  });
+
+  it('failure 条目同样带备注（投递可能发生在失败之前）', () => {
+    const line = renderMessageLine(
+      taskEvent({ phase: 'failure', shownAttachments: ['a.png', 'b.png'] }),
+      renderOptions,
+    );
+    expect(line).toContain('任务执行中已把 a.png、b.png 作为消息附件直接发进本对话');
+  });
+
+  it('没有 shownAttachments（旧条目 / 未投递过）：不加备注', () => {
+    const line = renderMessageLine(taskEvent({}), renderOptions);
+    expect(line).not.toContain('宿主备注');
+    const empty = renderMessageLine(taskEvent({ shownAttachments: [] }), renderOptions);
+    expect(empty).not.toContain('宿主备注');
+  });
+
+  it('非终态条目（brief）即使带字段也不加备注', () => {
+    const line = renderMessageLine(
+      taskEvent({ phase: 'brief', shownAttachments: ['a.png'] }),
+      renderOptions,
+    );
+    expect(line).not.toContain('宿主备注');
+  });
+
+  it('文件名超过上限收成「等 N 个文件」；备注在正文截断之后仍完整可见', () => {
+    const names = Array.from({ length: 10 }, (_, i) => `file-${i + 1}.png`);
+    const line = renderMessageLine(taskEvent({ shownAttachments: names }), renderOptions);
+    expect(line).toContain('file-1.png、file-2.png');
+    expect(line).not.toContain('file-9.png、file-10.png');
+    expect(line).toContain('等 10 个文件');
+    // 长正文触发截断（trigger 模式 12000 字上限）：备注追加在截断提示之后。
+    const long = 'x'.repeat(12001);
+    const clipped = renderMessageLine(
+      makeMessage({
+        id: 'msg_t2',
+        seq: 2,
+        senderType: 'system',
+        kind: 'task_event',
+        ownerBotId: 'bot_1',
+        taskId: 'run_task',
+        content: {
+          taskId: 'run_task',
+          phase: 'result',
+          text: long,
+          shownAttachments: ['pelican-bicycle.png'],
+        } as Message['content'],
+      }),
+      renderOptions,
+      'trigger',
+    );
+    expect(clipped).toContain('（结果过长');
+    expect(clipped).toContain('（宿主备注：任务执行中已把 pelican-bicycle.png');
+  });
+});
+
 describe('hard constraints section (D-memory)', () => {
   const base = {
     bot: makeBot('bot_self', '我自己'),

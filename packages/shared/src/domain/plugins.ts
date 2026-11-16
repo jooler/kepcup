@@ -8,6 +8,10 @@ import {
   pluginVersionSchema,
 } from './plugin-manifest.js';
 import { imTransportSchema } from './im.js';
+import {
+  PLUGIN_RUNTIME_STORAGE_QUOTA_BYTES,
+  PLUGIN_RUNTIME_STATUS_VALUES,
+} from '../plugin-runtime/protocol.js';
 
 export { pluginFieldSchema, pluginFieldValueSchema } from './plugin-manifest.js';
 
@@ -40,6 +44,8 @@ export const pluginItemKindSchema = z.enum([
   'mcp',
   'mail',
   'im',
+  // D124：能力模型条目照常记入 plugin_items 账本（ref = 条目 id），卸载可回滚。
+  'capability-model',
   'disabled_connection',
 ]);
 export type PluginItemKind = z.infer<typeof pluginItemKindSchema>;
@@ -193,6 +199,23 @@ export const pluginConflictSchema = z.object({
 });
 export type PluginConflict = z.infer<typeof pluginConflictSchema>;
 
+/**
+ * 执行型插件的能力披露（D125，61 §7「同意卡披露」）：联网域名清单、凭据字段名
+ * （**不含值**）与存储配额。P2 只落数据（inspect payload），渲染在 P3/P4。
+ * `null` = 数据型插件（清单无 runtime 段）。
+ */
+export const pluginRuntimeDisclosureSchema = z.strictObject({
+  /** 清单 `runtime.hostApi` 的 semver 范围原文（如 '^1'）。 */
+  hostApi: z.string(),
+  /** `runtime.network.allow` 域名白名单（精确 host 或 '*.domain'）。 */
+  networkDomains: z.array(z.string()),
+  /** 实例凭据字段名（键名；D125 P4 起 = `runtime.instanceFields` 的敏感键 ∪ 引擎凭据）。 */
+  credentialFields: z.array(z.string()),
+  /** `host.storage` 配额（字节，10MB）。 */
+  storageQuotaBytes: z.number().int().positive().default(PLUGIN_RUNTIME_STORAGE_QUOTA_BYTES),
+});
+export type PluginRuntimeDisclosure = z.infer<typeof pluginRuntimeDisclosureSchema>;
+
 export const pluginInspectOutputSchema = z.object({
   id: pluginIdSchema,
   name: z.string(),
@@ -223,6 +246,11 @@ export const pluginInspectOutputSchema = z.object({
   configFields: z.array(pluginFieldSummarySchema),
   /** D105 P1: one-line capability summary derived from the manifest. */
   capabilitySummary: z.string(),
+  /**
+   * D125 P2：执行型插件能力披露（数据先行；null = 数据型插件）。核心恒提供，渲染在
+   * P3/P4；可选保持旧渲染端载荷兼容。
+   */
+  runtime: pluginRuntimeDisclosureSchema.nullable().optional(),
 });
 export type PluginInspectOutput = z.infer<typeof pluginInspectOutputSchema>;
 
@@ -379,6 +407,112 @@ export const pluginsEnableForBotsInputSchema = z.object({
   botIds: z.array(z.string().min(1)).min(1).max(200),
 });
 export type PluginsEnableForBotsInput = z.infer<typeof pluginsEnableForBotsInputSchema>;
+
+// --- capability model entries (D124, docs/design/60-capability-model-plugins.md §3/§5) ------
+
+/** 一个已装能力模型插件及其条目视图（`plugins.listCapabilityEntries` 的分组行）。 */
+export const pluginCapabilityEntryGroupSchema = z.object({
+  pluginId: pluginIdSchema,
+  pluginName: z.string(),
+  tier: pluginTierSchema,
+  entries: z.array(
+    z.object({
+      entryId: z.string(),
+      capability: z.enum(['image', 'video', 'tts', 'asr', 'embedding', 'rerank', 'multimodal']),
+      model: z.string(),
+      displayName: z.string().nullable(),
+      /** 数据型条目的绑定引擎 id；执行型条目 `source: 'plugin'`（`engine` 恒 null，61 §2）。 */
+      engine: z.string().nullable(),
+      /**
+       * D125 P2：条目的执行体来源——数据型 = 'engine'（第一方引擎注册表），执行型 =
+       * 'plugin'（所属插件含 `runtime` 段，解析到 HostedAdapter）。核心恒提供；
+       * 可选是为了让 P3 之前的渲染端载荷继续兼容（新增字段不构成破坏性变更）。
+       */
+      source: z.enum(['engine', 'plugin']).optional(),
+      /** 该插件当前 capability-model 实例数口径：0 / 1 / 多。 */
+      instanceState: z.enum(['none', 'single', 'multi']),
+      /** 条目生效实例的必填凭据是否齐备（未配齐 = 置灰 + 「去配置」）。 */
+      configured: z.boolean(),
+    }),
+  ),
+});
+export type PluginCapabilityEntryGroup = z.infer<typeof pluginCapabilityEntryGroupSchema>;
+
+export const pluginsListCapabilityEntriesOutputSchema = z.object({
+  plugins: z.array(pluginCapabilityEntryGroupSchema),
+});
+
+// --- 插件运行时（D125 P2，61 §3.1 / §6） ---------------------------------------------
+
+/**
+ * 一次调用的历史记录（内存环形缓冲，每插件 50 条）：时间 / 契约.方法 / 时长 / 结果 /
+ * 错误码与人话消息。`errorCode` 是运行时错误码或插件 `error.code`（PROVIDER_* 族）。
+ */
+export const pluginRuntimeCallRecordSchema = z.strictObject({
+  at: z.number().int(),
+  contract: z.string().min(1),
+  method: z.string().min(1),
+  durationMs: z.number().int().nonnegative(),
+  ok: z.boolean(),
+  errorCode: z.string().nullable(),
+  message: z.string().nullable(),
+});
+export type PluginRuntimeCallRecord = z.infer<typeof pluginRuntimeCallRecordSchema>;
+
+/** `plugins.runtime.list` 的每个执行型插件行：状态机 + 最近错误 + 调用历史。 */
+export const pluginRuntimePluginStateSchema = z.strictObject({
+  pluginId: pluginIdSchema,
+  status: z.enum(PLUGIN_RUNTIME_STATUS_VALUES),
+  /** 状态说明（error 时的原因文本等）。 */
+  detail: z.string().nullable(),
+  /** 最近一次错误（人话；null = 无）。 */
+  lastError: z.string().nullable(),
+  /** 最近调用历史，最新的在前（≤50 条）。 */
+  recent: z.array(pluginRuntimeCallRecordSchema).max(50),
+});
+export type PluginRuntimePluginState = z.infer<typeof pluginRuntimePluginStateSchema>;
+
+export const pluginsRuntimeListOutputSchema = z.strictObject({
+  plugins: z.array(pluginRuntimePluginStateSchema),
+});
+export type PluginsRuntimeListOutput = z.infer<typeof pluginsRuntimeListOutputSchema>;
+
+/** `plugins.runtime.restart`：终止并重新拉起指定执行型插件进程。 */
+export const pluginsRuntimeRestartInputSchema = z.strictObject({ pluginId: pluginIdSchema });
+export type PluginsRuntimeRestartInput = z.infer<typeof pluginsRuntimeRestartInputSchema>;
+export type PluginsListCapabilityEntriesOutput = z.infer<
+  typeof pluginsListCapabilityEntriesOutputSchema
+>;
+
+/**
+ * D124：整体替换 Bot 的启用条目集（`profile_json.runtime.capability_entries`，≤16 软引用）。
+ * 写入前校验插件已装且条目存在，未知 ref 整批拒绝（INVALID_INPUT 列出违规项）。
+ */
+export const pluginsSetBotCapabilityEntriesInputSchema = z.object({
+  botId: z.string().min(1),
+  entries: z
+    .array(
+      z.object({
+        plugin: z.string().min(1),
+        entry: z.string().min(1),
+      }),
+    )
+    .max(16),
+});
+export type PluginsSetBotCapabilityEntriesInput = z.infer<
+  typeof pluginsSetBotCapabilityEntriesInputSchema
+>;
+
+/** `plugins.testCapabilityEntry`（D124）：条目级最小真实探测（复用 testCapability 探针）。 */
+export const pluginsTestCapabilityEntryInputSchema = z.object({
+  pluginId: pluginIdSchema,
+  entryId: z.string().min(1),
+  /** 缺省按条目 instance / 唯一实例解析；多实例未指定拒绝。 */
+  instanceId: z.string().min(1).optional(),
+  /** 未保存先测：覆盖实例的 API Key。 */
+  keyOverride: z.string().optional(),
+});
+export type PluginsTestCapabilityEntryInput = z.infer<typeof pluginsTestCapabilityEntryInputSchema>;
 
 /** `plugins.changed` (P0a): the renderer refreshes every projected view. */
 export const pluginsChangedPayloadSchema = z.object({ ids: z.array(pluginIdSchema).max(200) });

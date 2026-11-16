@@ -43,6 +43,7 @@ import type { ApprovalsService } from '../permissions/approvals.js';
 import { buildImageTools, type MediaToolFacade } from './image-tools.js';
 import { buildSpeechTools } from './speech-tools.js';
 import { createGeneratedMediaDelivery } from './media-delivery.js';
+import type { MediaEntryHints } from './media-entry-hints.js';
 import { buildWebTools, type SearchToolFacade } from './web-tools.js';
 import { readOnlyRefusal } from './read-only.js';
 import { buildDelegateTools } from './delegate-tools.js';
@@ -198,6 +199,18 @@ export interface ResponseToolDeps {
    * orchestrator 中断 run 并引导设置。
    */
   media?: MediaToolFacade | undefined;
+  /**
+   * D124 P3：Bot 已勾选的模型条目摘要（orchestrator 经 MediaService 解析）。
+   * 三个生成工具的描述按它注入条目清单；缺省 / 空清单 = 描述逐字节不变。
+   */
+  mediaEntryHints?: MediaEntryHints | undefined;
+  /**
+   * D125 补丁：执行型插件 id → 私有产物目录（`{plugin-data}/{ns}/{name}/artifacts`）。
+   * 未显式指定 output_dir 的插件产物默认落这里。
+   */
+  pluginArtifactDir?: ((pluginId: string) => string) | undefined;
+  /** D125 补丁：插件数据根（投递时 hostOwned 读取的白名单根）。 */
+  pluginDataDir?: string | undefined;
   /**
    * 联网检索网关（docs/design/21-web-search.md）：present 时注册
    * web_search / web_fetch 工具；web_search 缺配置返回 SETUP_REQUIRED。
@@ -357,6 +370,18 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   '.csv': 'text/csv',
   '.html': 'text/html',
   '.zip': 'application/zip',
+  // 生成类媒体产物的投递走这里的扩展名映射（generate_speech 的 mp3/wav/ogg
+  // 与 generate_video 的 mp4，见 media-delivery → attachments.upload 的
+  // guessMime）：缺了会让音频 / 视频附件带上 application/octet-stream，
+  // 渲染层只能退回文件 chip，无法内联播放。
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.m4a': 'audio/mp4',
+  '.flac': 'audio/flac',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
 };
 
 function guessMime(fileName: string): string {
@@ -1166,6 +1191,7 @@ export function buildResponseTools(input: {
     onBotMessage: deps.onBotMessage,
     logger: deps.logger,
     guessMime,
+    ...(deps.pluginDataDir !== undefined ? { hostArtifactRoot: deps.pluginDataDir } : {}),
   });
 
   // 图像/语音/视频生成与理解（docs/design/18-inline-setup.md、
@@ -1194,6 +1220,11 @@ export function buildResponseTools(input: {
           delivery: generatedMediaDelivery,
           recordFile: recordGenerated,
           checkWritable: (target) => gateway.assertWritableArtifact(identity, target),
+          ...(deps.pluginArtifactDir !== undefined
+            ? { pluginArtifactDir: deps.pluginArtifactDir }
+            : {}),
+          resolveWritableTarget: (target) => gateway.resolveArtifactTarget(identity, target),
+          ...(deps.mediaEntryHints !== undefined ? { entryHints: deps.mediaEntryHints } : {}),
         })
       : [];
   const speechTools =
@@ -1207,6 +1238,11 @@ export function buildResponseTools(input: {
           delivery: generatedMediaDelivery,
           recordFile: recordGenerated,
           checkWritable: (target) => gateway.assertWritableArtifact(identity, target),
+          ...(deps.pluginArtifactDir !== undefined
+            ? { pluginArtifactDir: deps.pluginArtifactDir }
+            : {}),
+          resolveWritableTarget: (target) => gateway.resolveArtifactTarget(identity, target),
+          ...(deps.mediaEntryHints !== undefined ? { entryHints: deps.mediaEntryHints } : {}),
         })
       : [];
 

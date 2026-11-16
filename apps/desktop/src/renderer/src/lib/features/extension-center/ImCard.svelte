@@ -2,12 +2,14 @@
   import { t } from '$lib/i18n';
   import { avatarOnFillForeground, resolveAccentColor } from '$lib/avatars/presets';
   import { getChatSession } from '$lib/features/chats/chat-session-context';
+  import { messageBubbleStyle, uiConfig } from '$lib/uiConfig';
 
   /**
    * 私聊里的 IM 入站消息（D109，54 号文档 §8）：微信消息到了。按正常用户消息
    * 的形态渲染——右对齐、跟随对话 Bot 强调色的药丸气泡（同 MessageBody 用户
-   * 气泡），容器下方 caption「来自微信」标明来源。正文是宿主截取的入站摘要
-   * （imSnippet，500 字符内，Svelte 自动转义不渲染格式）。
+   * 气泡，圆角 / 内边距 / 字号同走 $lib/uiConfig 的 messageBubble.user），容器
+   * 下方 caption「来自微信」标明来源。正文是宿主截取的入站摘要（imSnippet，
+   * 500 字符内，Svelte 自动转义不渲染格式）。
    */
   let {
     accountId,
@@ -34,8 +36,9 @@
   {#if summary.length > 0}
     <!-- 正文是宿主截取的入站原文，长 URL 由容器横向滚动承接，不戳破气泡 -->
     <div
-      class="my-2 max-w-[85%] overflow-x-auto rounded-[18px] px-3 py-2 text-sm whitespace-pre-wrap
+      class="my-2 max-w-[85%] overflow-x-auto whitespace-pre-wrap
         {userBubbleAccent ? '' : 'bg-primary text-primary-foreground'}"
+      style={messageBubbleStyle(uiConfig.messageBubble.user, { above: false, below: false }, 'right')}
       style:background={userBubbleAccent?.hex}
       style:color={userBubbleAccent ? avatarOnFillForeground(userBubbleAccent) : undefined}
       data-testid="im-card-bubble"
