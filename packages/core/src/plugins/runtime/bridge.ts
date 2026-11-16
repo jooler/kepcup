@@ -300,7 +300,7 @@ export class CapabilityBridge {
     if (init?.body !== undefined && init.bodyBase64 !== undefined) {
       throw new AppError('INVALID_INPUT', '请求体只能给 body 或 bodyBase64 之一');
     }
-    let url = await this.#assertAllowedUrl(pluginId, rawUrl, allow);
+    const url = await this.#assertAllowedUrl(pluginId, rawUrl, allow);
     // 审计：每插件每域调用次数（进日志，不阻塞）。
     this.#count(pluginId, url.hostname);
     // 超时由插件声明（init.timeoutMs），宿主只钳制上限——不同厂商协议的合理单次请求
