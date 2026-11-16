@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   agentText,
   connectorDescription,
+  errorText,
   connectorUnavailableText,
   i18n,
   presetSkillText,
@@ -53,5 +54,31 @@ describe('目录数据的界面文案', () => {
     i18n.setLocale('zh-CN');
     expect(presetSkillText('docx', 'name', 'fallback')).toBe('Word 文档');
     expect(vendorName('dashscope', 'fallback')).toBe('阿里云百炼');
+  });
+});
+
+describe('errorText：兼容性 / 升级类错误带明细', () => {
+  it('PLUGIN_UPGRADE_REQUIRED 的通用文案追加 core 的具体原因（未知清单字段）', () => {
+    i18n.setLocale('zh-CN');
+    const text = errorText(
+      'PLUGIN_UPGRADE_REQUIRED',
+      '插件清单包含当前版本不认识的内容（runtime.timeouts），请升级 KepCup',
+    );
+    expect(text).toContain('请先升级应用');
+    expect(text).toContain('runtime.timeouts');
+  });
+
+  it('PLUGIN_INCOMPATIBLE 追加版本号明细', () => {
+    i18n.setLocale('zh-CN');
+    const text = errorText('PLUGIN_INCOMPATIBLE', '需要 KepCup >=0.5.14，当前 0.5.13');
+    expect(text).toContain('0.5.13');
+  });
+
+  it('其它错误码保持原样（不追加冗余明细）', () => {
+    i18n.setLocale('zh-CN');
+    const text = errorText('PLUGIN_NETWORK_DENIED', 'resource cleanup failed: socket hang up');
+    expect(text).not.toContain('socket hang up');
+    // 无映射码回退到原始 message（现状不变）。
+    expect(errorText('SOMETHING_UNMAPPED', '原始信息')).toBe('原始信息');
   });
 });

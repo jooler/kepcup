@@ -197,5 +197,16 @@ export function agentText(id: string, part: 'description' | 'authNote', fallback
 export function errorText(code: string | undefined, fallback: string): string {
   if (code === undefined) return fallback;
   const key = `chats.errorCode.${code}` as MessageKey;
-  return key in (dicts[i18n.locale] ?? {}) || key in zhCN ? t(key) : fallback;
+  const mapped = key in (dicts[i18n.locale] ?? {}) || key in zhCN ? t(key) : fallback;
+  // 兼容性 / 升级类错误的 message 带具体原因（未知清单字段路径、应用版本号）；
+  // 只显示通用文案会让开发者在「升级应用」与「清单写错」之间猜——追加为明细。
+  if (
+    (code === 'PLUGIN_UPGRADE_REQUIRED' || code === 'PLUGIN_INCOMPATIBLE') &&
+    fallback !== '' &&
+    fallback !== mapped &&
+    !mapped.includes(fallback)
+  ) {
+    return `${mapped}（${fallback}）`;
+  }
+  return mapped;
 }
