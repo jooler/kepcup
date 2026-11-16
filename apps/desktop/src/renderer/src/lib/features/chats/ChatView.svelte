@@ -14,6 +14,9 @@
   import Composer from './Composer.svelte';
   import ChatBanners from './ChatBanners.svelte';
   import ProjectComposeBar from './ProjectComposeBar.svelte';
+  import { composerDrafts } from './composer-drafts.svelte';
+  import { createFileDropZone } from './file-drop.svelte';
+  import FileDropOverlay from './FileDropOverlay.svelte';
   import SetupRequiredCard from './SetupRequiredCard.svelte';
   import MediaLightbox from './MediaLightbox.svelte';
   import StickiesLayer from './StickiesLayer.svelte';
@@ -67,6 +70,19 @@
   // Bot 详情走全屏覆盖层：窄屏，或宽屏但窗口放不下并排右栏（sidebar-layout.ts）。
   const panelOverlay = $derived(sidebarLayout.panelAsOverlay);
   const isMac = /Mac/i.test(navigator.platform);
+
+  /**
+   * 父视图级文件拖拽附加（file-drop.svelte.ts）：单聊分支整片区域拖入文件即
+   * 附加到当前会话（项目组分支由 ProjectView 自己接）。门禁与输入坞一致：
+   * 只读（含访谈目录闸门）时不收；上传链路同一份 composerDrafts。
+   */
+  const fileDropZone = createFileDropZone({
+    enabled: () => current !== null && !(current.conversation.readOnly || pathGateClosed),
+    onFiles: (files) => {
+      const conversationId = current?.conversation.id;
+      if (conversationId !== undefined) composerDrafts.uploadFiles(conversationId, files);
+    },
+  });
 
   let composerDockHeight = $state(0);
 </script>
@@ -163,10 +179,14 @@
   <ProjectView {chatBody} />
 {:else}
   <!-- h-full：Pane 是块级盒子，聊天区以绝对定位布局，必须显式取满高度 -->
+  <!-- svelte-ignore a11y_no_static_element_interactions --><!-- 整片 drop 区无指针交互语义；键盘路径走输入坞的 + 键 -->
   <div
     class="relative h-full min-h-0 min-w-0 flex-1"
     data-testid="chat-view"
     data-readonly={current.conversation.readOnly}
+    ondragover={fileDropZone.onDragOver}
+    ondragleave={fileDropZone.onDragLeave}
+    ondrop={fileDropZone.onDrop}
   >
     <!-- 顶部 Bot 药丸：点击切换右栏；收起时右侧「>」提示可展开。
          窄屏：左上角返回列表（chat.leaveCurrent），药丸跟在返回之后、可截断，
@@ -231,5 +251,7 @@
     </header>
 
     {@render chatBody(56, 'top-14')}
+    <!-- 拖拽提示浮层：文件拖到视图上方时整片加罩（pointer-events-none）。 -->
+    <FileDropOverlay active={fileDropZone.dragActive} />
   </div>
 {/if}
