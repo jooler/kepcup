@@ -21,6 +21,7 @@ import {
 import { buildPluginFixture } from '@kepcup/testkit';
 
 import { PluginPackager } from '../../src/plugins/package.js';
+import { pluginConfigSecretName, pluginSecretScope } from '../../src/plugins/instances.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
 import { PluginStore } from '../../src/plugins/store.js';
 import { openDatabase } from '../../src/infra/db.js';
@@ -214,6 +215,13 @@ interface Rig {
   events: Array<{ name: string; payload: unknown }>;
   audits: Array<{ action: string; detail: Record<string, unknown> }>;
   home: string;
+  /** In-memory plugin secret store (config / instance sensitive values). */
+  secrets: {
+    hasValue(name: string): boolean;
+    setValue(name: string, value: string): void;
+    removeValue(name: string): void;
+    names(): string[];
+  };
 }
 
 function makeRig(
@@ -252,6 +260,14 @@ function makeRig(
   };
   const events: Array<{ name: string; payload: unknown }> = [];
   const audits: Array<{ action: string; detail: Record<string, unknown> }> = [];
+  const secretValues = new Map<string, string>();
+  const secrets = {
+    hasValue: (name: string) => secretValues.has(name),
+    getValue: (name: string) => secretValues.get(name) ?? null,
+    setValue: (name: string, value: string) => void secretValues.set(name, value),
+    removeValue: (name: string) => void secretValues.delete(name),
+    names: () => [...secretValues.keys()],
+  };
   const registry = new PluginRegistry({
     store,
     packager,
@@ -260,6 +276,12 @@ function makeRig(
     pluginDataDir: paths.pluginDataDir,
     clock,
     logger,
+    secrets: {
+      hasValue: secrets.hasValue,
+      setValue: secrets.setValue,
+      removeValue: secrets.removeValue,
+      names: secrets.names,
+    },
     events: {
       emit: (name, payload) => events.push({ name, payload }),
     },
@@ -280,6 +302,7 @@ function makeRig(
     events,
     audits,
     home,
+    secrets,
   };
 }
 
@@ -298,7 +321,7 @@ function rowOf(id: string, patch: Partial<Parameters<PluginStore['insert']>[0]> 
     dir: `${id}@${version}`.toLowerCase(),
     updateTo: null,
     updateSnapshot: null,
-      configJson: '{}',
+    configJson: '{}',
     installedAt: 1,
     updatedAt: 1,
     ...patch,
@@ -455,6 +478,7 @@ async function makeFixture(
     version?: string;
     skills?: string[];
     mail?: string[];
+    configFields?: Array<Record<string, unknown>>;
   } = {},
 ): Promise<{ path: string; sha256: string; manifest: PluginManifest }> {
   fixtureCounter += 1;
@@ -478,6 +502,7 @@ async function makeFixture(
           smtp: { host: 'smtp.test', port: 465, secure: 'ssl' },
         })),
       },
+      ...(options.configFields !== undefined ? { config: { fields: options.configFields } } : {}),
     },
     skills: (options.skills ?? ['alpha', 'beta']).map((name) => ({ name })),
   });
@@ -559,7 +584,11 @@ describe('PluginRegistry', () => {
       'username',
       'password',
     ]);
-    expect(summary.instanceFields.every((field) => (field as { default?: unknown }).default === undefined)).toBe(true);
+    expect(
+      summary.instanceFields.every(
+        (field) => (field as { default?: unknown }).default === undefined,
+      ),
+    ).toBe(true);
     // 停用 / 卸载后消失。
     await rig.registry.uninstall('io.github.tester/reg');
     expect(rig.registry.list().find((row) => row.id === 'io.github.tester/reg')).toBeUndefined();
@@ -746,6 +775,34 @@ describe('PluginRegistry', () => {
       (caught: unknown) => caught,
     );
     expectCode(none, 'NOT_FOUND');
+  });
+
+  it('卸载清理插件级 config 敏感字段（含清单删字段后的残留），不碰别的插件作用域', async () => {
+    const rig = makeRig();
+    const id = 'io.github.tester/secrets';
+    const fixture = await makeFixture({
+      id,
+      skills: ['alpha'],
+      configFields: [
+        { key: 'apiKey', type: 'string', title: 'API Key', required: true, sensitive: true },
+      ],
+    });
+    await rig.registry.install(installArgs(fixture));
+    await rig.registry.setConfig(id, { apiKey: 'sk-config' });
+    const key = pluginConfigSecretName(id, 'apiKey');
+    expect(rig.secrets.hasValue(key)).toBe(true);
+    // 清单改名 / 删字段后可能残留的同作用域 secret（前缀扫描兜底）。
+    const stale = `${pluginSecretScope(id)}:config:oldKey`;
+    rig.secrets.setValue(stale, 'old');
+    // 命名空间相近的另一个插件不能被前缀清理误伤。
+    const otherPlugin = `${pluginSecretScope('io.github.tester/secrets2')}:config:apiKey`;
+    rig.secrets.setValue(otherPlugin, 'other');
+
+    await rig.registry.uninstall(id);
+    expect(
+      rig.secrets.names().filter((name) => name.startsWith(`${pluginSecretScope(id)}:`)),
+    ).toEqual([]);
+    expect(rig.secrets.hasValue(otherPlugin)).toBe(true);
   });
 
   it('崩溃恢复：installing 行回滚、uninstalling 行继续完成', async () => {

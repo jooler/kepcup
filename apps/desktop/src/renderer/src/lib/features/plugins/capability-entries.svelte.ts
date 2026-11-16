@@ -13,7 +13,11 @@ class CapabilityEntriesState {
   loading = $state(false);
   /** 最近一次加载失败的错误文本（null = 正常）；调用方多是 `void load()`。 */
   loadError = $state<string | null>(null);
-  #loaded = false;
+  /**
+   * 是否已成功拉到过条目清单（D125 收口审查）：Bot 条目勾选用它判定「已知条目集合」
+   * 可信——未加载 / 加载失败时不能把 profile 里的引用当成「条目已被移除」剪掉。
+   */
+  loaded = $state(false);
   #started = false;
 
   start(): void {
@@ -25,7 +29,7 @@ class CapabilityEntriesState {
   }
 
   async load(force = false): Promise<void> {
-    if (!force && this.#loaded) return;
+    if (!force && this.loaded) return;
     this.loading = true;
     try {
       const result = (await core.call('plugins.listCapabilityEntries', undefined)) as {
@@ -33,7 +37,7 @@ class CapabilityEntriesState {
       };
       this.groups = result.plugins;
       this.loadError = null;
-      this.#loaded = true;
+      this.loaded = true;
     } catch (error) {
       console.error('[capability-entries] load failed', error);
       this.loadError =
@@ -76,7 +80,7 @@ class CapabilityEntriesState {
   reset(): void {
     this.groups = [];
     this.loadError = null;
-    this.#loaded = false;
+    this.loaded = false;
   }
 }
 

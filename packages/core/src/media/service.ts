@@ -2,6 +2,7 @@ import {
   AppError,
   VENDOR_DESCRIPTORS,
   newId,
+  sanitizeDisplayText,
   type CapabilityModelKey,
   type LoopType,
   type ModelCapability,
@@ -95,6 +96,12 @@ export interface MediaEntrySource {
   /** 实例非敏感配置（config_json；无行 = null）。 */
   instanceConfig(pluginId: string, instanceId: string): Record<string, unknown> | null;
   /**
+   * D125：执行型插件的实例敏感字段键（`runtime.instanceFields` 里 `sensitive: true`
+   * 的键，声明序）。条目级「未保存先测」把 keyOverride 映射到这些键；可选（数据型
+   * 插件 / 测试夹具 = 缺省，此时 keyOverride 对托管路径不生效）。
+   */
+  sensitiveFieldKeysOf?(pluginId: string): Promise<string[]>;
+  /**
    * 实例 → 所属插件与执行体来源（generateVideo → videoStatus 的 provider 往返；
    * null = 非插件实例）。D125：`source` 区分第一方引擎与执行型插件（托管适配器）。
    */
@@ -120,8 +127,9 @@ export interface ResolvedEntry {
   /** 数据型条目的引擎 id；执行型条目为 ''（`source:'plugin'`，无第一方引擎）。 */
   engine: string;
   /**
-   * D125：执行体来源——'engine' = 第一方引擎注册表；'plugin' = 所属插件含 `runtime`
-   * 段，经 HostedAdapter 在插件子进程执行（61 §5）。
+   * D125：执行体来源**逐条判定**——'engine' = 条目绑定第一方引擎注册表；'plugin' =
+   * 条目不填 `engine`，经 HostedAdapter 在插件子进程执行（61 §5）。混合插件
+   * （runtime + 数据型 engine 条目）里两者可以并存。
    */
   source: 'engine' | 'plugin';
   /** 条目展示名（displayName 缺省时实现侧回填 model，工具 model 参数匹配用）。 */
@@ -426,11 +434,16 @@ export class MediaService {
     }
     const push = (capability: 'image' | 'tts' | 'video', entries: ResolvedEntry[]): void => {
       for (const entry of entries) {
-        const name =
+        const raw =
           entry.displayName !== undefined && entry.displayName !== entry.model
             ? `${entry.displayName}（${entry.model}）`
             : entry.model;
-        if (!summaries[capability].includes(name)) summaries[capability].push(name);
+        // 清单文本不可信：条目名要进工具描述（系统提示词的一部分）——控制字符 /
+        // 双向控制 / 零宽字符与换行按展示文本统一清洗（同一规则见 pluginCapabilitySummary）。
+        const name = sanitizeDisplayText(raw, 120);
+        if (name !== '' && !summaries[capability].includes(name)) {
+          summaries[capability].push(name);
+        }
       }
     };
     push('image', await this.#entrySource.entriesFor(botId, 'image'));
@@ -473,23 +486,40 @@ export class MediaService {
         entryId,
       });
     };
-    // D125：执行型条目（所属插件含 runtime 段）走托管适配器的同一 invoke 路径（探针
-    // 与真实调用同一入口，超时用契约默认）；数据型条目保持 D124 的引擎路径。
-    const hosted = (await source.hostedAdapterOf?.(pluginId)) ?? null;
-    if (hosted !== null) {
+    // D125：执行型条目（不填 engine）走托管适配器的同一 invoke 路径（探针与真实
+    // 调用同一入口，超时用契约默认）；数据型条目保持 D124 的引擎路径——即使所属
+    // 插件同时含 runtime 段（混合插件），有 engine 的条目仍由第一方引擎执行。
+    if (entry.engine === undefined) {
+      const hosted = (await source.hostedAdapterOf?.(pluginId)) ?? null;
+      if (hosted === null) {
+        throw new AppError(
+          'NOT_IMPLEMENTED',
+          `插件 ${pluginId} 的托管运行时未装配，无法探测执行型条目「${entryId}」`,
+        );
+      }
       const instanceId = resolveInstanceId();
-      const resolved = this.#hostedProvider(pluginId, entryId, instanceId, entry.model, hosted);
+      // 未保存先测：把表单里尚未保存的敏感值覆盖到该实例的 secrets 键上（宿主注入
+      // 时同名覆盖；真实调用路径不带这个字段）。没有声明面 / 没给值时保持已存凭据。
+      const sensitiveKeys = (await source.sensitiveFieldKeysOf?.(pluginId)) ?? [];
+      const override = options.keyOverride;
+      const credentialOverrides =
+        override !== undefined && sensitiveKeys.length > 0
+          ? Object.fromEntries(sensitiveKeys.map((key) => [key, override]))
+          : undefined;
+      const resolved = this.#hostedProvider(
+        pluginId,
+        entryId,
+        instanceId,
+        entry.model,
+        hosted,
+        undefined,
+        credentialOverrides,
+      );
       resolved.entry = { pluginId, entryId, capability: entry.capability };
       if (entry.params !== undefined) resolved.context.entryParams = entry.params;
       return this.#runProbe(entry.capability, resolved);
     }
     // 数据型条目：先引擎、后实例——错误判定顺序与 D124 逐字节一致。
-    if (entry.engine === undefined) {
-      throw new AppError(
-        'NOT_IMPLEMENTED',
-        `插件 ${pluginId} 的托管运行时未装配，无法探测执行型条目「${entryId}」`,
-      );
-    }
     const engine = MEDIA_ENGINES[entry.engine];
     if (engine === undefined) {
       throw new AppError(
@@ -622,7 +652,11 @@ export class MediaService {
         conversationId: usage.conversationId ?? null,
         loopType: usage.loopType,
         ...(entry !== undefined
-          ? { provider: entry.pluginId, capability: entry.capability, modelEntryId: `${entry.pluginId}/${entry.entryId}` }
+          ? {
+              provider: entry.pluginId,
+              capability: entry.capability,
+              modelEntryId: `${entry.pluginId}/${entry.entryId}`,
+            }
           : { provider }),
         model: modelId,
         inputTokens: 0,
@@ -669,9 +703,7 @@ export class MediaService {
     // 回调只用于工具的落点选择，抛错不能破坏一次已成型的媒体调用（日志 + 忽略）。
     try {
       resolve?.onResolved?.({
-        ...(resolved.artifactPluginId !== undefined
-          ? { pluginId: resolved.artifactPluginId }
-          : {}),
+        ...(resolved.artifactPluginId !== undefined ? { pluginId: resolved.artifactPluginId } : {}),
       });
     } catch (error) {
       this.#logger.warn(
@@ -771,6 +803,7 @@ export class MediaService {
     modelId: string,
     adapter: VendorAdapter,
     resolve?: MediaResolveOptions,
+    credentialOverrides?: Readonly<Record<string, string>>,
   ): ResolvedProvider {
     return {
       vendor: 'custom',
@@ -789,6 +822,8 @@ export class MediaService {
         // D125 P3：取消 / 进度只走托管路径（内置引擎不读取这两个字段）。
         ...(resolve?.signal !== undefined ? { signal: resolve.signal } : {}),
         ...(resolve?.onProgress !== undefined ? { onProgress: resolve.onProgress } : {}),
+        // D125：条目级「未保存先测」的凭据覆盖（仅测试入口传入）。
+        ...(credentialOverrides !== undefined ? { credentialOverrides } : {}),
       },
       adapter,
     };

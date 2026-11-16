@@ -649,6 +649,15 @@ export function scanRuntimePackage({ files, manifest }) {
   // 因此签名侧与安装侧用同一条判定。嵌套 package.json 会改变「最近」判定，拒绝。
   if (entry !== null) {
     const lowerEntry = entry.toLowerCase();
+    // 入口必须真实存在且不是符号链接：签名的包若缺 entry，装到客户端才被
+    // PLUGIN_INVALID 拒绝（市场发布了永远装不上的版本）。目录扫描 / .kepcup 扫描
+    // 共用这一条判定（file 名已按 normalizeRelative 规范化）。
+    if (!files.some((file) => normalizeRelative(file.path) === entry && file.isSymlink !== true)) {
+      errors.push({
+        path: entry,
+        message: 'runtime.entry 指向的文件不存在（或为符号链接）',
+      });
+    }
     if (!lowerEntry.endsWith('.js') && !lowerEntry.endsWith('.mjs')) {
       errors.push({
         path: entry,

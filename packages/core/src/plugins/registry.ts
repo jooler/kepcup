@@ -52,6 +52,7 @@ import { pluginIconDataUri } from './icon.js';
 import { CAPABILITY_KINDS, capabilityKindOf, mergeConsentItems } from './kinds.js';
 import {
   pluginConfigSecretName,
+  pluginSecretScope,
   validatePluginFieldValues,
   type PluginInstanceStore,
 } from './instances.js';
@@ -104,6 +105,8 @@ export interface PluginRegistryDeps {
         hasValue(name: string): boolean;
         setValue?(name: string, value: string): void;
         removeValue?(name: string): void;
+        /** 卸载时按作用域前缀清理 config / 实例 secret（D125 收口审查）。 */
+        names?(): string[];
       }
     | undefined;
   /** Instance rows (D105): `list()` instance counts read it directly. */
@@ -1694,6 +1697,25 @@ export class PluginRegistry {
           { plugin: id, error: error instanceof Error ? error.message : String(error) },
           'plugin teardown: instance cascade failed (continuing)',
         );
+      }
+    }
+    // D125 收口审查：插件级 config 敏感字段（`plugin:{scope}:config:*`）此前不在卸载
+    // 清理范围（实例 secrets 由 instance teardown 按实例前缀清）。这里按插件作用域
+    // 前缀兜底清掉**全部** secret（含清单改名 / 删字段后的残留）；作用域编码是单射的，
+    // 前缀带结尾冒号，不会碰到其它插件。best-effort，失败只 warn。
+    const pluginSecrets = this.#deps.secrets;
+    if (pluginSecrets?.names !== undefined && pluginSecrets.removeValue !== undefined) {
+      const prefix = `${pluginSecretScope(id)}:`;
+      for (const name of pluginSecrets.names()) {
+        if (!name.startsWith(prefix)) continue;
+        try {
+          pluginSecrets.removeValue(name);
+        } catch (error) {
+          this.#deps.logger.warn(
+            { plugin: id, name, error: error instanceof Error ? error.message : String(error) },
+            'plugin teardown: secret removal failed (continuing)',
+          );
+        }
       }
     }
     const row = this.#deps.store.get(id);

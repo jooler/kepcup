@@ -45,19 +45,33 @@ export function parseHostApiRange(range: string): ParsedRange {
   if (text.startsWith('^')) {
     const partial = parsePartial(text.slice(1));
     if (partial === null) return null;
-    const major = partial.version[0];
+    const [major, minor, patch] = partial.version;
+    // npm caret：允许改动最左侧非零段（major > 0 时锁 major；0.x 锁 minor；0.0.x 锁
+    // patch；`^0.0` / `^0.0.x` 锁到 <0.1.0）。
+    const upper: Version =
+      major > 0
+        ? [major + 1, 0, 0]
+        : partial.parts === 1
+          ? [1, 0, 0]
+          : minor > 0
+            ? [0, minor + 1, 0]
+            : partial.parts === 3
+              ? [0, 0, patch + 1]
+              : [0, 1, 0];
     return [
       { op: '>=', version: partial.version },
-      { op: '<', version: [major + 1, 0, 0] },
+      { op: '<', version: upper },
     ];
   }
   if (text.startsWith('~')) {
     const partial = parsePartial(text.slice(1));
     if (partial === null) return null;
     const [major, minor] = partial.version;
+    // npm tilde：`~1` → 1.x；`~1.2` / `~1.2.3` → 1.2.x。
+    const upper: Version = partial.parts === 1 ? [major + 1, 0, 0] : [major, minor + 1, 0];
     return [
       { op: '>=', version: partial.version },
-      { op: '<', version: [major, minor + 1, 0] },
+      { op: '<', version: upper },
     ];
   }
   const tokens = text.split(/\s+/);
@@ -72,11 +86,16 @@ export function parseHostApiRange(range: string): ParsedRange {
       comparators.push({ op, version: partial.version });
       continue;
     }
-    // 裸版本 = 该前缀内的任意补丁（`1` → 1.x、`1.2` → 1.2.x）。
+    // 裸版本 = 该前缀内的任意补丁（`1` → 1.x、`1.2` → 1.2.x）；完整版本
+    // `1.2.3` 是精确匹配（npm 语义——不能把 `1.2.3` 当成「>=1.2.3 无上界」）。
     const [major, minor] = partial.version;
+    if (partial.parts === 3) {
+      comparators.push({ op: '=', version: partial.version });
+      continue;
+    }
     comparators.push({ op: '>=', version: partial.version });
     if (partial.parts === 1) comparators.push({ op: '<', version: [major + 1, 0, 0] });
-    else if (partial.parts === 2) comparators.push({ op: '<', version: [major, minor + 1, 0] });
+    else comparators.push({ op: '<', version: [major, minor + 1, 0] });
   }
   return comparators.length === 0 ? null : comparators;
 }

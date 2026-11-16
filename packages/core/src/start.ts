@@ -2638,6 +2638,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         hasValue: (name) => secrets.hasValue(name),
         setValue: (name, value) => secrets.setValue(name, value),
         removeValue: (name) => secrets.removeValue(name),
+        // D125 收口审查：卸载 / 安装回滚按插件作用域前缀清 config + 实例 secret。
+        names: () => secrets.names(),
       },
       instanceStore: pluginInstanceStore,
       // P3：instanceCounts.mail 的口径是 mail_accounts 里的活跃账号（软删 / 无主不算）。
@@ -3246,8 +3248,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
             const instanceServerIds = settings
               .get()
               .mcpServers.filter(
-                (server) =>
-                  server.source?.kind === 'instance' && server.source.pluginId === id,
+                (server) => server.source?.kind === 'instance' && server.source.pluginId === id,
               )
               .map((server) => server.id);
             if (instanceServerIds.length === 0) {
