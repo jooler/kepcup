@@ -151,6 +151,54 @@ describe('CapabilityBridge · net.fetch（D125 P2）', () => {
     expect(rig.bridge.auditSnapshot()[PLUGIN]).toEqual({ 'example.invalid': 1 });
   });
 
+  it('单次请求超时由插件声明（init.timeoutMs）；不声明时用宿主上限兜底（不再是 60s）', async () => {
+    // 慢响应：注入 fetch 监听 init.signal（真实 fetch 语义），1s 超时 → abort → 归一超时错误。
+    const slow = (async (_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((resolve, reject) => {
+        const timer = setTimeout(() => resolve(new Response('late', { status: 200 })), 5_000);
+        init?.signal?.addEventListener(
+          'abort',
+          () => {
+            clearTimeout(timer);
+            reject(new Error('aborted'));
+          },
+          { once: true },
+        );
+      })) as unknown as typeof fetch;
+    const rig = makeRig({ lookup: PUBLIC_LOOKUP, fetchImpl: slow });
+    const startedAt = Date.now();
+    await expect(
+      rig.bridge.netFetch(PLUGIN, 'https://example.invalid/slow', { timeoutMs: 1_000 }),
+    ).rejects.toMatchObject({ code: 'PROVIDER_UNREACHABLE', message: '插件网络请求超时' });
+    expect(Date.now() - startedAt).toBeLessThan(3_000);
+  });
+
+  it('abortFor（插件进程退出）取消在途请求，不再等自己的超时', async () => {
+    // 注入 fetch 模拟真实语义：监听 init.signal，abort 时 reject。
+    const slow = (async (_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((resolve, reject) => {
+        const timer = setTimeout(() => resolve(new Response('late', { status: 200 })), 10_000);
+        init?.signal?.addEventListener(
+          'abort',
+          () => {
+            clearTimeout(timer);
+            reject(new Error('aborted'));
+          },
+          { once: true },
+        );
+      })) as unknown as typeof fetch;
+    const rig = makeRig({ lookup: PUBLIC_LOOKUP, fetchImpl: slow });
+    const pending = rig.bridge.netFetch(PLUGIN, 'https://example.invalid/slow', {
+      timeoutMs: 600_000,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const startedAt = Date.now();
+    rig.bridge.abortFor(PLUGIN);
+    // abort 让 fetch 以拒绝收尾 → 归一到 PROVIDER_UNREACHABLE，不悬挂到 10s/600s。
+    await expect(pending).rejects.toMatchObject({ code: 'PROVIDER_UNREACHABLE' });
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+  });
+
   it('白名单外域名 → PLUGIN_NETWORK_DENIED（DNS 之前拦截）', async () => {
     const rig = makeRig({ lookup: PUBLIC_LOOKUP });
     await expect(rig.bridge.netFetch(PLUGIN, 'https://blocked.invalid/x')).rejects.toMatchObject({

@@ -62,6 +62,11 @@ runtime: strictObject({
   instanceFields: z.array(pluginFieldSchema).max(16).optional(),
                                     // D125 P4（DEV-114）：实例字段声明面（敏感值走实例
                                     // secrets，调用时经 invoke.context.credentials 注入）
+  timeouts: z.record(z.string(), z.number().int().min(1000).max(900000)).optional(),
+                                    // D125 P4（DEV-130）：方法级调用超时声明，key =
+                                    // '<contract>.<method>'（如 media.generateImage）。
+                                    // 插件按自己的厂商协议给合理时长，宿主只钳制上限
+                                    // （15 分钟）；未声明走契约默认。安装期校验方法已注册。
   maxConcurrent: z.number().int().min(1).max(4).default(1),
 }).optional()
 ```
@@ -76,7 +81,12 @@ runtime: strictObject({
 - **一插件一进程**：`child_process.fork(entry, { serialization: 'advanced', execArgv: [] })`，工作目录指向插件安装目录。desktop（core 为 utilityProcess）与 headless server 同构。
 - **状态机**：`stopped → starting → ready ⇄ busy → error`。懒启动（首次调用拉起）；`idle` 5 分钟无调用 → 优雅停（`shutdown` 请求 + 2s 强杀）；崩溃/看门狗击杀 → `error`（带原因）→ 下次调用自动重启。
 - **握手**：`init {hostApiVersion, manifestDigest, instances}` → 插件回 `ready {hostApiVersion, contracts: string[]}`；版本不匹配回错误并拒绝调用（`PLUGIN_UPGRADE_REQUIRED`）。
-- **看门狗**：每 15s ping，2 次无响应击杀；每次调用带能力级超时（media：图片 120s、TTS 120s、ASR 300s、视频 15 分钟——与现有工具轮询上限对齐），超时即 `cancel` + 击杀 + `PLUGIN_TIMEOUT`。
+- **看门狗**：每 15s ping，2 次无响应击杀；每次调用带能力级超时——**取值优先插件清单声明**
+  （`runtime.timeouts['<contract>.<method>']`，如 `media.generateImage: 300000`），未声明走
+  契约默认（media：图片 120s、TTS 120s、ASR 300s、视频 15 分钟），宿主只钳制 15 分钟上限。
+  超时即 `cancel` + 击杀 + `PLUGIN_TIMEOUT`。**理由（DEV-130）**：同步出图 / 异步排队 /
+  视频生成的合理时长差异很大，应用用一个固定值会误杀正常厂商请求；插件最了解自己的协议，
+  超时该由它声明，应用的职责只是「有上限 + 到点必杀」。
 - **并发**：每插件进程内调用串行排队（v1，`maxConcurrent` 预留）；插件自身轮询占用的是等待时间而非 CPU，串行不影响吞吐主场景。
 
 ### 3.2 调用协议（`packages/shared/src/plugin-runtime/protocol.ts`）
@@ -96,7 +106,8 @@ plugin → host   ready{hostApiVersion, contracts, features?}
 
 | 维度 | 规范 | 越界处置 |
 |---|---|---|
-| 调用时长 | 能力契约默认超时（§3.1） | `PLUGIN_TIMEOUT` + 击杀 |
+| 调用时长 | 插件声明（`runtime.timeouts`）> 契约默认；宿主钳制 15 分钟（§3.1） | `PLUGIN_TIMEOUT` + 击杀 |
+| 单次网络请求 | 插件声明（`net.fetch` 的 `init.timeoutMs`）；宿主钳制 15 分钟，不设隐含固定值 | 超时归 `PROVIDER_UNREACHABLE`；进程退出时在途请求被取消 |
 | 网络 | 清单白名单，core 侧强制 + SSRF 防护（复用 `web_fetch` 守卫）+ 审计计数 | 拒绝 + `PLUGIN_NETWORK_DENIED`，插件卡可见 |
 | 存储 | `host.storage` 配额 10MB/插件 | 写入拒绝 |
 | 日志 | `host.log` 限速（100 条/调用） | 截断 + warn |
@@ -106,7 +117,7 @@ plugin → host   ready{hostApiVersion, contracts, features?}
 
 | API | 语义 | 边界强制 |
 |---|---|---|
-| `host.net.fetch(url, init?)` | HTTP 客户端（fetch 语义，JSON/文本/二进制→base64） | 域名白名单（§3.3）、SSRF 守卫、UA 固定、审计计数、单次 20MB |
+| `host.net.fetch(url, init?)` | HTTP 客户端（fetch 语义，JSON/文本/二进制→base64）；`init.timeoutMs` 由插件声明单次超时 | 域名白名单（§3.3）、SSRF 守卫、UA 固定、审计计数、单次 20MB、超时钳制 15 分钟（§3.3） |
 | `context.credentials` | 实例敏感字段注入（只读） | 仅清单声明的键；进程内存活；不落盘不入日志 |
 | `host.secrets.get(key)` | 本插件实例键的读取（长生命周期插件重建凭据用） | 键必须匹配 `plugin:{pluginId}:instance:{instanceId}:*`；只读（`set` 不开放，见 §11 Q1） |
 | `host.storage.get/set/delete/list(prefix?)` | 插件 KV（sqlite `plugin_storage`，随插件卸载清除） | 配额 10MB；存非敏感数据（敏感走 secrets） |
@@ -220,37 +231,48 @@ package.json）；签名扫描归档本身，不应用 `.kepcup-ignore`。
   **DEV-128** native 扩展名补 `.dll/.so/.exe/.dylib`；
   **DEV-129** 静态扫描审查加固（标识符级规则 / 静态 import 与包外路径 / `runtime.entry`
   的 ESM 策略（`.js/.mjs` + `type: module`）/ `.kepcup-ignore` 目录口径；已知假阴性面见该条）。
+- 真机反馈修正（2026-11-16，DEV-124 / DEV-130）：**DEV-124** 试点模型改
+  `qwen-image-3.0`（首版 `wan2.7-t2v` 是视频模型，被文生图端点以 `url error` 拒绝）；
+  **DEV-130** 超时治理交给插件——`runtime.timeouts`（方法级调用超时声明）+ `net.fetch`
+  的 `init.timeoutMs`，宿主只钳制 15 分钟上限并取消进程退出时的在途请求（原 60s 固定
+  上限会误杀长任务）；试点随之改回 qwen-image **异步**任务 + 轮询（单次请求秒级）。
   无未决阻塞项。
 
 ### 12.4 试点 A/B 结论（百炼 Qwen-Image，`plugins/dashscope-t2i/`）
 
-**事实修正（两轮）**：① 任务书假设「插件协议与内置引擎同源」——实际首版用 wan 异步
-`text2image/image-synthesis`，而内置 `generateImage` 是 qwen-image 同步
-`multimodal-generation`，异步「提交 → 轮询」的代码形状属于内置引擎的
+**事实修正（三轮）**：① 任务书假设「插件协议与内置引擎同源」——内置 `generateImage` 是
+qwen-image 同步 `multimodal-generation`，异步「提交 → 轮询」的代码形状属于
 `submitVideo / videoStatus`。② 首版按 16 号 wan 视频预置取 `model: wan2.7-t2v`，真机被
-百炼以 `url error, please check url!` 拒绝（视频模型不能用于文生图端点）。**现状**：
-试点改为 `qwen-image-3.0` + 同步 `multimodal-generation`（官方推荐路径），与内置引擎
-协议等价——A/B 因此对照的是**执行引擎**（进程内适配器 vs 子进程插件），而非两套协议。
+百炼以 `url error` 拒绝（视频模型不能用于文生图端点）。③ 改用 `qwen-image-3.0` 同步协议
+后，真机调用又在 **60s 网络超时**失败——该 60s 是应用侧 `host.net.fetch` 的固定上限，
+比插件声明的调用看门狗（120s）还短，等于应用替插件决定了「单次请求最多多久」。
+**现状**：试点改为 qwen-image **异步**任务接口（提交 + 轮询，单次请求都是秒级）+ 清单声明
+`runtime.timeouts['media.generateImage'] = 300000`；`host.net.fetch` 的单次超时改由插件
+声明（`init.timeoutMs`），宿主只钳制 15 分钟上限并取消进程退出时的在途请求（DEV-130）。
 
 集成层对照（同一 prompt / size / model，无 API Key，测试
 `plugin-host.test.ts` 的「A/B 对照（集成层）」）：
 
-| 维度 | 执行型插件 | 内置引擎 |
+| 维度 | 执行型插件（异步任务） | 内置引擎（同步） |
 |---|---|---|
-| 端点 / 请求体 | `multimodal-generation/generation`，`input.messages` + `parameters` | 同左（逐字段等价，测试断言两侧 body） |
-| 延迟形态 | 单次厂商 RTT + 子进程 IPC 往返（含首次懒启动） | 单次厂商 RTT |
-| 进度 | `submitting`（取回帧受 1 次/秒限速与调用结束丢弃影响，通常不可见） | 无阶段进度 |
+| 端点 | `image-generation/generation` + `X-DashScope-Async` → `GET /api/v1/tasks/{id}` | `multimodal-generation/generation` 单请求 |
+| 单次网络请求 | 秒级（提交 / 每次轮询） | 连接保持到出图完成（`prompt_extend` 常 60s+） |
+| 长任务鲁棒性 | 轮询失败可重试；不受单次连接时长限制 | 任一网络抖动 / 代理超时即整次失败 |
+| 超时 | 插件声明 5 分钟（宿主钳制 15 分钟） | 适配器内置 120s |
+| 进度 | `submitting → queued → generating → downloading` 进状态行 | 无阶段进度 |
+| 取消 | `signal` → 轮询间隙尽快返回（不删服务端任务） | 引擎路径无工具 signal（DEV-118/119） |
 | 活动记录 | 插件卡 busy→ready + 调用历史（时长 / 结果 / 错误 / CANCELLED） | 无插件活动 |
-| 取消 | `signal` → cancel 帧；同步请求返回后丢弃结果并报「调用已取消」 | 引擎路径无工具 signal（DEV-118/119） |
 | 错误文案 | 插件映射：`百炼鉴权失败 / 额度不足 / 请求过于频繁 / 图片生成失败`（`url error` 附 model 指引） | `media/http.ts` 的厂商错误归一 |
 | 产物 | URL → core 下载（SSRF 守卫）→ 既有附件投递 | 同左（同一投递链） |
 
-**结论**：同协议下两者行为等价，差异集中在可观测性与进程边界成本——执行型路径的
-价值在于「厂商协议与模型上新不必等应用发版」+ 活动/取消/进度可观测，代价是一次 IPC
-往返与插件包维护；同步短请求场景内置引擎仍是更低成本的选择。
+**结论**：图片 / 视频这类长任务，**异步任务 + 轮询是更合适的协议形态**（官方亦推荐该
+模式；同步接口把生成时长压在一条 HTTP 连接上，失败面大且不可观测）。执行型运行时的价值
+在此被直接证实：插件自带状态机就能采用异步协议，内置引擎的同步实现则要改代码发版。
+超时治理随之定案：**超时由插件声明，应用只钳制上限**（DEV-130）；内置引擎的 120s
+仍是其自身实现的选择，不构成对插件的约束。
 
-**真机状态**：`qwen-image-3.0` 已按用户指定落地；首次真机调用（测试连接）待用户复验
-（历史 `wan2.7-t2v` 的 `url error` 根因见 DEV-124）。
+**真机状态**：`qwen-image-3.0` + 异步轮询已落地；真机出图待用户复验（`testCapabilityEntry`
+先测连接，再在 Bot 任务里出图）。
 
 ### 12.5 Q1–Q5（被试点证实 / 仍未决）
 

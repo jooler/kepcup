@@ -6,6 +6,7 @@ import {
   AppError,
   PLUGIN_RUNTIME_HOST_API_VERSION,
   PLUGIN_RUNTIME_INSTANCE_ID_FEATURE,
+  PLUGIN_RUNTIME_MAX_CALL_TIMEOUT_MS,
   isPluginHostApiRequest,
   isPluginHostApiResponse,
   pluginRuntimeInitFrameSchema,
@@ -129,6 +130,8 @@ export interface PluginRuntimeDescriptor {
   hostApi: string;
   networkAllow: readonly string[];
   maxConcurrent: number;
+  /** 插件声明的方法级调用超时（`<contract>.<method>` → ms；缺省空 = 用契约默认）。 */
+  timeouts: Readonly<Record<string, number>>;
 }
 
 export interface PluginHostDeps {
@@ -413,8 +416,14 @@ export class PluginHost {
     if (!live.contracts.includes(contract.id)) {
       throw new AppError('NOT_IMPLEMENTED', `插件未实现能力契约：${contract.id}`);
     }
+    // 调用级超时优先级（61 §3.1 / §3.3）：测试覆盖 > 插件清单声明（runtime.timeouts，
+    // 按自己的厂商协议给合理时长，宿主钳制上限）> 契约默认。应用不预设一个固定值。
+    const declaredTimeout = live.descriptor.timeouts[`${contract.id}.${method}`];
     const timeoutMs =
-      this.#timings.callTimeoutOverride[`${contract.id}.${method}`] ?? methodSpec.timeoutMs;
+      this.#timings.callTimeoutOverride[`${contract.id}.${method}`] ??
+      (declaredTimeout !== undefined
+        ? Math.min(declaredTimeout, PLUGIN_RUNTIME_MAX_CALL_TIMEOUT_MS)
+        : methodSpec.timeoutMs);
     const callId = `pc_${++live.seq}`;
     const startedAt = Date.now();
     this.#clearIdle(live);
@@ -607,6 +616,8 @@ export class PluginHost {
     this.#descriptorCache.delete(pluginId);
     live.stopReason = 'dispose';
     this.#clearTimers(live);
+    // 宿主代发的 net.fetch 不会随插件进程自动停止：显式取消，避免连接悬挂到自己的超时。
+    this.#deps.bridge.abortFor(pluginId);
     // 在途调用随插件一起结束（插件已被停用 / 卸载）。
     for (const pending of [...live.pending.values()]) {
       pending.reject(new AppError('PLUGIN_CRASHED', '插件已被停用或卸载'));
@@ -648,6 +659,8 @@ export class PluginHost {
     live.stopReason = 'failure';
     live.gone = true;
     this.#clearTimers(live);
+    // 进程已死：宿主代发的在途 net.fetch 显式取消（否则会挂到自己的超时）。
+    this.#deps.bridge.abortFor(live.descriptor.pluginId);
     this.#setStatus(live.descriptor.pluginId, 'error', detail);
     for (const pending of [...live.pending.values()]) {
       pending.reject(new AppError(code, message));
@@ -702,6 +715,7 @@ export class PluginHost {
       hostApi: manifest.runtime.hostApi,
       networkAllow: manifest.runtime.network?.allow ?? [],
       maxConcurrent: manifest.runtime.maxConcurrent ?? 1,
+      timeouts: manifest.runtime.timeouts ?? {},
     };
     this.#descriptorCache.set(pluginId, descriptor);
     return descriptor;

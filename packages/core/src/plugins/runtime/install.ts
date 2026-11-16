@@ -9,6 +9,7 @@ import {
   type PluginTier,
 } from '@kepcup/shared';
 import { MEDIA_ENGINES } from '../../media/engines.js';
+import { CAPABILITY_CONTRACTS } from './contracts.js';
 import { isHostApiRangeValid, satisfiesHostApiRange } from './version.js';
 
 /**
@@ -133,6 +134,21 @@ function runtimeIssues(
       code: 'PLUGIN_INVALID',
       message: '执行型插件至少需要声明一条执行型能力条目（不填 engine，且不是 embedding / rerank）',
     });
+  }
+  // `runtime.timeouts` 的方法键必须属于已注册契约（`CAPABILITY_CONTRACTS`）：拼错或
+  // 引用未注册契约会让插件以为声明生效、实际走契约默认——安装期直接拒绝。
+  for (const key of Object.keys(runtime.timeouts ?? {})) {
+    const [contractId, method] = key.split('.');
+    const contract = contractId !== undefined ? CAPABILITY_CONTRACTS[contractId] : undefined;
+    if (contract === undefined || method === undefined || contract.methods[method] === undefined) {
+      const available = Object.keys(CAPABILITY_CONTRACTS)
+        .flatMap((id) => Object.keys(CAPABILITY_CONTRACTS[id]?.methods ?? {}).map((name) => `${id}.${name}`))
+        .join('、');
+      issues.push({
+        code: 'PLUGIN_INVALID',
+        message: `runtime.timeouts 引用未注册的契约方法：${key}（可用：${available}）`,
+      });
+    }
   }
   // 混合插件（runtime + 数据型 engine 条目）：runtime.instanceFields 与引擎凭据字段
   // 重名时，合并顺序会让 runtime 声明覆盖引擎字段（DEV-123）——若 runtime 声明成

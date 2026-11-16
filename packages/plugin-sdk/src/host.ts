@@ -17,6 +17,12 @@ export interface HostNetRequestInit {
   headers?: Record<string, string>;
   /** JSON / 文本直接传字符串；二进制传 Uint8Array（宿主侧限单次 20MB，61 §4）。 */
   body?: string | Uint8Array;
+  /**
+   * 单次请求超时（毫秒）。**由插件按自己的厂商协议声明**（如同步出图可给 300000）；
+   * 宿主只钳制上限（15 分钟）。不传 = 宿主上限兜底，不再有 60s 的隐含限制。
+   * 整个调用的总时长另由清单 `runtime.timeouts`（方法级）或契约默认看门狗约束。
+   */
+  timeoutMs?: number;
 }
 
 export interface HostNetResponse {

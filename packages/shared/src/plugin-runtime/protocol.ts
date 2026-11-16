@@ -296,6 +296,16 @@ export const PLUGIN_RUNTIME_STORAGE_QUOTA_BYTES = 10 * 1024 * 1024;
 /** `host.net.fetch` 单次响应体上限（20MB，61 §4）。 */
 export const PLUGIN_RUNTIME_NET_MAX_BYTES = 20 * 1024 * 1024;
 
+/**
+ * `host.net.fetch` 单次请求超时上限（15 分钟，与视频契约对齐）。
+ *
+ * 超时**由插件按自己的厂商协议声明**（`init.timeoutMs`），宿主只做上限钳制——不同厂商
+ * 的同步 / 异步、排队时长差异很大，应用不应用一个固定值干涉插件实现（61 §4「能力注入」
+ * 的边界语义）。插件不声明时用该上限兜底；调用级看门狗（契约 / manifest `runtime.timeouts`）
+ * 仍是最终裁判，插件进程被杀时在途请求随之取消。
+ */
+export const PLUGIN_RUNTIME_NET_MAX_TIMEOUT_MS = 15 * 60_000;
+
 /** 请求 / 应答共用的标识形状（requestId 由插件侧生成、宿主原样回显）。 */
 const hostApiEnvelopeBase = {
   type: z.literal('host-api'),
@@ -313,6 +323,11 @@ const hostApiNetInitSchema = z.strictObject({
   body: z.string().max(30_000_000).optional(),
   /** 二进制请求体（base64；与 body 恰好一个）。 */
   bodyBase64: z.string().max(30_000_000).optional(),
+  /**
+   * 单次请求超时（毫秒，插件自主声明；宿主钳制到 {@link PLUGIN_RUNTIME_NET_MAX_TIMEOUT_MS}）。
+   * 不声明 = 用宿主上限兜底（不再有 60s 的隐含上限）。
+   */
+  timeoutMs: z.number().int().min(1_000).max(PLUGIN_RUNTIME_NET_MAX_TIMEOUT_MS).optional(),
 });
 export type PluginHostApiNetInit = z.infer<typeof hostApiNetInitSchema>;
 

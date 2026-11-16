@@ -391,6 +391,21 @@ function probeSourceWithInstanceFields(): string {
   return dir;
 }
 
+/**
+ * 探针变体：清单声明方法级调用超时（`runtime.timeouts`）。
+ * 用于验证「超时由插件声明，宿主只钳制上限」——声明的 1.5s 生效而不是契约的 120s。
+ */
+function probeSourceWithDeclaredTimeout(timeoutMs: number): string {
+  const dir = probeSource();
+  const manifestPath = path.join(dir, 'plugin.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+    runtime: Record<string, unknown>;
+  };
+  manifest.runtime.timeouts = { 'media.generateImage': timeoutMs };
+  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+  return dir;
+}
+
 /** 数据型插件（无 runtime 段）：`plugins.runtime.list` 必须忽略它（P3 验收 4）。 */
 function dataPluginSource(): string {
   const dir = path.join(root, `data-plugin-${Math.random().toString(36).slice(2, 8)}`);
@@ -533,13 +548,15 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     rig.host.disposeAll();
   }, 30_000);
 
-  it('百炼文生图执行型试点：MediaService 条目解析 → 子进程提交/轮询 → 产物 URL + 进度阶段（D125 P4）', async () => {
+  it('百炼 Qwen-Image 执行型试点：MediaService 条目解析 → 子进程异步提交/轮询 → 产物 URL + 进度阶段（D125 P4）', async () => {
     const requests: Array<{
       url: string;
       method: string;
       authorization: string;
+      asyncHeader: string;
       body: Record<string, unknown>;
     }> = [];
+    let polls = 0;
     const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       const headers = (init?.headers ?? {}) as Record<string, string>;
@@ -549,17 +566,36 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
         url,
         method: init?.method ?? 'GET',
         authorization: headers['Authorization'] ?? '',
+        asyncHeader: headers['X-DashScope-Async'] ?? '',
         body,
       });
-      // qwen-image 系列同步接口：一次请求即返回 output.choices[].message.content[].image。
+      if (url.endsWith('/api/v1/services/aigc/image-generation/generation')) {
+        // qwen-image 异步提交：秒级返回 task_id（不是等出图）。
+        expect(headers['X-DashScope-Async']).toBe('enable');
+        return new Response(JSON.stringify({ output: { task_id: 'task-pilot-1' } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      // 轮询：PENDING → RUNNING → SUCCEEDED；成功取 choices[].message.content[].image。
+      polls += 1;
+      const status = polls === 1 ? 'PENDING' : polls === 2 ? 'RUNNING' : 'SUCCEEDED';
       return new Response(
         JSON.stringify({
           output: {
-            choices: [
-              { message: { content: [{ image: 'https://dashscope.aliyuncs.com/out/1.png' }] } },
-            ],
+            task_status: status,
+            ...(status === 'SUCCEEDED'
+              ? {
+                  choices: [
+                    {
+                      message: {
+                        content: [{ image: 'https://dashscope.aliyuncs.com/out/1.png' }],
+                      },
+                    },
+                  ],
+                }
+              : {}),
           },
-          usage: { output_image_count: 1 },
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       );
@@ -574,11 +610,16 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     // 真机协议错误漏测（DEV-124 的 url error 教训）。
     const pilotEntries = JSON.parse(
       readFileSync(path.join(pilotPluginDir, 'plugin.json'), 'utf8'),
-    ) as { contributions: { capabilityModels: Array<{ id: string; model: string }> } };
+    ) as {
+      runtime: { timeouts?: Record<string, number> };
+      contributions: { capabilityModels: Array<{ id: string; model: string }> };
+    };
     expect(
       pilotEntries.contributions.capabilityModels.find((entry) => entry.id === PILOT_ENTRY_ID)
         ?.model,
     ).toBe(PILOT_MODEL);
+    // 插件声明的调用超时（异步排队 + 出图 5 分钟），宿主只钳制上限（DEV-130）。
+    expect(pilotEntries.runtime.timeouts?.['media.generateImage']).toBe(300_000);
     const instance = await rig.pluginInstances.create(
       PILOT_ID,
       { apiKey: 'sk-pilot' },
@@ -600,7 +641,7 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     );
     expect(image.images).toEqual([{ url: 'https://dashscope.aliyuncs.com/out/1.png' }]);
     const submit = requests.find((request) => request.method === 'POST');
-    expect(submit?.url).toContain('/api/v1/services/aigc/multimodal-generation/generation');
+    expect(submit?.url).toContain('/api/v1/services/aigc/image-generation/generation');
     expect(submit?.authorization).toBe('Bearer sk-pilot');
     expect(submit?.body).toMatchObject({
       model: PILOT_MODEL,
@@ -610,11 +651,11 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
       parameters: { size: '1024*1024', n: 1, prompt_extend: true, watermark: false },
     });
 
-    // 同步接口只有「提交」与「取回」两个阶段；取回帧紧跟在提交后（同一秒内），
-    // 会被 SDK/宿主的 1 次/秒限速合并、并在调用结束时丢弃尾随帧——因此只断言
-    // 首个阶段与「确实有进度」，不断言 downloading 一定可见（真机同步请求同理）。
+    // 异步轮询：提交 → 排队 → 生成中 → 取回 四段都能观测到（与同步接口不同）。
     expect(phases[0]).toBe('submitting');
-    expect(phases.length).toBeGreaterThan(0);
+    expect(phases).toContain('queued');
+    expect(phases).toContain('generating');
+    expect(phases).toContain('downloading');
 
     expect(rig.host.statusOf(PILOT_ID).recent[0]).toMatchObject({
       contract: 'media',
@@ -675,29 +716,20 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     rig.host.disposeAll();
   }, 20_000);
 
-  it('百炼试点取消：signal abort → cancel 帧 → 插件返回后立即放弃结果；活动历史标 CANCELLED', async () => {
-    // 同步接口无法中途中断宿主代理请求（signal 不能跨进程）——mock 一次慢响应，
-    // 插件在拿到响应后发现 ctx.signal 已 abort，丢弃结果并回取消错误。
-    const fetchImpl = (async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1_200));
-      return new Response(
-        JSON.stringify({
-          output: {
-            choices: [
-              {
-                message: {
-                  content: [{ image: 'https://dashscope.aliyuncs.com/out/cancel.png' }],
-                },
-              },
-            ],
-          },
-        }),
-        { status: 200 },
-      );
+  it('百炼试点取消：signal abort → cancel 帧 → 轮询等待中尽快返回；活动历史标 CANCELLED', async () => {
+    // 异步轮询：取消在 sleep 间隙生效（不必等厂商响应），提交仍是秒级短请求。
+    const fetchImpl = (async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith('/api/v1/services/aigc/image-generation/generation')) {
+        return new Response(JSON.stringify({ output: { task_id: 'task-cancel-1' } }), {
+          status: 200,
+        });
+      }
+      return new Response(JSON.stringify({ output: { task_status: 'PENDING' } }), { status: 200 });
     }) as typeof fetch;
     const rig = makeRig({
       fetchImpl,
-      callTimeoutOverride: { 'media.generateImage': 5_000 },
+      callTimeoutOverride: { 'media.generateImage': 8_000 },
     });
     await rig.installSource(pilotSource());
     const instance = await rig.pluginInstances.create(
@@ -718,8 +750,8 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
         signal: controller.signal,
       },
     );
-    // 请求在途时 abort（mock 响应 1.2s 后返回）。
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    // 等到第一次轮询（插件固定 3s 间隔）之后 abort，覆盖「轮询等待中取消」。
+    await new Promise((resolve) => setTimeout(resolve, 3_300));
     controller.abort();
     await expect(pending).rejects.toMatchObject({
       code: 'PROVIDER_UNAVAILABLE',
@@ -780,27 +812,36 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
       '/api/v1/services/aigc/multimodal-generation/generation',
     );
 
-    // 插件侧：同一 prompt/size、同一协议，经子进程托管适配器。
+    // 插件侧：**异步**提交 + 轮询（厂商协议允许插件自带状态机），同一 model / prompt / size。
     const pluginRequests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    let polls = 0;
     const pluginFetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
       const raw = typeof init?.body === 'string' ? init.body : '{}';
-      pluginRequests.push({
-        url: String(input),
-        body: JSON.parse(raw) as Record<string, unknown>,
-      });
+      pluginRequests.push({ url, body: JSON.parse(raw) as Record<string, unknown> });
+      if (url.endsWith('/api/v1/services/aigc/image-generation/generation')) {
+        return new Response(JSON.stringify({ output: { task_id: 'ab-task-1' } }), { status: 200 });
+      }
+      polls += 1;
+      const status = polls === 1 ? 'PENDING' : 'SUCCEEDED';
       return new Response(
         JSON.stringify({
           output: {
-            choices: [
-              {
-                message: {
-                  content: [{ image: 'https://dashscope.aliyuncs.com/out/plugin.png' }],
-                },
-              },
-            ],
+            task_status: status,
+            ...(status === 'SUCCEEDED'
+              ? {
+                  choices: [
+                    {
+                      message: {
+                        content: [{ image: 'https://dashscope.aliyuncs.com/out/plugin.png' }],
+                      },
+                    },
+                  ],
+                }
+              : {}),
           },
         }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
+        { status: 200 },
       );
     }) as typeof fetch;
     const rig = makeRig({ fetchImpl: pluginFetch, callTimeoutOverride: {} });
@@ -827,15 +868,19 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     const pluginMs = Date.now() - pluginStarted;
     expect(viaPlugin.images).toEqual([{ url: 'https://dashscope.aliyuncs.com/out/plugin.png' }]);
 
-    // 协议等价性：同一 model / prompt / size 打到同一端点（这是「同协议」的直接证据）。
-    expect(pluginRequests[0]?.url).toContain(
-      '/api/v1/services/aigc/multimodal-generation/generation',
-    );
+    // 请求形态差异（这是「两类协议」的直接证据）：
+    // - 插件走异步任务端点 + 轮询（qwen-image 异步模式，单次请求都是秒级）；
+    // - 内置引擎走同步端点（连接保持到出图完成——这正是 60s 网络超时的受害者形态）。
+    expect(pluginRequests[0]?.url).toContain('/api/v1/services/aigc/image-generation/generation');
     expect(pluginRequests[0]?.body).toMatchObject({
       model: PILOT_MODEL,
       input: { messages: [{ role: 'user', content: [{ text: prompt }] }] },
       parameters: { size, n: 1 },
     });
+    expect(pluginRequests.length).toBeGreaterThanOrEqual(2); // 提交 + 至少一次轮询
+    expect(builtinRequests[0]?.url).toContain(
+      '/api/v1/services/aigc/multimodal-generation/generation',
+    );
     expect(builtinRequests[0]?.body).toMatchObject({
       model: PILOT_MODEL,
       input: { messages: [{ role: 'user', content: [{ text: prompt }] }] },
@@ -843,9 +888,10 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     });
 
     // 观测差异（61 §6 / 61 §12 A/B 记录的数据来源）：
-    // - 内置引擎：进程内单请求，无阶段进度、无插件活动记录；
-    // - 插件：多一层子进程往返（含首次懒启动），有阶段进度与插件卡历史。
+    // - 内置引擎：单请求同步，无阶段进度、无插件活动记录、无取消介入点；
+    // - 插件：异步排队 + 轮询，有阶段进度、插件卡历史，取消可在轮询间隙生效。
     expect(pluginProgress.length).toBeGreaterThan(0);
+    expect(pluginProgress).toContain('queued');
     expect(rig.host.statusOf(PILOT_ID).recent[0]).toMatchObject({ ok: true });
     expect(pluginMs).toBeGreaterThanOrEqual(0);
     expect(builtinMs).toBeGreaterThanOrEqual(0);
@@ -1130,6 +1176,27 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     expect(rig.host.statusOf(PROBE_ID).status).toBe('ready');
     rig.host.disposeAll();
   });
+
+  it('清单声明的调用超时生效：runtime.timeouts 1.5s → hang 在 1.5s 被杀（不是契约 120s）', async () => {
+    // 不传 callTimeoutOverride：验证 manifest `runtime.timeouts` 是 host 的取值来源。
+    const rig = makeRig();
+    await rig.installSource(probeSourceWithDeclaredTimeout(1_500));
+    const instance = await rig.pluginInstances.create(PROBE_ID, {}, 'capability-model');
+    const startedAt = Date.now();
+    await expect(
+      rig.host.call(
+        PROBE_ID,
+        'media',
+        'generateImage',
+        { prompt: '探针' },
+        { entryId: 'probe-image', model: 'hang', instanceId: instance.id },
+      ),
+    ).rejects.toMatchObject({ code: 'PLUGIN_TIMEOUT' });
+    // 看门狗使用插件声明的 1.5s（+2s 强杀宽限），远小于契约默认 120s。
+    expect(Date.now() - startedAt).toBeLessThan(15_000);
+    expect(rig.host.statusOf(PROBE_ID).status).toBe('error');
+    rig.host.disposeAll();
+  }, 30_000);
 
   it('心跳看门狗：同步死循环（submitVideo，900s 契约超时）被 2 次心跳无响应击杀', async () => {
     const { rig, instanceId } = await withProbe();
@@ -1499,6 +1566,28 @@ describe('执行型插件安装管线（D125 步骤 4：层级 / entry / 包防�
     expect(rig.store.get(PROBE_ID)).toBeNull();
     const invalid = variantDir('hostapi-invalid', { hostApi: 'banana' });
     await expect(rig.installSource(invalid)).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
+  });
+
+  it('runtime.timeouts 引用未注册契约方法 → 拒装（PLUGIN_INVALID）；合法键通过', async () => {
+    const rig = makeRig();
+    const unknown = variantDir('timeout-unknown', {
+      timeouts: { 'media.notAMethod': 60_000 },
+    });
+    await expect(rig.installSource(unknown)).rejects.toMatchObject({
+      code: 'PLUGIN_INVALID',
+      message: expect.stringContaining('media.notAMethod'),
+    });
+    expect(rig.store.get(PROBE_ID)).toBeNull();
+    const unknownContract = variantDir('timeout-contract', {
+      timeouts: { 'search.query': 60_000 },
+    });
+    await expect(rig.installSource(unknownContract)).rejects.toMatchObject({
+      code: 'PLUGIN_INVALID',
+    });
+    const valid = variantDir('timeout-valid', {
+      timeouts: { 'media.generateImage': 180_000 },
+    });
+    await expect(rig.installSource(valid)).resolves.toBeUndefined();
   });
 
   it('包内含 .node / .wasm / .dll / .so / .exe / 可执行位文件 → 拒装（PLUGIN_INVALID）', async () => {

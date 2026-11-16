@@ -3,6 +3,7 @@ import net from 'node:net';
 import {
   AppError,
   PLUGIN_RUNTIME_NET_MAX_BYTES,
+  PLUGIN_RUNTIME_NET_MAX_TIMEOUT_MS,
   type PluginFieldValue,
   type PluginHostApiRequest,
   type PluginHostNetResponse,
@@ -90,11 +91,13 @@ export interface CapabilityBridgeDeps {
   fetchImpl?: typeof fetch;
   /** 测试缝：注入 DNS 解析（模拟私网地址 / DNS rebinding）。 */
   lookup?: (hostname: string) => Promise<Array<{ address: string }>>;
-  /** 单次 `net.fetch` 超时（缺省 60s）。 */
+  /**
+   * 测试缝：单次 `net.fetch` 的宿主默认超时（生产不注入 = 用
+   * {@link PLUGIN_RUNTIME_NET_MAX_TIMEOUT_MS} 兜底；插件可用 `init.timeoutMs` 声明更短值）。
+   */
   netTimeoutMs?: number;
 }
 
-const DEFAULT_NET_TIMEOUT_MS = 60_000;
 const MAX_REDIRECTS = 5;
 const FETCH_USER_AGENT = 'Mozilla/5.0 (compatible; KepCup-Plugin/1.0; +https://kepcup.app)';
 
@@ -153,6 +156,8 @@ export class CapabilityBridge {
   readonly #deps: CapabilityBridgeDeps;
   /** 每插件每域调用计数（审计面，61 §3.3）。 */
   readonly #audit = new Map<string, Map<string, number>>();
+  /** 每插件在途 `net.fetch` 的取消器（进程退出 / 卸载时统一 abort，防连接悬挂）。 */
+  readonly #inflight = new Map<string, Set<AbortController>>();
 
   constructor(deps: CapabilityBridgeDeps) {
     this.#deps = deps;
@@ -298,13 +303,64 @@ export class CapabilityBridge {
     let url = await this.#assertAllowedUrl(pluginId, rawUrl, allow);
     // 审计：每插件每域调用次数（进日志，不阻塞）。
     this.#count(pluginId, url.hostname);
-    const timeout = AbortSignal.timeout(this.#deps.netTimeoutMs ?? DEFAULT_NET_TIMEOUT_MS);
+    // 超时由插件声明（init.timeoutMs），宿主只钳制上限——不同厂商协议的合理单次请求
+    // 时长差异很大（同步出图可达数分钟），固定 60s 会误杀正常请求（61 §4 能力注入语义）。
+    // 调用级看门狗仍是最终裁判；插件进程退出时 abortFor 会取消这里的在途请求。
+    const timeoutMs = Math.min(
+      init?.timeoutMs ?? this.#deps.netTimeoutMs ?? PLUGIN_RUNTIME_NET_MAX_TIMEOUT_MS,
+      PLUGIN_RUNTIME_NET_MAX_TIMEOUT_MS,
+    );
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    this.#track(pluginId, controller);
     const body =
       init?.bodyBase64 !== undefined
         ? Buffer.from(init.bodyBase64, 'base64')
         : init?.body !== undefined
           ? init.body
           : undefined;
+    try {
+      return await this.#netFetchLoop(pluginId, url, allow, init, body, controller.signal);
+    } finally {
+      clearTimeout(timer);
+      this.#untrack(pluginId, controller);
+    }
+  }
+
+  /**
+   * 取消某插件的全部在途 `net.fetch`（插件进程退出 / 卸载时调用）。
+   *
+   * 请求是宿主代发的：插件进程死亡后请求本身不会自动停止，若不取消会一直挂到自己的
+   * 超时（上限 15 分钟）并长期占用连接。PluginHost 的 dispose / 失败收尾负责调用。
+   */
+  abortFor(pluginId: string): void {
+    for (const controller of this.#inflight.get(pluginId) ?? []) controller.abort();
+    this.#inflight.delete(pluginId);
+  }
+
+  #track(pluginId: string, controller: AbortController): void {
+    const set = this.#inflight.get(pluginId) ?? new Set<AbortController>();
+    set.add(controller);
+    this.#inflight.set(pluginId, set);
+  }
+
+  #untrack(pluginId: string, controller: AbortController): void {
+    const set = this.#inflight.get(pluginId);
+    if (set === undefined) return;
+    set.delete(controller);
+    if (set.size === 0) this.#inflight.delete(pluginId);
+  }
+
+  /** `netFetch` 的重定向循环主体（超时 / 在途登记由调用方负责）。 */
+  async #netFetchLoop(
+    pluginId: string,
+    startUrl: URL,
+    allow: readonly string[],
+    init: Extract<PluginHostApiRequest, { api: 'net.fetch' }>['init'],
+    body: Buffer | string | undefined,
+    signal: AbortSignal,
+  ): Promise<PluginHostNetResponse> {
+    let url = startUrl;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
       let response: Response;
       // UA 固定（61 §4）：插件自定义 headers 不能覆盖 User-Agent。
@@ -318,14 +374,17 @@ export class CapabilityBridge {
           headers: requestHeaders,
           ...(body !== undefined ? { body } : {}),
           redirect: 'manual',
-          signal: timeout,
+          signal,
         });
       } catch (error) {
         const rejection = connectRejectionText(error);
         if (rejection !== null) {
           throw new AppError('PLUGIN_NETWORK_DENIED', rejection, { host: url.hostname });
         }
-        if (error instanceof Error && error.name === 'TimeoutError') {
+        if (
+          (error instanceof Error && error.name === 'TimeoutError') ||
+          signal.aborted
+        ) {
           throw new AppError('PROVIDER_UNREACHABLE', '插件网络请求超时');
         }
         throw new AppError(

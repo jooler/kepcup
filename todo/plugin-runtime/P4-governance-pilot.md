@@ -90,3 +90,11 @@ pnpm test   # 全量一次（阶段收口，AGENTS.md）
   - Q3 / Q5：未涉及，仍未决。Q4：扫描管线已落地，community 执行型维持拒绝。
   - 参考插件 `plugins/reference-media` 的去留（保留为开发者样例 or 退役）留给用户决策；本阶段未改动其定位。
   - 建议后续：真机确认 `qwen-image-3.0` 出图与成本（DEV-124 已改）；`runtimeScan` 是否在市场 UI 展示（当前只写索引，未消费）；静态扫描的已知假阴性面（变量别名的计算成员、`Object.getPrototypeOf(...).constructor`、Unicode 转义标识符）只能靠 verified 人工复审兜底，见 DEV-129。
+- 真机反馈修正（2026-11-16，第二轮，DEV-130）：真机同步 `qwen-image-3.0` 两次均 60s
+  网络超时（`bridge.DEFAULT_NET_TIMEOUT_MS`），确认「超时是应用侧固定值」违背插件自治。
+  改为：①`runtime.timeouts` 方法级调用超时声明 + `net.fetch.init.timeoutMs` 单次请求
+  超时声明，宿主只钳制 15 分钟上限并在进程退出时 `abortFor` 取消在途请求；②试点改回
+  **异步**任务接口（`image-generation/generation` + 轮询，单次请求秒级）并声明 5 分钟调用
+  超时；③安装期校验 timeouts 键属于已注册契约方法。测试：bridge 超时/abortFor 2 用例、
+  host「清单声明 1.5s 生效」1 用例、install「未注册键拒装」1 用例、shared schema 2 用例、
+  试点用例改异步（四段进度 + 轮询取消）。
