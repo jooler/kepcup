@@ -70,7 +70,9 @@ const pilotPluginDir = path.join(repoRoot, 'plugins', 'dashscope-t2i');
 const probeFixtureDir = path.join(here, '../fixtures/plugin-runtime/probe');
 const REFERENCE_ID = 'io.kepcup/reference-media';
 const PILOT_ID = 'io.kepcup/dashscope-t2i';
-const PILOT_ENTRY_ID = 'wan-t2i';
+const PILOT_ENTRY_ID = 'qwen-image-3';
+/** 试点条目 `qwen-image-3` 的 model：必须是 qwen-image 系列（同步 multimodal-generation）。 */
+const PILOT_MODEL = 'qwen-image-3.0';
 const PROBE_ID = 'io.test/runtime-probe';
 
 beforeAll(() => {
@@ -536,10 +538,8 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
       url: string;
       method: string;
       authorization: string;
-      asyncHeader: string;
       body: Record<string, unknown>;
     }> = [];
-    let polls = 0;
     const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       const headers = (init?.headers ?? {}) as Record<string, string>;
@@ -549,27 +549,17 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
         url,
         method: init?.method ?? 'GET',
         authorization: headers['Authorization'] ?? '',
-        asyncHeader: headers['X-DashScope-Async'] ?? '',
         body,
       });
-      if (url.endsWith('/api/v1/services/aigc/text2image/image-synthesis')) {
-        expect(headers['X-DashScope-Async']).toBe('enable');
-        return new Response(
-          JSON.stringify({ output: { task_id: 'task-pilot-1', task_status: 'PENDING' } }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        );
-      }
-      polls += 1;
-      const status = polls === 1 ? 'PENDING' : polls === 2 ? 'RUNNING' : 'SUCCEEDED';
+      // qwen-image 系列同步接口：一次请求即返回 output.choices[].message.content[].image。
       return new Response(
         JSON.stringify({
           output: {
-            task_id: 'task-pilot-1',
-            task_status: status,
-            ...(status === 'SUCCEEDED'
-              ? { results: [{ url: 'https://dashscope.aliyuncs.com/out/1.png' }] }
-              : {}),
+            choices: [
+              { message: { content: [{ image: 'https://dashscope.aliyuncs.com/out/1.png' }] } },
+            ],
           },
+          usage: { output_image_count: 1 },
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       );
@@ -580,6 +570,15 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     // 实例字段声明面：apiKey 敏感必填 → 实例表单 + secrets（DEV-114 与试点同一条链）。
     const summary = rig.registry.list().find((plugin) => plugin.id === PILOT_ID);
     expect(summary?.instanceFields.map((field) => field.key)).toEqual(['apiKey']);
+    // PILOT_MODEL 必须与插件清单条目一致：manifest 换 model 而测试仍断言旧 id 会让
+    // 真机协议错误漏测（DEV-124 的 url error 教训）。
+    const pilotEntries = JSON.parse(
+      readFileSync(path.join(pilotPluginDir, 'plugin.json'), 'utf8'),
+    ) as { contributions: { capabilityModels: Array<{ id: string; model: string }> } };
+    expect(
+      pilotEntries.contributions.capabilityModels.find((entry) => entry.id === PILOT_ENTRY_ID)
+        ?.model,
+    ).toBe(PILOT_MODEL);
     const instance = await rig.pluginInstances.create(
       PILOT_ID,
       { apiKey: 'sk-pilot' },
@@ -601,20 +600,21 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     );
     expect(image.images).toEqual([{ url: 'https://dashscope.aliyuncs.com/out/1.png' }]);
     const submit = requests.find((request) => request.method === 'POST');
+    expect(submit?.url).toContain('/api/v1/services/aigc/multimodal-generation/generation');
     expect(submit?.authorization).toBe('Bearer sk-pilot');
     expect(submit?.body).toMatchObject({
-      model: 'wan2.7-t2v',
-      input: { prompt: '一只在窗台上的橘猫' },
-      // 条目 params 的默认 size / n（工具不传时生效），原生分隔符为 *。
-      parameters: { size: '1024*1024', n: 1 },
+      model: PILOT_MODEL,
+      // qwen-image 协议：prompt 在 input.messages[0].content[].text。
+      input: { messages: [{ role: 'user', content: [{ text: '一只在窗台上的橘猫' }] }] },
+      // 条目 params 的默认 size / n / prompt_extend / watermark（工具不传时生效）。
+      parameters: { size: '1024*1024', n: 1, prompt_extend: true, watermark: false },
     });
 
-    // 进度阶段：提交 → 排队 → 生成中 → 取回。PENDING → RUNNING → SUCCEEDED 三个
-    // 轮询状态保证 queued / generating 都能观测到；downloading 是成功后的 100% 帧。
+    // 同步接口只有「提交」与「取回」两个阶段；取回帧紧跟在提交后（同一秒内），
+    // 会被 SDK/宿主的 1 次/秒限速合并、并在调用结束时丢弃尾随帧——因此只断言
+    // 首个阶段与「确实有进度」，不断言 downloading 一定可见（真机同步请求同理）。
     expect(phases[0]).toBe('submitting');
-    expect(phases).toContain('queued');
-    expect(phases).toContain('generating');
-    expect(phases).toContain('downloading');
+    expect(phases.length).toBeGreaterThan(0);
 
     expect(rig.host.statusOf(PILOT_ID).recent[0]).toMatchObject({
       contract: 'media',
@@ -675,15 +675,25 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     rig.host.disposeAll();
   }, 20_000);
 
-  it('百炼试点取消：signal abort → cancel 帧 → 插件尽快返回（不删服务端任务）；活动历史标 CANCELLED', async () => {
-    const fetchImpl = (async (input: string | URL | Request) => {
-      const url = String(input);
-      if (url.endsWith('/text2image/image-synthesis')) {
-        return new Response(JSON.stringify({ output: { task_id: 'task-cancel-1' } }), {
-          status: 200,
-        });
-      }
-      return new Response(JSON.stringify({ output: { task_status: 'PENDING' } }), { status: 200 });
+  it('百炼试点取消：signal abort → cancel 帧 → 插件返回后立即放弃结果；活动历史标 CANCELLED', async () => {
+    // 同步接口无法中途中断宿主代理请求（signal 不能跨进程）——mock 一次慢响应，
+    // 插件在拿到响应后发现 ctx.signal 已 abort，丢弃结果并回取消错误。
+    const fetchImpl = (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_200));
+      return new Response(
+        JSON.stringify({
+          output: {
+            choices: [
+              {
+                message: {
+                  content: [{ image: 'https://dashscope.aliyuncs.com/out/cancel.png' }],
+                },
+              },
+            ],
+          },
+        }),
+        { status: 200 },
+      );
     }) as typeof fetch;
     const rig = makeRig({
       fetchImpl,
@@ -703,13 +713,13 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
       { prompt: '取消' },
       {
         entryId: PILOT_ENTRY_ID,
-        model: 'wan2.7-t2v',
+        model: PILOT_MODEL,
         instanceId: instance.id,
         signal: controller.signal,
       },
     );
-    // 等到第一次轮询（插件固定 2s 间隔）之后 abort，覆盖「轮询等待中取消」。
-    await new Promise((resolve) => setTimeout(resolve, 2_300));
+    // 请求在途时 abort（mock 响应 1.2s 后返回）。
+    await new Promise((resolve) => setTimeout(resolve, 300));
     controller.abort();
     await expect(pending).rejects.toMatchObject({
       code: 'PROVIDER_UNAVAILABLE',
@@ -728,11 +738,15 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
   it('A/B 对照（集成层）：同一 prompt/size 走执行型插件 vs 内置引擎 generateImage（无 Key 的真机差异见 61 §12）', async () => {
     const prompt = '一只在窗台上的橘猫';
     const size = '1024*1024';
-    // 内置引擎侧：dashscope 引擎的 image 是 qwen-image 同步 multimodal-generation
-    // （与 wan 异步协议不同源；异步提交/轮询的代码形状在内置引擎里属于视频三方法）。
-    const builtinRequests: string[] = [];
-    const builtinFetch = (async (input: string | URL | Request) => {
-      builtinRequests.push(String(input));
+    // 两侧现在同协议（qwen-image 同步 multimodal-generation）：A/B 对照的是
+    // **执行引擎**——进程内适配器 vs 子进程插件，而不是两套厂商协议。
+    const builtinRequests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const builtinFetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const raw = typeof init?.body === 'string' ? init.body : '{}';
+      builtinRequests.push({
+        url: String(input),
+        body: JSON.parse(raw) as Record<string, unknown>,
+      });
       return new Response(
         JSON.stringify({
           output: {
@@ -757,31 +771,36 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
         logger: makeLogger().logger as never,
         fetchImpl: builtinFetch,
       },
-      'qwen-image',
-      { prompt, size: '1024x1024' },
+      PILOT_MODEL,
+      { prompt, size: '1024x1024', n: 1 },
     );
     const builtinMs = Date.now() - builtinStarted;
     expect(builtin.images).toEqual([{ url: 'https://dashscope.aliyuncs.com/out/qwen-image.png' }]);
-    expect(builtinRequests[0]).toContain('/api/v1/services/aigc/multimodal-generation/generation');
+    expect(builtinRequests[0]?.url).toContain(
+      '/api/v1/services/aigc/multimodal-generation/generation',
+    );
 
-    // 插件侧：同一 prompt/size 走 wan 异步提交 + 最少一次 2s 轮询。
-    let polls = 0;
-    const pluginFetch = (async (input: string | URL | Request) => {
-      const url = String(input);
-      if (url.endsWith('/text2image/image-synthesis')) {
-        return new Response(JSON.stringify({ output: { task_id: 'ab-1' } }), { status: 200 });
-      }
-      polls += 1;
+    // 插件侧：同一 prompt/size、同一协议，经子进程托管适配器。
+    const pluginRequests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const pluginFetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const raw = typeof init?.body === 'string' ? init.body : '{}';
+      pluginRequests.push({
+        url: String(input),
+        body: JSON.parse(raw) as Record<string, unknown>,
+      });
       return new Response(
         JSON.stringify({
           output: {
-            task_status: polls === 1 ? 'PENDING' : 'SUCCEEDED',
-            ...(polls > 1
-              ? { results: [{ url: 'https://dashscope.aliyuncs.com/out/wan.png' }] }
-              : {}),
+            choices: [
+              {
+                message: {
+                  content: [{ image: 'https://dashscope.aliyuncs.com/out/plugin.png' }],
+                },
+              },
+            ],
           },
         }),
-        { status: 200 },
+        { status: 200, headers: { 'content-type': 'application/json' } },
       );
     }) as typeof fetch;
     const rig = makeRig({ fetchImpl: pluginFetch, callTimeoutOverride: {} });
@@ -800,21 +819,36 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
       { prompt, size },
       {
         entryId: PILOT_ENTRY_ID,
-        model: 'wan2.7-t2v',
+        model: PILOT_MODEL,
         instanceId: instance.id,
         onProgress: (payload) => pluginProgress.push(payload.phase ?? ''),
       },
     )) as { images: Array<{ url: string }> };
     const pluginMs = Date.now() - pluginStarted;
-    expect(viaPlugin.images).toEqual([{ url: 'https://dashscope.aliyuncs.com/out/wan.png' }]);
+    expect(viaPlugin.images).toEqual([{ url: 'https://dashscope.aliyuncs.com/out/plugin.png' }]);
+
+    // 协议等价性：同一 model / prompt / size 打到同一端点（这是「同协议」的直接证据）。
+    expect(pluginRequests[0]?.url).toContain(
+      '/api/v1/services/aigc/multimodal-generation/generation',
+    );
+    expect(pluginRequests[0]?.body).toMatchObject({
+      model: PILOT_MODEL,
+      input: { messages: [{ role: 'user', content: [{ text: prompt }] }] },
+      parameters: { size, n: 1 },
+    });
+    expect(builtinRequests[0]?.body).toMatchObject({
+      model: PILOT_MODEL,
+      input: { messages: [{ role: 'user', content: [{ text: prompt }] }] },
+      parameters: { size, n: 1 },
+    });
 
     // 观测差异（61 §6 / 61 §12 A/B 记录的数据来源）：
-    // - 内置引擎单请求同步返回，无阶段进度、无插件活动记录；
-    // - 插件路径至少 2s（轮询节奏）、有阶段进度、有插件卡历史。
-    expect(builtinMs).toBeLessThan(pluginMs);
-    expect(pluginMs).toBeGreaterThanOrEqual(2_000);
+    // - 内置引擎：进程内单请求，无阶段进度、无插件活动记录；
+    // - 插件：多一层子进程往返（含首次懒启动），有阶段进度与插件卡历史。
     expect(pluginProgress.length).toBeGreaterThan(0);
     expect(rig.host.statusOf(PILOT_ID).recent[0]).toMatchObject({ ok: true });
+    expect(pluginMs).toBeGreaterThanOrEqual(0);
+    expect(builtinMs).toBeGreaterThanOrEqual(0);
     rig.host.disposeAll();
   }, 30_000);
 

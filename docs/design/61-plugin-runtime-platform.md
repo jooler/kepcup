@@ -166,7 +166,7 @@ package.json）；签名扫描归档本身，不应用 `.kepcup-ignore`。
 
 ## 验收锚点
 
-- 安装一个执行型插件（百炼文生图试点或参考插件）→ 同意卡显示能力披露 → 添加实例填 Key → Bot 勾选条目 → 任务里 `generate_image` 走插件：对话内可见进度阶段（排队/生成中）→ 产物落附件 → 插件卡显示 busy→ready、活动抽屉有调用记录。
+- 安装一个执行型插件（百炼 Qwen-Image 试点或参考插件）→ 同意卡显示能力披露 → 添加实例填 Key → Bot 勾选条目 → 任务里 `generate_image` 走插件：对话内可见进度阶段（同步试点只报「提交」，参考插件报排队/生成中）→ 产物落附件 → 插件卡显示 busy→ready、活动抽屉有调用记录。
 - 拔网线/断网：插件 `net.fetch` 出白名单域被拒，插件卡活动可见 `PLUGIN_NETWORK_DENIED`。
 - 插件代码死循环：看门狗超时击杀，工具收 `PROVIDER_UNAVAILABLE` 人话错误，内核与其它插件无感，插件卡标 error、下次调用自动重启。
 - 插件返回不合 schema 的输出：`PLUGIN_CONTRACT_VIOLATION`，无部分投递。
@@ -213,7 +213,8 @@ package.json）；签名扫描归档本身，不应用 `.kepcup-ignore`。
   视频阶段文案、执行型判定来源等），详见 [DEVIATIONS.md](../dev/DEVIATIONS.md)。
 - P4：**DEV-123** `runtime.instanceFields` + `invoke.context.instanceId`（落实 DEV-114；
   兼容面用 `ready.features` 握手，旧 SDK 不收到新字段）；
-  **DEV-124** 试点条目 model 取 `wan2.7-t2v`（16 号只有 wan 视频预置，真机可能需换文生图 id）；
+  **DEV-124** 试点模型：首版 `wan2.7-t2v`（视频模型）被真机以 `url error` 拒绝 →
+  改为用户指定的 `qwen-image-3.0` + 同步协议（`params.model` 可覆盖）；
   **DEV-125** RSS 观测用插件心跳自报；**DEV-126** 静态扫描掩码与域名豁免；
   **DEV-127** 产物下载 SSRF 加固对所有来源生效（http(s) 使用与 Agent 同版本的 undici fetch）；
   **DEV-128** native 扩展名补 `.dll/.so/.exe/.dylib`；
@@ -221,28 +222,35 @@ package.json）；签名扫描归档本身，不应用 `.kepcup-ignore`。
   的 ESM 策略（`.js/.mjs` + `type: module`）/ `.kepcup-ignore` 目录口径；已知假阴性面见该条）。
   无未决阻塞项。
 
-### 12.4 试点 A/B 结论（百炼文生图，`plugins/dashscope-t2i/`）
+### 12.4 试点 A/B 结论（百炼 Qwen-Image，`plugins/dashscope-t2i/`）
 
-**重要事实修正**：任务书假设「插件协议与内置引擎同源」。实际内置 `dashscope` 引擎的
-`generateImage` 走 **qwen-image 同步** `multimodal-generation`，并未实现 wan 异步文生图；
-异步「提交 → 轮询」的代码形状属于内置引擎的 `submitVideo / videoStatus`。因此试点 A/B
-是「执行型运行时 vs 第一方同步引擎」，不是同一端点的双实现。
+**事实修正（两轮）**：① 任务书假设「插件协议与内置引擎同源」——实际首版用 wan 异步
+`text2image/image-synthesis`，而内置 `generateImage` 是 qwen-image 同步
+`multimodal-generation`，异步「提交 → 轮询」的代码形状属于内置引擎的
+`submitVideo / videoStatus`。② 首版按 16 号 wan 视频预置取 `model: wan2.7-t2v`，真机被
+百炼以 `url error, please check url!` 拒绝（视频模型不能用于文生图端点）。**现状**：
+试点改为 `qwen-image-3.0` + 同步 `multimodal-generation`（官方推荐路径），与内置引擎
+协议等价——A/B 因此对照的是**执行引擎**（进程内适配器 vs 子进程插件），而非两套协议。
 
-集成层对照（同一 prompt / 逻辑 size，无 API Key，测试
+集成层对照（同一 prompt / size / model，无 API Key，测试
 `plugin-host.test.ts` 的「A/B 对照（集成层）」）：
 
-| 维度 | 执行型插件（wan 异步） | 内置引擎（qwen-image 同步） |
+| 维度 | 执行型插件 | 内置引擎 |
 |---|---|---|
-| 端点 | `text2image/image-synthesis` + `GET /api/v1/tasks/{id}` | `multimodal-generation/generation` 单请求 |
-| 延迟形态 | 提交 RTT + 至少一次 2s 轮询（测试 ≥2s；真实生成更久） | 单次厂商 RTT |
-| 进度 | `submitting → queued → generating → downloading` 进状态行 | 无阶段进度 |
-| 活动记录 | 插件卡 busy→ready + 调用历史（时长 / 结果 / 错误） | 无插件活动 |
-| 取消 | `signal` → cancel 帧，插件尽快返回（不删服务端任务） | 引擎路径无工具 signal（DEV-118/119 记录） |
-| 错误文案 | 插件映射：`百炼鉴权失败 / 额度不足 / 请求过于频繁 / 文生图失败` | `media/http.ts` 的厂商错误归一 |
+| 端点 / 请求体 | `multimodal-generation/generation`，`input.messages` + `parameters` | 同左（逐字段等价，测试断言两侧 body） |
+| 延迟形态 | 单次厂商 RTT + 子进程 IPC 往返（含首次懒启动） | 单次厂商 RTT |
+| 进度 | `submitting`（取回帧受 1 次/秒限速与调用结束丢弃影响，通常不可见） | 无阶段进度 |
+| 活动记录 | 插件卡 busy→ready + 调用历史（时长 / 结果 / 错误 / CANCELLED） | 无插件活动 |
+| 取消 | `signal` → cancel 帧；同步请求返回后丢弃结果并报「调用已取消」 | 引擎路径无工具 signal（DEV-118/119） |
+| 错误文案 | 插件映射：`百炼鉴权失败 / 额度不足 / 请求过于频繁 / 图片生成失败`（`url error` 附 model 指引） | `media/http.ts` 的厂商错误归一 |
 | 产物 | URL → core 下载（SSRF 守卫）→ 既有附件投递 | 同左（同一投递链） |
 
-**真机验收（待用户验证）**：填入百炼 API Key 后，按 §验收锚点第 1 条执行；若文生图端点
-拒绝 `wan2.7-t2v`，按 DEV-124 只改 manifest `model`。
+**结论**：同协议下两者行为等价，差异集中在可观测性与进程边界成本——执行型路径的
+价值在于「厂商协议与模型上新不必等应用发版」+ 活动/取消/进度可观测，代价是一次 IPC
+往返与插件包维护；同步短请求场景内置引擎仍是更低成本的选择。
+
+**真机状态**：`qwen-image-3.0` 已按用户指定落地；首次真机调用（测试连接）待用户复验
+（历史 `wan2.7-t2v` 的 `url error` 根因见 DEV-124）。
 
 ### 12.5 Q1–Q5（被试点证实 / 仍未决）
 

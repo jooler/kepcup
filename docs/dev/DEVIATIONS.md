@@ -1956,22 +1956,35 @@
 - 已更新的文档：本条；61 §2 / §3.2 runtime 固定段、`todo/plugin-runtime/README.md`
   固定契约、`packages/plugin-sdk/README.md`（ctx 与实例字段）。
 
-### DEV-124 百炼试点条目 model 取 `wan2.7-t2v`（16 号只有 wan 视频预置），真机可能需换文生图 id（D125 P4）
+### DEV-124 百炼试点模型选择：wan 视频 id 被真机拒绝 → 改用 qwen-image-3.0 同步协议（D125 P4）
 
-- 状态：已记录（待真机确认）
+- 状态：已修正（真机确认根因）
 - 阶段：D125 P4（2026-11-16）
-- 是否阻塞：否（不影响运行时链路的开发验收；影响真机出图）
+- 是否阻塞：否
 - 问题：任务书步骤 3 要求条目 `model` 取「16 号 wan 系列预置 id」。16 号当前登记的
   wan 系列预置只有视频三条（`wan2.7-t2v / wan3.0-video / wan2.2-t2v-plus`），没有 wan
   文生图预置；而试点的协议（`input.prompt` 顶层 + `X-DashScope-Async` +
   `GET /api/v1/tasks/{id}`）是百炼 **text2image/image-synthesis** 的异步文生图形态。
-- 影响范围：`plugins/dashscope-t2i/plugin.json` 的条目 `model`（仅清单数据）。
-- 决定：按任务书字面取 `wan2.7-t2v`。若真机验证发现文生图端点不接受该 id（预期风险），
-  只改 manifest 的 `model` 为厂商在售的 wan 文生图 id（如 `wan2.2-t2i-plus`），插件代码、
-  协议与运行时链路完全不变。A/B 的「同源」前提也按事实修正：内置 `dashscope` 引擎的
-  `generateImage` 是 qwen-image **同步** multimodal-generation，并未实现 wan 异步文生图
-  （异步提交/轮询的代码形状在内置引擎里属于 `submitVideo/videoStatus`），见 61 §12。
-- 已更新的文档：本条；`plugins/dashscope-t2i/README.md`、61 §12。
+  首次实现按任务书字面取 `wan2.7-t2v`。
+- **真机结果（用户实测）**：安装 → 填 Key → `plugins.testCapabilityEntry` 报
+  `PROVIDER_UNAVAILABLE / 百炼文生图失败：url error, please check url!`。根因确认：
+  `wan2.7-t2v` 是**视频**（t2v）模型，被发到文生图端点，百炼按 model 路由不到对应
+  API，故以 `url error` 拒绝（该文案易被误读为 URL 写错；宿主 header 透传已核实正常，
+  `Authorization` 与 `X-DashScope-Async` 都到达厂商）。
+- 影响范围：`plugins/dashscope-t2i/plugin.json`（条目 id / model / params）、
+  `plugins/dashscope-t2i/src/main.ts`（协议实现）、`plugin-host.test.ts` 试点用例。
+- 决定（用户指定模型）：改用 **`qwen-image-3.0`**（官方文档
+  `qwen-image-generation-and-editing-api-reference`：qwen-image 系列同步
+  `multimodal-generation/generation`，官方推荐路径；同系列还有 `-3.0-pro` /
+  `-2.1-pro` / `-2.1-turbo`）。条目 id `wan-t2i` → `qwen-image-3`，协议从「异步提交 +
+  轮询」改为「单请求同步返回 `output.choices[0].message.content[].image`」，并支持参考图
+  （3.0 系列最多 3 张，带图即编辑）、`prompt_extend` / `watermark` / `negative_prompt` /
+  `seed`。附带两项增强：条目 `params.model` 可覆盖 model（在售 id 更替时改清单即可）；
+  `url error` 错误文案附带「model 不在本端点支持列表」的可操作指引。
+  代价：同步接口没有中间状态可上报，进度只剩 `submitting → downloading`（后者还会因
+  SDK/宿主 1 次/秒限速与「调用结束丢弃尾随帧」而常不可见）；取消只能在响应返回后丢弃
+  结果（signal 不能跨进程中断宿主代理请求）。A/B 前提随之修正为「同协议、不同执行引擎」。
+- 已更新的文档：本条；`plugins/dashscope-t2i/README.md`、61 §12.4、P4 任务书实施记录。
 
 ### DEV-125 RSS > 512MB 观测用插件心跳自报，不引入 pidusage（D125 P4）
 

@@ -15,7 +15,7 @@ plugins/
   im-<id>/             即时通讯插件（D107）：instances: ['im'] + 一份 im 贡献
   dashscope/           阿里云百炼（D124）：instances: ['capability-model'] + 20 条模型条目
   volcengine-ark/      火山方舟（D124）：instances: ['capability-model'] + 7 条模型条目
-  dashscope-t2i/       百炼文生图（D125 执行型试点）：runtime 段 + 自带代码 + 1 条 image 条目
+  dashscope-t2i/       百炼 Qwen-Image 文生图（D125 执行型试点）：runtime 段 + 自带代码 + 1 条 image 条目
   reference-media/     执行型参考插件（D125）：media 契约假实现，开发者调试用
   README.md
 ```
@@ -55,7 +55,7 @@ plugins/
   eval / 动态远程 import / 域名白名单一致性），fail 不出包。实例字段由
   `runtime.instanceFields` 声明（敏感值入 secrets，调用时注入凭据）。开发约定见
   [packages/plugin-sdk/README.md](../packages/plugin-sdk/README.md)，首个试点
-  `dashscope-t2i/`（百炼文生图），现状见 [61 §12](../docs/design/61-plugin-runtime-platform.md#12-现状d125-收口后)。
+  `dashscope-t2i/`（百炼 Qwen-Image 文生图），现状见 [61 §12](../docs/design/61-plugin-runtime-platform.md#12-现状d125-收口后)。
 - **MCP 插件凭据方案**：`contributions.mcp` 的 http 贡献可给 header 模板加
   `scheme`（当前仅 `"bearer"`）声明该 header 用裸凭据：宿主保存时 strip 用户自己粘的
   `Bearer `、发送时自动补前缀。未声明 `scheme` 的 header / 其他 MCP server 行为不变。
