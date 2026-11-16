@@ -64,6 +64,8 @@ export const enUS = {
   'chats.errorCode.INVALID_INPUT': 'Invalid input',
   'chats.errorCode.PROVIDER_AUTH_FAILED':
     'Model authentication failed. Check your API key in Settings.',
+  'chats.errorCode.PROVIDER_QUOTA':
+    'Model quota exhausted or account in arrears. Top up or switch plans in the vendor console.',
   'chats.errorCode.PROVIDER_RATE_LIMITED': 'Model requests are rate-limited. Try again later.',
   'chats.errorCode.PROVIDER_UNREACHABLE':
     "Can't reach the model service. Check your network or endpoint URL.",
@@ -124,6 +126,12 @@ export const enUS = {
     'This item is managed by a plugin; uninstall the plugin under Installed',
   'chats.errorCode.PLUGIN_UPGRADE_REQUIRED':
     'This plugin needs a newer KepCup; please upgrade the app first',
+  // D125 P3: plugin runtime error codes (61 §6; shared by the activity drawer and tool failures)
+  'chats.errorCode.PLUGIN_CRASHED': 'The plugin crashed and is restarting automatically',
+  'chats.errorCode.PLUGIN_TIMEOUT': 'The plugin timed out',
+  'chats.errorCode.PLUGIN_CONTRACT_VIOLATION': 'The plugin returned invalid data',
+  'chats.errorCode.PLUGIN_NETWORK_DENIED':
+    'The plugin tried to access an unauthorized network address',
   'runStatus.pleaseWait': 'Please wait…',
   'runStatus.callingVerb': '{verb}…',
   'runStatus.callingTool': 'Calling {tool}…',
@@ -149,6 +157,7 @@ export const enUS = {
   'setupCard.mailAccountNoBot':
     "Can't find the current bot, so email can't be linked. Close the card and try again, or add it from the Extensions Center.",
   'composer.attach': 'Add attachment',
+  'composer.dropToAttach': 'Drop files to attach',
   'composer.attachmentRemove': 'Remove attachment',
   'composer.attachmentTooLarge': '{name} exceeds the 30 MB attachment limit',
   'composer.attachmentUploadFailed': 'Failed to upload {name}',
@@ -321,8 +330,6 @@ export const enUS = {
   'settings.capabilityTitle.multimodal': 'Multimodal model (image understanding)',
   'settings.capabilityTitle.asr': 'Speech recognition model',
   'settings.capabilityTitle.tts': 'Speech generation model',
-  'settings.capabilityTitle.image': 'Image generation model',
-  'settings.capabilityTitle.video': 'Video generation model',
   'settings.capabilityHint.embedding':
     'Used for memory retrieval when Vector source is set to Vendor API. Changing the model rebuilds the vector index.',
   'settings.capabilityHint.rerank':
@@ -331,17 +338,14 @@ export const enUS = {
     'Separate image understanding calls (such as describing screenshots). Images in conversations are handled by the conversation model.',
   'settings.capabilityHint.asr': 'Converts voice messages to text.',
   'settings.capabilityHint.tts': 'Text to speech.',
-  'settings.capabilityHint.image':
-    'Text-to-image and image editing (adding a reference image makes it an edit).',
-  'settings.capabilityHint.video': 'Text-to-video is an async task: submit, then poll for results.',
   'settings.capability.chat': 'Chat',
   'settings.capability.embedding': 'Embedding',
   'settings.capability.rerank': 'Rerank',
   'settings.capability.multimodal': 'Multimodal',
   'settings.capability.image': 'Image generation/editing',
+  'settings.capability.video': 'Video generation',
   'settings.capability.tts': 'Speech synthesis',
   'settings.capability.asr': 'Speech recognition',
-  'settings.capability.video': 'Video generation',
   'settings.modelPlaceholder': 'Select a model (provider/model ID)',
   'settings.concurrency': 'Per-vendor concurrency limit',
   'settings.providersSection': 'Model vendors and endpoints',
@@ -430,6 +434,9 @@ export const enUS = {
   'settings.capabilitySlotGoProvider': 'Open provider',
   'settings.capabilitySlotFootnote':
     'Pick local model or provider API under "Embedding source" below.',
+  // D124: plugin-provided model entries entry row (deep link into the plugin detail).
+  'settings.capabilityPluginProvided': 'From plugins · {count} models',
+  'settings.capabilityPluginProvidedHint': 'Enable them on the plugin card in Bot details.',
   'settings.customIdDuplicate': 'Instance id {id} already exists',
   'settings.back': 'Back',
   'settings.templateGroupZhipu': 'Zhipu',
@@ -766,6 +773,24 @@ export const enUS = {
   'botPanel.plugins.staleAccounts': 'Invalid account grants',
   'botPanel.plugins.staleAccountsHint':
     'These connections no longer exist (disconnected in the extension center, or the authorization flow did not finish). Remove them to save any other change to this bot.',
+  // --- D124: model entry toggles (plugin card expanded area) ---------------------
+  'botPanel.plugins.entries': 'Model entries',
+  'botPanel.plugins.entriesHint':
+    "Checked entries take priority over the global default for this bot's image / video / speech generation tools.",
+  'botPanel.plugins.entryGroup.image': 'Image generation',
+  'botPanel.plugins.entryGroup.video': 'Video generation',
+  'botPanel.plugins.entryGroup.tts': 'Speech synthesis',
+  'botPanel.plugins.entryGroup.asr': 'Speech recognition',
+  'botPanel.plugins.entryGroup.multimodal': 'Image understanding',
+  'botPanel.plugins.entryGroup.embedding': 'Embedding',
+  'botPanel.plugins.entryGroup.rerank': 'Rerank',
+  'botPanel.plugins.entryNotConfigured': 'Not configured',
+  'botPanel.plugins.entryConfigured': 'Configured',
+  'botPanel.plugins.entryConfigure': 'Set up',
+  'botPanel.plugins.entryUninstalled': 'Uninstalled',
+  'botPanel.plugins.uninstalledEntries': 'Model entries from uninstalled plugins',
+  'botPanel.plugins.uninstalledEntriesHint':
+    'These entries belong to uninstalled plugins and have no effect; saving the selection clears them.',
   'rightPanel.exportTemplate': 'Export as template',
   // --- Secondary menu rows of the other tabs (details hold the original content) -
   'rightPanel.menuSectionKnowledge': 'Knowledge & capabilities',
@@ -1765,8 +1790,6 @@ export const enUS = {
   'task.statusOne': 'Task “{title}”: {activity}',
   'task.statusMany': '{count} tasks in progress · “{title}”: {activity}',
   'task.working': 'In progress…',
-  'task.originProgress': 'Progress of task “{title}”',
-  'task.originResult': 'Result of task “{title}”',
   'route.openBot': 'Chat with {name}',
   'route.openProject': 'Open project group “{name}”',
   'route.chatMyself': "I'll go to {name} myself",
@@ -1946,6 +1969,25 @@ export const enUS = {
     'This removes everything "{name}" installed (skills, tools, connected apps), deletes the plugin instances it created (such as mailbox accounts, including stored credentials), and disconnects every account connected through its apps. This cannot be undone.',
   'plugins.uninstallConfirm': 'Uninstall',
   'plugins.cancel': 'Cancel',
+  // D125 P3: executing plugin runtime status / activity drawer (61 §6)
+  'plugins.runtime.status.stopped': 'Stopped',
+  'plugins.runtime.status.starting': 'Starting',
+  'plugins.runtime.status.ready': 'Ready',
+  'plugins.runtime.status.busy': 'Running',
+  'plugins.runtime.status.error': 'Error',
+  'plugins.runtime.restart': 'Restart runtime',
+  'plugins.runtime.activity': 'View activity',
+  'plugins.runtime.activity.title': 'Plugin activity',
+  'plugins.runtime.activity.hint': 'Latest 50 calls (newest first)',
+  'plugins.runtime.activity.empty': 'No calls yet',
+  'plugins.runtime.activity.time': 'Time',
+  'plugins.runtime.activity.call': 'Call',
+  'plugins.runtime.activity.duration': 'Duration',
+  'plugins.runtime.activity.result': 'Result',
+  'plugins.runtime.activity.error': 'Error',
+  'plugins.runtime.result.ok': 'Success',
+  'plugins.runtime.result.failed': 'Failed',
+  'plugins.runtime.result.cancelled': 'Cancelled',
   'plugins.badge': 'Plugin · {name}',
   'plugins.managedBy': 'Managed by plugin "{name}"',
   'plugins.managedHint': 'To remove it, uninstall the plugin under Installed.',
@@ -1974,6 +2016,17 @@ export const enUS = {
   'plugins.consent.author': 'Author',
   'plugins.consent.developerWarn':
     'Unreviewed source: tools from its connected apps and MCP servers need your confirmation on every call, with no standing grants.',
+  'plugins.consent.runtime': 'Executable plugin (ships code and runs in a separate child process)',
+  'plugins.consent.runtimeNetwork': 'Network domains',
+  'plugins.consent.runtimeNetworkEmpty':
+    'No network domains declared (the plugin cannot use the network)',
+  'plugins.consent.runtimeNetworkWildcard':
+    'Entries starting with * match their subdomains; these requests are made by the app on the plugin’s behalf and counted per domain.',
+  'plugins.consent.runtimeCredentials':
+    'Credentials it will request (field names only, never values)',
+  'plugins.consent.runtimeCredentialsEmpty': 'No credentials required',
+  'plugins.consent.runtimeStorage':
+    'Local storage: up to {quota} (plugin key-value data, removed on uninstall)',
   'plugins.consent.skills': 'Skills (visible to all Bots once installed)',
   'plugins.consent.skillIncompatible': 'Incompatible with this environment: {reason}',
   'plugins.consent.skillDeps': 'Needs runtimes: {deps}',
@@ -2013,6 +2066,7 @@ export const enUS = {
   'plugins.market.category.mcp': 'Tools',
   'plugins.market.category.mail': 'Mail',
   'plugins.market.category.im': 'Instant messaging',
+  'plugins.market.category.capability-model': 'Models',
   'plugins.filter.im': 'Instant messaging',
   'plugins.market.refresh': 'Refresh',
   'plugins.market.refreshing': 'Syncing…',
@@ -2059,6 +2113,31 @@ export const enUS = {
   'plugins.bot.notice': 'Nothing is installed until you confirm.',
   'plugins.bot.confirm': 'Confirm install',
   'plugins.bot.dismiss': 'Not now',
+  // --- D124: capability model plugins (Bot entry toggles / plugin detail / settings entry row) ---
+  'plugins.kind.capabilityModel': 'Models',
+  'plugins.capabilityModels.title': 'Model entries',
+  'plugins.capabilityModels.hint':
+    'One model per entry, declared by the plugin. Enable entries on the plugin card in the Bot details.',
+  'plugins.capabilityModels.loadFailed': 'Failed to load model entries: {reason}',
+  'plugins.capabilityModels.test': 'Test connection',
+  'plugins.capabilityModels.testing': 'Testing…',
+  'plugins.capabilityModels.testOk': 'Connected',
+  'plugins.capabilityModels.testFailed': 'Connection failed: {reason}',
+  'plugins.capabilityModels.multiInstance':
+    'This plugin has multiple account instances; the entry must specify one to run.',
+  'plugins.capabilityModels.instances': 'Account instances',
+  'plugins.capabilityModels.instancesHint':
+    'An instance is a vendor account (API key and other credentials). Entries share these instances; uninstalling the plugin removes them.',
+  'plugins.capabilityModels.builtinInstancesUnavailable':
+    'Built-in read-only plugins cannot hold account instances (instance rows belong to marketplace-installed plugins). Install this plugin from the official marketplace to add an account and its credentials.',
+  'plugins.capabilityModels.addInstance': 'Add account',
+  'plugins.capabilityModels.empty':
+    'No account instances yet. Add one with its credentials so entries can run.',
+  'plugins.capabilityModels.noEntries': 'This plugin does not declare any model entries yet.',
+  'plugins.capabilityModels.notConfiguredHint':
+    'Fill in vendor credentials under "Account instances" below before this entry can run.',
+  'plugins.capabilityModels.instanceFormNote':
+    'Credentials are stored in the local key store and never appear in receipts or snapshots.',
   'wiki.tabHint': "The Wiki is this Bot's own knowledge base.",
   'wiki.empty': 'No Wiki pages yet. The Bot will create pages here after organizing information.',
   'wiki.searchPlaceholder': 'Search Wiki…',
@@ -2564,6 +2643,15 @@ export const enUS = {
     'No chat model available yet: add a provider and enter an API key, then choose a default model. The conversation continues automatically after you confirm.',
   'setupCard.capabilityHint':
     'This is the same data as Settings → Models, and you can change it anytime in Settings.',
+  'setupCard.pluginCapabilityTitle': 'A capability-model plugin is required',
+  'setupCard.pluginCapabilityHint':
+    'Image / video generation is provided by capability-model plugin entries: install and enable a matching plugin, fill in its instance credentials, and tick the entry in the Bot plugin capabilities.',
+  'setupCard.pluginCapabilityOpen': 'Open extension center',
+  // D124: plugin model entry missing credentials (payload carries plugin / entry / instance).
+  'setupCard.pluginCredentialTitle': 'Set up account credentials for "{plugin} · {entry}"',
+  'setupCard.pluginCredentialReason':
+    'This model entry is missing vendor account credentials. The request continues automatically once saved; credentials stay in the local key store.',
+  'setupCard.pluginCredentialSaved': 'Configured {plugin} · {entry}, continuing',
   'setupCard.botModelLabel': 'Model used by this Bot',
   'setupCard.botModelFollowDefault': 'Use default main model',
   'setupCard.confirm': 'Finish setup and continue',
@@ -3094,7 +3182,7 @@ export const enUS = {
   'agents.capabilities.web.description': 'Web search and fetching (requires a search provider)',
   'agents.capabilities.image_generation.name': 'Image generation',
   'agents.capabilities.image_generation.description':
-    'Generate images from a description (requires an image model)',
+    'Generate images from a description (provided by capability-model plugin entries)',
   'agents.capabilities.image_understanding.name': 'Image understanding',
   'agents.capabilities.image_understanding.description':
     'Answer questions about images (requires a multimodal model)',
@@ -3106,7 +3194,7 @@ export const enUS = {
     'Convert recordings to text (requires a speech recognition model)',
   'agents.capabilities.video.name': 'Video generation',
   'agents.capabilities.video.description':
-    'Generate videos from a description (requires a video model)',
+    'Generate videos from a description (provided by capability-model plugin entries)',
   'agents.capabilities.skills.name': 'Skills',
   'agents.capabilities.skills.description': 'Install and create skills',
   'agents.capabilities.host_ops.name': 'Host operations',
@@ -3751,14 +3839,6 @@ export const enUS = {
   'settingsItem.capability.tts.summary': 'Reads text aloud and generates speech',
   'settingsItem.capability.tts.field.provider': 'Provider',
   'settingsItem.capability.tts.field.model': 'Model',
-  'settingsItem.capability.image.title': 'Image generation model',
-  'settingsItem.capability.image.summary': 'Lets Bots generate images',
-  'settingsItem.capability.image.field.provider': 'Provider',
-  'settingsItem.capability.image.field.model': 'Model',
-  'settingsItem.capability.video.title': 'Video generation model',
-  'settingsItem.capability.video.summary': 'Lets Bots generate videos',
-  'settingsItem.capability.video.field.provider': 'Provider',
-  'settingsItem.capability.video.field.model': 'Model',
   'settingsItem.models.embedding-local.title': 'Local embedding model',
   'settingsItem.models.embedding-local.summary':
     'Download and use a local embedding model so memory search no longer depends on provider APIs',

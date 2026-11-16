@@ -26,6 +26,11 @@ export function setupAliasOf(
 ): Extract<SetupRequirement, { kind: 'setting' }> | null {
   switch (requirement.kind) {
     case 'capability-model':
+      // DEV-133：image / video 无全局槽位条目（图像 / 视频生成由能力模型插件
+      // 条目提供）——不映射到设置目录，SettingSetupBody 走插件导向分支。
+      if (requirement.capability === 'image' || requirement.capability === 'video') {
+        return null;
+      }
       return {
         kind: 'setting',
         itemId: CAPABILITY_SETTING_IDS[requirement.capability],
@@ -53,4 +58,23 @@ export function setupAliasOf(
     default:
       return null;
   }
+}
+
+/**
+ * D124：`kind:'capability-model'` 缺凭据的**条目路径**判定（SettingSetupBody 的
+ * 插件凭据卡分发用）。payload 带 `pluginId` 且插件在已装清单里 → 插件实例凭据卡
+ * （别名指向的全局能力槽位卡管不到插件实例凭据，凭据永不经模型，60 号 §6）；
+ * 插件清单尚未拉到（`plugins.loaded === false`，冷启动直出卡）也先按条目路径渲染
+ * ——凭据卡自带载入态，此时落全局槽位卡会误导（全局槽位配好也解不了实例凭据缺失，
+ * 续跑还会再失败）。其余（payload 无 `pluginId` 的全局槽位路径 / 清单拉到后插件
+ * 已卸载）回全局槽位卡。纯函数便于单测。
+ */
+export function isPluginCredentialEntryPath(
+  requirement: SetupRequirement,
+  pluginsLoaded: boolean,
+  hasPlugin: (pluginId: string) => boolean,
+): requirement is Extract<SetupRequirement, { kind: 'capability-model' }> {
+  if (requirement.kind !== 'capability-model') return false;
+  if (requirement.pluginId === undefined) return false;
+  return hasPlugin(requirement.pluginId) || !pluginsLoaded;
 }

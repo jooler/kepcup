@@ -60,6 +60,17 @@ export const botRoleSchema = z.object({
 export const networkPolicySchema = z.enum(['none', 'allowlist', 'open']);
 export type NetworkPolicyMode = z.infer<typeof networkPolicySchema>;
 
+/**
+ * D124 能力模型插件（docs/design/60-capability-model-plugins.md §3）：Bot 运行时启用的
+ * 模型条目引用——软引用（`plugin` = 插件 id，`entry` = 清单条目 id），无外键、无迁移。
+ * 插件卸载后残留引用由解析侧静默跳过（与 `plugin_ids` 现状一致）。
+ */
+export const capabilityEntryRefSchema = z.strictObject({
+  plugin: z.string().min(1),
+  entry: z.string().min(1),
+});
+export type CapabilityEntryRef = z.infer<typeof capabilityEntryRefSchema>;
+
 export const botRuntimeSchema = z.object({
   /** Main model ref; empty means "use the settings default". */
   model: z.string().default(''),
@@ -102,6 +113,13 @@ export const botRuntimeSchema = z.object({
    * 缺失 / 空 = 未启用任何插件（显式添加制）；项目会话内再并上 project_plugins 的授权。
    */
   plugin_ids: z.array(z.string().min(1).max(200)).max(200).optional(),
+  /**
+   * D124 能力模型插件：该 Bot 勾选启用的模型条目（{plugin, entry} 软引用，≤16）。
+   * 缺失 / 空 = 未启用条目（媒体工具回退全局槽位，现状不变）；`.default([])` 保证
+   * 旧 profile_json 读出即合法（Profile JSON，无迁移）。有效集 = 插件已装启用 ∩
+   * effectivePluginIds ∩ 本字段（解析在 core MediaService，P2）。
+   */
+  capability_entries: z.array(capabilityEntryRefSchema).max(16).default([]),
   /**
    * 外部智能体引擎（D72，docs/design/28-external-agents-acp.md §3）：`id` 为
    * 空 = 内置 pi 引擎（其余字段忽略）；非空 = 由目录中该 Agent 驱动。D75
@@ -555,15 +573,18 @@ export const capabilityModelSchema = z.object({
 });
 export type CapabilityModel = z.infer<typeof capabilityModelSchema>;
 
-/** `settings.capabilityModels`：除对话外的全部模型能力，各 section 一条。 */
+/**
+ * `settings.capabilityModels`：仍由应用内全局槽位承载的模型能力，各 section 一条。
+ * DEV-133：图像 / 视频生成的槽位已删除——这两类能力统一由能力模型插件条目提供
+ * （Bot 绑定域），不再有全局配置；存量设置 JSON 里残留的 image / video 键在
+ * parse 时按 zod object 默认行为静默剥离。
+ */
 export const capabilityModelsSchema = z.object({
   embedding: capabilityModelSchema.nullable().default(null),
   rerank: capabilityModelSchema.nullable().default(null),
   multimodal: capabilityModelSchema.nullable().default(null),
   asr: capabilityModelSchema.nullable().default(null),
   tts: capabilityModelSchema.nullable().default(null),
-  image: capabilityModelSchema.nullable().default(null),
-  video: capabilityModelSchema.nullable().default(null),
 });
 export type CapabilityModels = z.infer<typeof capabilityModelsSchema>;
 /** 能力模型配置的 key（不含 chat）。 */
@@ -1831,6 +1852,15 @@ export const taskEventContentSchema = z.object({
    */
   artifacts: z.array(messageArtifactSchema).optional(),
   /**
+   * 终态条目（result / failure）：任务在执行中**已作为消息附件发进对话**的
+   * 文件名（生成媒体的确定性投递、send_message 带附件）。这些消息是任务自己
+   * 的行，从不进模型上下文（isTaskInterimProgress）——消费结果的对话轮只看到
+   * 报告文本，无从知道文件已经展示过，容易拿报告里的路径用 send_message 再发
+   * 一遍，用户就会看到同一张图出现两条消息。模型侧渲染据此在结果行追加宿主
+   * 备注（见 renderMessageLine）；用户读的执行报告不受影响。
+   */
+  shownAttachments: z.array(z.string()).optional(),
+  /**
    * Terminal entries (result / failure): how many times the host handed the
    * entry to the bot (D75 审查 M4, capped by TASK_REDELIVER_MAX_ATTEMPTS).
    */
@@ -2065,6 +2095,11 @@ export const setupRequirementSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('capability-model'),
     capability: z.enum(['embedding', 'rerank', 'multimodal', 'asr', 'tts', 'image', 'video']),
+    // D124：插件条目路径缺凭据时携带定位（全局槽位路径不带这三个字段，渲染端据此
+    // 出插件实例凭据卡而不是全局设置卡）。凭据永不经模型，payload 由宿主生成。
+    pluginId: z.string().optional(),
+    instanceId: z.string().optional(),
+    entryId: z.string().optional(),
   }),
   /**
    * 联网检索供应商未配置（docs/design/21-web-search.md）：web_search 工具的

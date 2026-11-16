@@ -9,7 +9,13 @@ import type { PluginItemKind } from '@kepcup/shared';
  * item, and every `unproject` is idempotent so rollback / recovery can replay it.
  */
 
-export type ProjectedKind = 'skill' | 'connector' | 'mcp' | 'mail' | 'im';
+/**
+ * One kind per registered capability-kind adapter. D124 appends `'capability-model'`
+ * last (the projection order derives from `CAPABILITY_KINDS`; uninstall reverses it).
+ * The capability-model "projection" is ledger-only (entries are data; runtime
+ * consumption goes through the media entry source, not a projector-owned service).
+ */
+export type ProjectedKind = 'skill' | 'connector' | 'mcp' | 'mail' | 'im' | 'capability-model';
 
 export interface PluginIdentity {
   id: string;
@@ -105,7 +111,14 @@ export const PLUGIN_PROJECTOR_ORDER: readonly ProjectedKind[] = CAPABILITY_KINDS
 
 /** The install-time context's `owned` (nothing projected yet). */
 export function emptyOwned(): Readonly<Record<ProjectedKind, ReadonlySet<string>>> {
-  return { skill: new Set(), connector: new Set(), mcp: new Set(), mail: new Set(), im: new Set() };
+  return {
+    skill: new Set(),
+    connector: new Set(),
+    mcp: new Set(),
+    mail: new Set(),
+    im: new Set(),
+    'capability-model': new Set(),
+  };
 }
 
 // --- barrel -------------------------------------------------------------------

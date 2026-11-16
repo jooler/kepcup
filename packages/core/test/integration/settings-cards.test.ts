@@ -110,45 +110,47 @@ describe('conversational app settings', () => {
     );
   }, 30_000);
 
-  it('(2) 「帮我生成图片」: search → form card → user applies → the bot is woken and continues', async () => {
+  it('(2) 「把文字读出来」: search → form card → user applies → the bot is woken and continues', async () => {
+    // DEV-133：capability.image 条目已删（生成能力走插件条目），改用保留的
+    // capability.tts 验证同一条「search → 卡片 → 应用 → 唤醒」链路。
     const { core, llm } = await start();
     llm.script('mock-main', [
-      step().replyToolCall('settings_search', { query: '生成图片' }),
+      step().replyToolCall('settings_search', { query: '语音合成' }),
       step()
-        .expect((req) => JSON.stringify(req.body.messages).includes('capability.image'))
+        .expect((req) => JSON.stringify(req.body.messages).includes('capability.tts'))
         .replyToolCall('settings_change', {
-          id: 'capability.image',
-          reason: '生成图片需要先配置图像模型',
+          id: 'capability.tts',
+          reason: '语音回复需要先配置语音合成模型',
         }),
-      step().replyText('请在卡片里配置图像模型，配好我就开始画'),
+      step().replyText('请在卡片里配置语音合成模型，配好我就开始读'),
       step()
         .expect((req) => req.lastUserText().includes('setting_card_resolved'))
-        .replyText('图像模型配好了，我这就开始画'),
+        .replyText('语音模型配好了，我这就开始读'),
     ]);
-    const bot = await makeBot(core, '画师');
+    const bot = await makeBot(core, '朗读者');
     const conv = await openDirect(core, bot.id);
-    await sendBatch(core, conv.id, ['我想让你帮我生成图片']);
+    await sendBatch(core, conv.id, ['我想让你把文字读出来']);
     await waitForRun(core, conv.id, 'completed');
 
     const { message, card } = await waitForCard(core, conv.id);
     expect(card).toMatchObject({
-      itemId: 'capability.image',
+      itemId: 'capability.tts',
       mode: 'form',
       state: 'pending',
       proposed: null,
     });
 
     const applied = (await core.rpc.call('settings.items.apply', {
-      itemId: 'capability.image',
-      values: { provider: 'dashscope', model: 'dashscope/qwen-image', apiKey: 'sk-image' },
+      itemId: 'capability.tts',
+      values: { provider: 'dashscope', model: 'dashscope/cosyvoice-v2', apiKey: 'sk-tts' },
       expected: card.before,
       messageId: message.id,
     })) as { status: string; values: Record<string, unknown> };
     expect(applied.status).toBe('applied');
-    expect(JSON.stringify(applied)).not.toContain('sk-image');
-    expect((await settingsOf(core)).capabilityModels.image).toEqual({
+    expect(JSON.stringify(applied)).not.toContain('sk-tts');
+    expect((await settingsOf(core)).capabilityModels.tts).toEqual({
       provider: 'dashscope',
-      model: 'qwen-image',
+      model: 'cosyvoice-v2',
     });
 
     await waitForMessage(
@@ -156,14 +158,14 @@ describe('conversational app settings', () => {
       conv.id,
       (m) =>
         m.senderBotId === bot.id &&
-        ((m.content as { text?: string }).text?.includes('开始画') ?? false),
+        ((m.content as { text?: string }).text?.includes('开始读') ?? false),
     );
     const woken = (await listRuns(core, conv.id)).filter((run) => run.triggerReason === 'event');
     expect(woken).toHaveLength(1);
     const wake = llm.requestsFor('mock-main').at(-1)!;
     expect(wake.lastUserText()).toContain('<trigger reason="event" event="setting_card_resolved">');
-    expect(wake.lastUserText()).toContain('用户已应用「图像生成模型」');
-    expect(wake.lastUserText()).not.toContain('sk-image');
+    expect(wake.lastUserText()).toContain('用户已应用「语音合成模型」');
+    expect(wake.lastUserText()).not.toContain('sk-tts');
     expect((await waitForCard(core, conv.id)).card.state).toBe('applied');
   }, 30_000);
 
@@ -265,16 +267,16 @@ describe('conversational app settings', () => {
     });
     const settings = await settingsOf(core);
     const capability = waitForEvent<{ itemIds: string[] }>(core, 'settings.changed', (payload) =>
-      payload.itemIds.includes('capability.image'),
+      payload.itemIds.includes('capability.tts'),
     );
     await core.rpc.call('settings.update', {
       capabilityModels: {
         ...settings.capabilityModels,
-        image: { provider: 'dashscope', model: 'qwen-image' },
+        tts: { provider: 'dashscope', model: 'cosyvoice-v2' },
       },
     });
     // Only the capability that really changed (field-level diff of the whole-object save).
-    expect((await capability).itemIds).toEqual(['capability.image']);
+    expect((await capability).itemIds).toEqual(['capability.tts']);
 
     const search = waitForEvent<{ itemIds: string[] }>(core, 'settings.changed', (payload) =>
       payload.itemIds.includes('search.provider'),
@@ -304,37 +306,37 @@ describe('conversational app settings', () => {
 
   it('(8) task + required: the task fails with a setting setup; the retry continues after apply', async () => {
     const { core, llm } = await start();
-    const required = { id: 'capability.image', reason: '生成图片需要图像模型', required: true };
+    const required = { id: 'capability.tts', reason: '语音回复需要语音合成模型', required: true };
     llm.script('mock-main', [
       ...viaTask({
         taskSteps: [step().replyToolCall('settings_change', required)],
-        relay: '需要先配置图像模型，配好后任务会自动继续',
+        relay: '需要先配置语音合成模型，配好后任务会自动继续',
       }),
     ]);
-    const bot = await makeBot(core, '画师');
+    const bot = await makeBot(core, '朗读者');
     const conv = await openDirect(core, bot.id);
-    await sendBatch(core, conv.id, ['帮我画一张猫']);
+    await sendBatch(core, conv.id, ['帮我把这段文字读出来']);
     const failed = await waitForRun(core, conv.id, 'failed', { loopType: 'task' });
     expect(failed.setup).toEqual({
       kind: 'setting',
-      itemId: 'capability.image',
+      itemId: 'capability.tts',
       // 出卡时的当前值：失败续跑卡的组件靠它定位目标与做 CAS（D89 审查修复）。
       before: { provider: '', model: '' },
-      reason: '生成图片需要图像模型',
+      reason: '语音回复需要语音合成模型',
     });
     expect(failed.error ?? '').toContain('需要完成一项设置');
     // No message-stream card for a blocking requirement.
     expect(settingCards(await listMessages(core, conv.id))).toHaveLength(0);
 
     await core.rpc.call('settings.items.apply', {
-      itemId: 'capability.image',
-      values: { provider: 'dashscope', model: 'dashscope/qwen-image', apiKey: 'sk-image' },
+      itemId: 'capability.tts',
+      values: { provider: 'dashscope', model: 'dashscope/cosyvoice-v2', apiKey: 'sk-tts' },
       expected: null,
     });
     llm.script('mock-main', [
       step().inTask().replyToolCall('settings_change', required),
-      step().inTask().replyText('图像能力已就绪'),
-      step().inTurn().replyText('画好了'),
+      step().inTask().replyText('语音能力已就绪'),
+      step().inTurn().replyText('读好了'),
     ]);
     const retried = (await core.rpc.call('runs.retry', { runId: failed.id })) as {
       run: { id: string; loopType: string } | null;

@@ -517,16 +517,16 @@ describe('settings catalog host: reads', () => {
     rig.settings.update({
       capabilityModels: {
         ...rig.settings.get().capabilityModels,
-        image: { provider: 'dashscope', model: 'qwen-image' },
+        tts: { provider: 'dashscope', model: 'qwen3-tts-flash' },
       },
     });
     rig.secrets.set('provider:dashscope', SECRET);
     const facade = rig.host.forRun(runCtx(rig));
-    const read = facade.read('capability.image', undefined);
+    const read = facade.read('capability.tts', undefined);
     expect(read.ok).toBe(true);
     expect(read.content).toContain('apiKey');
     expect(read.content).toContain('已配置');
-    expect(read.content).toContain('qwen-image');
+    expect(read.content).toContain('qwen3-tts-flash');
     expect(read.content).not.toContain(SECRET);
     expect(Buffer.byteLength(read.content)).toBeLessThanOrEqual(4096);
 
@@ -551,9 +551,9 @@ describe('settings catalog host: reads', () => {
     const overview = facade.search(undefined);
     expect(overview).toContain('- 模型：');
     expect(Buffer.byteLength(overview)).toBeLessThanOrEqual(2048);
-    const hits = facade.search('我想让你帮我生成图片');
-    expect(hits).toContain('capability.image');
-    expect(hits).toMatch(/capability\.image｜图像生成模型｜[^\n]*｜未配置｜本次：出待填卡/);
+    const hits = facade.search('我想让你帮我朗读文字');
+    expect(hits).toContain('capability.tts');
+    expect(hits).toMatch(/capability\.tts｜语音合成模型｜[^\n]*｜未配置｜本次：出待填卡/);
     expect(Buffer.byteLength(hits)).toBeLessThanOrEqual(2048);
   });
 });
@@ -619,80 +619,81 @@ describe('settings catalog host: settings_change and cards', () => {
   });
 
   it('item-level CAS on capability models: applying one capability keeps a concurrent sibling edit', async () => {
+    // DEV-133：capability.image / video 条目已删；CAS 口径用保留的 tts / asr 两项。
     const rig = makeRig();
     rig.secrets.set('provider:dashscope', SECRET);
     rig.settings.update({
       capabilityModels: {
         ...rig.settings.get().capabilityModels,
-        image: { provider: 'dashscope', model: 'qwen-image' },
+        tts: { provider: 'dashscope', model: 'qwen3-tts-flash' },
       },
     });
     const facade = rig.host.forRun(runCtx(rig));
     const result = await facade.change({
-      id: 'capability.image',
-      values: { model: 'dashscope/qwen-image-plus' },
-      reason: '换个更好的图像模型',
+      id: 'capability.tts',
+      values: { model: 'dashscope/cosyvoice-v2' },
+      reason: '换个更好的语音模型',
     });
     expect(result.ok).toBe(true);
     const cardId = messageIdIn(result.content);
     const card = cardOf(rig, cardId);
     expect(card).toMatchObject({ mode: 'confirm', state: 'pending' });
-    // Meanwhile the settings page changes the tts capability (whole-object save).
+    // Meanwhile the settings page changes the asr capability (whole-object save).
     rig.settings.update({
       capabilityModels: {
         ...rig.settings.get().capabilityModels,
-        tts: { provider: 'dashscope', model: 'cosyvoice-v2' },
+        asr: { provider: 'dashscope', model: 'qwen3-asr-flash' },
       },
     });
     const applied = await rig.host.applyItem({
-      itemId: 'capability.image',
+      itemId: 'capability.tts',
       values: card.proposed!,
       expected: card.before,
       messageId: cardId,
     });
     expect(applied.status).toBe('applied');
     const models = rig.settings.get().capabilityModels;
-    expect(models.image).toEqual({ provider: 'dashscope', model: 'qwen-image-plus' });
     expect(models.tts).toEqual({ provider: 'dashscope', model: 'cosyvoice-v2' });
+    expect(models.asr).toEqual({ provider: 'dashscope', model: 'qwen3-asr-flash' });
     expect(cardOf(rig, cardId).state).toBe('applied');
     expect(rig.wakes).toHaveLength(1);
-    expect(rig.wakes[0]!.text).toContain('用户已应用「图像生成模型」');
+    expect(rig.wakes[0]!.text).toContain('用户已应用「语音合成模型」');
     // A stale card (expected no longer matches) reports a conflict and does not write.
     const second = await facade.change({
-      id: 'capability.image',
-      values: { model: 'dashscope/qwen-image' },
+      id: 'capability.tts',
+      values: { model: 'dashscope/qwen3-tts-flash' },
       reason: '换回去',
     });
     const secondId = messageIdIn(second.content);
     rig.settings.update({
       capabilityModels: {
         ...rig.settings.get().capabilityModels,
-        image: { provider: 'dashscope', model: 'qwen-image-edit' },
+        tts: { provider: 'dashscope', model: 'cosyvoice-v3-flash' },
       },
     });
     const conflict = await rig.host.applyItem({
-      itemId: 'capability.image',
+      itemId: 'capability.tts',
       values: cardOf(rig, secondId).proposed!,
       expected: cardOf(rig, secondId).before,
       messageId: secondId,
     });
     expect(conflict).toMatchObject({
       status: 'conflict',
-      current: { model: 'dashscope/qwen-image-edit' },
+      current: { model: 'dashscope/cosyvoice-v3-flash' },
     });
-    expect(rig.settings.get().capabilityModels.image?.model).toBe('qwen-image-edit');
+    expect(rig.settings.get().capabilityModels.tts?.model).toBe('cosyvoice-v3-flash');
     expect(cardOf(rig, secondId).state).toBe('pending');
   });
 
   it('a card applied with a key stores it in secrets and never echoes it', async () => {
     const rig = makeRig();
     const facade = rig.host.forRun(runCtx(rig));
-    const result = await facade.change({ id: 'capability.image', reason: '用户想生成图片' });
+    const result = await facade.change({ id: 'capability.tts', reason: '用户想朗读文字' });
     const cardId = messageIdIn(result.content);
     expect(cardOf(rig, cardId)).toMatchObject({ mode: 'form', proposed: null, state: 'pending' });
     const applied = await rig.host.applyItem({
-      itemId: 'capability.image',
-      values: { provider: 'dashscope', model: 'dashscope/qwen-image', apiKey: SECRET },
+      itemId: 'capability.tts',
+      values: { provider: 'dashscope', model: 'dashscope/cosyvoice-v2', apiKey: SECRET },
       expected: cardOf(rig, cardId).before,
       messageId: cardId,
     });
@@ -707,7 +708,7 @@ describe('settings catalog host: settings_change and cards', () => {
     const rig = makeRig();
     const facade = rig.host.forRun(runCtx(rig));
     const secret = await facade.change({
-      id: 'capability.image',
+      id: 'capability.tts',
       values: { provider: 'dashscope', apiKey: 'sk-from-chat' },
       reason: '用户给了 key',
     });
@@ -1345,7 +1346,7 @@ describe('settings catalog host: settings_change and cards', () => {
       reason: 'c',
     });
     expect(cards(rig)).toHaveLength(SETTING_CARDS_PER_RUN_MAX);
-    const over = await facade.change({ id: 'capability.image', reason: 'd' });
+    const over = await facade.change({ id: 'capability.tts', reason: 'd' });
     expect(over.ok).toBe(false);
     expect(over.content).toContain(`${SETTING_CARDS_PER_RUN_MAX} 张`);
 
@@ -1393,7 +1394,7 @@ describe('settings catalog host: settings_change and cards', () => {
     const rig = makeRig();
     const result = await rig.host
       .forRun(runCtx(rig))
-      .change({ id: 'capability.image', reason: '生成图片' });
+      .change({ id: 'capability.tts', reason: '朗读文字' });
     const id = messageIdIn(result.content);
     expect(rig.host.dismissCard(id)).toEqual({ state: 'dismissed' });
     expect(rig.host.dismissCard(id)).toEqual({ state: 'dismissed' });
@@ -1401,12 +1402,12 @@ describe('settings catalog host: settings_change and cards', () => {
     expect(rig.wakes[0]!.resolved).toMatchObject({
       cardMessageId: id,
       outcome: 'dismissed',
-      itemId: 'capability.image',
+      itemId: 'capability.tts',
     });
 
     const stale = await rig.host
       .forRun(runCtx(rig))
-      .change({ id: 'capability.video', reason: '生成视频' });
+      .change({ id: 'capability.asr', reason: '语音识别' });
     rig.clock.advance(SETTING_CARD_DECLINE_WINDOW_MS + 1);
     expect(rig.host.dismissCard(messageIdIn(stale.content))).toEqual({ state: 'expired' });
     expect(rig.wakes).toHaveLength(1);
@@ -1416,14 +1417,14 @@ describe('settings catalog host: settings_change and cards', () => {
     const rig = makeRig();
     const result = await rig.host
       .forRun(runCtx(rig))
-      .change({ id: 'capability.image', reason: '生成图片' });
+      .change({ id: 'capability.tts', reason: '朗读文字' });
     const id = messageIdIn(result.content);
     expect(rig.host.completeCard(id)).toEqual({ state: 'pending', verified: false });
     rig.secrets.set('provider:dashscope', SECRET);
     rig.settings.update({
       capabilityModels: {
         ...rig.settings.get().capabilityModels,
-        image: { provider: 'dashscope', model: 'qwen-image' },
+        tts: { provider: 'dashscope', model: 'qwen3-tts-flash' },
       },
     });
     expect(rig.host.completeCard(id)).toEqual({ state: 'applied', verified: true });
@@ -1443,33 +1444,33 @@ describe('settings catalog host: settings_change and cards', () => {
     const ctx = runCtx(rig, { loopType: 'task' });
     const facade = rig.host.forRun(ctx);
     const result = await facade.change({
-      id: 'capability.image',
-      reason: '生成图片需要图像模型',
+      id: 'capability.tts',
+      reason: '语音回复需要语音合成模型',
       required: true,
     });
     expect(result).toMatchObject({ ok: false, errorCode: 'SETUP_REQUIRED' });
     expect(ctx.setup).toEqual([
       {
         kind: 'setting',
-        itemId: 'capability.image',
+        itemId: 'capability.tts',
         before: { provider: '', model: '' },
-        reason: '生成图片需要图像模型',
+        reason: '语音回复需要语音合成模型',
       },
     ]);
     expect(cards(rig)).toHaveLength(0);
     // Not required: a non-blocking card, the task goes on.
-    const soft = await facade.change({ id: 'capability.image', reason: '顺便配一下' });
+    const soft = await facade.change({ id: 'capability.tts', reason: '顺便配一下' });
     expect(soft.ok).toBe(true);
     expect(soft.content).toContain('不阻塞本任务');
     // Once configured (the user applied the setup card), the retried call just continues.
     await rig.host.applyItem({
-      itemId: 'capability.image',
-      values: { provider: 'dashscope', model: 'dashscope/qwen-image', apiKey: SECRET },
+      itemId: 'capability.tts',
+      values: { provider: 'dashscope', model: 'dashscope/cosyvoice-v2', apiKey: SECRET },
       expected: null,
     });
     const retried = await rig.host.forRun(runCtx(rig, { loopType: 'task' })).change({
-      id: 'capability.image',
-      reason: '生成图片需要图像模型',
+      id: 'capability.tts',
+      reason: '语音回复需要语音合成模型',
       required: true,
     });
     expect(retried.ok).toBe(true);
@@ -1616,13 +1617,13 @@ describe('settings catalog host: review fixes', () => {
   it('#7 task required still honors the per-item decline back-off', async () => {
     const rig = makeRig();
     for (const reason of ['a', 'b']) {
-      const result = await rig.host.forRun(runCtx(rig)).change({ id: 'capability.image', reason });
+      const result = await rig.host.forRun(runCtx(rig)).change({ id: 'capability.tts', reason });
       rig.host.dismissCard(messageIdIn(result.content));
     }
     const ctx = runCtx(rig, { loopType: 'task' });
     const result = await rig.host
       .forRun(ctx)
-      .change({ id: 'capability.image', reason: 'c', required: true });
+      .change({ id: 'capability.tts', reason: 'c', required: true });
     expect(result).toMatchObject({ ok: false, errorCode: 'LIMIT_REACHED' });
     expect(result.content).toContain('也不能为它暂停任务');
     expect(ctx.setup).toEqual([]);
@@ -2145,15 +2146,15 @@ describe('settings catalog host: D89 review round 3', () => {
   it('auto verification: a card with proposed values settles only when they are met', async () => {
     const rig = makeRig();
     const result = await rig.host.forRun(runCtx(rig)).change({
-      id: 'capability.image',
+      id: 'capability.tts',
       values: { provider: 'dashscope', model: 'dashscope/qwen-image-plus' },
       reason: '要画图',
     });
     const id = messageIdIn(result.content);
     expect(cardOf(rig, id)).toMatchObject({ mode: 'form' });
     await rig.host.applyItem({
-      itemId: 'capability.image',
-      values: { provider: 'dashscope', model: 'dashscope/qwen-image', apiKey: SECRET },
+      itemId: 'capability.tts',
+      values: { provider: 'dashscope', model: 'dashscope/cosyvoice-v2', apiKey: SECRET },
       expected: null,
     });
     expect(rig.host.completeCard(id, { auto: true })).toEqual({
@@ -2162,7 +2163,7 @@ describe('settings catalog host: D89 review round 3', () => {
     });
     rig.clock.advance(31_000);
     await rig.host.applyItem({
-      itemId: 'capability.image',
+      itemId: 'capability.tts',
       values: { provider: 'dashscope', model: 'dashscope/qwen-image-plus' },
       expected: null,
     });

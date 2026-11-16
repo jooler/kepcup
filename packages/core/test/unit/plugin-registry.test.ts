@@ -1,4 +1,14 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -11,6 +21,7 @@ import {
 import { buildPluginFixture } from '@kepcup/testkit';
 
 import { PluginPackager } from '../../src/plugins/package.js';
+import { pluginConfigSecretName, pluginSecretScope } from '../../src/plugins/instances.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
 import { PluginStore } from '../../src/plugins/store.js';
 import { openDatabase } from '../../src/infra/db.js';
@@ -199,13 +210,23 @@ interface Rig {
   store: PluginStore;
   packager: PluginPackager;
   pluginsDir: string;
+  pluginDataDir: string;
   fakes: Record<ProjectedKind, FakeProjector>;
   events: Array<{ name: string; payload: unknown }>;
   audits: Array<{ action: string; detail: Record<string, unknown> }>;
   home: string;
+  /** In-memory plugin secret store (config / instance sensitive values). */
+  secrets: {
+    hasValue(name: string): boolean;
+    setValue(name: string, value: string): void;
+    removeValue(name: string): void;
+    names(): string[];
+  };
 }
 
-function makeRig(): Rig {
+function makeRig(
+  options: { warnings?: Array<{ fields: Record<string, unknown>; message: string }> } = {},
+): Rig {
   const home = path.join(root, `home-${Math.random().toString(36).slice(2, 8)}`);
   mkdirSync(home, { recursive: true });
   const paths = resolvePaths(home);
@@ -217,9 +238,18 @@ function makeRig(): Rig {
   let tick = 0;
   const clock: Clock = { now: () => 5_000_000 + tick++ };
   const store = new PluginStore(db);
+  const logger =
+    options.warnings === undefined
+      ? noopLogger
+      : {
+          ...noopLogger,
+          warn: (fields: Record<string, unknown>, message: string) => {
+            options.warnings!.push({ fields, message });
+          },
+        };
   const packager = new PluginPackager({
     pluginsDir: paths.pluginsDir,
-    logger: noopLogger,
+    logger,
     appVersion: '0.0.0-test',
   });
   const fakes = {
@@ -230,13 +260,28 @@ function makeRig(): Rig {
   };
   const events: Array<{ name: string; payload: unknown }> = [];
   const audits: Array<{ action: string; detail: Record<string, unknown> }> = [];
+  const secretValues = new Map<string, string>();
+  const secrets = {
+    hasValue: (name: string) => secretValues.has(name),
+    getValue: (name: string) => secretValues.get(name) ?? null,
+    setValue: (name: string, value: string) => void secretValues.set(name, value),
+    removeValue: (name: string) => void secretValues.delete(name),
+    names: () => [...secretValues.keys()],
+  };
   const registry = new PluginRegistry({
     store,
     packager,
     projectors: [fakes.skill, fakes.mcp, fakes.connector, fakes.mail],
     pluginsDir: paths.pluginsDir,
+    pluginDataDir: paths.pluginDataDir,
     clock,
-    logger: noopLogger,
+    logger,
+    secrets: {
+      hasValue: secrets.hasValue,
+      setValue: secrets.setValue,
+      removeValue: secrets.removeValue,
+      names: secrets.names,
+    },
     events: {
       emit: (name, payload) => events.push({ name, payload }),
     },
@@ -247,7 +292,18 @@ function makeRig(): Rig {
       },
     },
   });
-  return { registry, store, packager, pluginsDir: paths.pluginsDir, fakes, events, audits, home };
+  return {
+    registry,
+    store,
+    packager,
+    pluginsDir: paths.pluginsDir,
+    pluginDataDir: paths.pluginDataDir,
+    fakes,
+    events,
+    audits,
+    home,
+    secrets,
+  };
 }
 
 /** 手工插入一行（更新 / 恢复 / 孤儿清理测试用）；dir 按小写槽位默认推导。 */
@@ -265,7 +321,7 @@ function rowOf(id: string, patch: Partial<Parameters<PluginStore['insert']>[0]> 
     dir: `${id}@${version}`.toLowerCase(),
     updateTo: null,
     updateSnapshot: null,
-      configJson: '{}',
+    configJson: '{}',
     installedAt: 1,
     updatedAt: 1,
     ...patch,
@@ -291,6 +347,64 @@ function seedDir(pluginsDir: string, id: string, version: string, skillName = 'a
     path.join(dir, 'skills', skillName, 'SKILL.md'),
     `---\nname: ${skillName}\ndescription: seeded\n---\nbody`,
   );
+  return dir;
+}
+
+/** 目录树哈希（与 PluginPackager 的 folder 安装同算法）。 */
+function treeShaOf(dir: string): string {
+  const entries: string[] = [];
+  const walk = (relative: string): void => {
+    const absolute = relative === '' ? dir : path.join(dir, ...relative.split('/'));
+    const info = statSync(absolute, { throwIfNoEntry: false });
+    if (info === undefined) return;
+    if (info.isDirectory()) {
+      for (const child of readdirSync(absolute)) {
+        walk(relative === '' ? child : `${relative}/${child}`);
+      }
+      return;
+    }
+    entries.push(
+      `${relative}\0${createHash('sha256').update(readFileSync(absolute)).digest('hex')}`,
+    );
+  };
+  walk('');
+  return createHash('sha256')
+    .update([...entries].sort().join('\n'))
+    .digest('hex');
+}
+
+/**
+ * 最小执行型插件安装源（D125 补丁）：合法 `runtime.entry`（`dist/main.js` + 根
+ * package.json `type: module`）、一条执行型能力条目（不填 engine）与一个技能贡献
+ * （更新 / 回滚测试要有一个会进投影器的贡献）。
+ */
+function runtimePluginSource(id: string, version = '1.0.0'): string {
+  const dir = path.join(root, `runtime-src-${Math.random().toString(36).slice(2, 8)}`);
+  mkdirSync(path.join(dir, 'dist'), { recursive: true });
+  mkdirSync(path.join(dir, 'skills', 'alpha'), { recursive: true });
+  writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
+  writeFileSync(
+    path.join(dir, 'plugin.json'),
+    JSON.stringify({
+      format_version: 1,
+      id,
+      name: 'Runtime Fixture',
+      version,
+      description: '执行型插件数据目录测试夹具',
+      usage: '测试专用。',
+      instances: ['capability-model'],
+      runtime: { entry: 'dist/main.js', hostApi: '^1' },
+      contributions: {
+        skills: [{ dir: 'skills/alpha' }],
+        capabilityModels: [{ id: 'img', capability: 'image', model: 'fixture-image' }],
+      },
+    }),
+  );
+  writeFileSync(
+    path.join(dir, 'skills', 'alpha', 'SKILL.md'),
+    '---\nname: alpha\ndescription: runtime fixture\n---\nbody',
+  );
+  writeFileSync(path.join(dir, 'dist', 'main.js'), 'export {};\n');
   return dir;
 }
 
@@ -349,6 +463,7 @@ function makeRigWithBuiltin(): Rig & { builtinIds: string[] } {
       get: (id: string) => (builtinIds.includes(id) ? ({ id } as never) : null),
     },
     pluginsDir: rig.pluginsDir,
+    pluginDataDir: rig.pluginDataDir,
     clock: { now: () => 9_000_000 },
     logger: noopLogger,
     events: { emit: () => {} },
@@ -363,6 +478,7 @@ async function makeFixture(
     version?: string;
     skills?: string[];
     mail?: string[];
+    configFields?: Array<Record<string, unknown>>;
   } = {},
 ): Promise<{ path: string; sha256: string; manifest: PluginManifest }> {
   fixtureCounter += 1;
@@ -386,6 +502,7 @@ async function makeFixture(
           smtp: { host: 'smtp.test', port: 465, secure: 'ssl' },
         })),
       },
+      ...(options.configFields !== undefined ? { config: { fields: options.configFields } } : {}),
     },
     skills: (options.skills ?? ['alpha', 'beta']).map((name) => ({ name })),
   });
@@ -467,7 +584,11 @@ describe('PluginRegistry', () => {
       'username',
       'password',
     ]);
-    expect(summary.instanceFields.every((field) => (field as { default?: unknown }).default === undefined)).toBe(true);
+    expect(
+      summary.instanceFields.every(
+        (field) => (field as { default?: unknown }).default === undefined,
+      ),
+    ).toBe(true);
     // 停用 / 卸载后消失。
     await rig.registry.uninstall('io.github.tester/reg');
     expect(rig.registry.list().find((row) => row.id === 'io.github.tester/reg')).toBeUndefined();
@@ -656,6 +777,34 @@ describe('PluginRegistry', () => {
     expectCode(none, 'NOT_FOUND');
   });
 
+  it('卸载清理插件级 config 敏感字段（含清单删字段后的残留），不碰别的插件作用域', async () => {
+    const rig = makeRig();
+    const id = 'io.github.tester/secrets';
+    const fixture = await makeFixture({
+      id,
+      skills: ['alpha'],
+      configFields: [
+        { key: 'apiKey', type: 'string', title: 'API Key', required: true, sensitive: true },
+      ],
+    });
+    await rig.registry.install(installArgs(fixture));
+    await rig.registry.setConfig(id, { apiKey: 'sk-config' });
+    const key = pluginConfigSecretName(id, 'apiKey');
+    expect(rig.secrets.hasValue(key)).toBe(true);
+    // 清单改名 / 删字段后可能残留的同作用域 secret（前缀扫描兜底）。
+    const stale = `${pluginSecretScope(id)}:config:oldKey`;
+    rig.secrets.setValue(stale, 'old');
+    // 命名空间相近的另一个插件不能被前缀清理误伤。
+    const otherPlugin = `${pluginSecretScope('io.github.tester/secrets2')}:config:apiKey`;
+    rig.secrets.setValue(otherPlugin, 'other');
+
+    await rig.registry.uninstall(id);
+    expect(
+      rig.secrets.names().filter((name) => name.startsWith(`${pluginSecretScope(id)}:`)),
+    ).toEqual([]);
+    expect(rig.secrets.hasValue(otherPlugin)).toBe(true);
+  });
+
   it('崩溃恢复：installing 行回滚、uninstalling 行继续完成', async () => {
     const rig = makeRig();
     // 手工造一个中断的安装：行 + 账本 + 目录
@@ -682,10 +831,15 @@ describe('PluginRegistry', () => {
     });
     rig.store.addItem(id, 'skill', 'alpha');
     rig.store.addItem(id, 'mcp', 'plg_orphan');
+    // D125 补丁：中断的安装若已初始化数据目录，恢复（回滚）一并删除。
+    const dataDir = path.join(rig.pluginDataDir, 'io.github.tester', 'crash');
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(path.join(dataDir, 'marker.txt'), 'half-installed');
     const recovered = await rig.registry.recoverInterrupted();
     expect(recovered).toBe(1);
     expect(rig.store.get(id)).toBeNull();
     expect(existsSync(dir)).toBe(false);
+    expect(existsSync(dataDir)).toBe(false);
     expect(rig.fakes.skill.unprojected).toEqual([{ pluginId: id, refs: ['alpha'] }]);
     expect(rig.fakes.mcp.unprojected).toEqual([{ pluginId: id, refs: ['plg_orphan'] }]);
 
@@ -709,9 +863,12 @@ describe('PluginRegistry', () => {
       updatedAt: 2,
     });
     rig.store.addItem('io.github.tester/mid', 'mail', 'mailleft');
+    const midDataDir = path.join(rig.pluginDataDir, 'io.github.tester', 'mid');
+    mkdirSync(midDataDir, { recursive: true });
     const recovered2 = await rig.registry.recoverInterrupted();
     expect(recovered2).toBe(1);
     expect(rig.store.get('io.github.tester/mid')).toBeNull();
+    expect(existsSync(midDataDir)).toBe(false);
     expect(rig.fakes.mail.unprojected.at(-1)).toEqual({
       pluginId: 'io.github.tester/mid',
       refs: ['mailleft'],
@@ -833,6 +990,7 @@ describe('PluginRegistry', () => {
       packager: rig.packager,
       projectors: [rig.fakes.skill, rig.fakes.mcp, rig.fakes.connector, rig.fakes.mail],
       pluginsDir: rig.pluginsDir,
+      pluginDataDir: rig.pluginDataDir,
       clock: { now: () => 9_000_000 },
       logger: noopLogger,
       events: { emit: () => {} },
@@ -1102,6 +1260,7 @@ describe('PluginRegistry updates (P1-2)', () => {
         projectors: [rig.fakes.skill, rig.fakes.mcp, rig.fakes.connector, rig.fakes.mail],
         marketplace: market.service,
         pluginsDir: rig.pluginsDir,
+        pluginDataDir: rig.pluginDataDir,
         clock: { now: () => 7_000_000 },
         logger: noopLogger,
         events: { emit: () => {} },
@@ -1159,6 +1318,7 @@ describe('PluginRegistry updates (P1-2)', () => {
         projectors: [rig.fakes.skill, rig.fakes.mcp, rig.fakes.connector, rig.fakes.mail],
         marketplace: makeMarketFake(MARKET_ID, 'https://other.test/plugins/v1').service,
         pluginsDir: rig.pluginsDir,
+        pluginDataDir: rig.pluginDataDir,
         clock: { now: () => 7_000_001 },
         logger: noopLogger,
         events: { emit: () => {} },
@@ -1221,6 +1381,7 @@ describe('PluginRegistry updates (P1-2)', () => {
       projectors: [rig.fakes.skill, rig.fakes.mcp, rig.fakes.connector, rig.fakes.mail],
       marketplace: market.service,
       pluginsDir: rig.pluginsDir,
+      pluginDataDir: rig.pluginDataDir,
       clock: { now: () => 7_100_000 },
       logger: noopLogger,
       events: { emit: () => {} },
@@ -1252,6 +1413,8 @@ describe('PluginRegistry updates (P1-2)', () => {
       summary: { name: 'M', description: '', author: null, iconUrl: null },
       updatedAt: 1,
     });
+    const stops: string[] = [];
+    registry.attachRuntimeStop((pluginId) => void stops.push(pluginId));
     const summary = await registry.update({
       id: MARKET_ID,
       sha256: next.sha256,
@@ -1259,6 +1422,8 @@ describe('PluginRegistry updates (P1-2)', () => {
       acknowledgeDiff: true,
       via: 'marketplace',
     });
+    // D125：更新事务写 journal 后、替换目录前终止执行型进程（下次调用懒启动新版本）。
+    expect(stops).toEqual([MARKET_ID]);
     expect(summary).toMatchObject({ version: '3.0.0', origin: 'marketplace', tier: 'community' });
     expect(rig.store.get(MARKET_ID)).toMatchObject({
       version: '3.0.0',
@@ -1357,5 +1522,119 @@ describe('PluginRegistry updates (P1-2)', () => {
     expect(existsSync(stalePrev)).toBe(false);
     expect(existsSync(prevSuffixDir)).toBe(true); // .prev 后缀的真实槽位 → 保留
     expect(existsSync(foreign)).toBe(true);
+  });
+});
+
+/**
+ * D125 补丁：执行型插件私有数据目录（`{home}/plugin-data/{ns}/{name}/`）。
+ * 安装 / 更新为执行型时创建、卸载（安装回滚同路径）删除；纯数据插件不创建。
+ */
+describe('执行型插件数据目录（D125 补丁）', () => {
+  const installFolder = (rig: Rig, dir: string) =>
+    rig.registry.install({
+      source: { kind: 'folder', path: dir },
+      sha256: treeShaOf(dir),
+      userConfig: {},
+      via: 'folder',
+    });
+
+  it('执行型安装创建 {ns}/{name}；卸载删除', async () => {
+    const rig = makeRig();
+    await installFolder(rig, runtimePluginSource('io.github.tester/runtime'));
+    const dataDir = path.join(rig.pluginDataDir, 'io.github.tester', 'runtime');
+    expect(existsSync(dataDir)).toBe(true);
+    expect(existsSync(path.join(dataDir, 'artifacts'))).toBe(false);
+    await rig.registry.uninstall('io.github.tester/runtime');
+    expect(existsSync(dataDir)).toBe(false);
+  });
+
+  it('纯数据插件安装不创建数据目录', async () => {
+    const rig = makeRig();
+    const fixture = await makeFixture();
+    await rig.registry.install(installArgs(fixture));
+    expect(existsSync(path.join(rig.pluginDataDir, 'io.github.tester', 'reg'))).toBe(false);
+  });
+
+  it('更新替换安装树但保留数据目录与内容（版本无关）', async () => {
+    const rig = makeRig();
+    const id = 'io.github.tester/runtime-update';
+    await installFolder(rig, runtimePluginSource(id, '1.0.0'));
+    const dataDir = path.join(rig.pluginDataDir, 'io.github.tester', 'runtime-update');
+    writeFileSync(path.join(dataDir, 'marker.txt'), 'keep-me');
+    await installFolder(rig, runtimePluginSource(id, '2.0.0'));
+    expect(rig.store.get(id)).toMatchObject({ version: '2.0.0', updateTo: null });
+    expect(existsSync(path.join(rig.pluginsDir, `${id}@1.0.0`.toLowerCase()))).toBe(false);
+    expect(existsSync(path.join(rig.pluginsDir, `${id}@2.0.0`.toLowerCase()))).toBe(true);
+    expect(readFileSync(path.join(dataDir, 'marker.txt'), 'utf8')).toBe('keep-me');
+  });
+
+  it('更新失败（投影抛错）不删除旧版本数据目录与内容', async () => {
+    const rig = makeRig();
+    const id = 'io.github.tester/runtime-fail';
+    await installFolder(rig, runtimePluginSource(id, '1.0.0'));
+    const dataDir = path.join(rig.pluginDataDir, 'io.github.tester', 'runtime-fail');
+    writeFileSync(path.join(dataDir, 'marker.txt'), 'keep-me');
+    rig.fakes.skill.failUpdate = true;
+    const error = await installFolder(rig, runtimePluginSource(id, '2.0.0')).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    expectCode(error, 'INTERNAL');
+    // 旧版本仍在，数据目录也不是更新补偿的清理对象。
+    expect(rig.store.get(id)).toMatchObject({ version: '1.0.0', updateTo: null });
+    expect(existsSync(dataDir)).toBe(true);
+    expect(readFileSync(path.join(dataDir, 'marker.txt'), 'utf8')).toBe('keep-me');
+  });
+
+  it('安装投影失败回滚 → 数据目录随安装一起删除', async () => {
+    const rig = makeRig();
+    rig.fakes.skill.failProjectAt = 1;
+    const id = 'io.github.tester/runtime-rollback';
+    const error = await installFolder(rig, runtimePluginSource(id)).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    expectCode(error, 'INTERNAL');
+    expect(rig.store.get(id)).toBeNull();
+    expect(existsSync(path.join(rig.pluginDataDir, 'io.github.tester', 'runtime-rollback'))).toBe(
+      false,
+    );
+  });
+
+  it('start() 为改动前已安装的执行型插件补齐数据目录（应用重启即生效）', async () => {
+    const rig = makeRig();
+    const id = 'io.github.tester/runtime-existing';
+    await installFolder(rig, runtimePluginSource(id, '1.0.0'));
+    const dataDir = path.join(rig.pluginDataDir, 'io.github.tester', 'runtime-existing');
+    // 模拟改动前安装的旧行：只有安装树与 store 行，没有 plugin-data 目录。
+    rmSync(dataDir, { recursive: true, force: true });
+    expect(existsSync(dataDir)).toBe(false);
+
+    await expect(rig.registry.start()).resolves.toBeUndefined();
+    expect(existsSync(dataDir)).toBe(true);
+    expect(rig.store.get(id)).toMatchObject({ version: '1.0.0', state: 'installed' });
+  });
+
+  it('start() 数据目录初始化失败只 warn，不阻断启动与后续注册表操作', async () => {
+    const warnings: Array<{ fields: Record<string, unknown>; message: string }> = [];
+    const rig = makeRig({ warnings });
+    const id = 'io.github.tester/runtime-warn';
+    await installFolder(rig, runtimePluginSource(id, '1.0.0'));
+    const dataDir = path.join(rig.pluginDataDir, 'io.github.tester', 'runtime-warn');
+    rmSync(dataDir, { recursive: true, force: true });
+    // 同名文件占位：ensurePluginDataDir 的 mkdir 必然失败。
+    writeFileSync(dataDir, 'not-a-directory');
+
+    await expect(rig.registry.start()).resolves.toBeUndefined();
+    expect(
+      warnings.some(
+        (warning) =>
+          warning.message === 'plugin startup: data dir init failed' &&
+          warning.fields.plugin === id,
+      ),
+    ).toBe(true);
+    // 启动没有中断：行仍可用，注册表继续接受操作。
+    expect(rig.store.get(id)).toMatchObject({ version: '1.0.0', state: 'installed' });
+    await expect(rig.registry.setEnabled(id, false)).resolves.toMatchObject({ enabled: false });
   });
 });

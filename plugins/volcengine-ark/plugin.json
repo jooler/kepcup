@@ -1,0 +1,48 @@
+{
+  "format_version": 1,
+  "id": "io.kepcup/volcengine-ark",
+  "name": "火山方舟",
+  "icon": "icon.png",
+  "version": "1.0.1",
+  "description": "火山方舟（Volcano Ark）官方模型条目包：图文理解 / 多模态向量共 3 个预置模型，一个模型一条，勾选即用；凭据只保存在本机。（DEV-133：图片 / 视频生成由执行型插件提供，内置引擎不再承载）",
+  "usage": "安装后在插件详情「账号实例」添加火山方舟账号并填入 API Key（方舟控制台 ark.volcengine.com 获取），再到 Bot 详情展开本插件卡片勾选要启用的模型条目；勾选后该 Bot 即可用所选模型，未填 Key 时调用会引导补配。",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "homepage": "https://kepcup.com",
+  "engines": {
+    "kepcup": ">=0.5.14"
+  },
+  "instances": [
+    "capability-model"
+  ],
+  "contributions": {
+    "capabilityModels": [
+      {
+        "id": "doubao-embedding-vision-251215",
+        "capability": "embedding",
+        "model": "doubao-embedding-vision-251215",
+        "engine": "volcengine-ark",
+        "displayName": "豆包多模态向量",
+        "description": "现役向量只有多模态 embedding-vision，引擎走 /embeddings/multimodal 端点。"
+      },
+      {
+        "id": "doubao-seed-2-1-pro-260915",
+        "capability": "multimodal",
+        "model": "doubao-seed-2-1-pro-260915",
+        "engine": "volcengine-ark",
+        "displayName": "豆包 Seed 2.1 Pro 图文理解",
+        "description": "seed-2.1 系自带多模态理解能力标签的 Pro 档模型。"
+      },
+      {
+        "id": "doubao-seed-2-1-lite-260915",
+        "capability": "multimodal",
+        "model": "doubao-seed-2-1-lite-260915",
+        "engine": "volcengine-ark",
+        "displayName": "豆包 Seed 2.1 Lite 图文理解",
+        "description": "seed-2.1 系自带多模态理解能力标签的 Lite 档模型。"
+      }
+    ]
+  }
+}

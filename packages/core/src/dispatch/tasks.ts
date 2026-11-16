@@ -25,6 +25,7 @@ import {
   TASK_REDELIVER_AFTER_MS,
   TASK_REDELIVER_MAX_ATTEMPTS,
   TASK_SETTLE_SWEEP_MS,
+  TASK_SHOWN_ATTACHMENT_NAMES_MAX,
   TASK_START_MAX_PER_TURN,
   type Message,
   type MessageArtifact,
@@ -49,6 +50,7 @@ import {
   type AbsDomain,
 } from '../workdir/domains.js';
 import { buildRunDigest, type DigestEffect } from '../agent/context/continuation.js';
+import { shownAttachmentsNote } from '../agent/context/conversation.js';
 import type { ToolEffectsStore } from '../agent/effects/store.js';
 import { neutralizeUntrusted } from '../infra/data-boundary.js';
 import type { PermissionRevokedEvent } from '../permissions/revocations.js';
@@ -728,7 +730,7 @@ export function buildTaskBriefSegment(
     [
       '你正在执行自己在这个对话中派出的一项任务（上面是交代）。source_messages 是用户的原话：交代与原话不一致时以原话为准，并在结果里说明。',
       '工作中简短的进度说明会直接显示给用户；不要停下来等待对话里的新消息，新的指令会另行转给你。',
-      '你的最终回复不会直接发给用户，而是作为任务结果交回给对话中的你，由你决定如何告诉用户：写清做了什么、结论、产出的文件路径与未完成的事项。没有需要交回的内容时用 skip_reply。',
+      '你的最终回复不会直接发给用户，而是作为任务结果交回给对话中的你，由你决定如何告诉用户：写清做了什么、结论、产出的文件路径与未完成的事项。已由系统自动作为消息附件发进对话的生成媒体（图片 / 语音 / 视频）不必写路径——它们已经展示给用户，对话轮也不会再发送。没有需要交回的内容时用 skip_reply。',
       ...(brief.writes ? [] : ['这是只读任务：不要修改任何文件。']),
     ].join('\n'),
   );
@@ -1487,9 +1489,14 @@ export class TaskHost implements TaskToolFacade {
     const entry = this.#deps.messages.terminalTaskEvent(task.id);
     const content = entry !== null ? taskEventOf(entry) : null;
     const digest = (content?.text ?? task.error ?? '').trim();
+    // 兄弟任务读不到彼此的私有条目，摘要是它认识结果的唯一窗口：把「已投递
+    // 附件」的宿主备注并进摘要（与对话轮读到的同一句），等待方转述时不会把
+    // 同一文件再发一遍。备注与对话轮同款：正文截断之后追加。
+    const note = content !== null ? shownAttachmentsNote(content) : '';
+    const summary = `${digest.length > 0 ? clip(digest, TASK_PEER_WAIT_RESULT_MAX_CHARS) : ''}${note}`.trim();
     return {
       status,
-      ...(digest.length > 0 ? { resultDigest: clip(digest, TASK_PEER_WAIT_RESULT_MAX_CHARS) } : {}),
+      ...(summary.length > 0 ? { resultDigest: summary } : {}),
     };
   }
 
@@ -2205,6 +2212,7 @@ export class TaskHost implements TaskToolFacade {
     let created = true;
     if (task.botId !== null && task.conversationId !== null) {
       const files = this.#deps.artifactsOf?.(taskId) ?? [];
+      const shown = this.#shownAttachmentsOf(task);
       const written = this.#safeAppend(
         outcome.status === 'completed'
           ? {
@@ -2215,6 +2223,7 @@ export class TaskHost implements TaskToolFacade {
               text: outcome.resultText ?? '',
               status: 'completed',
               ...(files.length > 0 ? { artifacts: files } : {}),
+              ...(shown.length > 0 ? { shownAttachments: shown } : {}),
             }
           : {
               conversationId: task.conversationId,
@@ -2232,6 +2241,7 @@ export class TaskHost implements TaskToolFacade {
               ...(error !== null ? { error } : {}),
               ...(outcome.errorReason !== undefined ? { errorReason: outcome.errorReason } : {}),
               ...(files.length > 0 ? { artifacts: files } : {}),
+              ...(shown.length > 0 ? { shownAttachments: shown } : {}),
             },
       );
       if (written === null && this.#deps.conversations.get(task.conversationId) !== null) {
@@ -2605,6 +2615,7 @@ export class TaskHost implements TaskToolFacade {
     outcome: { status: 'cancelled' | 'interrupted'; error: string; errorReason?: TaskErrorReason },
   ): Run | null {
     if (task.botId !== null && task.conversationId !== null) {
+      const shown = this.#shownAttachmentsOf(task);
       const written = this.#safeAppend({
         conversationId: task.conversationId,
         ownerBotId: task.botId,
@@ -2614,6 +2625,7 @@ export class TaskHost implements TaskToolFacade {
         status: outcome.status,
         error: outcome.error,
         ...(outcome.errorReason !== undefined ? { errorReason: outcome.errorReason } : {}),
+        ...(shown.length > 0 ? { shownAttachments: shown } : {}),
       });
       if (written === null && this.#deps.conversations.get(task.conversationId) !== null) {
         this.#unsettled.set(task.id, outcome);
@@ -3722,6 +3734,7 @@ export class TaskHost implements TaskToolFacade {
           // Settled outside the task host (should not happen): give the bot a
           // failure entry rather than silence.
           const status = task.status === 'completed' ? 'failed' : task.status;
+          const shown = this.#shownAttachmentsOf(task);
           entry =
             this.#safeAppend({
               conversationId: task.conversationId,
@@ -3731,6 +3744,7 @@ export class TaskHost implements TaskToolFacade {
               text: this.#failureText(task, status, task.error ?? '任务的结算记录缺失'),
               status,
               error: task.error ?? '任务的结算记录缺失',
+              ...(shown.length > 0 ? { shownAttachments: shown } : {}),
             })?.message ?? null;
         }
         this.#afterTerminal(task, entry);
@@ -3819,6 +3833,30 @@ export class TaskHost implements TaskToolFacade {
       );
       return null;
     }
+  }
+
+  /**
+   * 任务在执行中**已作为消息附件发进对话**的文件名（去重、按
+   * TASK_SHOWN_ATTACHMENT_NAMES_MAX 截断）：任务自己发的消息（生成媒体的确定
+   * 性投递、send_message 带附件）都记在 outputMessageIds 里，但这些行是任务
+   * 自己的（isTaskInterimProgress），从不进模型上下文——消费结果的对话轮只
+   * 看到报告文本，无从知道文件已经展示过。结算时把清单带进终态条目，模型侧
+   * 渲染据此免掉「再 send_message 发一遍」的重复（同一张图出现两条消息）。
+   * 从尾部倒序读（与 #legacyLastInterim 同款）：附件大概率在靠后的消息里，
+   * 早凑满早退出。
+   */
+  #shownAttachmentsOf(task: Run): string[] {
+    const names = new Set<string>();
+    for (let i = task.outputMessageIds.length - 1; i >= 0; i -= 1) {
+      if (names.size >= TASK_SHOWN_ATTACHMENT_NAMES_MAX) break;
+      const message = this.#deps.messages.getById(task.outputMessageIds[i] ?? '');
+      if (message === null || message.status === 'recalled') continue;
+      for (const attachment of message.attachments) {
+        if (names.size >= TASK_SHOWN_ATTACHMENT_NAMES_MAX) break;
+        names.add(attachment.fileName);
+      }
+    }
+    return [...names];
   }
 
   /** Last interim chat bubble text for a task (legacy D54 stacking). */

@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { WikiOwner } from '@kepcup/shared';
+import { AppError, pluginIdSchema, type WikiOwner } from '@kepcup/shared';
 
 /**
  * Single source of truth for every path inside the data directory.
@@ -32,6 +32,12 @@ export interface AppPaths {
   toolchainsDir: string;
   /** Installed plugin trees and the staging root (D104): `{home}/plugins/`. */
   pluginsDir: string;
+  /**
+   * Private writable data of execution-type plugins (D125 补丁):
+   * `{home}/plugin-data/`. One version-independent directory per plugin;
+   * never the install tree (which is replaced on every update).
+   */
+  pluginDataDir: string;
 }
 
 export function defaultHome(): string {
@@ -85,7 +91,55 @@ export function resolvePaths(homeOverride?: string): AppPaths {
     cacheDownloadsDir: path.join(cacheDir, 'downloads'),
     toolchainsDir: path.join(home, 'toolchains'),
     pluginsDir: path.join(home, 'plugins'),
+    pluginDataDir: path.join(home, 'plugin-data'),
   };
+}
+
+/**
+ * Private data directory of one execution-type plugin (D125 补丁):
+ * `{pluginDataRoot}/{ns}/{name}/`, version-independent (an update replaces the
+ * install tree, never this directory). The plugin id is lower-cased and must
+ * pass `pluginIdSchema`; exactly two path segments must result, anything else
+ * (traversal, absolute paths, extra segments) is `PLUGIN_INVALID`.
+ */
+export function pluginDataDirFor(pluginDataRoot: string, pluginId: string): string {
+  if (!pluginIdSchema.safeParse(pluginId).success) {
+    throw new AppError('PLUGIN_INVALID', `非法的插件 id：${pluginId}`);
+  }
+  const id = pluginId.toLowerCase();
+  const root = path.resolve(pluginDataRoot);
+  const dir = path.resolve(root, ...id.split('/'));
+  const relative = path.relative(root, dir);
+  const segments = relative.split(path.sep);
+  if (
+    relative.length === 0 ||
+    path.isAbsolute(relative) ||
+    segments.length !== 2 ||
+    segments.some((segment) => segment === '' || segment === '.' || segment === '..')
+  ) {
+    throw new AppError('PLUGIN_INVALID', `插件数据目录越界：${pluginId}`);
+  }
+  return dir;
+}
+
+/**
+ * Default output directory of one execution-type plugin's generated media:
+ * `.../artifacts/`. Created on demand by the writing tool.
+ */
+export function pluginArtifactDirFor(pluginDataRoot: string, pluginId: string): string {
+  return path.join(pluginDataDirFor(pluginDataRoot, pluginId), 'artifacts');
+}
+
+/**
+ * Creates (0700) and returns the private data directory of one plugin. Called
+ * on install for execution-type plugins and before every plugin fork; a
+ * builtin execution-type plugin (no store row) gets it on first use.
+ */
+export function ensurePluginDataDir(pluginDataRoot: string, pluginId: string): string {
+  const dir = pluginDataDirFor(pluginDataRoot, pluginId);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32') chmodSync(dir, 0o700);
+  return dir;
 }
 
 /** Install directory of one toolchain item version: `toolchains/{item}/{version}/`. */

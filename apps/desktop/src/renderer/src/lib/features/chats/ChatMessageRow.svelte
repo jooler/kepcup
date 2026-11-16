@@ -17,7 +17,6 @@
   import { getChatSession } from './chat-session-context';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
-  import { tasks } from '$lib/stores/tasks.svelte';
   import { shell } from '$lib/stores/shell.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
@@ -54,25 +53,6 @@
       message.content.origin === 'delegation'
       ? (message.content.delegatedBy ?? '')
       : null,
-  );
-  /**
-   * D75 §6.1：任务发出的可见消息（origin = 'task'）——任务执行中的进度
-   * （run_id = 任务）或旧版本 forward_task_result 留下的原文转发行——
-   * 标出所属任务，与 Bot 的直接回复区分。
-   */
-  const taskOrigin = $derived(
-    !isUser && 'origin' in message.content && message.content.origin === 'task'
-      ? {
-          taskId: message.content.taskId ?? '',
-          forwarded: message.runId !== null && message.runId !== message.content.taskId,
-        }
-      : null,
-  );
-  $effect(() => {
-    if (taskOrigin !== null && taskOrigin.taskId.length > 0) void tasks.ensure(taskOrigin.taskId);
-  });
-  const taskTitle = $derived(
-    taskOrigin !== null ? (tasks.byId[taskOrigin.taskId]?.title ?? '') : '',
   );
   /** D80：定时触发的对话轮发出的回复——气泡下方「⏰ 标题」，点开定时任务列表。 */
   const scheduleTitle = $derived(
@@ -305,17 +285,6 @@
     {#if delegatedBy !== null}
       <span class="mb-0.5 text-[11px] text-muted-foreground" data-testid="delegation-origin">
         {t('delegation.proxiedBy', { name: delegatedBy ? chat.botName(delegatedBy) : '' })}
-      </span>
-    {/if}
-    {#if taskOrigin !== null}
-      <span
-        class="mb-0.5 text-[11px] text-muted-foreground"
-        data-testid="task-origin"
-        data-task-id={taskOrigin.taskId}
-      >
-        {taskOrigin.forwarded
-          ? t('task.originResult', { title: taskTitle })
-          : t('task.originProgress', { title: taskTitle })}
       </span>
     {/if}
     {#if quoted !== null}

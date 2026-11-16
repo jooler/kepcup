@@ -144,6 +144,11 @@ class ShellState {
    * ExtensionInstalled 消费后即复位（同 autoOpenStartPanel 的模式）。
    */
   extensionCenterSystemCardFocus = $state(false);
+  /**
+   * D124：深链到某个插件的详情管理视图（设置页能力槽位「插件提供」行、Bot 详情
+   * 条目的「去配置」落点）。ExtensionInstalled 消费后即复位；筛选变化也清空。
+   */
+  extensionCenterPluginFocus = $state<string | null>(null);
 
   /**
    * 全局搜索层是否打开（侧栏搜索按钮 / Cmd+K 共用）。状态放 shell 而不是 AppSidebar：
@@ -175,6 +180,8 @@ class ShellState {
     this.extensionCenterTab = resolved.tab;
     this.extensionCenterFilter = resolved.filter;
     this.extensionCenterSystemCardFocus = resolved.systemCard;
+    // D124：带插件深链的调用方先置 extensionCenterPluginFocus，再调本方法进「已安装」。
+    if (tab !== 'installed') this.extensionCenterPluginFocus = null;
     if (narrowLayout.narrow) {
       narrowLayout.selectTab('extensions');
       return;

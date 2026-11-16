@@ -5,6 +5,8 @@ import {
   describePermission,
   diffPermissions,
   permissionTokens,
+  runtimePermissionTokens,
+  unionPermissionTokens,
 } from '../../src/plugins/permissions.js';
 
 /**
@@ -156,5 +158,68 @@ describe('describePermission', () => {
   it('returns unknown tokens verbatim', () => {
     expect(describePermission('future:thing')).toBe('future:thing');
     expect(describePermission('nocolon')).toBe('nocolon');
+  });
+});
+
+/**
+ * D125 P4（61 §7）：执行型插件的能力披露参与扩权 diff——网络域名新增或敏感实例
+ * 字段新增 = 重新同意；数据型插件（runtime null）不产生 token。
+ */
+describe('runtimePermissionTokens（D125 P4）', () => {
+  it('data plugins produce no tokens (zero change)', () => {
+    expect([...runtimePermissionTokens(null)]).toEqual([]);
+    expect([...runtimePermissionTokens(undefined)]).toEqual([]);
+  });
+
+  it('one token per network domain (lowercased) and per credential field', () => {
+    const tokens = runtimePermissionTokens({
+      hostApi: '^1',
+      networkDomains: ['API.example.com', '*.example.org'],
+      credentialFields: ['apiKey', 'secretKey'],
+      storageQuotaBytes: 1024,
+    });
+    expect([...tokens].sort()).toEqual([
+      'plugin-credential:apiKey',
+      'plugin-credential:secretKey',
+      'plugin-network:*.example.org',
+      'plugin-network:api.example.com',
+    ]);
+  });
+
+  it('expanding either list re-consents; removing never does', () => {
+    const v1 = unionPermissionTokens(
+      new Set(),
+      {
+        hostApi: '^1',
+        networkDomains: ['api.example.com'],
+        credentialFields: ['apiKey'],
+        storageQuotaBytes: 1,
+      },
+    );
+    const v2 = unionPermissionTokens(
+      new Set(),
+      {
+        hostApi: '^1',
+        networkDomains: ['api.example.com', 'cdn.example.com'],
+        credentialFields: ['apiKey', 'secretKey'],
+        storageQuotaBytes: 1,
+      },
+    );
+    const expanded = diffPermissions(v1, v2);
+    expect(expanded.expanded).toBe(true);
+    expect(expanded.added).toEqual([
+      'plugin-credential:secretKey',
+      'plugin-network:cdn.example.com',
+    ]);
+    expect(diffPermissions(v2, v1).expanded).toBe(false);
+  });
+
+  it('describePermission renders the two runtime lines', () => {
+    expect(describePermission('plugin-network:api.example.com')).toBe(
+      '执行型插件新增可访问的网络域名 api.example.com',
+    );
+    expect(describePermission('plugin-credential:apiKey')).toBe(
+      '执行型插件新增实例凭据字段 apiKey（只保存你填写的值）',
+    );
   });
 });

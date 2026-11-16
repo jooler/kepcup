@@ -315,6 +315,8 @@ export interface AppendTaskEventInput {
   fromTitle?: string | undefined;
   /** Terminal entries: files the task created / modified. */
   artifacts?: MessageArtifact[] | undefined;
+  /** Terminal entries: file names the task already sent into the conversation as attachments. */
+  shownAttachments?: string[] | undefined;
   /** Overrides the creation time (defaults to the clock). */
   at?: number | undefined;
 }
@@ -780,6 +782,9 @@ export class MessagesService {
       ...(input.fromTitle !== undefined ? { fromTitle: input.fromTitle } : {}),
       ...(input.artifacts !== undefined && input.artifacts.length > 0
         ? { artifacts: input.artifacts }
+        : {}),
+      ...(input.shownAttachments !== undefined && input.shownAttachments.length > 0
+        ? { shownAttachments: input.shownAttachments }
         : {}),
     };
     const write = this.db.transaction((): { message: Message; created: boolean } => {

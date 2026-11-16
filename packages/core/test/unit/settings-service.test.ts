@@ -32,7 +32,7 @@ describe('SettingsService：legacy 供应商数据迁移（modelProviders 实例
       ],
       capabilityModels: {
         embedding: { vendor: 'siliconflow', model: 'BAAI/bge-m3' },
-        image: { vendor: 'dashscope', model: 'qwen-image' },
+        tts: { vendor: 'dashscope', model: 'cosyvoice-v2' },
       },
     };
     const db = fakeDb(JSON.stringify(stored));
@@ -51,10 +51,11 @@ describe('SettingsService：legacy 供应商数据迁移（modelProviders 实例
       capabilities: ['chat'],
     });
     // 能力配置：未知厂商引用置空；有效引用改写为 {provider, model}，模型补进实例。
+    // （DEV-133：image / video 槽位已删；legacy 数据里的残留键随 parse 静默剥离。）
     expect(settings.capabilityModels.embedding).toBeNull();
-    expect(settings.capabilityModels.image).toEqual({ provider: 'dashscope', model: 'qwen-image' });
-    expect(settings.modelProviders[0]!.models.map((m) => m.id)).toEqual(['qwen-plus', 'qwen-image']);
-    expect(settings.modelProviders[0]!.models[1]!.capabilities).toEqual(['image']);
+    expect(settings.capabilityModels.tts).toEqual({ provider: 'dashscope', model: 'cosyvoice-v2' });
+    expect(settings.modelProviders[0]!.models.map((m) => m.id)).toEqual(['qwen-plus', 'cosyvoice-v2']);
+    expect(settings.modelProviders[0]!.models[1]!.capabilities).toEqual(['tts']);
     expect(settings.defaultMainModel).toBe('dashscope/qwen-plus');
     // 迁移写回：legacy 字段不再存库（下次读取不再迁移）。
     const persisted = JSON.parse(db.stored!);
