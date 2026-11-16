@@ -4,14 +4,26 @@ import type { McpServer, PluginSummary } from '@kepcup/shared';
 import { enUS } from '../../i18n/locales/en-US';
 import { zhCN } from '../../i18n/locales/zh-CN';
 import {
+  CAPABILITY_ENTRIES_MAX,
+  ENTRY_GROUP_LABEL_KEYS,
+  ENTRY_GROUP_ORDER,
   PLUGIN_KIND_LABEL_KEYS,
   addedPlugins,
+  dedupeEntryRefs,
   dedupePluginIds,
   enabledPluginCount,
+  entryDetailText,
+  entryRefKey,
+  entryRefsOfEnabledPlugins,
+  entryRefsStillKnown,
+  groupEntriesByCapability,
+  knownEntryRefKeys,
   manualToolServers,
   matchesPluginQuery,
   pluginKindBadges,
   pluginProvides,
+  saveableEntryRefs,
+  toggleEntryRef,
   togglePluginId,
 } from './bot-plugins';
 
@@ -91,7 +103,7 @@ describe('addedPlugins / matchesPluginQuery（添加弹框）', () => {
 });
 
 describe('pluginKindBadges / pluginProvides（类别徽标）', () => {
-  it('按贡献计数推导，顺序固定 技能 → 连接 → 工具 → 邮件 → 即时通讯', () => {
+  it('按贡献计数推导，顺序固定 技能 → 连接 → 工具 → 邮件 → 即时通讯 → 模型', () => {
     expect(
       pluginKindBadges(summary({ counts: { skills: 2, connectors: 1, mcp: 3, mail: 1, im: 1 } })),
     ).toEqual(['skill', 'connector', 'mcp', 'mail', 'im']);
@@ -109,6 +121,17 @@ describe('pluginKindBadges / pluginProvides（类别徽标）', () => {
     expect(PLUGIN_KIND_LABEL_KEYS.mcp).toBe('plugins.kind.mcp');
     expect(zhCN['plugins.kind.mcp']).toBe('工具');
     expect(enUS['plugins.kind.mcp']).toBe('Tools');
+  });
+
+  it('能力模型插件按 providesInstances 出「模型」徽标（D124），中英文案齐全', () => {
+    expect(pluginKindBadges(summary({ providesInstances: ['capability-model'] }))).toEqual([
+      'capability-model',
+    ]);
+    expect(PLUGIN_KIND_LABEL_KEYS['capability-model']).toBe('plugins.kind.capabilityModel');
+    expect(zhCN['plugins.kind.capabilityModel']).toBe('模型');
+    expect(enUS['plugins.kind.capabilityModel']).toBe('Models');
+    expect(zhCN['plugins.market.category.capability-model']).toBe('模型');
+    expect(enUS['plugins.market.category.capability-model']).toBe('Models');
   });
 
   it('pluginProvides：连接只看贡献计数；邮件 / IM 看贡献或实例声明', () => {
@@ -161,5 +184,177 @@ describe('manualToolServers（展开细选：仅手动 server）', () => {
       server({ id: 'off', name: '已停用', enabled: false }),
     ];
     expect(manualToolServers(servers).map((entry) => entry.id)).toEqual(['manual', 'mcpb']);
+  });
+});
+
+// --- D124：模型条目勾选（capability_entries 整集写入） ------------------------
+
+const entry = (
+  pluginId: string,
+  entryId: string,
+  capability: 'image' | 'video' | 'tts' | 'asr' | 'multimodal' | 'embedding' | 'rerank',
+) => ({
+  entryId,
+  capability,
+  model: `${entryId}-model`,
+  displayName: null,
+  engine: 'dashscope',
+  instanceState: 'single' as const,
+  configured: true,
+});
+
+describe('toggleEntryRef / dedupeEntryRefs（plugins.setBotCapabilityEntries 整集写入）', () => {
+  it('缺失（未勾选过任何条目）视作空集', () => {
+    expect(toggleEntryRef(undefined, 'p', 'e1', true)).toEqual([{ plugin: 'p', entry: 'e1' }]);
+    expect(toggleEntryRef(undefined, 'p', 'e1', false)).toEqual([]);
+  });
+
+  it('勾选追加、取消移除，保持其余引用顺序', () => {
+    const current = [
+      { plugin: 'p', entry: 'e1' },
+      { plugin: 'q', entry: 'f1' },
+    ];
+    expect(toggleEntryRef(current, 'p', 'e2', true)).toEqual([
+      { plugin: 'p', entry: 'e1' },
+      { plugin: 'q', entry: 'f1' },
+      { plugin: 'p', entry: 'e2' },
+    ]);
+    expect(toggleEntryRef(current, 'p', 'e1', false)).toEqual([{ plugin: 'q', entry: 'f1' }]);
+    // 重复勾选不产生两份（实现是先移除再尾插：已勾选项被移到末尾，防御性路径）
+    expect(toggleEntryRef(current, 'p', 'e1', true)).toEqual([
+      { plugin: 'q', entry: 'f1' },
+      { plugin: 'p', entry: 'e1' },
+    ]);
+  });
+
+  it('dedupeEntryRefs 按 (plugin, entry) 去重、保序', () => {
+    expect(
+      dedupeEntryRefs([
+        { plugin: 'p', entry: 'e1' },
+        { plugin: 'p', entry: 'e1' },
+        { plugin: 'p', entry: 'e2' },
+        { plugin: 'q', entry: 'e1' },
+      ]),
+    ).toEqual([
+      { plugin: 'p', entry: 'e1' },
+      { plugin: 'p', entry: 'e2' },
+      { plugin: 'q', entry: 'e1' },
+    ]);
+  });
+});
+
+describe('saveableEntryRefs（保存前剔除已卸载插件的残留引用）', () => {
+  it('只保留插件仍在已装清单里的引用；顺序与去重不变', () => {
+    const current = [
+      { plugin: 'p', entry: 'e1' },
+      { plugin: 'gone', entry: 'z' },
+      { plugin: 'q', entry: 'f1' },
+    ];
+    expect(saveableEntryRefs(current, ['p', 'q'])).toEqual([
+      { plugin: 'p', entry: 'e1' },
+      { plugin: 'q', entry: 'f1' },
+    ]);
+    expect(saveableEntryRefs(undefined, ['p'])).toEqual([]);
+  });
+
+  it('已装但不在本 Bot 启用集里的引用同样不发送（否则只会占 16 条上限）', () => {
+    const current = [
+      { plugin: 'p', entry: 'e1' },
+      { plugin: 'installed-not-in-bot', entry: 'e2' },
+    ];
+    expect(saveableEntryRefs(current, ['p'])).toEqual([{ plugin: 'p', entry: 'e1' }]);
+  });
+});
+
+describe('entryRefsOfEnabledPlugins（16 条上限只计有效引用）', () => {
+  it('只算来源插件在当前启用集里的引用；去重保序', () => {
+    const refs = [
+      { plugin: 'p', entry: 'e1' },
+      { plugin: 'gone', entry: 'z' },
+      { plugin: 'p', entry: 'e1' },
+      { plugin: 'q', entry: 'f1' },
+    ];
+    expect(entryRefsOfEnabledPlugins(refs, ['p'])).toEqual([{ plugin: 'p', entry: 'e1' }]);
+    expect(entryRefsOfEnabledPlugins(refs, ['p', 'q'])).toEqual([
+      { plugin: 'p', entry: 'e1' },
+      { plugin: 'q', entry: 'f1' },
+    ]);
+    // 16 条全来自已移出 Bot 的插件 → 有效计数为 0（新条目可继续勾选）。
+    const stale = Array.from({ length: CAPABILITY_ENTRIES_MAX }, (_, index) => ({
+      plugin: 'removed',
+      entry: `e${index}`,
+    }));
+    expect(entryRefsOfEnabledPlugins(stale, ['p'])).toHaveLength(0);
+    expect(entryRefsOfEnabledPlugins(undefined, ['p'])).toEqual([]);
+  });
+});
+
+describe('entryDetailText（条目行次级文案）', () => {
+  it('数据型条目 = model · engine；执行型条目（engine null）只显示 model，不出现 null', () => {
+    expect(entryDetailText({ model: 'qwen-image-2.0', engine: 'dashscope' })).toBe(
+      'qwen-image-2.0 · dashscope',
+    );
+    expect(entryDetailText({ model: 'reference-image-1', engine: null })).toBe('reference-image-1');
+  });
+});
+
+describe('knownEntryRefKeys / entryRefsStillKnown（插件更新删条目后的残留引用）', () => {
+  it('键按 plugin + entry 组合；只保留仍存在于当前清单投影里的引用', () => {
+    const groups = [
+      {
+        pluginId: 'p',
+        pluginName: 'P',
+        tier: 'developer' as const,
+        entries: [entry('p', 'e1', 'image')],
+      },
+    ];
+    const keys = knownEntryRefKeys(groups);
+    expect(keys.has(entryRefKey({ plugin: 'p', entry: 'e1' }))).toBe(true);
+    expect(entryRefKey({ plugin: 'p', entry: 'e1' })).not.toBe(
+      entryRefKey({ plugin: 'p2', entry: 'e1' }),
+    );
+    expect(
+      entryRefsStillKnown(
+        [
+          { plugin: 'p', entry: 'e1' },
+          { plugin: 'p', entry: 'removed-by-update' },
+          { plugin: 'q', entry: 'e1' },
+        ],
+        keys,
+      ),
+    ).toEqual([{ plugin: 'p', entry: 'e1' }]);
+  });
+});
+
+describe('groupEntriesByCapability（展开区按能力分组）', () => {
+  it('按固定顺序分组；空能力不出组；组内保持清单序', () => {
+    const entries = [
+      entry('p', 'tts-a', 'tts'),
+      entry('p', 'img-a', 'image'),
+      entry('p', 'img-b', 'image'),
+      entry('p', 'vid-a', 'video'),
+    ];
+    const groups = groupEntriesByCapability(entries);
+    expect(groups.map((group) => group.capability)).toEqual(['image', 'video', 'tts']);
+    expect(groups[0]!.entries.map((row) => row.entryId)).toEqual(['img-a', 'img-b']);
+  });
+
+  it('清单外能力（如新增枚举）不进组；空清单不出任何组', () => {
+    expect(groupEntriesByCapability([entry('p', 'x', 'rerank')]).map((g) => g.capability)).toEqual([
+      'rerank',
+    ]);
+    expect(groupEntriesByCapability([])).toEqual([]);
+  });
+
+  it('ENTRY_GROUP_ORDER 与文案键一一对应；七组中英文案都登记（i18n 不缺键）', () => {
+    expect(Object.keys(ENTRY_GROUP_LABEL_KEYS)).toHaveLength(ENTRY_GROUP_ORDER.length);
+    for (const capability of ENTRY_GROUP_ORDER) {
+      const key = ENTRY_GROUP_LABEL_KEYS[capability];
+      expect(typeof zhCN[key]).toBe('string');
+      expect(typeof enUS[key]).toBe('string');
+    }
+    expect(zhCN['botPanel.plugins.entryGroup.image']).toBe('图片生成');
+    expect(zhCN['botPanel.plugins.entryGroup.multimodal']).toBe('图文理解');
+    expect(CAPABILITY_ENTRIES_MAX).toBe(16);
   });
 });

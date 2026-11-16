@@ -1,0 +1,7 @@
+{
+  "name": "kepcup-plugin-reference-media",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "plugin.json 之外的 package.json 只做一件事：让 Node 把 dist/main.js 按 ESM 加载（fork 的模块类型按最近 package.json 判定）。不是 workspace 包，也不会被安装依赖。"
+}

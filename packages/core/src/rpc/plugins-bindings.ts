@@ -14,21 +14,28 @@ import {
   pluginsInstancesListOutputSchema,
   pluginsInstancesUpdateInputSchema,
   pluginsInstancesUpdateOutputSchema,
+  pluginsListCapabilityEntriesOutputSchema,
   pluginsListOutputSchema,
   pluginsMarketplaceListOutputSchema,
   pluginsMarketplaceRefreshOutputSchema,
+  pluginsRuntimeListOutputSchema,
+  pluginsRuntimeRestartInputSchema,
+  pluginsSetBotCapabilityEntriesInputSchema,
   pluginsSetBotPluginsInputSchema,
   pluginsEnableForBotsInputSchema,
   pluginsSetEnabledInputSchema,
   pluginsSetEnabledOutputSchema,
+  pluginsTestCapabilityEntryInputSchema,
   pluginsUninstallInputSchema,
   pluginsUpdateInputSchema,
   pluginsUpdateOutputSchema,
   pluginsInspectInputSchema,
   pluginInspectOutputSchema,
+  type PluginCapabilityEntryGroup,
   type PluginInstanceKind,
   type PluginSource,
 } from '@kepcup/shared';
+import { MEDIA_ENGINES } from '../media/engines.js';
 import type { CoreServices } from '../start.js';
 import { currentRemoteSource } from '../remote/audit.js';
 import type { RpcMethodSpec } from './server.js';
@@ -62,6 +69,10 @@ export function bindPluginsMethods(services: CoreServices): Record<string, RpcMe
   const instances = () => {
     if (services.pluginInstances === null) throw new AppError('NOT_IMPLEMENTED', '插件模块未就绪');
     return services.pluginInstances;
+  };
+  const runtime = () => {
+    if (services.pluginRuntime === null) throw new AppError('NOT_IMPLEMENTED', '插件运行时未就绪');
+    return services.pluginRuntime;
   };
   const assertLocalSource = (source: PluginSource): void => {
     // P0a only has file / folder; P1 adds `marketplace` additively (allowed from remote).
@@ -243,6 +254,169 @@ export function bindPluginsMethods(services: CoreServices): Record<string, RpcMe
         }
         await instances().delete(input.id);
         for (const botId of affected) services.pluginBotNotice?.note(botId);
+        return { ok: true as const };
+      },
+    ),
+    // --- D124 能力模型条目（60 号文档 §3/§5） ---------------------------------
+    /**
+     * 已装插件的条目全集（Bot 详情勾选 UI 的数据源）：按插件分组，条目行带
+     * 能力 / 模型 / 引擎与实例配置状态（instanceState + configured）。
+     * D124 P4 起 builtin 只读目录插件经 `manifestOf` 的 builtin 回退同样入列
+     * （生产构建无 builtin 目录）；清单不可读的插件跳过。
+     */
+    'plugins.listCapabilityEntries': method(
+      voidInput,
+      pluginsListCapabilityEntriesOutputSchema,
+      async () => {
+        const pluginRegistry = registry();
+        const groups: PluginCapabilityEntryGroup[] = [];
+        for (const summary of pluginRegistry.list()) {
+          if (summary.state !== 'installed') continue;
+          const manifest = await pluginRegistry.manifestOf(summary.id);
+          const entries = manifest?.contributions.capabilityModels ?? [];
+          if (manifest === null || entries.length === 0) continue;
+          const instanceRows = instances()
+            .list(summary.id)
+            .filter((row) => row.kind === 'capability-model');
+          const requiredOf = (engine: string) =>
+            (MEDIA_ENGINES[engine]?.credentialFields ?? []).filter((field) => field.required);
+          // D125 P4：执行型条目的必填凭据来自 `runtime.instanceFields`（DEV-123）——
+          // 与数据型条目的引擎凭据同一口径（required + 已存 secret / 非敏感值），
+          // 否则实例行存在但 Key 被删 / 更新新增必填字段时仍显示「已配置」。
+          const runtimeRequired = (manifest?.runtime?.instanceFields ?? []).filter(
+            (field) => field.required,
+          );
+          groups.push({
+            pluginId: summary.id,
+            pluginName: summary.name,
+            tier: summary.tier,
+            entries: entries.map((entry) => {
+              // 执行体来源逐条判定（混合插件：有 engine 的条目仍由第一方引擎执行）。
+              const source: 'engine' | 'plugin' = entry.engine !== undefined ? 'engine' : 'plugin';
+              const required =
+                source === 'plugin' ? runtimeRequired : requiredOf(entry.engine ?? '');
+              const configured = (row?: {
+                values: Record<string, unknown>;
+                storedSensitiveKeys: string[];
+              }): boolean =>
+                row === undefined
+                  ? false
+                  : required.every((field) =>
+                      field.sensitive
+                        ? row.storedSensitiveKeys.includes(field.key)
+                        : row.values[field.key] !== undefined && row.values[field.key] !== '',
+                    );
+              const explicit =
+                entry.instance !== undefined
+                  ? instanceRows.find((row) => row.id === entry.instance)
+                  : undefined;
+              const instanceState =
+                instanceRows.length === 0 ? 'none' : instanceRows.length === 1 ? 'single' : 'multi';
+              return {
+                entryId: entry.id,
+                capability: entry.capability,
+                model: entry.model,
+                displayName: entry.displayName ?? null,
+                // 执行型条目（不填 engine）engine 恒 null（执行体来自插件代码，61 §2）。
+                engine: entry.engine ?? null,
+                source,
+                instanceState,
+                configured:
+                  explicit !== undefined
+                    ? configured(explicit)
+                    : instanceRows.length === 1
+                      ? configured(instanceRows[0])
+                      : instanceState === 'multi'
+                        ? instanceRows.some((row) => configured(row))
+                        : false,
+              };
+            }),
+          });
+        }
+        return { plugins: groups };
+      },
+    ),
+    /**
+     * 整集替换 Bot 的启用条目集（`profile_json.runtime.capability_entries`，≤16）。
+     * 与 `plugins.setBotPlugins` 同模式：先整批校验（插件已装且条目存在，未知 ref
+     * 整批拒绝并列出违规项），再单字段写入；写后广播 `bot.updated` + `plugins.changed`
+     * （ids = 新旧并集，让 Bot 详情与插件详情两侧都刷新）。
+     */
+    'plugins.setBotCapabilityEntries': method(
+      pluginsSetBotCapabilityEntriesInputSchema,
+      okOutputSchema,
+      async (input) => {
+        const domain = services.domain;
+        if (domain === null) throw new AppError('NOT_IMPLEMENTED', '插件模块未就绪');
+        const pluginRegistry = registry();
+        // 整批预检在任何写入之前：按插件聚合条目声明，未知 ref 一次性列出。
+        // `null` = 清单不可读 / 未安装（与「已装但无该条目」区分，违规项文案才准确）。
+        const byPlugin = new Map<string, Set<string> | null>();
+        for (const ref of input.entries) {
+          if (!byPlugin.has(ref.plugin)) {
+            const manifest = await pluginRegistry.manifestOf(ref.plugin);
+            byPlugin.set(
+              ref.plugin,
+              manifest === null
+                ? null
+                : new Set(manifest.contributions.capabilityModels?.map((entry) => entry.id) ?? []),
+            );
+          }
+        }
+        const invalid: string[] = [];
+        for (const ref of input.entries) {
+          const known = byPlugin.get(ref.plugin);
+          if (known === undefined || known === null) {
+            invalid.push(`${ref.plugin}/${ref.entry}（插件未安装）`);
+            continue;
+          }
+          if (!known.has(ref.entry)) {
+            invalid.push(`${ref.plugin}/${ref.entry}（条目不存在）`);
+          }
+        }
+        if (invalid.length > 0) {
+          throw new AppError('INVALID_INPUT', `未知的模型条目引用：${invalid.join('；')}`, {
+            invalid,
+          });
+        }
+        const bot = domain.bots.get(input.botId);
+        const before = new Set(
+          (bot?.profile.runtime.capability_entries ?? []).map((r) => r.plugin),
+        );
+        domain.bots.setCapabilityEntries(input.botId, input.entries);
+        const updated = domain.bots.getOrThrow(input.botId);
+        services.events.emit('bot.updated', { bot: updated });
+        services.events.emit('plugins.changed', {
+          ids: [...new Set([...before, ...input.entries.map((ref) => ref.plugin)])],
+        });
+        return { ok: true as const };
+      },
+    ),
+    /** 条目级连通性测试：凭据取实例（keyOverride 支持未保存先测），探针同 testCapability。 */
+    'plugins.testCapabilityEntry': method(
+      pluginsTestCapabilityEntryInputSchema,
+      okOutputSchema,
+      async (input) => {
+        const media = services.media;
+        if (media === null) throw new AppError('NOT_IMPLEMENTED', '插件模块未就绪');
+        await media.testCapabilityEntry(input.pluginId, input.entryId, {
+          ...(input.instanceId !== undefined ? { instanceId: input.instanceId } : {}),
+          ...(input.keyOverride !== undefined ? { keyOverride: input.keyOverride } : {}),
+        });
+        return { ok: true as const };
+      },
+    ),
+    // --- D125 P2 插件运行时 -------------------------------------------------
+    /** 全部执行型插件：状态机 + 最近错误 + 每次调用历史（环形 50 条，最新在前）。 */
+    'plugins.runtime.list': method(voidInput, pluginsRuntimeListOutputSchema, async () => ({
+      plugins: await runtime().list(),
+    })),
+    /** 终止并重新拉起进程（kill switch / 调试）；失败按插件错误码上抛。 */
+    'plugins.runtime.restart': method(
+      pluginsRuntimeRestartInputSchema,
+      okOutputSchema,
+      async (input) => {
+        await runtime().restart(input.pluginId);
         return { ok: true as const };
       },
     ),

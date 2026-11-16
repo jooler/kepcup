@@ -1,7 +1,17 @@
-import { homedir } from 'node:os';
+import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { canonicalPath, defaultHome, expandTilde, resolvePaths } from '../../src/infra/paths.js';
+import { afterAll, describe, expect, it } from 'vitest';
+import { AppError } from '@kepcup/shared';
+import {
+  canonicalPath,
+  defaultHome,
+  ensurePluginDataDir,
+  expandTilde,
+  pluginArtifactDirFor,
+  pluginDataDirFor,
+  resolvePaths,
+} from '../../src/infra/paths.js';
 
 describe('resolvePaths', () => {
   it('defaults to ~/.kepcup', () => {
@@ -15,6 +25,11 @@ describe('resolvePaths', () => {
   it('places plugins under {home}/plugins (D104)', () => {
     const paths = resolvePaths();
     expect(paths.pluginsDir).toBe(path.join(paths.home, 'plugins'));
+  });
+
+  it('places execution-type plugin data under {home}/plugin-data (D125 补丁)', () => {
+    const paths = resolvePaths();
+    expect(paths.pluginDataDir).toBe(path.join(paths.home, 'plugin-data'));
   });
 
   it('honors the KEPCUP_HOME override passed by the caller', () => {
@@ -41,5 +56,51 @@ describe('expandTilde', () => {
 describe('defaultHome', () => {
   it('matches the documented data directory', () => {
     expect(defaultHome()).toBe(path.join(homedir(), '.kepcup'));
+  });
+});
+
+describe('plugin data directories (D125 补丁)', () => {
+  const pluginRoot = mkdtempSync(path.join(tmpdir(), 'plugin-data-paths-'));
+  afterAll(() => rmSync(pluginRoot, { recursive: true, force: true }));
+
+  it('uses the lower-cased {ns}/{name} and no version segment', () => {
+    const dir = pluginDataDirFor(pluginRoot, 'IO.GitHub.Alice/Doc-Tools');
+    expect(dir).toBe(path.join(pluginRoot, 'io.github.alice', 'doc-tools'));
+    // Version-independent: the same plugin id always resolves to the same dir.
+    expect(pluginDataDirFor(pluginRoot, 'io.github.alice/doc-tools')).toBe(dir);
+    expect(pluginArtifactDirFor(pluginRoot, 'io.github.alice/doc-tools')).toBe(
+      path.join(dir, 'artifacts'),
+    );
+  });
+
+  it('rejects ids that are not exactly two safe segments (PLUGIN_INVALID)', () => {
+    for (const bad of [
+      '../escape',
+      'nodash',
+      'a/b/c',
+      '/abs/path',
+      'a/../b',
+      'io.test/..',
+      'io.test/../escape',
+      'io.test\\x',
+      'io.test/na me',
+      '',
+    ]) {
+      expect(() => pluginDataDirFor(pluginRoot, bad)).toThrow(AppError);
+      try {
+        pluginDataDirFor(pluginRoot, bad);
+      } catch (error) {
+        expect((error as AppError).code).toBe('PLUGIN_INVALID');
+      }
+    }
+  });
+
+  it('ensurePluginDataDir creates the private directory (0700) and returns it', () => {
+    const dir = ensurePluginDataDir(pluginRoot, 'io.test/ensured');
+    expect(dir).toBe(path.join(pluginRoot, 'io.test', 'ensured'));
+    expect(statSync(dir).isDirectory()).toBe(true);
+    if (process.platform !== 'win32') {
+      expect(statSync(dir).mode & 0o777).toBe(0o700);
+    }
   });
 });

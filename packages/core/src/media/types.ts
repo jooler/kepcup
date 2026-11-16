@@ -1,5 +1,5 @@
 import type { CoreLogger } from '../infra/logger.js';
-import type { VendorId } from '@kepcup/shared';
+import type { PluginRuntimeProgressPayload, VendorId } from '@kepcup/shared';
 
 /**
  * 厂商媒体适配器的厂商无关契约。每个国内厂商实现一份（adapters/），
@@ -17,6 +17,55 @@ export interface VendorCallContext {
   apiKey: string;
   logger: CoreLogger;
   fetchImpl?: typeof fetch;
+  /**
+   * D124 插件条目级参数覆盖（`CapabilityModelEntry.params`，60 号 §7）：只走
+   * 既有全局槽位路径的调用不携带（行为零变化）。`params` 白名单消费原则：
+   * 引擎逐键读取自己认识的键，未知键忽略并 warn——**绝不整包透传给厂商 HTTP
+   * 层**（社区插件的风险上限 = 诱导调用已注册引擎 + 参数注入，见 60 §7）。
+   * 现有三适配器不读取本字段（通道留给后续新增引擎）。
+   */
+  entryParams?: Record<string, unknown>;
+  /**
+   * D125 托管适配器（执行型插件）：条目与插件定位。仅 `source: 'plugin'` 的条目
+   * 路径携带；全局槽位与内置引擎路径不填（行为零变化）。
+   */
+  entryRef?: { pluginId: string; entryId: string };
+  /** D125：插件实例 id（宿主据此注入该实例的敏感凭据）。仅托管路径携带。 */
+  instanceId?: string;
+  /** D125：调用方语言（进 invoke.context.locale）。仅托管路径携带。 */
+  locale?: string;
+  /**
+   * D125 P3：run 取消信号（用户取消任务 / 工具超时）。仅托管适配器消费（转发
+   * `cancel` 帧，DEV-118）；内置适配器不读取，数据型路径行为零变化。
+   */
+  signal?: AbortSignal;
+  /**
+   * D125 P3：插件阶段进度（`host.progress` 帧，宿主已限速）→ 工具 `ctx.progress`
+   * （对话内状态行 D55 / 任务详情页 D93）。仅托管路径携带。
+   */
+  onProgress?: (payload: PluginRuntimeProgressPayload) => void;
+  /**
+   * D125：仅条目级「未保存先测」（`plugins.testCapabilityEntry` 的 keyOverride）携带。
+   * 键 = 实例敏感字段名，值 = 用户表单里尚未保存的输入；宿主在注入实例 secrets 后
+   * 用这些值覆盖同名键（其余凭据仍取已存值）。真实调用路径不填。
+   */
+  credentialOverrides?: Readonly<Record<string, string>>;
+}
+
+/**
+ * D125 P3：工具 → 媒体调用的取消 / 进度联动（工具 facade 的第 4 个参数）。
+ * 数据型路径（全局槽位 / 内置引擎）不消费，行为与从前逐字节一致。
+ */
+export interface MediaCallControls {
+  signal?: AbortSignal;
+  onProgress?: (payload: PluginRuntimeProgressPayload) => void;
+  /**
+   * D125 补丁：本次解析命中的执行体来源。执行型插件条目回调
+   * `{ pluginId }`（工具据此把产物默认落到该插件的数据目录）；数据型条目 /
+   * 全局槽位不回调 `pluginId`（`{}`）。`#resolve` 解析完成后调用一次。
+   * 回调抛错会被记录并忽略，不影响媒体调用。
+   */
+  onResolved?: (origin: { pluginId?: string }) => void;
 }
 
 export interface ImageGenerationParams {

@@ -33,7 +33,15 @@ function shrinkMockContext(core: TestStack['core']): void {
         ? {
             ...provider,
             models: provider.models.map((model) =>
-              model.id === 'mock-main' ? { ...model, contextWindow: 20_000 } : model,
+              model.id === 'mock-main'
+                ? {
+                    ...model,
+                    // 工具 schema reserve 随工具面增长（当前约 15k）；20k 窗口只剩约
+                    // 230 token，新增三个工具参数（output_dir 等）即可把 usable 压到 0。
+                    // 改用 26k 继续验证压缩路径本身，而不是被 reserve 悬崖挡住。
+                    contextWindow: 26_000,
+                  }
+                : model,
             ),
           }
         : provider,

@@ -5,6 +5,8 @@ import type { RunIdentity, ToolResult } from '../agent/types.js';
 import { MAX_ATTACHMENT_BYTES, type AttachmentsService } from '../domain/attachments.js';
 import type { MessagesService } from '../domain/messages.js';
 import type { ToolGateway } from '../gateway/index.js';
+import { canonicalPath } from '../infra/paths.js';
+import { isInsidePath } from '../sandbox/sensitive-paths.js';
 
 /**
  * 生成类媒体工具（generate_image / generate_speech / generate_video）的**确定性
@@ -18,7 +20,16 @@ import type { ToolGateway } from '../gateway/index.js';
  * 时谎称「已显示」，否则用户既看不到文件、模型也拿不到路径无从补救。
  */
 export interface GeneratedMediaDelivery {
-  send(files: string[], caption: string): MediaDeliveryOutcome;
+  /**
+   * @param options.hostOwned 产物由宿主管理（执行型插件默认落点 = 该插件的数据
+   *   目录，对网关不可读）：只在 `hostArtifactRoot` 内直接读文件，不走
+   *   `gateway.checkPath`。缺省 = 现有读写权限检查（workspace / 任务写域语义不变）。
+   */
+  send(
+    files: string[],
+    caption: string,
+    options?: { hostOwned?: boolean },
+  ): MediaDeliveryOutcome;
 }
 
 export interface MediaDeliveryFailure {
@@ -42,6 +53,11 @@ export interface GeneratedMediaDeliveryDeps {
   /** 事件发布失败只记日志（消息已落库，不能回头算「没投递成功」）。 */
   logger?: { warn(fields: Record<string, unknown>, msg: string): void } | undefined;
   guessMime: (fileName: string) => string;
+  /**
+   * 执行型插件数据根（D125 补丁）：`{home}/plugin-data/`。`send(..., {hostOwned:
+   * true})` 时只允许读该根内的文件（数据目录对网关不可读，不能走 checkPath）。
+   */
+  hostArtifactRoot?: string | undefined;
 }
 
 function megabytes(bytes: number): string {
@@ -53,7 +69,7 @@ export function createGeneratedMediaDelivery(
 ): GeneratedMediaDelivery {
   const { identity } = deps;
   return {
-    send: (files, caption) => {
+    send: (files, caption, options) => {
       if (identity.conversationId === null || identity.botId === null) {
         return {
           delivered: [],
@@ -62,20 +78,48 @@ export function createGeneratedMediaDelivery(
       }
       const conversationId = identity.conversationId;
       const botId = identity.botId;
+      const hostOwned = options?.hostOwned === true;
+      // 插件产物目录对网关不可读（应用数据目录恒拒绝），hostOwned 走显式白名单：
+      // 只有该根内的文件能被读取；根未配置 = 拒绝（绝不回落成任意读）。
+      const hostRoot =
+        hostOwned && deps.hostArtifactRoot !== undefined && deps.hostArtifactRoot.length > 0
+          ? canonicalPath(deps.hostArtifactRoot)
+          : null;
       const failed: MediaDeliveryFailure[] = [];
       const uploaded: Array<{ id: string; source: string }> = [];
       for (const filePath of files) {
-        const decision = deps.gateway.checkPath(identity, filePath, 'read');
-        if (decision.kind !== 'allowed') {
-          failed.push({
-            path: filePath,
-            reason: `没有读取权限（${decision.reason}）`,
-          });
-          continue;
+        let readablePath: string;
+        if (hostOwned) {
+          if (hostRoot === null) {
+            failed.push({
+              path: filePath,
+              reason: '插件产物目录未配置，宿主无法读取该文件',
+            });
+            continue;
+          }
+          const resolved = canonicalPath(filePath);
+          if (!isInsidePath(resolved, hostRoot)) {
+            failed.push({
+              path: filePath,
+              reason: '不是插件产物目录内的文件，宿主拒绝读取',
+            });
+            continue;
+          }
+          readablePath = resolved;
+        } else {
+          const decision = deps.gateway.checkPath(identity, filePath, 'read');
+          if (decision.kind !== 'allowed') {
+            failed.push({
+              path: filePath,
+              reason: `没有读取权限（${decision.reason}）`,
+            });
+            continue;
+          }
+          readablePath = decision.resolvedPath;
         }
         let bytes: Buffer;
         try {
-          bytes = readFileSync(decision.resolvedPath);
+          bytes = readFileSync(readablePath);
         } catch (error) {
           failed.push({
             path: filePath,
@@ -175,6 +219,10 @@ export function recordUndeliveredFiles(
  * 生成工具的投递后结果文案：全部成功 → 告诉模型「已显示」（不回路径，避免被复述）；
  * 否则 → 把未投递文件的路径与原因交还模型，让它用 send_message 补发或向用户说明。
  *
+ * `privateArtifacts` 用于执行型插件的默认落点：文件在应用数据目录里，任务的
+ * send_message / 文件卡都读不到，因此失败文案不回路径、不引导 `attachment_paths`
+ * 补发（那只会得到「没有读取权限」），只要求模型如实向用户说明。
+ *
  * @param generated 已生成的产物名词短语，如「3 张图片」「语音」
  */
 export function mediaDeliveryResult(input: {
@@ -183,6 +231,8 @@ export function mediaDeliveryResult(input: {
   outcome: MediaDeliveryOutcome;
   /** 全部成功时的收尾句（缺省为通用提示）。 */
   successHint?: string;
+  /** 产物在宿主管理的插件私有目录（D125 补丁）：失败时不给模型不可读的路径。 */
+  privateArtifacts?: boolean;
 }): ToolResult {
   const { generated, saved, outcome } = input;
   if (outcome.failed.length === 0 && outcome.delivered.length === saved.length) {
@@ -192,6 +242,19 @@ export function mediaDeliveryResult(input: {
     };
   }
   const undelivered = saved.filter((file) => !outcome.delivered.includes(file));
+  if (input.privateArtifacts === true) {
+    const reasons = outcome.failed.length
+      ? outcome.failed.map((f) => `- ${f.reason}`).join('\n')
+      : undelivered.map(() => '- 未能发送').join('\n');
+    const deliveredNote =
+      outcome.delivered.length > 0
+        ? `其中 ${outcome.delivered.length} 个已作为消息附件显示，`
+        : '';
+    return {
+      ok: true,
+      content: `已生成${generated}，${deliveredNote}但另有 ${undelivered.length} 个文件未能自动投递到对话。产物保存在执行型插件的私有数据目录中，任务的 send_message 无法读取该目录，不能通过它补发。失败原因：\n${reasons}\n请如实向用户说明未送达的文件（如超过附件大小上限），不要声称已显示。`,
+    };
+  }
   const reasons = outcome.failed.length
     ? outcome.failed.map((f) => `- ${f.path}：${f.reason}`).join('\n')
     : undelivered.map((file) => `- ${file}：未能发送`).join('\n');
@@ -199,7 +262,7 @@ export function mediaDeliveryResult(input: {
   const head =
     outcome.delivered.length > 0
       ? `已生成${generated}，其中 ${outcome.delivered.length} 个文件已作为消息附件显示在用户的对话界面中，但另有 ${undelivered.length} 个文件投递失败：`
-      : `已生成${generated}并保存到 workspace，但自动投递到对话失败，用户目前看不到文件：`;
+      : `已生成${generated}并已落盘，但自动投递到对话失败，用户目前看不到文件：`;
   return {
     ok: true,
     content: `${head}\n${reasons}\n未送达的文件路径：\n${list}\n可修复的（如读取权限）处理后请用 send_message 的 attachment_paths 把这些文件发给用户；无法作为附件发送的（如超过大小上限）请向用户如实说明文件在 workspace 的位置，不要声称已显示。`,

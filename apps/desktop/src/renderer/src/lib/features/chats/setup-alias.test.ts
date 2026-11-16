@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { MessageKey } from '$lib/i18n';
 import type { SetupRequirement } from '@kepcup/shared';
-import { setupAliasOf } from './setup-alias';
+import { isPluginCredentialEntryPath, setupAliasOf } from './setup-alias';
 
 /** 与 i18n 无关的假文案：直接回 key，断言里认 key。 */
 const text = (key: MessageKey): string => key;
@@ -71,5 +71,47 @@ describe('setupAliasOf（旧 kind → kind:"setting" 兼容别名）', () => {
       reason: 'r',
     };
     expect(setupAliasOf(requirement, text)).toBe(requirement);
+  });
+});
+
+describe('isPluginCredentialEntryPath（D124 条目路径缺凭据的凭据卡分发）', () => {
+  const entryRequirement = (patch: Partial<Extract<SetupRequirement, { kind: 'capability-model' }>> = {}): SetupRequirement => ({
+    kind: 'capability-model',
+    capability: 'image',
+    pluginId: 'p/one',
+    entryId: 'e1',
+    ...patch,
+  });
+
+  it('payload 带插件定位且插件在已装清单：走插件凭据卡', () => {
+    expect(isPluginCredentialEntryPath(entryRequirement(), true, () => true)).toBe(true);
+  });
+
+  it('清单尚未拉到（冷启动直出卡）：也按条目路径渲染——落全局槽位卡会误导且解不了实例凭据', () => {
+    expect(isPluginCredentialEntryPath(entryRequirement(), false, () => false)).toBe(true);
+  });
+
+  it('清单拉到后插件已卸载：回落全局槽位卡', () => {
+    expect(isPluginCredentialEntryPath(entryRequirement(), true, () => false)).toBe(false);
+  });
+
+  it('payload 无插件定位（全局槽位路径，D124 前唯一形态）：不走凭据卡', () => {
+    expect(
+      isPluginCredentialEntryPath(entryRequirement({ pluginId: undefined }), true, () => true),
+    ).toBe(false);
+    expect(
+      isPluginCredentialEntryPath(entryRequirement({ pluginId: undefined }), false, () => false),
+    ).toBe(false);
+  });
+
+  it('其余 kind 一律不走凭据卡', () => {
+    const others: SetupRequirement[] = [
+      { kind: 'main-model' },
+      { kind: 'web-search' },
+      { kind: 'setting', itemId: 'models.provider', reason: 'r' },
+    ];
+    for (const requirement of others) {
+      expect(isPluginCredentialEntryPath(requirement, true, () => true)).toBe(false);
+    }
   });
 });

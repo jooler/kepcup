@@ -23,6 +23,7 @@ import { appSkillsOfferEventSchema } from '../domain/app-skills.js';
 import { connectorTierSchema } from '../domain/connector-catalog.js';
 import { appCatalogChangedPayloadSchema } from '../domain/local-connectors.js';
 import { watchEntrySchema } from '../domain/watches.js';
+import { PLUGIN_RUNTIME_STATUS_VALUES } from '../plugin-runtime/protocol.js';
 import { mailAccountSchema } from '../domain/mail.js';
 import { handoverViewSchema } from '../domain/handover.js';
 import { wikiOwnerSchema } from '../domain/wiki.js';
@@ -429,6 +430,17 @@ export type RemoteDeviceChangedPayload = z.infer<typeof remoteDeviceChangedPaylo
 export const remotePairingRequestedPayloadSchema = pendingPairingRequestSchema;
 export type RemotePairingRequestedPayload = z.infer<typeof remotePairingRequestedPayloadSchema>;
 
+/**
+ * 插件运行时状态迁移（D125，61 §6）：状态机五值之一 + 可选说明（错误原因 / 显示文本）。
+ * 每次迁移广播一次；渲染端据此刷新插件卡状态徽标与活动抽屉（P3）。
+ */
+export const pluginRuntimeStatePayloadSchema = z.object({
+  pluginId: z.string().min(1),
+  status: z.enum(PLUGIN_RUNTIME_STATUS_VALUES),
+  detail: z.string().optional(),
+});
+export type PluginRuntimeStatePayload = z.infer<typeof pluginRuntimeStatePayloadSchema>;
+
 export const rpcEventSchemas = {
   'core.status': coreStatusPayloadSchema,
   'message.created': messageCreatedPayloadSchema,
@@ -500,6 +512,8 @@ export const rpcEventSchemas = {
   'plugins.marketplace.updated': pluginsMarketplaceUpdatedPayloadSchema,
   /** 插件市场包下载进度（D104 P1-1）：检视 / 安装拉取包时节流推送（received / total 字节）。 */
   'plugins.package.progress': pluginsPackageProgressPayloadSchema,
+  /** 插件运行时（D125 P2）：执行型插件进程状态迁移（stopped/starting/ready/busy/error）。 */
+  'plugin.runtime': pluginRuntimeStatePayloadSchema,
 } as const;
 
 export type RpcEventName = keyof typeof rpcEventSchemas;

@@ -14,6 +14,13 @@ export interface UsageRecordInput {
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
   costUsd?: number | null;
+  /**
+   * D124 能力模型条目维度（迁移 0075 两列，均 nullable）：插件条目调用记
+   * `capability`（能力名）与 `model_entry_id`（'{pluginId}/{entryId}'）；全局
+   * 槽位路径两列留空（NULL），旧行读出 NULL。
+   */
+  capability?: string | null;
+  modelEntryId?: string | null;
 }
 
 /** One local-day bucket aggregated by SQLite (`localtime`, same zone as the app). */
@@ -125,7 +132,7 @@ export class UsageService {
   record(input: UsageRecordInput): void {
     this.db
       .prepare(
-        'insert into usage_ledger (id, run_id, bot_id, conversation_id, loop_type, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'insert into usage_ledger (id, run_id, bot_id, conversation_id, loop_type, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, capability, model_entry_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         newId('use'),
@@ -140,6 +147,8 @@ export class UsageService {
         Math.max(0, Math.round(input.cacheReadTokens ?? 0)),
         Math.max(0, Math.round(input.cacheWriteTokens ?? 0)),
         input.costUsd ?? null,
+        input.capability ?? null,
+        input.modelEntryId ?? null,
         this.clock.now(),
       );
   }

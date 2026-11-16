@@ -133,11 +133,22 @@ export const pluginIndexEntrySchema = z.object({
     .array(z.enum(['darwin', 'win32', 'linux']))
     .min(1)
     .optional(),
-  /** 签名时由贡献推导写入（skills→skill、connectors→connector、mcp→mcp、mail→mail）。 */
-  /** 签名时由贡献推导的类别（skill / connector / mcp / mail / im，至多 5 类）。 */
-  categories: z.array(pluginContributionKindSchema).max(5),
+  /** 签名时由贡献推导的类别（skill / connector / mcp / mail / im / capability-model，至多 6 类）。 */
+  categories: z.array(pluginContributionKindSchema).max(6),
   /** 签名时由贡献推导的一句话能力概述（D105 P4）；老索引没有此字段，消费端按 categories 回退推导。 */
   capabilitySummary: z.string().max(200).optional(),
+  /**
+   * D125 P4：执行型包的 CI 静态扫描结果（`scripts/scan-plugin-runtime.mjs` 写入）。
+   * `fail` 的包根本不会被签名（签名脚本拒绝出包），因此索引里只可能见到 pass / warn；
+   * 非执行型包没有该字段。老客户端不识别、按缺省忽略。
+   */
+  runtimeScan: z
+    .object({
+      status: z.enum(['pass', 'warn']),
+      errors: z.array(z.string().max(500)).max(50).default([]),
+      warnings: z.array(z.string().max(500)).max(50).default([]),
+    })
+    .optional(),
   summary: z.object({
     name: z.string().min(1).max(100),
     description: z.string().max(500).default(''),

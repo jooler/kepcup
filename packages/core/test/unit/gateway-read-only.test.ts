@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -843,6 +843,40 @@ describe('declared write domains (D123 §3.6)', () => {
       claimed.assertWritableArtifact(ids.scopedTask, path.join(workspace(), 'docs', 'a.md')),
     ).toThrow(/认领/);
   });
+
+  it('generated artifact target: 指向 workspace 外的符号链接 fail-closed（宿主写不能跟随）', () => {
+    const gateway = makeGateway();
+    const outsideFile = path.join(outside, 'artifact-secret.txt');
+    writeFileSync(outsideFile, 'secret');
+    const link = path.join(workspace(), 'linked.png');
+    symlinkSync(outsideFile, link);
+    expect(gateway.checkPath(ids.writeTask, link, 'write').kind).not.toBe('allowed');
+    expect(() => gateway.assertWritableArtifact(ids.writeTask, link)).toThrow();
+    try {
+      gateway.assertWritableArtifact(ids.writeTask, link);
+    } catch (error) {
+      expect((error as { code?: string }).code).toBe('PATH_OUT_OF_SCOPE');
+    }
+  });
+
+  it('generated artifact target: 指向 workspace 外 inode 的硬链接同样 fail-closed', () => {
+    const gateway = makeGateway();
+    const outsideFile = path.join(outside, 'artifact-hardlink.png');
+    writeFileSync(outsideFile, 'outside-inode');
+    const linked = path.join(workspace(), 'hardlinked.png');
+    linkSync(outsideFile, linked);
+    expect(gateway.checkPath(ids.writeTask, linked, 'write')).toMatchObject({
+      kind: 'forbidden',
+    });
+    expect(() => gateway.assertWritableArtifact(ids.writeTask, linked)).toThrow(/硬链接/);
+  });
+
+  it('generated artifact target: 只读 run 保留 D75 的固定 workspace 产物豁免', () => {
+    const gateway = makeGateway();
+    expect(() =>
+      gateway.assertWritableArtifact(ids.turn, path.join(workspace(), '.generated', 'x.png')),
+    ).not.toThrow();
+  });
 });
 
 describe('runtime path claims (D123 §5)', () => {
@@ -920,5 +954,59 @@ describe('runtime path claims (D123 §5)', () => {
     });
     expect(claims.release('run_peer')).toEqual(['docs/shared/**', 'notes/**']);
     expect(claims.get('run_peer')).toBeNull();
+  });
+});
+
+/**
+ * D125 补丁：`resolveArtifactTarget` 是 generate_image / generate_speech /
+ * generate_video 的 `output_dir` 付费前预检——它复用 checkPath 的写判定，但把
+ * 「需要授权 / 租约」等一律折成 PATH_OUT_OF_SCOPE（生成工具不在中途弹审批）。
+ */
+describe('resolveArtifactTarget（D125 补丁）', () => {
+  function codeOf(thunk: () => unknown): string {
+    try {
+      thunk();
+    } catch (error) {
+      return (error as { code?: string }).code ?? 'none';
+    }
+    return 'no-throw';
+  }
+
+  it('域内目标返回解析后的绝对路径', () => {
+    const gateway = makeGateway();
+    expect(gateway.resolveArtifactTarget(ids.scopedTask, 'docs/img.png')).toBe(
+      path.join(workspace(), 'docs', 'img.png'),
+    );
+  });
+
+  it('域外目标抛 WRITE_OUT_OF_DOMAIN', () => {
+    const gateway = makeGateway();
+    const outsideDomain = path.join(workspace(), '.generated', 'x.png');
+    expect(codeOf(() => gateway.resolveArtifactTarget(ids.scopedTask, outsideDomain))).toBe(
+      'WRITE_OUT_OF_DOMAIN',
+    );
+  });
+
+  it('只读 run 不获宿主产物豁免：output_dir 是模型选的路径，走普通写判定', () => {
+    const gateway = makeGateway();
+    const target = path.join(workspace(), '.generated', 'x.png');
+    expect(codeOf(() => gateway.resolveArtifactTarget(ids.turn, target))).toBe(
+      'PATH_OUT_OF_SCOPE',
+    );
+    // 不是只落 workspace/.generated：模型给的绝对路径同样被拒（不能借此写任意位置）。
+    expect(codeOf(() => gateway.resolveArtifactTarget(ids.turn, path.join(outside, 'x.png')))).toBe(
+      'PATH_OUT_OF_SCOPE',
+    );
+  });
+
+  it('需要授权的目标抛 PATH_OUT_OF_SCOPE，消息保留网关原因', () => {
+    const gateway = makeGateway();
+    const target = path.join(outside, 'x.png');
+    expect(codeOf(() => gateway.resolveArtifactTarget(ids.response, target))).toBe(
+      'PATH_OUT_OF_SCOPE',
+    );
+    expect(() => gateway.resolveArtifactTarget(ids.response, target)).toThrow(
+      /位于当前 workspace 与系统目录之外/,
+    );
   });
 });
