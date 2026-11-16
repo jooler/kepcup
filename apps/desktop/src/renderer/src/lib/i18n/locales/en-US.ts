@@ -1795,8 +1795,6 @@ export const enUS = {
   'task.statusOne': 'Task “{title}”: {activity}',
   'task.statusMany': '{count} tasks in progress · “{title}”: {activity}',
   'task.working': 'In progress…',
-  'task.originProgress': 'Progress of task “{title}”',
-  'task.originResult': 'Result of task “{title}”',
   'route.openBot': 'Chat with {name}',
   'route.openProject': 'Open project group “{name}”',
   'route.chatMyself': "I'll go to {name} myself",
