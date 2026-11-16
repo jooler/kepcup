@@ -8,7 +8,7 @@ import {
   runtimeBadge,
   truncateMessage,
 } from './plugin-runtime-view';
-import { t } from '$lib/i18n';
+import { i18n, t } from '$lib/i18n';
 import { zhCN } from '$lib/i18n/locales/zh-CN';
 
 /**
@@ -192,30 +192,36 @@ describe('插件活动抽屉行（D125 P3）', () => {
   });
 
   it('活动行里 PLUGIN_* 走补集人话；PROVIDER_QUOTA / PROVIDER_AUTH_FAILED 沿用既有文案', () => {
-    const codes = [
-      'PLUGIN_CRASHED',
-      'PLUGIN_TIMEOUT',
-      'PLUGIN_CONTRACT_VIOLATION',
-      'PLUGIN_NETWORK_DENIED',
-      'PROVIDER_QUOTA',
-      'PROVIDER_AUTH_FAILED',
-    ] as const;
-    const rows = activityRows(
-      state({
-        recent: codes.map((code, index) => ({
-          at: index,
-          contract: 'media',
-          method: 'generateImage',
-          durationMs: 1,
-          ok: false,
-          errorCode: code,
-          message: `插件原始消息 ${code}`,
-        })),
-      }),
-      'zh-CN',
-    );
-    expect(rows.map((row) => row.error)).toEqual(codes.map((code) => zhCN[`chats.errorCode.${code}`]));
-    // 插件消息仍作为次级说明透传（不与主文案重复）。
-    expect(rows.every((row) => row.detail.startsWith('插件原始消息 '))).toBe(true);
+    const prev = i18n.locale;
+    i18n.setLocale('zh-CN');
+    try {
+      const codes = [
+        'PLUGIN_CRASHED',
+        'PLUGIN_TIMEOUT',
+        'PLUGIN_CONTRACT_VIOLATION',
+        'PLUGIN_NETWORK_DENIED',
+        'PROVIDER_QUOTA',
+        'PROVIDER_AUTH_FAILED',
+      ] as const;
+      const rows = activityRows(
+        state({
+          recent: codes.map((code, index) => ({
+            at: index,
+            contract: 'media',
+            method: 'generateImage',
+            durationMs: 1,
+            ok: false,
+            errorCode: code,
+            message: `插件原始消息 ${code}`,
+          })),
+        }),
+        'zh-CN',
+      );
+      expect(rows.map((row) => row.error)).toEqual(codes.map((code) => zhCN[`chats.errorCode.${code}`]));
+      // 插件消息仍作为次级说明透传（不与主文案重复）。
+      expect(rows.every((row) => row.detail.startsWith('插件原始消息 '))).toBe(true);
+    } finally {
+      i18n.setLocale(prev);
+    }
   });
 });
