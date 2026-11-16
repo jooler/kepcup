@@ -611,9 +611,13 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     const pilotEntries = JSON.parse(
       readFileSync(path.join(pilotPluginDir, 'plugin.json'), 'utf8'),
     ) as {
+      engines: { kepcup: string };
       runtime: { timeouts?: Record<string, number> };
       contributions: { capabilityModels: Array<{ id: string; model: string }> };
     };
+    // `engines.kepcup` 是**应用最低版本**，不是插件版本：固定 >=0.5.14，不要随插件
+    // 版本号（1.x）抬高——否则当前应用（0.5.x）会因 PLUGIN_INCOMPATIBLE 装不上。
+    expect(pilotEntries.engines.kepcup).toBe('>=0.5.14');
     expect(
       pilotEntries.contributions.capabilityModels.find((entry) => entry.id === PILOT_ENTRY_ID)
         ?.model,

@@ -1652,8 +1652,10 @@
   声明 `PROVIDER_AUTH_FAILED`/`PROVIDER_QUOTA` 映射」——故帧级 code 开放为 string，
   宿主侧产生的 4 码（`PLUGIN_CRASHED` 等）在 shared 另册登记
   （`PLUGIN_RUNTIME_ERROR_CODES`）供内部使用。
-  ② 参考插件 `engines.kepcup: ">=0.5.14"` 与当前应用版本对齐；runtime 段真正的最低
-  支持版本在 P2 发版时按需抬高（插件 README 已注明）。
+  ② 参考插件 `engines.kepcup: ">=0.5.14"` 与当前应用版本对齐。**该值固定不随插件
+  版本号抬高**（用户明确要求）：它是「应用最低版本」，不是插件版本——插件升到 1.x
+  时若把这条同步抬高，当前 0.5.x 应用会直接 `PLUGIN_INCOMPATIBLE` 装不上。
+  `plugin-host.test.ts` 的试点用例断言该值锁定为 `>=0.5.14`。
 - 决定：均按上述口径；61 §5 的映射语义不受影响。
 - 已更新的文档：本条。
 

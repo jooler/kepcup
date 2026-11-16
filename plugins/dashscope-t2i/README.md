@@ -69,5 +69,8 @@ node scripts/scan-plugin-runtime.mjs --dir plugins/dashscope-t2i
   qwen-image 系列**：wan 文生图（`wanx*`）与视频模型（`*t2v`，如 `wan2.7-t2v`）会被
   百炼以 `url error, please check url!` 拒绝（真机教训，见 DEV-124）。在售 id 更替时，
   改条目 `params.model` 即可（插件代码与协议不变），插件报错也会带这条指引。
+- `engines.kepcup` 固定为 `>=0.5.14`（应用最低版本），**不随插件版本号抬高**——否则
+  当前 0.5.x 应用会因 `PLUGIN_INCOMPATIBLE` 装不上；dev / test 应用（版本 `0.0.0*`）
+  完全跳过该检查。
 - 与内置引擎的 A/B 对照结论见 [todo/plugin-runtime/P4-governance-pilot.md](../../todo/plugin-runtime/P4-governance-pilot.md)
   的实施记录与 61 号 §12。
