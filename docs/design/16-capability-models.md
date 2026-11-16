@@ -181,7 +181,8 @@ core 侧 `media/` 每家厂商一个适配器，实现厂商无关的 `VendorAda
 - **执行型插件**（61 号）：插件子进程内实现厂商协议（`media` 契约的
   `generateImage` / `submitVideo` / `videoStatus` / `cancelVideo` 方法），宿主按条目调用。
   图片试点 `plugins/dashscope-t2i`（qwen-image 异步任务协议，DEV-124~DEV-130 已跑通）；
-  视频后续补插件试点。
+  仓库当前**不提供**视频生成插件包——视频条目由后续独立开发的插件实现（契约方法已就绪：
+  `submitVideo` / `videoStatus` / `cancelVideo`）。
 - **条目解析与全局槽位的关系**：image / video 无「条目 > 全局槽位」回退链——`MediaService`
   的解析是**条目路径 only**，Bot 未绑定可用条目即抛 `CAPABILITY_NOT_CONFIGURED`
   （文案插件导向：引导安装 / 启用插件并在 Bot 的插件能力里勾选），不再回落全局设置。

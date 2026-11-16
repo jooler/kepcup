@@ -2294,8 +2294,8 @@
   `settings.capabilityModels.image/video` 全局槽位 + `media.generateImage / generateVideo /
   videoStatus` RPC + 设置页槽位卡）与 D124/D125 已跑通的插件条目通道并存，且厂商侧模型
   更新节奏远快于应用发版——这两类「生成型」能力没有跨厂商事实标准接口，内置引擎每接一个
-  新模型都要发版。用户决策：此类能力统一交给能力模型插件（dashscope-t2i 图片试点已跑通，
-  视频后续补试点），应用内实现整体删除。
+  新模型都要发版。用户决策：此类能力统一交给能力模型插件（dashscope-t2i 图片试点已跑通；
+  视频生成插件由后续独立提供，不在本次范围），应用内实现整体删除。
 - 方案：
   - shared：`capabilityModelsSchema` 删 image / video 键（存量设置 JSON 残留键随 zod parse
     静默剥离）；`VENDOR_DESCRIPTORS` 两家能力矩阵去 image / video、预置模型删除对应组
@@ -2389,7 +2389,13 @@
     plugin-runtime-view.svelte **9/9**、composer-inject **5/5** —— **113 用例 / 0 失败**。
   - typecheck：`pnpm --filter @kepcup/shared typecheck` / `@kepcup/core typecheck` /
     `@kepcup/desktop typecheck`（svelte-check **0 error / 0 warning**）全绿；改动文件
-    eslint 干净。
+    eslint 干净。全工作区 `pnpm typecheck`（10 个包，含 build）**0 error**。
+  - 全量收口（`pnpm test`，2026-11-17，仅此一次）：808 个文件 / 8779 个用例中
+    803 文件通过、3 跳过、**2 失败**——遗留的两个 shared 测试仍以已删条目
+    `capability.image` 作字段类型 / needs-sensitive-input 夹具
+    （`settings-merge-validate.test.ts`、`settings-mode.test.ts`）。改为保留的
+    `capability.tts` 后单跑 **37/37 通过**（eslint 干净）；其余 8733 用例全绿
+    （44 skipped），无其他回归。
 - 已更新的文档：本条；`docs/design/16-capability-models.md`（能力矩阵、槽位结构、适配层
   契约、image/video 章节改插件唯一通道、连通性测试、数据包口径）；
   `docs/design/20-conversation-media.md`（工具能力来源、SETUP_REQUIRED 分流、新增 4.1
