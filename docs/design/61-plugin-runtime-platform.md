@@ -78,7 +78,7 @@ runtime: strictObject({
 
 ### 3.1 进程与生命周期
 
-- **一插件一进程**：`child_process.fork(entry, { serialization: 'advanced', execArgv: [] })`，工作目录指向插件安装目录。desktop（core 为 utilityProcess）与 headless server 同构。
+- **一插件一进程**：`child_process.fork(entry, { serialization: 'advanced', execArgv: [] })`，工作目录指向插件**私有数据目录** `{home}/plugin-data/{ns}/{name}/`（DEV-131；不是安装目录——安装树随更新替换且语义只读）。该目录在安装执行型插件时创建（更新时确保存在，更新失败 / 补偿不删），builtin 执行型插件在首次拉起时按需创建，权限 0700；插件沿相对路径写入即落在自己的数据区。**包内相对资产不能再用 `process.cwd()` 读取**（cwd 已不是安装目录）：插件应通过 `import.meta.url` / 宿主上下文的绝对信息解析包内文件，相对路径写入则落在数据目录。desktop（core 为 utilityProcess）与 headless server 同构。
 - **状态机**：`stopped → starting → ready ⇄ busy → error`。懒启动（首次调用拉起）；`idle` 5 分钟无调用 → 优雅停（`shutdown` 请求 + 2s 强杀）；崩溃/看门狗击杀 → `error`（带原因）→ 下次调用自动重启。
 - **握手**：`init {hostApiVersion, manifestDigest, instances}` → 插件回 `ready {hostApiVersion, contracts: string[]}`；版本不匹配回错误并拒绝调用（`PLUGIN_UPGRADE_REQUIRED`）。
 - **看门狗**：每 15s ping，2 次无响应击杀；每次调用带能力级超时——**取值优先插件清单声明**
@@ -109,7 +109,8 @@ plugin → host   ready{hostApiVersion, contracts, features?}
 | 调用时长 | 插件声明（`runtime.timeouts`）> 契约默认；宿主钳制 15 分钟（§3.1） | `PLUGIN_TIMEOUT` + 击杀 |
 | 单次网络请求 | 插件声明（`net.fetch` 的 `init.timeoutMs`）；宿主钳制 15 分钟，不设隐含固定值 | 超时归 `PROVIDER_UNREACHABLE`；进程退出时在途请求被取消 |
 | 网络 | 清单白名单，core 侧强制 + SSRF 防护（复用 `web_fetch` 守卫）+ 审计计数 | 拒绝 + `PLUGIN_NETWORK_DENIED`，插件卡可见 |
-| 存储 | `host.storage` 配额 10MB/插件 | 写入拒绝 |
+| 存储 | `host.storage` 配额 10MB/插件；私有数据目录 `{home}/plugin-data/{ns}/{name}/`（0700，版本无关） | 写入拒绝（KV）；数据目录卸载即删 |
+| 产物 | 由 core 下载并按 `artifacts/` 默认落盘（插件条目）；`output_dir` 可显式指定落点；内置引擎仍落 `<workspace>/.generated/` | 写域 / 权限预检在付费生成之前（DEV-131） |
 | 日志 | `host.log` 限速（100 条/调用） | 截断 + warn |
 | 内存 | v1 不强制（观测项）；RSS > 512MB 记 warn | 记录，远期加压 |
 
@@ -173,7 +174,12 @@ package.json）；签名扫描归档本身，不应用 `.kepcup-ignore`。
 - **Q2 并发池化**：串行排队在高频短调用（批量图片）下可能成瓶颈；出现实测瓶颈再按 `maxConcurrent` 进程池化。
 - **Q3 持久型插件**：监看类（自行订阅外部事件）需要常驻进程 + 健康检查；与 D79 宿主监看的关系先想清楚再开放，本期不做。
 - **Q4 community 执行型**：等扫描管线运行一段时间、verified 试点稳定后再评估。
-- **Q5 fs 能力**：需要本地文件的插件（如缓存大文件）远期以 `host.files.scopedTmp()` 形态评估，v1 不给。
+- **Q5 fs 能力**：**仍未作为 Host API 开放**。DEV-131 只给执行型插件一个宿主管理的
+  可写数据目录 `{home}/plugin-data/{ns}/{name}/`（进程 cwd，相对路径写入落此；安装时
+  初始化、卸载 / 安装回滚删除），生成产物默认落其中的 `artifacts/`——这是 cwd 与宿主
+  落盘策略，不是 `host.files`：不新增文件读写 API、不放开 fs / secrets / env，市场静态
+  扫描对 `fs` / 子进程 / 网络的限制不变。注意静态扫描是代码审查层、不是 OS 沙箱；插件
+  进程仍以用户权限运行。更远的 `host.files.scopedTmp()` 形态仍待评估。
 
 ## 验收锚点
 
@@ -193,7 +199,7 @@ package.json）；签名扫描归档本身，不应用 `.kepcup-ignore`。
 
 | 决策 | 落地 |
 |---|---|
-| 1 双形态 / 进程外执行 | `runtime` 段 + `plugins/*` 单文件 ESM；`child_process.fork`（execArgv 空、最小 env、cwd=安装目录）；进程内执行仍禁止 |
+| 1 双形态 / 进程外执行 | `runtime` 段 + `plugins/*` 单文件 ESM；`child_process.fork`（execArgv 空、最小 env、cwd=插件私有数据目录 `{home}/plugin-data/{ns}/{name}/`，DEV-131）；进程内执行仍禁止 |
 | 2 三层边界 | 内核未动；`plugins/runtime/` 为第一方运行时；插件经 SDK 只见 `host` 命名空间 |
 | 3 能力契约注册表 | `plugins/runtime/contracts.ts` 的 `CAPABILITY_CONTRACTS`，v1 仅 `media`（七方法 zod 双向） |
 | 4 进程模型 | 每插件一进程；懒启动 / 空闲 5 分钟优雅停 / 15s ping ×2 击杀 / 调用级超时；串行队列（`maxConcurrent` 预留） |
@@ -237,6 +243,10 @@ package.json）；签名扫描归档本身，不应用 `.kepcup-ignore`。
   的 `init.timeoutMs`，宿主只钳制 15 分钟上限并取消进程退出时的在途请求（原 60s 固定
   上限会误杀长任务）；试点随之改回 qwen-image **异步**任务 + 轮询（单次请求秒级）。
   无未决阻塞项。
+- D125 补丁（2026-11-16，真机写域问题）：**DEV-131** 执行型插件私有数据目录
+  `{home}/plugin-data/{ns}/{name}/`（进程 cwd、安装初始化、卸载删除）；core 落插件产物
+  不再受任务写域门槛，生成工具新增 `output_dir` 且预检在付费生成之前；投递新增
+  `hostOwned` 显式读取根。**不是 Q5 fs 能力**：不新增 `host.files`，扫描约束不变。
 
 ### 12.4 试点 A/B 结论（百炼 Qwen-Image，`plugins/dashscope-t2i/`）
 
@@ -282,7 +292,11 @@ qwen-image 同步 `multimodal-generation`，异步「提交 → 轮询」的代�
 - **Q3 持久型插件**：未涉及。仍未决。
 - **Q4 community 执行型**：静态扫描管线已落地（P4），但只有两个第一方包跑过；维持 v1
   拒绝，待 verified 试点积累后再评估。
-- **Q5 fs 能力**：试点未需要（产物按 URL 引用）。仍未决。
+- **Q5 fs 能力**：**仍未作为 Host API 开放（DEV-131 只动了 cwd / 落盘策略）**：宿主给
+  每个执行型插件一个版本无关的私有数据目录（cwd + `artifacts/` 默认落点，安装初始化 /
+  卸载与安装回滚删除），但 **Host API 仍无 fs**——没有 `host.files`，不放开
+  fs / secrets / env；扫描约束不变（代码审查层，不是 OS 沙箱，插件进程仍是用户权限）。
+  `host.files.scopedTmp()` 等显式 API 仍待评估。
 
 ### 12.6 验收锚点核对
 

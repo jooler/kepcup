@@ -194,6 +194,7 @@ function makeRig(options: RigOptions = {}) {
     },
     instanceStore,
     pluginsDir: paths.pluginsDir,
+    pluginDataDir: paths.pluginDataDir,
     clock,
     logger,
     events: eventSink as never,
@@ -226,6 +227,7 @@ function makeRig(options: RigOptions = {}) {
     bridge,
     events: eventSink as never,
     logger,
+    pluginDataDir: paths.pluginDataDir,
     timings: {
       heartbeatIntervalMs: 60,
       heartbeatMisses: 2,
@@ -919,7 +921,7 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     rig.host.disposeAll();
   });
 
-  it('进程边界：env 白名单不透传宿主秘密；cwd = 安装目录；execArgv 为空', async () => {
+  it('进程边界：env 白名单不透传宿主秘密；cwd = 插件数据目录；execArgv 为空', async () => {
     const { rig, instanceId } = await withProbe({
       baseEnv: { ...process.env, PLUGIN_TEST_SECRET: 'top-secret' },
     });
@@ -931,10 +933,38 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     expect(parts[0]).toBe('image/png');
     expect(parts[1]).toBe('no-secret');
     const reportedCwd = parts.slice(2, -1).join('+');
+    // D125 补丁：进程 cwd 是插件私有数据目录（不是安装目录）——相对路径写入落在
+    // 用户数据区，更新替换安装树时不受影响。
+    const dataDir = path.join(rig.home, 'plugin-data', 'io.test', 'runtime-probe');
+    expect(realpathSync(reportedCwd)).toBe(realpathSync(dataDir));
+    expect(statSync(dataDir).isDirectory()).toBe(true);
     const installDir = await rig.registry.runtimeDirOf(PROBE_ID);
     expect(installDir).not.toBeNull();
-    expect(realpathSync(reportedCwd)).toBe(realpathSync(installDir!));
+    expect(realpathSync(reportedCwd)).not.toBe(realpathSync(installDir!));
     expect(parts.at(-1)).toBe('0');
+    rig.host.disposeAll();
+  });
+
+  it('数据目录不可用（同名文件占位）：启动失败置 error，调用得到 PLUGIN_CRASHED', async () => {
+    const rig = makeRig();
+    await rig.installSource(probeSource());
+    await rig.pluginInstances.create(PROBE_ID, {}, 'capability-model');
+    const botId = bindProbeBot(rig);
+    const dataDir = path.join(rig.home, 'plugin-data', 'io.test', 'runtime-probe');
+    rmSync(dataDir, { recursive: true, force: true });
+    writeFileSync(dataDir, 'not-a-directory');
+    await expect(
+      rig.media.generateImage(
+        { prompt: '目录不可用' },
+        { loopType: 'task', botId },
+        { botId },
+      ),
+    ).rejects.toMatchObject({
+      code: 'PROVIDER_UNAVAILABLE',
+      details: { pluginId: PROBE_ID, code: 'PLUGIN_CRASHED' },
+    });
+    expect(rig.host.statusOf(PROBE_ID).status).toBe('error');
+    expect(rig.host.statusOf(PROBE_ID).detail).toBe('插件数据目录不可用');
     rig.host.disposeAll();
   });
 
@@ -1498,6 +1528,21 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     expect(result.images).toHaveLength(1);
     // 探针 'ok' 行为发一条 progress（phase/percent/message 原样透传）。
     expect(progress).toEqual([{ phase: 'queued', percent: 10, message: '探针已排队' }]);
+    rig.host.disposeAll();
+  });
+
+  it('来源回调（D125 补丁）：执行型插件条目 → onResolved({ pluginId })', async () => {
+    const rig = makeRig();
+    await rig.installSource(probeSource());
+    await rig.pluginInstances.create(PROBE_ID, {}, 'capability-model');
+    const botId = bindProbeBot(rig);
+    const origins: Array<{ pluginId?: string }> = [];
+    await rig.media.generateImage(
+      { prompt: '来源回调' },
+      { loopType: 'task', botId },
+      { botId, onResolved: (origin) => origins.push(origin) },
+    );
+    expect(origins).toEqual([{ pluginId: PROBE_ID }]);
     rig.host.disposeAll();
   });
 

@@ -4,14 +4,14 @@
 
 ## 决策
 
-- **D61 附件与媒体**：用户附件走既有 `attachments` 通道（上传即落盘会话附件目录，草稿阶段预挂、flush 转正）；`drafts.add` 增 `attachmentIds`，发送前可移除（`attachments.detach`，仅限草稿阶段）；消息附件在渲染层按 mime 内联渲染——图片缩略图（懒加载 blob URL + 渲染层缓存）、视频/音频点击加载后内联播放、其余保持文件 chip；点击媒体打开灯箱（滚轮缩放、拖拽平移、双击适配、前后切换、下载）；新增 `generate_speech` / `generate_video` 工具（产物同 `generate_image` 落 workspace `.generated/`，落盘后由工具立即作为消息附件随消息发出——确定性投递，不依赖模型调 `send_message`；视频为提交+轮询的异步任务，工具内轮询并经 progress 汇报）；触发批中的图片附件在模型支持图像输入时以 image part 进入首条 user 消息（≤4 张、单张 ≤5MB），不支持时保持文本行并提示改用 `get_attachment`；上下文附件行补充 mime（见 20）。
+- **D61 附件与媒体**：用户附件走既有 `attachments` 通道（上传即落盘会话附件目录，草稿阶段预挂、flush 转正）；`drafts.add` 增 `attachmentIds`，发送前可移除（`attachments.detach`，仅限草稿阶段）；消息附件在渲染层按 mime 内联渲染——图片缩略图（懒加载 blob URL + 渲染层缓存）、视频/音频点击加载后内联播放、其余保持文件 chip；点击媒体打开灯箱（滚轮缩放、拖拽平移、双击适配、前后切换、下载）；新增 `generate_speech` / `generate_video` 工具（产物同 `generate_image`：执行型插件条目默认落 `plugin-data/{ns}/{name}/artifacts/`（DEV-131），内置引擎落 workspace `.generated/`；`output_dir` 可显式指定 workspace / 工作目录内的目录。落盘后由工具立即作为消息附件随消息发出——确定性投递，不依赖模型调 `send_message`；视频为提交+轮询的异步任务，工具内轮询并经 progress 汇报）；触发批中的图片附件在模型支持图像输入时以 image part 进入首条 user 消息（≤4 张、单张 ≤5MB），不支持时保持文本行并提示改用 `get_attachment`；上下文附件行补充 mime（见 20）。
 - **D94 系统分享（macOS Share Extension）**：分享进来的文件同样落既有 `attachments` 通道（`conversations/{id}/attachments/`），不新增附件表字段；与普通上传不同的是，**这类消息的上下文附件行追加 workspace 副本 path**（`path="…"`，按查看 Bot 物化到 `<workspace>/.attachments/`，见 [44-macos-share-extension.md](44-macos-share-extension.md) §5.7）。普通上传附件 P0 保持原格式（只有 id / 文件名 / mime / 大小）。
 
 ## 1 现状与缺口
 
 - 附件存储/RPC 早已备好：`attachments.upload`（base64 ≤40MB，core 侧 30MB 校验）、`attachments.get`、`{home}/conversations/{id}/attachments/`、草稿预挂（`draftId`）与 flush 转正（`attachToMessage`）——但渲染层没有任何上传入口，`drafts.add` 也没有附件参数，整条链路无人使用。
 - `MessageAttachments.svelte` 只有「图标 + 文件名」chip；组件注释预留了 inline 预览扩展点。无灯箱。
-- Bot 发附件的通道已通：`send_message.attachment_paths`（读 workspace 文件 → upload → attach）；生成类工具的产物落盘 `.generated/` 后由工具自身经同一组原语立即发出（`GeneratedMediaDelivery`），`send_message` 仍是模型主动发任意 workspace 文件的通道。
+- Bot 发附件的通道已通：`send_message.attachment_paths`（读 workspace 文件 → upload → attach）；生成类工具的产物落盘（执行型插件条目 → 插件私有目录 `artifacts/`（DEV-131），内置引擎 → `.generated/`；任务可用 `output_dir` 显式指定 workspace / 工作目录内的目录）后由工具自身经同一组原语立即发出（`GeneratedMediaDelivery`），`send_message` 仍是模型主动发任意 workspace 文件的通道。
 - 上下文里附件只是一行文本 `（附件：att_x 文件名 12KB）`；用户上传的图片**不会**进入模型——引擎唯一的 image 通道是 `ToolResult.images`（browser_screenshot），且不持久化。
 - 模型侧 `MediaService` 已有 `synthesizeSpeech / generateVideo / pollVideo` 与七能力配置（16 文档），但只有 image 被工具消费。
 
@@ -43,14 +43,14 @@ Composer（按钮/粘贴/拖拽）
 
 ## 4 模型生成媒体
 
-| 工具 | 能力 | 行为 |
-|---|---|---|
-| `generate_image`（已有） | image | 同步生成，落 `.generated/`，返回路径 |
-| `generate_speech`（新） | tts | 文本 → 语音（voice/format/speed 可选），落 `.generated/{name}.mp3` 等 |
-| `generate_video`（新） | video | 提交任务 → 工具内 `pollVideo` 轮询（约 5s 间隔），ctx.progress 汇报阶段，总时限 10 分钟；产物下载挂取消信号与 2 分钟独立超时（content-length 预检 + 200MB 上限），落 `.generated/{name}.mp4` |
+| 工具 | 能力 | 行为 | 默认落点 / `output_dir` |
+|---|---|---|---|
+| `generate_image`（已有） | image | 同步生成，返回路径 | 执行型插件条目 → 插件 `plugin-data/{ns}/{name}/artifacts/`；内置引擎 → `<workspace>/.generated/`；`output_dir?` 可显式指定（付费前预检） |
+| `generate_speech`（新） | tts | 文本 → 语音（voice/format/speed 可选），`{name}.mp3` 等 | 同上（插件 `artifacts/` / `.generated/`）；`output_dir?` |
+| `generate_video`（新） | video | 提交任务 → 工具内 `pollVideo` 轮询（约 5s 间隔），ctx.progress 汇报阶段，总时限 10 分钟；产物下载挂取消信号与 2 分钟独立超时（content-length 预检 + 200MB 上限），`{name}.mp4` | 提交前预检 `output_dir?`；未指定时同上（插件 `artifacts/` / `.generated/`） |
 
 - 三者未配置能力时一致返回 `SETUP_REQUIRED`（facade 捕获 `CAPABILITY_NOT_CONFIGURED / PROVIDER_AUTH_FAILED` 记 requirement：speech → `tts`、video → `video`），复用 D58 内联设置引导（`CapabilityModelSection` 已支持 tts/video）。
-- 产物由工具落盘后立即作为消息附件发出（`GeneratedMediaDelivery`，任务内为进度消息）；`send_message.attachment_paths` 保留为模型主动发文件的通道。消息到达后即走第 3 节渲染。
+- 产物由工具落盘后立即作为消息附件发出（`GeneratedMediaDelivery`，任务内为进度消息）；`send_message.attachment_paths` 保留为模型主动发文件的通道。消息到达后即走第 3 节渲染。插件数据目录对网关不可读，投递用 `hostOwned` 模式显式放行该根（DEV-131）。
 
 ## 5 图片进视觉通道
 

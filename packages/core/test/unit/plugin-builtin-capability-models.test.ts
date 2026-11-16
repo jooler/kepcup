@@ -114,6 +114,7 @@ function makeRig() {
     },
     instanceStore,
     pluginsDir: paths.pluginsDir,
+    pluginDataDir: paths.pluginDataDir,
     clock,
     logger: noopLogger,
     events: eventSink,

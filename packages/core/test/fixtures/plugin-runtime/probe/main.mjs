@@ -183,7 +183,7 @@ async function handleInvoke(frame) {
       return;
     }
     if (model === 'env') {
-      // 进程边界：宿主 env 白名单 / cwd = 插件安装目录 / execArgv 为空。
+      // 进程边界：宿主 env 白名单 / cwd = 插件私有数据目录 / execArgv 为空。
       const leaked = process.env.PLUGIN_TEST_SECRET === undefined ? 'no-secret' : 'leaked';
       sendResult(callId, {
         images: [

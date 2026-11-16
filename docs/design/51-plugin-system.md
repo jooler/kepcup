@@ -162,8 +162,13 @@ flowchart LR
 {home}/plugins/{ns}/{name}@{version}/   # 解包后的插件目录（如 io.github.alice/doc-tools@1.2.0）
 {home}/plugins/.staging/
 {home}/cache/plugins/                    # 市场下载的 zip 缓存（sha256 命名）
+{home}/plugin-data/{ns}/{name}/          # 执行型插件私有数据（0700，版本无关；cwd + artifacts/）
 ```
 
+执行型插件的私有数据目录（DEV-131）与安装目录分开：**版本无关**（更新替换安装树时保留，
+更新失败也不删），安装执行型插件时创建、builtin 首次拉起时按需创建、更新时确保存在、
+卸载 / 安装回滚时删除；子进程以它作为 cwd（包内相对资产不能用 `process.cwd()` 读），
+生成产物默认落 `artifacts/`。
 插件目录是插件内容的权威副本：运行期读取的资产（清单、README、图标、连接器文件、邮件模板）与安装源（技能目录、`.mcpb`）都留在这里，卸载整目录删除；技能内容被应用外删除时，可由此重新投影（接 `SkillsService.reportMissing` 既有流程）。`.mcpb` 解包后的运行树仍在 `toolchains/mcpb/`，由 MCPB 自带的 marker + tree hash 做完整性复核。
 
 ## 6. 市场、本地安装与更新
