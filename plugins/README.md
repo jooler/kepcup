@@ -13,8 +13,8 @@ plugins/
   connector-<slug>/    连接器插件：connectors/<slug>/server.json（+ 图标）
   mail-<id>/           邮件插件（D105 P3）：instances: ['mail'] + 一份 mail 贡献
   im-<id>/             即时通讯插件（D107）：instances: ['im'] + 一份 im 贡献
-  dashscope/           阿里云百炼（D124）：instances: ['capability-model'] + 20 条模型条目
-  volcengine-ark/      火山方舟（D124）：instances: ['capability-model'] + 7 条模型条目
+  dashscope/           阿里云百炼（D124）：instances: ['capability-model'] + 13 条模型条目
+  volcengine-ark/      火山方舟（D124）：instances: ['capability-model'] + 3 条模型条目
   dashscope-t2i/       百炼 Qwen-Image 文生图（D125 执行型试点）：runtime 段 + 自带代码 + 1 条 image 条目
   reference-media/     执行型参考插件（D125）：media 契约假实现，开发者调试用
   README.md
@@ -223,8 +223,8 @@ cd infra/cloudflare/directory && npx wrangler deploy
 ### 能力模型条目包批次（2 个，2026-11-15 开发；**待发布**，随 D124 P4 收口）
 
 - **数据 2**：`dashscope`（阿里云百炼，20 条：embedding 3 / rerank 2 / multimodal 2 /
-  image 4 / tts 5 / asr 1 / video 3）/ `volcengine-ark`（火山方舟，7 条：embedding 1 /
-  multimodal 2 / image 2 / video 2；方舟数据面无 rerank / tts / asr）。首批
+  tts 5 / asr 1；DEV-133 起不携带 image / video 条目）/ `volcengine-ark`（火山方舟，3 条：
+  embedding 1 / multimodal 2；方舟数据面无 rerank / tts / asr，生成能力由执行型插件提供）。首批
   `contributions.capabilityModels` 纯数据插件（设计 60 决策 12）：条目 =
   `VENDOR_DESCRIPTORS` 非 chat 的 presets 全量逐 preset 一条，`engine` 绑定 core 内置引擎
   （`dashscope` / `volcengine-ark`），`params` 不迁（描述符无默认值，不发明）。

@@ -178,7 +178,7 @@ function pathsOverlap(a: string, b: string): boolean {
 
 /**
  * 设置变化 → 受影响的条目（`settings.changed` 补发用，§4.1「设置页原有的保存路径也补发」）：
- * `changed` 是 settings 的点路径（`capabilityModels`、`capabilityModels.image`、`apps.taintGuard`），
+ * `changed` 是 settings 的点路径（`capabilityModels`、`capabilityModels.tts`、`apps.taintGuard`），
  * 父子路径互相命中。结果按登记顺序、去重。
  */
 export function itemIdsForSettingsPaths(changed: readonly string[]): string[] {

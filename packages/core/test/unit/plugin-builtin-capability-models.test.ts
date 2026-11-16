@@ -145,8 +145,6 @@ function makeRig() {
         multimodal: null,
         asr: null,
         tts: null,
-        image: null,
-        video: null,
       },
     }),
   };
@@ -190,17 +188,21 @@ function makeRig() {
 const DASHSCOPE_ID = 'io.kepcup/dashscope';
 const ARK_ID = 'io.kepcup/volcengine-ark';
 
-/** `VENDOR_DESCRIPTORS` presets 全量的条目数口径（与 vendors.ts 逐项核对）。 */
+/**
+ * `VENDOR_DESCRIPTORS` presets 全量的条目数口径（与 vendors.ts 逐项核对）。
+ * DEV-133：数据包不再携带 image / video 条目——图像 / 视频生成统一由执行型
+ * 插件条目提供（dashscope-t2i 试点），绑内置引擎的生成条目会在安装期被拒。
+ */
 const EXPECTED = {
   [DASHSCOPE_ID]: {
     name: '阿里云百炼',
-    entries: 20,
-    byCapability: { embedding: 3, rerank: 2, multimodal: 2, image: 4, tts: 5, asr: 1, video: 3 },
+    entries: 13,
+    byCapability: { embedding: 3, rerank: 2, multimodal: 2, tts: 5, asr: 1 },
   },
   [ARK_ID]: {
     name: '火山方舟',
-    entries: 7,
-    byCapability: { embedding: 1, multimodal: 2, image: 2, video: 2 },
+    entries: 3,
+    byCapability: { embedding: 1, multimodal: 2 },
   },
 } as const;
 
@@ -264,12 +266,16 @@ describe('plugins.listCapabilityEntries 投影 builtin 条目（P4 验收面）'
       }
       expect(counts).toEqual(expected.byCapability);
       // 与 `VENDOR_DESCRIPTORS` 的 presets 逐能力逐模型核对（不是只比数量）：
-      // chat 不迁（对话模型走 provider 注册表），其余能力的模型集合必须完全一致。
+      // chat 不迁（对话模型走 provider 注册表），其余**有预置模型**的能力的
+      // 模型集合必须完全一致。
       const vendor =
         pluginId === DASHSCOPE_ID ? VENDOR_DESCRIPTORS.dashscope : VENDOR_DESCRIPTORS.volcengine;
       for (const [capability, models] of Object.entries(vendor.presets)) {
-        if (capability === 'chat') {
-          expect(group!.entries.some((entry) => entry.capability === 'chat')).toBe(false);
+        if (capability === 'chat' || models.length === 0) {
+          expect(
+            group!.entries.some((entry) => entry.capability === capability),
+            `${pluginId}/${capability}`,
+          ).toBe(false);
           continue;
         }
         const actual = group!.entries
@@ -279,22 +285,21 @@ describe('plugins.listCapabilityEntries 投影 builtin 条目（P4 验收面）'
         expect(actual, `${pluginId}/${capability}`).toEqual([...models].sort());
       }
     }
-    // 百炼条目名抽样（中文 displayName 迁移自描述符）。
+    // 百炼条目名抽样（中文 displayName 迁移自描述符）；image / video 条目已删。
     const dashscope = byId.get(DASHSCOPE_ID)!;
-    expect(dashscope.entries.find((entry) => entry.entryId === 'qwen-image')).toMatchObject({
-      capability: 'image',
-      model: 'qwen-image',
-      displayName: 'Qwen-Image 图片生成',
+    expect(dashscope.entries.find((entry) => entry.entryId === 'qwen3-tts-flash')).toMatchObject({
+      capability: 'tts',
+      model: 'qwen3-tts-flash',
     });
-    expect(dashscope.entries.find((entry) => entry.entryId === 'wan2-7-t2v')).toMatchObject({
-      capability: 'video',
-      model: 'wan2.7-t2v',
-    });
-    // 方舟无 rerank / tts / asr（描述符能力矩阵为空，条目不含）。
+    expect(dashscope.entries.some((entry) => entry.capability === 'image')).toBe(false);
+    expect(dashscope.entries.some((entry) => entry.capability === 'video')).toBe(false);
+    // 方舟无 rerank / tts / asr（描述符能力矩阵为空，条目不含）；生成能力同样不含。
     const ark = byId.get(ARK_ID)!;
     expect(ark.entries.some((entry) => entry.capability === 'rerank')).toBe(false);
     expect(ark.entries.some((entry) => entry.capability === 'tts')).toBe(false);
     expect(ark.entries.some((entry) => entry.capability === 'asr')).toBe(false);
+    expect(ark.entries.some((entry) => entry.capability === 'image')).toBe(false);
+    expect(ark.entries.some((entry) => entry.capability === 'video')).toBe(false);
   });
 
   it('条目可勾选：setBotCapabilityEntries 接受 builtin ref；未知 ref 拒绝；plugin_ids 可启用 builtin 插件', async () => {
@@ -304,10 +309,10 @@ describe('plugins.listCapabilityEntries 投影 builtin 条目（P4 验收面）'
     rig.bots.setPluginIds(bot.id, [DASHSCOPE_ID]);
     await rig.bindings['plugins.setBotCapabilityEntries']!.handle({
       botId: bot.id,
-      entries: [{ plugin: DASHSCOPE_ID, entry: 'qwen-image' }],
+      entries: [{ plugin: DASHSCOPE_ID, entry: 'qwen3-tts-flash' }],
     });
     expect(rig.bots.get(bot.id)?.profile.runtime.capability_entries).toEqual([
-      { plugin: DASHSCOPE_ID, entry: 'qwen-image' },
+      { plugin: DASHSCOPE_ID, entry: 'qwen3-tts-flash' },
     ]);
     await expect(
       rig.bindings['plugins.setBotCapabilityEntries']!.handle({
@@ -324,8 +329,8 @@ describe('plugins.listCapabilityEntries 投影 builtin 条目（P4 验收面）'
     await rig.bindings['plugins.setBotCapabilityEntries']!.handle({
       botId: bot.id,
       entries: [
-        { plugin: DASHSCOPE_ID, entry: 'qwen-image' },
-        { plugin: ARK_ID, entry: 'doubao-seedance-2-0-260128' },
+        { plugin: DASHSCOPE_ID, entry: 'qwen3-tts-flash' },
+        { plugin: ARK_ID, entry: 'doubao-seed-2-1-pro-260915' },
       ],
     });
     // builtin 插件不能持有实例：`plugin_instances.plugin_id` 外键引用 `plugins(id)`
@@ -340,21 +345,21 @@ describe('plugins.listCapabilityEntries 投影 builtin 条目（P4 验收面）'
       botRuntimeOf: (botId) => rig.bots.get(botId)?.profile.runtime ?? null,
       logger: noopLogger,
     });
-    const image = await source.entriesFor(bot.id, 'image');
-    expect(image).toHaveLength(1);
-    expect(image[0]).toMatchObject({
+    const tts = await source.entriesFor(bot.id, 'tts');
+    expect(tts).toHaveLength(1);
+    expect(tts[0]).toMatchObject({
       pluginId: DASHSCOPE_ID,
-      entryId: 'qwen-image',
-      model: 'qwen-image',
+      entryId: 'qwen3-tts-flash',
+      model: 'qwen3-tts-flash',
       engine: 'dashscope',
       instances: [],
     });
-    expect(image[0]?.instanceId).toBeUndefined();
-    const video = await source.entriesFor(bot.id, 'video');
-    expect(video).toHaveLength(1);
-    expect(video[0]).toMatchObject({ pluginId: ARK_ID, engine: 'volcengine-ark' });
-    // 未勾选的能力（tts 条目存在但不在此 Bot 的条目集）不返回。
-    expect(await source.entriesFor(bot.id, 'tts')).toEqual([]);
+    expect(tts[0]?.instanceId).toBeUndefined();
+    const multimodal = await source.entriesFor(bot.id, 'multimodal');
+    expect(multimodal).toHaveLength(1);
+    expect(multimodal[0]).toMatchObject({ pluginId: ARK_ID, engine: 'volcengine-ark' });
+    // 未勾选的能力（asr 条目存在但不在此 Bot 的条目集）不返回。
+    expect(await source.entriesFor(bot.id, 'asr')).toEqual([]);
   });
 
   it('plugins.testCapabilityEntry 对 builtin 条目走真实解析（零实例 → CAPABILITY_NOT_CONFIGURED 带条目定位）', async () => {
@@ -362,7 +367,7 @@ describe('plugins.listCapabilityEntries 投影 builtin 条目（P4 验收面）'
     await expect(
       rig.bindings['plugins.testCapabilityEntry']!.handle({
         pluginId: DASHSCOPE_ID,
-        entryId: 'qwen-image',
+        entryId: 'qwen3-tts-flash',
       }),
     ).rejects.toMatchObject({ code: 'CAPABILITY_NOT_CONFIGURED' });
     // 未知条目 → NOT_FOUND。

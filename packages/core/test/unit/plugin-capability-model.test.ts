@@ -108,7 +108,8 @@ function makeRig() {
   pluginInstances.registerMaterializer('capability-model', createCapabilityModelMaterializer());
   const bots = new BotsService(db, clock);
   bots.attachPluginDirectory({ installed: (pluginId) => store.get(pluginId) !== null });
-  // settings 仅条目路径用到全局槽位（image 走 volcengine 全局实例）。
+  // settings 仅条目路径用到（DEV-133：capabilityModels 无 image / video 键——
+  // 生成能力走插件条目，这里不再有全局生成槽位）。
   const settings = {
     get: () => ({
       modelProviders: [
@@ -127,8 +128,6 @@ function makeRig() {
         multimodal: null,
         asr: null,
         tts: null,
-        image: { provider: 'volcengine', model: 'global-image-model' },
-        video: null,
       },
     }),
   };
@@ -177,11 +176,13 @@ const ARK_MANIFEST = {
   contributions: {
     capabilityModels: [
       {
+        // DEV-133：image / video 引擎条目在安装期被拒（引擎能力校验）；
+        // 管线机制用例改用引擎仍支持的 multimodal。
         id: 'seedream',
-        capability: 'image',
-        model: 'doubao-seedream-4-5',
+        capability: 'multimodal',
+        model: 'doubao-seed-2-1-pro',
         engine: 'volcengine-ark',
-        displayName: 'Seedream 4.5',
+        displayName: 'Seed 看图',
       },
     ],
   },
@@ -194,8 +195,8 @@ const TWO_MANIFEST = {
   instances: ['capability-model'],
   contributions: {
     capabilityModels: [
-      { id: 'alpha', capability: 'image', model: 'model-alpha', engine: 'volcengine-ark' },
-      { id: 'beta', capability: 'image', model: 'model-beta', engine: 'volcengine-ark' },
+      { id: 'alpha', capability: 'multimodal', model: 'model-alpha', engine: 'volcengine-ark' },
+      { id: 'beta', capability: 'multimodal', model: 'model-beta', engine: 'volcengine-ark' },
     ],
   },
 };
@@ -207,8 +208,8 @@ const MIXED_MANIFEST = {
   instances: ['capability-model'],
   contributions: {
     capabilityModels: [
-      { id: 'img', capability: 'image', model: 'model-img', engine: 'dashscope' },
-      { id: 'vid', capability: 'video', model: 'model-vid', engine: 'volcengine-ark' },
+      { id: 'img', capability: 'multimodal', model: 'model-img', engine: 'dashscope' },
+      { id: 'vid', capability: 'multimodal', model: 'model-vid', engine: 'volcengine-ark' },
     ],
   },
 };
@@ -240,10 +241,11 @@ const MIXED_RUNTIME_MANIFEST = {
     capabilityModels: [
       {
         id: 'engine-img',
-        capability: 'image',
+        capability: 'multimodal',
         model: 'engine-model',
         engine: 'volcengine-ark',
       },
+      // DEV-133：执行型条目仍可声明 image（托管适配器实现生成方法）。
       { id: 'plugin-img', capability: 'image', model: 'plugin-model' },
     ],
   },
@@ -284,9 +286,10 @@ function entrySourceOf(rig: Awaited<ReturnType<typeof makeRig>>) {
   });
 }
 
-const okArkImage = (async () =>
+/** 多模态探针（chat/completions + image_url）的最小成功响应。 */
+const okArkVision = (async () =>
   new Response(
-    JSON.stringify({ data: [{ url: 'https://out.example/ark.png' }] }),
+    JSON.stringify({ choices: [{ message: { content: '红色' } }] }),
   )) as unknown as typeof fetch;
 
 describe('capability-model 安装管线（D124）', () => {
@@ -324,6 +327,89 @@ describe('capability-model 安装管线（D124）', () => {
       }),
     ).rejects.toThrow(/dashscope/);
     expect(rig.store.get('io.test/unknown')).toBeNull();
+  });
+
+  it('DEV-133：条目能力不在引擎支持范围内 → 拒装（PLUGIN_INVALID）', async () => {
+    // 内置厂商引擎不再承载图像 / 视频生成（能力统一归执行型插件条目）——
+    // 旧式 manifest 仍把 image / video 条目绑到引擎时安装 / 更新即拒绝。
+    const rig = makeRig();
+    const fixture = await buildPluginFixture({
+      dir: path.join(rig.home, 'pkg-mismatch'),
+      id: 'io.test/mismatch',
+      name: '能力错配',
+      manifest: {
+        id: 'io.test/mismatch',
+        instances: ['capability-model'],
+        contributions: {
+          capabilityModels: [
+            { id: 'm1', capability: 'image', model: 'x', engine: 'dashscope' },
+            { id: 'm2', capability: 'video', model: 'y', engine: 'volcengine-ark' },
+          ],
+        },
+      } as never,
+    });
+    await expect(
+      rig.registry.install({
+        source: { kind: 'file', path: fixture.path },
+        sha256: fixture.sha256,
+        userConfig: {},
+        via: 'file',
+      }),
+    ).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
+    await expect(
+      rig.registry.install({
+        source: { kind: 'file', path: fixture.path },
+        sha256: fixture.sha256,
+        userConfig: {},
+        via: 'file',
+      }),
+    ).rejects.toThrow(/条目声明的能力不在引擎支持范围内/);
+    expect(rig.store.get('io.test/mismatch')).toBeNull();
+  });
+
+  it('DEV-133：更新路径同样拒绝引擎能力错配（本地同 id 重装即更新，已装版本不变）', async () => {
+    // 本地同 id 重装 = 更新流程（design 51 §6.2，#installLocked → #performUpdate）；
+    // 两个入口都在一切持久化写入之前跑 #assertEnginesKnown——旧式 image 引擎条目
+    // 不能借更新混进已装清单。初始版本显式给 0.5.0（夹具缺省是 1.0.0），升级包
+    // 1.0.0 被拒后已装行必须原样不动。
+    const rig = makeRig();
+    await installPlugin(rig, {
+      ...ARK_MANIFEST,
+      version: '0.5.0',
+    });
+    const upgrade = await buildPluginFixture({
+      dir: path.join(rig.home, `pkg-ark-upgrade-${Math.random().toString(36).slice(2, 8)}`),
+      id: 'io.test/ark',
+      name: '火山方舟测试包',
+      manifest: {
+        id: 'io.test/ark',
+        version: '1.0.0',
+        name: '火山方舟测试包',
+        instances: ['capability-model'],
+        contributions: {
+          capabilityModels: [
+            {
+              id: 'm1',
+              capability: 'multimodal',
+              model: 'doubao-seed-2-1-pro',
+              engine: 'volcengine-ark',
+            },
+            { id: 'm2', capability: 'image', model: 'doubao-seedream-4-0', engine: 'volcengine-ark' },
+          ],
+        },
+      } as never,
+    });
+    await expect(
+      rig.registry.install({
+        source: { kind: 'file', path: upgrade.path },
+        sha256: upgrade.sha256,
+        userConfig: {},
+        via: 'file',
+      }),
+    ).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
+    // 校验先于一切写入：已装清单仍是旧版本（条目账本不变）。
+    expect(rig.store.get('io.test/ark')?.version).toBe('0.5.0');
+    expect(rig.store.refs('io.test/ark', 'capability-model')).toEqual(['seedream']);
   });
 
   it('已知引擎安装成功：条目记入 plugin_items 账本（kind capability-model）', async () => {
@@ -444,12 +530,12 @@ describe('plugins.* 能力模型条目 RPC（D124）', () => {
     const rig = makeRig();
     await installArk(rig);
     await rig.pluginInstances.create('io.test/ark', { apiKey: 'sk-saved' }, 'capability-model');
-    // 注入 fetch seam（方舟图像同步端点返回一张图）。
+    // 注入 fetch seam（方舟视觉端点返回文本）。
     const media = new MediaService({
       settings: (rig.media as never as { '#settings': unknown })['#settings'] as never,
       secrets: rig.secrets as never,
       logger: noopLogger,
-      fetchImpl: okArkImage,
+      fetchImpl: okArkVision,
     });
     media.attachEntrySource(
       createMediaEntrySource({
@@ -504,9 +590,9 @@ describe('plugins.* 能力模型条目 RPC（D124）', () => {
     expect(before.plugins[0]?.entries).toEqual([
       {
         entryId: 'seedream',
-        capability: 'image',
-        model: 'doubao-seedream-4-5',
-        displayName: 'Seedream 4.5',
+        capability: 'multimodal',
+        model: 'doubao-seed-2-1-pro',
+        displayName: 'Seed 看图',
         engine: 'volcengine-ark',
         source: 'engine',
         instanceState: 'none',
@@ -581,22 +667,22 @@ describe('plugins.* 能力模型条目 RPC（D124）', () => {
       botRuntimeOf: (botId) => rig.bots.get(botId)?.profile.runtime ?? null,
       logger: noopLogger,
     });
-    expect(await source.entriesFor(bot.id, 'image')).toEqual([]);
+    expect(await source.entriesFor(bot.id, 'multimodal')).toEqual([]);
     // 勾选 plugin_ids 后条目生效（条目 model / 引擎 / 唯一实例解析）。
     rig.bots.setPluginIds(bot.id, ['io.test/ark']);
-    const entries = await source.entriesFor(bot.id, 'image');
+    const entries = await source.entriesFor(bot.id, 'multimodal');
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
       pluginId: 'io.test/ark',
       entryId: 'seedream',
-      model: 'doubao-seedream-4-5',
+      model: 'doubao-seed-2-1-pro',
       engine: 'volcengine-ark',
       instanceId: expect.stringMatching(/^pli_/),
       instances: [expect.stringMatching(/^pli_/)],
     });
     // 卸载插件 → 残留引用静默跳过。
     await rig.registry.uninstall('io.test/ark');
-    expect(await source.entriesFor(bot.id, 'image')).toEqual([]);
+    expect(await source.entriesFor(bot.id, 'multimodal')).toEqual([]);
     void fetchImpl;
     void calls;
     void media;
@@ -613,11 +699,11 @@ describe('plugins.* 能力模型条目 RPC（D124）', () => {
     });
     await rig.pluginInstances.create('io.test/ark', { apiKey: 'sk-live' }, 'capability-model');
     const source = entrySourceOf(rig);
-    expect(await source.entriesFor(bot.id, 'image')).toHaveLength(1);
+    expect(await source.entriesFor(bot.id, 'multimodal')).toHaveLength(1);
     await rig.registry.setEnabled('io.test/ark', false);
-    expect(await source.entriesFor(bot.id, 'image')).toEqual([]);
+    expect(await source.entriesFor(bot.id, 'multimodal')).toEqual([]);
     await rig.registry.setEnabled('io.test/ark', true);
-    expect(await source.entriesFor(bot.id, 'image')).toHaveLength(1);
+    expect(await source.entriesFor(bot.id, 'multimodal')).toHaveLength(1);
   });
 
   it('entriesFor 输出序：插件内按条目声明序（勾选序不影响回退默认条目，60 §4 ① 内排序）', async () => {
@@ -634,13 +720,13 @@ describe('plugins.* 能力模型条目 RPC（D124）', () => {
       ],
     });
     await rig.pluginInstances.create('io.test/two', { apiKey: 'sk-live' }, 'capability-model');
-    const entries = await entrySourceOf(rig).entriesFor(bot.id, 'image');
+    const entries = await entrySourceOf(rig).entriesFor(bot.id, 'multimodal');
     // 声明序 alpha → beta 胜出；回退默认条目 = alpha。
     expect(entries.map((entry) => entry.entryId)).toEqual(['alpha', 'beta']);
     expect(entries.every((entry) => entry.model === `model-${entry.entryId}`)).toBe(true);
   });
 
-  it('capabilityInstanceOf 数据型口径不变：引擎 / 条目取声明序首个（不因 video 条目改道）', async () => {
+  it('capabilityInstanceOf 数据型口径不变：引擎 / 条目取声明序首个（不因能力不同改道）', async () => {
     const rig = makeRig();
     await installPlugin(rig, MIXED_MANIFEST);
     const instance = await rig.pluginInstances.create(
@@ -676,8 +762,10 @@ describe('plugins.* 能力模型条目 RPC（D124）', () => {
     );
     const source = entrySourceOf(rig);
     // 本条即是回归点：按插件整体判定时两条都会被标成 source:'plugin'。
-    expect(await source.entriesFor(bot.id, 'image')).toMatchObject([
+    expect(await source.entriesFor(bot.id, 'multimodal')).toMatchObject([
       { entryId: 'engine-img', engine: 'volcengine-ark', source: 'engine' },
+    ]);
+    expect(await source.entriesFor(bot.id, 'image')).toMatchObject([
       { entryId: 'plugin-img', engine: '', source: 'plugin' },
     ]);
     // 视频往返同口径（无 video 条目 → 声明序首个；这里是 engine 条目）。
@@ -727,7 +815,7 @@ describe('plugins.* 能力模型条目 RPC（D124）', () => {
       } as never,
       secrets: rig.secrets as never,
       logger: noopLogger,
-      fetchImpl: okArkImage,
+      fetchImpl: okArkVision,
     });
     media.attachEntrySource(
       createMediaEntrySource({

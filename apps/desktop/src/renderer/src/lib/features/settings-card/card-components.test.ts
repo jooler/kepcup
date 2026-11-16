@@ -144,7 +144,7 @@ describe('cardEmbeddable（缺上下文时退回跳转卡）', () => {
       'models.default-main',
       'models.provider',
       'search.provider',
-      'capability.image',
+      'capability.tts',
       'hardware.camera',
     ]) {
       expect(cardEmbeddable(item(id), context({ botId: null })), id).toBe(true);

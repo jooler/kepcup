@@ -63,10 +63,15 @@ export type HostCapabilityCategory = 'host' | 'supplement';
  */
 export type HostCapabilityDefault = 'required' | 'inject' | 'follow_bot';
 
-/** 前置配置（缺失时包仍可勾选，调用时走既有 SETUP_REQUIRED → 对话内设置卡）。 */
+/**
+ * 前置配置（缺失时包仍可勾选，调用时走既有 SETUP_REQUIRED → 对话内设置卡）。
+ * DEV-133：capability-model 前置只覆盖仍由全局槽位承载的能力——image / video
+ * 生成已改由插件条目提供（无全局配置可判），这两个包的前置为 null，「未配置」
+ * 提示由调用时的 SETUP_REQUIRED / 插件凭据卡兜底。
+ */
 export type HostCapabilityPrerequisite =
   | { kind: 'web-search' }
-  | { kind: 'capability-model'; capability: 'image' | 'multimodal' | 'tts' | 'asr' | 'video' };
+  | { kind: 'capability-model'; capability: 'multimodal' | 'tts' | 'asr' };
 
 /**
  * 包内的单独开关（按 Bot 在能力包选项里开启）：选项 id 与包 id 一起存在 Bot 的
@@ -212,7 +217,9 @@ export const HOST_CAPABILITIES: readonly HostCapabilityDescriptor[] = [
     default: 'inject',
     tools: ['generate_image'],
     overlapsNative: 'image_generation',
-    prerequisite: { kind: 'capability-model', capability: 'image' },
+    // DEV-133：图像生成由插件条目提供，无全局槽位可判「未配置」（见
+    // HostCapabilityPrerequisite 注释）。
+    prerequisite: null,
   }),
   pack({
     id: 'image_understanding',
@@ -244,7 +251,8 @@ export const HOST_CAPABILITIES: readonly HostCapabilityDescriptor[] = [
     default: 'inject',
     tools: ['generate_video'],
     overlapsNative: 'video',
-    prerequisite: { kind: 'capability-model', capability: 'video' },
+    // DEV-133：视频生成由插件条目提供，无全局槽位可判「未配置」。
+    prerequisite: null,
   }),
   pack({
     id: 'skills',

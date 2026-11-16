@@ -3,24 +3,17 @@ import { fetchBinaryBase64, trimTrailingSlash, vendorFetch } from '../http.js';
 import { openAICompatibleEmbed } from '../embeddings.js';
 import { parseRerankResults } from '../rerank.js';
 import { openAICompatibleUnderstandImage } from '../vision.js';
-import {
-  speechMimeType,
-  type GeneratedImage,
-  type ImageGenerationParams,
-  type ImageGenerationResult,
-  type RerankParams,
-  type RerankResult,
-  type SpeechParams,
-  type SpeechResult,
-  type TranscriptionParams,
-  type TranscriptionResult,
-  type UnderstandImageParams,
-  type VendorAdapter,
-  type VendorCallContext,
-  type VideoGenerationHandle,
-  type VideoGenerationParams,
-  type VideoTaskPhase,
-  type VideoTaskStatus,
+import { speechMimeType } from '../types.js';
+import type {
+  RerankParams,
+  RerankResult,
+  SpeechParams,
+  SpeechResult,
+  TranscriptionParams,
+  TranscriptionResult,
+  UnderstandImageParams,
+  VendorAdapter,
+  VendorCallContext,
 } from '../types.js';
 
 /**
@@ -33,12 +26,13 @@ import {
  * - 重排：`{apiRoot}/api/v1/services/rerank/text-rerank/text-rerank`
  *   （gte-rerank-v2 / qwen3.7-text-rerank；qwen3-rerank 的独立兼容端点不适配）
  * - 图片理解：兼容根 chat/completions + image_url 内容块（vision.ts）
- * - 图片生成 / 编辑：`{apiRoot}/api/v1/services/aigc/multimodal-generation/generation`
- *   （qwen-image 家族统一端点，编辑 = content 里带 image 参考图）
  * - TTS：`{apiRoot}/api/v1/services/audio/tts/SpeechSynthesizer`（CosyVoice）
  * - ASR：兼容根 chat/completions + input_audio（qwen3-asr-flash）
- * - 视频：`{apiRoot}/api/v1/services/aigc/video-generation/video-synthesis`
- *   异步任务（X-DashScope-Async）+ `GET {apiRoot}/api/v1/tasks/{id}` 轮询
+ *
+ * DEV-133：图片生成 / 编辑与视频生成的内置实现已移除（generateImage /
+ * submitVideo / videoStatus / cancelVideo）——图像 / 视频生成统一由能力
+ * 模型插件条目提供（dashscope-t2i 插件即首个试点）；qwen-image / wan 系列
+ * 的原生端点实现随插件走，本适配器不再承载。
  */
 
 const COMPAT_SUFFIX = '/compatible-mode/v1';
@@ -47,19 +41,6 @@ const COMPAT_SUFFIX = '/compatible-mode/v1';
 function apiRoot(baseUrl: string): string {
   if (baseUrl.endsWith(COMPAT_SUFFIX)) return baseUrl.slice(0, -COMPAT_SUFFIX.length);
   return VENDOR_DESCRIPTORS.dashscope.apiRoot;
-}
-
-interface MultimodalContentItem {
-  text?: string;
-  image?: string;
-}
-
-interface MultimodalResponse {
-  output?: {
-    choices?: Array<{
-      message?: { content?: MultimodalContentItem[] };
-    }>;
-  };
 }
 
 /**
@@ -204,48 +185,6 @@ export const dashscopeAdapter: VendorAdapter = {
     return openAICompatibleUnderstandImage(ctx, model, params);
   },
 
-  async generateImage(
-    ctx: VendorCallContext,
-    model: string,
-    params: ImageGenerationParams,
-  ): Promise<ImageGenerationResult> {
-    const content: MultimodalContentItem[] = [
-      ...(params.images ?? []).map((image) => ({ image })),
-      { text: params.prompt },
-    ];
-    const response = await vendorFetch(
-      `${trimTrailingSlash(apiRoot(ctx.baseUrl))}/api/v1/services/aigc/multimodal-generation/generation`,
-      ctx.apiKey,
-      {
-        json: {
-          model,
-          input: { messages: [{ role: 'user', content }] },
-          parameters: {
-            n: params.n,
-            // 原生接口尺寸分隔符是 "*"（兼容模式才是 "x"）。
-            size: params.size?.replace(/x/g, '*'),
-            negative_prompt: params.negativePrompt,
-            seed: params.seed,
-          },
-        },
-        timeoutMs: 120_000,
-      },
-      ctx.fetchImpl,
-    );
-    const data = response.json() as MultimodalResponse;
-    const items = data.output?.choices?.[0]?.message?.content ?? [];
-    const images: GeneratedImage[] = items
-      .map((item) => item.image)
-      .filter((url): url is string => typeof url === 'string' && url.length > 0)
-      .map((url) => ({ url }));
-    if (images.length === 0) {
-      throw new AppError('PROVIDER_UNAVAILABLE', '百炼图片接口未返回图片', {
-        body: response.bodyText.slice(0, 300),
-      });
-    }
-    return { images };
-  },
-
   async synthesizeSpeech(
     ctx: VendorCallContext,
     model: string,
@@ -338,79 +277,5 @@ export const dashscopeAdapter: VendorAdapter = {
     const content = data.choices?.[0]?.message?.content;
     const text = typeof content === 'string' ? content : '';
     return { text };
-  },
-
-  async submitVideo(
-    ctx: VendorCallContext,
-    model: string,
-    params: VideoGenerationParams,
-  ): Promise<VideoGenerationHandle> {
-    const response = await vendorFetch(
-      `${trimTrailingSlash(apiRoot(ctx.baseUrl))}/api/v1/services/aigc/video-generation/video-synthesis`,
-      ctx.apiKey,
-      {
-        headers: { 'X-DashScope-Async': 'enable' },
-        json: {
-          model,
-          input: {
-            prompt: params.prompt,
-            ...(params.images && params.images.length > 0
-              ? { media: [{ type: 'first_frame', url: params.images[0] }] }
-              : {}),
-          },
-          parameters: {
-            resolution: params.resolution,
-            ratio: params.ratio,
-            duration: params.duration,
-          },
-        },
-        timeoutMs: 60_000,
-      },
-      ctx.fetchImpl,
-    );
-    const data = response.json() as { output?: { task_id?: string; task_status?: string } };
-    const taskId = data.output?.task_id;
-    if (!taskId) {
-      throw new AppError('PROVIDER_UNAVAILABLE', '百炼视频任务提交失败', {
-        body: response.bodyText.slice(0, 300),
-      });
-    }
-    return { taskId };
-  },
-
-  async videoStatus(ctx: VendorCallContext, taskId: string): Promise<VideoTaskStatus> {
-    const response = await vendorFetch(
-      `${trimTrailingSlash(apiRoot(ctx.baseUrl))}/api/v1/tasks/${encodeURIComponent(taskId)}`,
-      ctx.apiKey,
-      { timeoutMs: 30_000 },
-      ctx.fetchImpl,
-    );
-    const data = response.json() as {
-      output?: { task_status?: string; video_url?: string; message?: string; code?: string };
-    };
-    const raw = data.output?.task_status ?? 'UNKNOWN';
-    let status: VideoTaskPhase;
-    if (raw === 'SUCCEEDED') status = 'succeeded';
-    else if (raw === 'PENDING' || raw === 'RUNNING')
-      status = raw === 'PENDING' ? 'queued' : 'running';
-    else status = 'failed';
-    return {
-      status,
-      ...(status === 'succeeded' && data.output?.video_url
-        ? { videoUrl: data.output.video_url }
-        : {}),
-      ...(status === 'failed'
-        ? { error: data.output?.message ?? data.output?.code ?? `任务状态 ${raw}` }
-        : {}),
-    };
-  },
-
-  async cancelVideo(ctx: VendorCallContext, taskId: string): Promise<void> {
-    await vendorFetch(
-      `${trimTrailingSlash(apiRoot(ctx.baseUrl))}/api/v1/tasks/${encodeURIComponent(taskId)}/cancel`,
-      ctx.apiKey,
-      { method: 'POST', timeoutMs: 30_000 },
-      ctx.fetchImpl,
-    );
   },
 };

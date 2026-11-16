@@ -53,22 +53,32 @@ describe('MEDIA_ENGINES 引擎注册表（D124）', () => {
     expect(MEDIA_ENGINES['dashscope']?.adapter).toBe(dashscopeAdapter);
     expect(MEDIA_ENGINES['volcengine-ark']?.adapter).toBe(volcengineAdapter);
     expect(MEDIA_ENGINES['openai-compatible']?.adapter).toBe(openAICompatibleAdapter);
-    // 契约冻结：七方法形状仍在（embed 必选 + 视频三件套可选存在）。
+    // VendorAdapter 契约冻结（media/types.ts）：方法可选与否由实现方决定。
+    // DEV-133：内置厂商引擎的图像 / 视频方法已移除；openai-compatible 补齐
+    // 标准 TTS / ASR。
     expect(typeof dashscopeAdapter.embed).toBe('function');
-    expect(typeof dashscopeAdapter.generateImage).toBe('function');
-    expect(typeof dashscopeAdapter.submitVideo).toBe('function');
+    expect(dashscopeAdapter.generateImage).toBeUndefined();
+    expect(dashscopeAdapter.submitVideo).toBeUndefined();
     expect(typeof openAICompatibleAdapter.embed).toBe('function');
+    expect(typeof openAICompatibleAdapter.synthesizeSpeech).toBe('function');
+    expect(typeof openAICompatibleAdapter.transcribeSpeech).toBe('function');
     expect(openAICompatibleAdapter.generateImage).toBeUndefined();
   });
 
-  it('capabilities 与 VENDOR_DESCRIPTORS 能力矩阵一致；openai-compatible 仅 embedding', () => {
+  it('capabilities 与 VENDOR_DESCRIPTORS 能力矩阵一致；openai-compatible 为向量+标准语音', () => {
     expect(MEDIA_ENGINES['dashscope']?.capabilities).toEqual(
-      expect.arrayContaining(['image', 'tts', 'asr', 'video', 'multimodal', 'embedding', 'rerank']),
+      expect.arrayContaining(['tts', 'asr', 'multimodal', 'embedding', 'rerank']),
+    );
+    expect(MEDIA_ENGINES['dashscope']?.capabilities).toEqual(
+      expect.not.arrayContaining(['image', 'video']),
     );
     expect(MEDIA_ENGINES['volcengine-ark']?.capabilities).toEqual(
-      expect.arrayContaining(['image', 'video', 'multimodal', 'embedding']),
+      expect.arrayContaining(['multimodal', 'embedding']),
     );
-    expect(MEDIA_ENGINES['openai-compatible']?.capabilities).toEqual(['embedding']);
+    expect(MEDIA_ENGINES['volcengine-ark']?.capabilities).toEqual(
+      expect.not.arrayContaining(['image', 'video']),
+    );
+    expect(MEDIA_ENGINES['openai-compatible']?.capabilities).toEqual(['embedding', 'tts', 'asr']);
   });
 
   it('credentialFields：apiKey 必填敏感；baseUrl 覆盖默认可空（openai-compatible 必填）', () => {

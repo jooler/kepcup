@@ -41,7 +41,6 @@ import { PluginStore } from '../../src/plugins/store.js';
 import { CapabilityBridge } from '../../src/plugins/runtime/bridge.js';
 import { minimalPluginEnv, PluginHost } from '../../src/plugins/runtime/host.js';
 import { PluginStorageStore } from '../../src/plugins/runtime/storage.js';
-import { dashscopeAdapter } from '../../src/media/adapters/dashscope.js';
 import { bindPluginsMethods } from '../../src/rpc/plugins-bindings.js';
 import {
   assertRuntimeInstallable,
@@ -458,11 +457,12 @@ function dataPluginSource(): string {
         contributions: {
           capabilityModels: [
             {
+              // DEV-133：image 引擎条目安装期被拒；夹具改用引擎仍支持的 multimodal。
               id: 'data-image',
-              capability: 'image',
-              model: 'data-image-model',
+              capability: 'multimodal',
+              model: 'data-multimodal-model',
               engine: 'dashscope',
-              displayName: '数据型图片',
+              displayName: '数据型看图',
             },
           ],
         },
@@ -819,53 +819,11 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     rig.host.disposeAll();
   }, 20_000);
 
-  it('A/B 对照（集成层）：同一 prompt/size 走执行型插件 vs 内置引擎 generateImage（无 Key 的真机差异见 61 §12）', async () => {
+  it('插件侧集成：异步提交 + 轮询出图（DEV-133：内置引擎 generateImage 已移除，插件是唯一通道）', async () => {
     const prompt = '一只在窗台上的橘猫';
     const size = '1024*1024';
-    // 两侧同厂商 / 同模型，但协议不同：内置引擎同步 `multimodal-generation`，插件走
-    // 异步提交 + 轮询（DEV-130）。A/B 对照的是**执行引擎与观测面**（进程内适配器 vs
-    // 子进程插件；活动记录 / 阶段进度 / 取消链只在插件侧）。
-    const builtinRequests: Array<{ url: string; body: Record<string, unknown> }> = [];
-    const builtinFetch = (async (input: string | URL | Request, init?: RequestInit) => {
-      const raw = typeof init?.body === 'string' ? init.body : '{}';
-      builtinRequests.push({
-        url: String(input),
-        body: JSON.parse(raw) as Record<string, unknown>,
-      });
-      return new Response(
-        JSON.stringify({
-          output: {
-            choices: [
-              {
-                message: {
-                  content: [{ image: 'https://dashscope.aliyuncs.com/out/qwen-image.png' }],
-                },
-              },
-            ],
-          },
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      );
-    }) as typeof fetch;
-    const builtinStarted = Date.now();
-    const builtin = await dashscopeAdapter.generateImage!(
-      {
-        vendor: 'dashscope',
-        baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-        apiKey: 'sk-ab',
-        logger: makeLogger().logger as never,
-        fetchImpl: builtinFetch,
-      },
-      PILOT_MODEL,
-      { prompt, size: '1024x1024', n: 1 },
-    );
-    const builtinMs = Date.now() - builtinStarted;
-    expect(builtin.images).toEqual([{ url: 'https://dashscope.aliyuncs.com/out/qwen-image.png' }]);
-    expect(builtinRequests[0]?.url).toContain(
-      '/api/v1/services/aigc/multimodal-generation/generation',
-    );
-
-    // 插件侧：**异步**提交 + 轮询（厂商协议允许插件自带状态机），同一 model / prompt / size。
+    // 插件走异步任务端点 + 轮询（qwen-image 异步模式）；活动记录 / 阶段进度 /
+    // 取消链只在插件侧（原「A/B 对照」保留插件半边，内置引擎半边随 DEV-133 移除）。
     const pluginRequests: Array<{ url: string; body: Record<string, unknown> }> = [];
     let polls = 0;
     const pluginFetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -905,7 +863,6 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
       'capability-model',
     );
     const pluginProgress: string[] = [];
-    const pluginStarted = Date.now();
     const viaPlugin = (await rig.host.call(
       PILOT_ID,
       'media',
@@ -918,36 +875,21 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
         onProgress: (payload) => pluginProgress.push(payload.phase ?? ''),
       },
     )) as { images: Array<{ url: string }> };
-    const pluginMs = Date.now() - pluginStarted;
     expect(viaPlugin.images).toEqual([{ url: 'https://dashscope.aliyuncs.com/out/plugin.png' }]);
 
-    // 请求形态差异（这是「两类协议」的直接证据）：
-    // - 插件走异步任务端点 + 轮询（qwen-image 异步模式，单次请求都是秒级）；
-    // - 内置引擎走同步端点（连接保持到出图完成——这正是 60s 网络超时的受害者形态）。
+    // 请求形态：插件走异步任务端点 + 轮询（提交 + 至少一次轮询）。
     expect(pluginRequests[0]?.url).toContain('/api/v1/services/aigc/image-generation/generation');
     expect(pluginRequests[0]?.body).toMatchObject({
       model: PILOT_MODEL,
       input: { messages: [{ role: 'user', content: [{ text: prompt }] }] },
       parameters: { size, n: 1 },
     });
-    expect(pluginRequests.length).toBeGreaterThanOrEqual(2); // 提交 + 至少一次轮询
-    expect(builtinRequests[0]?.url).toContain(
-      '/api/v1/services/aigc/multimodal-generation/generation',
-    );
-    expect(builtinRequests[0]?.body).toMatchObject({
-      model: PILOT_MODEL,
-      input: { messages: [{ role: 'user', content: [{ text: prompt }] }] },
-      parameters: { size, n: 1 },
-    });
+    expect(pluginRequests.length).toBeGreaterThanOrEqual(2);
 
-    // 观测差异（61 §6 / 61 §12 A/B 记录的数据来源）：
-    // - 内置引擎：单请求同步，无阶段进度、无插件活动记录、无取消介入点；
-    // - 插件：异步排队 + 轮询，有阶段进度、插件卡历史，取消可在轮询间隙生效。
+    // 观测面（61 §6）：有阶段进度、插件卡历史。
     expect(pluginProgress.length).toBeGreaterThan(0);
     expect(pluginProgress).toContain('queued');
     expect(rig.host.statusOf(PILOT_ID).recent[0]).toMatchObject({ ok: true });
-    expect(pluginMs).toBeGreaterThanOrEqual(0);
-    expect(builtinMs).toBeGreaterThanOrEqual(0);
     rig.host.disposeAll();
   }, 30_000);
 
