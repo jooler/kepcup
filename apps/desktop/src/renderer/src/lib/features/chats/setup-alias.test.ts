@@ -13,11 +13,10 @@ describe('setupAliasOf（旧 kind → kind:"setting" 兼容别名）', () => {
       itemId: 'capability.asr',
       reason: 'setupCard.capabilityHint',
     });
-    expect(setupAliasOf({ kind: 'capability-model', capability: 'image' }, text)).toEqual({
-      kind: 'setting',
-      itemId: 'capability.image',
-      reason: 'setupCard.capabilityHint',
-    });
+    // DEV-133：image / video 无全局槽位条目（生成能力由插件条目提供）——
+    // 不映射到设置目录，SettingSetupBody 走插件导向分支。
+    expect(setupAliasOf({ kind: 'capability-model', capability: 'image' }, text)).toBeNull();
+    expect(setupAliasOf({ kind: 'capability-model', capability: 'video' }, text)).toBeNull();
   });
 
   it('web-search 映到 search.provider', () => {

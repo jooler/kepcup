@@ -1476,20 +1476,48 @@ export class PluginRegistry {
    * `MEDIA_ENGINES` 注册——未知引擎拒绝安装 / 更新（PLUGIN_ENGINE_UNKNOWN，错误
    * 信息列出已注册引擎 id）。执行逻辑住在第一方引擎里：包内数据指向不存在的
    * 引擎 = 当前版本无法安全执行，不能静默忽略。
+   *
+   * DEV-133 追加数据型条目的能力校验：条目声明的 `capability` 必须落在该引擎
+   * 的 `capabilities` 内（如 image / video 条目不能再绑 dashscope / volcengine
+   * 引擎——内置引擎的图像 / 视频生成已移除，这类能力只有执行型插件条目承载）。
+   * 错误码选 PLUGIN_INVALID（与 manifest 校验同族）：引擎已知、引擎与能力的
+   * 组合非法，属于清单数据错误而非"引擎不存在"，PLUGIN_ENGINE_UNKNOWN 的
+   * "列出已注册引擎"文案在这里会误导；invalid 家族已有插件清单语义
+   * （errors.ts PLUGIN_INVALID），调用方（安装 / 更新 RPC）按普通插件校验失败
+   * 呈现。已在装的旧清单不受影响——运行时解析到这类条目由适配器能力检查给出
+   * NOT_IMPLEMENTED（逐步收敛，不强制卸载）。
    */
   #assertEnginesKnown(manifest: PluginManifest): void {
     const unknown = new Set<string>();
+    const mismatched: Array<{ engine: string; capability: string }> = [];
     for (const entry of manifest.contributions.capabilityModels ?? []) {
       // D125 过渡：执行型条目不填 engine（61 §2，与 manifest 的 runtime 段配对），
       // 其安装期校验归 D125-P2 执行型管线；这里只校验数据型条目（有 engine）。
       if (entry.engine === undefined) continue;
-      if (MEDIA_ENGINES[entry.engine] === undefined) unknown.add(entry.engine);
+      const engine = MEDIA_ENGINES[entry.engine];
+      if (engine === undefined) {
+        unknown.add(entry.engine);
+        continue;
+      }
+      if (!engine.capabilities.includes(entry.capability)) {
+        mismatched.push({ engine: entry.engine, capability: entry.capability });
+      }
     }
     if (unknown.size > 0) {
       throw new AppError(
         'PLUGIN_ENGINE_UNKNOWN',
         `条目绑定的引擎未注册：${[...unknown].sort().join('、')}（已注册：${Object.keys(MEDIA_ENGINES).join('、')}）`,
         { engines: [...unknown].sort() },
+      );
+    }
+    if (mismatched.length > 0) {
+      const described = mismatched
+        .map(({ engine, capability }) => `${capability}（引擎 ${engine}）`)
+        .join('、');
+      throw new AppError(
+        'PLUGIN_INVALID',
+        `条目声明的能力不在引擎支持范围内：${described}。图像 / 视频生成已改由执行型插件条目提供，内置引擎不再承载`,
+        { mismatches: mismatched },
       );
     }
   }

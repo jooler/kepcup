@@ -2284,3 +2284,120 @@
   **804 个文件通过 / 3 跳过，8721 passed / 44 skipped / 0 failed**（2026-11-16）。
 - 已更新的文档：本条；61 §12.3 / 验收锚点；`todo/plugin-runtime/P4-governance-pilot.md`；
   `plugins/dashscope-t2i/src/main.ts` 头注释。
+
+### DEV-133 图像 / 视频生成插件化收口（内置引擎与全局槽位删除）
+
+- 状态：已落实
+- 阶段：媒体插件化（feat/media-pluginization，2026-11-17）
+- 是否阻塞：否
+- 动机：图片生成与视频生成在应用内的实现路径（dashscope / volcengine 内置厂商适配器方法 +
+  `settings.capabilityModels.image/video` 全局槽位 + `media.generateImage / generateVideo /
+  videoStatus` RPC + 设置页槽位卡）与 D124/D125 已跑通的插件条目通道并存，且厂商侧模型
+  更新节奏远快于应用发版——这两类「生成型」能力没有跨厂商事实标准接口，内置引擎每接一个
+  新模型都要发版。用户决策：此类能力统一交给能力模型插件（dashscope-t2i 图片试点已跑通；
+  视频生成插件由后续独立提供，不在本次范围），应用内实现整体删除。
+- 方案：
+  - shared：`capabilityModelsSchema` 删 image / video 键（存量设置 JSON 残留键随 zod parse
+    静默剥离）；`VENDOR_DESCRIPTORS` 两家能力矩阵去 image / video、预置模型删除对应组
+    （presets 键类型收窄为 `Exclude<ModelCapability, 'image' | 'video'>`）；设置目录
+    `CAPABILITY_SETTING_IDS` / `CAPABILITY_ITEMS` 删两项；RPC 删
+    `media.generateImage / media.generateVideo / media.videoStatus` 三方法（含 schema 与
+    APP_METHODS 登记）；`HostCapabilityPrerequisite` 的 capability-model 前置收窄为
+    multimodal / tts / asr（image_generation / video 包前置置 null）。`ModelCapability`
+    枚举与 `MEDIA_CONTRACT_METHOD_WIRE` **不动**（插件清单条目仍声明 image / video，
+    执行型插件仍实现 generateImage / submitVideo / videoStatus / cancelVideo）。
+  - core：dashscope / volcengine 适配器删 generateImage / submitVideo / videoStatus /
+    cancelVideo（synthesizeSpeech / transcribeSpeech / embed / understandImage / rerank
+    保留）；openai-compatible 通用适配器**补齐标准接口**——`synthesizeSpeech`
+    （POST `{baseUrl}/audio/speech`，voice 缺省 alloy，二进制响应 → base64）与
+    `transcribeSpeech`（POST `{baseUrl}/audio/transcriptions`，multipart file+model(+language)，
+    文件名按 audioMime 映射扩展名），引擎 capabilities 改 `['embedding','tts','asr']`；
+    `MediaService` 的 image / video 解析改**条目路径 only**（`#resolveEntryOnly`：Bot 绑定
+    条目 → 条目解析，否则插件导向的 `CAPABILITY_NOT_CONFIGURED`，不再回落全局槽位；
+    `videoStatus` 的 provider 恒为插件实例 id，按条目仓库往返）；`testCapability` /
+    `#runProbe` 的 image / video 探针分支保留（`plugins.testCapabilityEntry` 条目测试仍用）；
+    `providers.test` 缺省路由探测顺序去掉 image / video。
+  - 安装期校验：`PluginRegistry.#assertEnginesKnown` 追加「数据型条目声明的能力必须落在
+    引擎 capabilities 内」，违反即拒装 / 拒更新；已装的旧清单运行到生成条目由适配器能力
+    检查给出 `NOT_IMPLEMENTED`，逐步收敛。
+  - 官方数据包：`plugins/dashscope`（20 → 13 条）与 `plugins/volcengine-ark`（7 → 3 条）
+    删除绑定内置引擎的 image / video 条目并 bump 版本——builtin 包不走安装管线，保留即
+    是常驻的死条目（勾选后调用必 NOT_IMPLEMENTED）；`plugins/dashscope-t2i` /
+    `reference-media` 的执行型（无 engine）image / video 条目不动。
+  - 渲染层：能力槽位列表删 image / video 两卡（`CAPABILITY_MODEL_KEYS`）；设置卡与
+    i18n 清理只为这两项服务的键；`setup-alias` 对 image / video 的 capability-model
+    失败需求不再映射设置目录（条目已不存在），`SettingSetupBody` 新增插件导向分支
+    （说明文案 + 打开扩展中心 + 已设置好继续）；`agents.capabilities.image_generation /
+    video` 描述改插件导向；`settings.capability.image/video` 两个**能力标签键保留**
+    （旧模型行仍可能声明这两种能力，供应商详情 badge 需要渲染）。
+- 关键取舍：
+  1. **ASR / TTS 保留全局槽位**：语音输入（26 号）与语音回复（53 号）是**无 Bot 上下文的
+     前台功能**，`media.transcribeSpeech` / `media.synthesizeSpeech` 的调用方没有 botId，
+     而插件条目是 Bot 绑定域（`botRuntime.capability_entries`）——全局槽位无法被条目接管。
+     同时给 openai-compatible 补标准接口，让任意自定义兼容端点提供语音能力（dashscope
+     原生 TTS 三路分流与 qwen3-asr 通道保留，原生形态优先）。
+  2. **rerank / multimodal（看图）不动**：rerank 是记忆管线内部精排（无用户可感知的工具面），
+     multimodal 是看图理解（16 号「与对话链路的分工」），两者不在本次「生成能力插件化」
+     范围；插件契约（60/61 号）也不覆盖 embed / rerank。
+  3. **RPC 三方法删除的核实**：全局 `rg media.generateImage|media.generateVideo|
+     media.videoStatus`（排除 dist / node_modules）后，渲染层生产代码零调用（仅
+     plugin-runtime 两个测试以契约方法名做夹具，`MEDIA_CONTRACT_METHOD_WIRE` 未动、测试
+     无需改）；core 内 orchestrator facade 与 Bot 工具走 MediaService 方法（保留），不是 RPC。
+  4. **安装校验错误码选 `PLUGIN_INVALID`**（而非 PLUGIN_ENGINE_UNKNOWN）：引擎已知、
+     引擎 × 能力组合非法，属清单数据错误；PLUGIN_ENGINE_UNKNOWN 的文案语义（列出已注册
+     引擎）在这里会误导，invalid 家族已有插件清单语义。
+  5. **外部代理能力暴露（host-capabilities）最小处理**：image_generation / video 包的
+     prerequisite 置 null——工具注入本就按用户勾选（prerequisite 只是「未配置」提示角标），
+     无全局槽位可判后不做条目级判定（external agents 的 entriesFor 判定要给
+     buildExternalAgentTools 增加 botId 依赖，收益低）；未绑定条目的调用由
+     SETUP_REQUIRED → 插件导向卡兜底。
+  6. **vendor presets 键类型收窄**而非保留空数组：类型即文档，禁止未来把生成模型预置加回
+     内置描述符。
+- 测试证据（定向，`node scripts/run-tests.mjs run`，2026-11-17）：
+  - shared：`settings-catalog.test.ts` **35/35**（检索 / CAS 路径映射 / closest ids 用例
+    改用保留条目）。
+  - core 单测（精确数）：media-adapters **30/30**（删 dashscope / volcengine 生成用例，新增
+    openai-compatible TTS / ASR 端点 / multipart 扩展名 / 错误归一 5 例，两个适配器补
+    「生成方法不再挂载」断言）；media-service **24/24**、media-entry-resolution **24/24**
+    （条目链改 tts 数据型 + hosted 双通道，新增 image / video 无全局槽位与旧清单
+    NOT_IMPLEMENTED 用例）、media-service-usage **11/11**（记账用例改 tts 全局槽位与
+    hosted 条目）、media-tools **41/41**（描述断言同步插件导向文案）、media-engines **8/8**
+    （引擎能力矩阵断言更新）、media-delivery **15/15**、plugin-capability-model **16/16**
+    （夹具 image→multimodal，新增 PLUGIN_INVALID 拒装用例）、plugin-registry **33/33**、
+    plugin-builtin-capability-models **6/6**（条目数口径 20/7→13/3）、plugin-host **55/55**
+    （「A/B 对照」用例改纯插件侧集成）、settings-catalog-host **57/57**（capability.image/
+    video 用例改 tts / asr）、settings-service **8/8**（迁移用例 image→tts）、
+    settings-item-writes **38/38**、paths **10/10**、gateway-read-only **41/41**、
+    capability-catalog **26/26**、capability-discovery **21/21**、sign-plugin-index **13/13**、
+    plugin-projectors-coverage **6/6**、builtin-plugins **10/10**、settings-prompt-acp **4/4**；
+    integration/settings-cards **14/14**（capability.image 流程改 capability.tts），
+    integration/response-loop **19/19**（D75「失败 → 设置卡 → 自动续跑」与
+    「生成产物确定性投递」两条端到端用例改用保留的 tts 槽位验证——image 内置引擎已删，
+    条目通道的产物交付由 media-tools / plugin-host 单测覆盖）；shared
+    plugin-runtime-protocol **16/16**（契约方法 wire 不动，零改动通过）。
+  - 独立审查修复（本次收口，2026-11-17）：`tools/index.ts` 的 `MIME_BY_EXTENSION`
+    补齐音频 / 视频扩展名（mp3 / wav / ogg / m4a / flac / mp4 / webm / mov）——此前
+    generate_speech / generate_video 的产物经 `media-delivery → attachments.upload`
+    的 guessMime 落成 `application/octet-stream`，渲染层只能退回文件 chip、无法内联
+    播放；response-loop 的两条端到端用例因夹具依赖已删的 image 槽位而改写为 tts
+    （见上），并对以上改动复跑 typecheck（shared / core / desktop svelte-check
+    0 error / 0 warning）与改动文件 eslint（0 error）。
+  - renderer（精确数，13 个文件）：setting-card-model **14/14**、card-components **13/13**、
+    setup-alias **11/11**（image / video 别名改 null 断言）、settings.svelte **4/4**、
+    settings-changed **3/3**、agent-capabilities **8/8**、locales **2/2**、sections **5/5**、
+    anchor-scroll **8/8**、bot-plugins **22/22**、plugin-runtime.svelte **9/9**、
+    plugin-runtime-view.svelte **9/9**、composer-inject **5/5** —— **113 用例 / 0 失败**。
+  - typecheck：`pnpm --filter @kepcup/shared typecheck` / `@kepcup/core typecheck` /
+    `@kepcup/desktop typecheck`（svelte-check **0 error / 0 warning**）全绿；改动文件
+    eslint 干净。全工作区 `pnpm typecheck`（10 个包，含 build）**0 error**。
+  - 全量收口（`pnpm test`，2026-11-17，仅此一次）：808 个文件 / 8779 个用例中
+    803 文件通过、3 跳过、**2 失败**——遗留的两个 shared 测试仍以已删条目
+    `capability.image` 作字段类型 / needs-sensitive-input 夹具
+    （`settings-merge-validate.test.ts`、`settings-mode.test.ts`）。改为保留的
+    `capability.tts` 后单跑 **37/37 通过**（eslint 干净）；其余 8733 用例全绿
+    （44 skipped），无其他回归。
+- 已更新的文档：本条；`docs/design/16-capability-models.md`（能力矩阵、槽位结构、适配层
+  契约、image/video 章节改插件唯一通道、连通性测试、数据包口径）；
+  `docs/design/20-conversation-media.md`（工具能力来源、SETUP_REQUIRED 分流、新增 4.1
+  语音标准接口小节）；`plugins/dashscope` 与 `plugins/volcengine-ark` 的 plugin.json
+  描述与 README 条目口径随数据更新。

@@ -10,7 +10,7 @@
 （**只迁描述符已有信息**：能力矩阵、模型 id、渠道事实注释；不发明新默认值，故条目不带
 `params`）。用户配置路径与既有全局槽位并存不迁移（两条路径互不改写）。
 
-- 条目数：**20**（embedding 3 / rerank 2 / multimodal 2 / image 4 / tts 5 / asr 1 / video 3）；
+- 条目数：**13**（embedding 3 / rerank 2 / multimodal 2 / tts 5 / asr 1；DEV-133 起 image / video 条目随内置引擎移除而删除，生成能力由执行型插件提供，如 dashscope-t2i）；
 - 引擎绑定：全部 `engine: 'dashscope'`（安装期 `PLUGIN_ENGINE_UNKNOWN` 校验）；
 - 实例：`instances: ['capability-model']`，凭据字段由引擎声明（apiKey 必填敏感 + baseUrl 可选），
   敏感值只进 secrets（`plugin:{pluginId}:instance:{instanceId}:{key}`）；

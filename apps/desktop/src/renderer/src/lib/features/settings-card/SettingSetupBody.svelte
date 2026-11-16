@@ -18,6 +18,7 @@
   import PluginCredentialSetupBody from '$lib/features/chats/PluginCredentialSetupBody.svelte';
   import { isPluginCredentialEntryPath, setupAliasOf } from '$lib/features/chats/setup-alias';
   import { plugins } from '$lib/features/plugins/plugins.svelte';
+  import { shell } from '$lib/stores/shell.svelte';
 
   /**
    * 失败续跑卡（D58 SetupRequiredCard）的通用 body 与分发（todo/conversational-app-setup.md
@@ -136,6 +137,31 @@
   <!-- D124：条目路径缺凭据（payload 带插件 / 条目 / 实例定位）→ 插件实例凭据卡；
        保存 = 既有实例 RPC，成功后由宿主 proceed（continueAfterSetup → runs.retry）。 -->
   <PluginCredentialSetupBody requirement={pluginCredential.requirement} onProceed={proceed} />
+{:else if requirement.kind === 'capability-model' && alias === null}
+  <!-- DEV-133：image / video 无全局槽位条目——生成能力由能力模型插件条目提供，
+       引导到扩展中心安装 / 启用对应插件（全局设置里没有可配的东西）。 -->
+  <div class="space-y-0.5 pr-6" data-testid="setup-card-plugin-capability">
+    <p class="text-sm font-medium" data-testid="setup-card-plugin-capability-title">
+      {t('setupCard.pluginCapabilityTitle')}
+    </p>
+    <p class="text-xs break-words text-muted-foreground">
+      {t('setupCard.pluginCapabilityHint')}
+    </p>
+    <div class="flex flex-wrap items-center justify-end gap-2">
+      <Button
+        size="sm"
+        variant="outline"
+        onclick={() => shell.openExtensionCenter('market')}
+        data-testid="setup-card-plugin-capability-open"
+      >
+        <ExternalLink class="size-3.5" aria-hidden="true" />
+        {t('setupCard.pluginCapabilityOpen')}
+      </Button>
+      <Button size="sm" onclick={proceed} data-testid="setup-card-plugin-capability-continue">
+        {t('settingCard.setupContinue')}
+      </Button>
+    </div>
+  </div>
 {:else if setting !== null}
   <div class="space-y-0.5 pr-6">
     <p class="text-sm font-medium" data-testid="setup-card-title">

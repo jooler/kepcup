@@ -26,6 +26,11 @@ export function setupAliasOf(
 ): Extract<SetupRequirement, { kind: 'setting' }> | null {
   switch (requirement.kind) {
     case 'capability-model':
+      // DEV-133：image / video 无全局槽位条目（图像 / 视频生成由能力模型插件
+      // 条目提供）——不映射到设置目录，SettingSetupBody 走插件导向分支。
+      if (requirement.capability === 'image' || requirement.capability === 'video') {
+        return null;
+      }
       return {
         kind: 'setting',
         itemId: CAPABILITY_SETTING_IDS[requirement.capability],
