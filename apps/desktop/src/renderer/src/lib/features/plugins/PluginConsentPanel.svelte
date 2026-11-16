@@ -6,6 +6,7 @@
   import { Label } from '$lib/components/ui/label';
   import { formatBytes, runtimeLabel } from '../settings/mcpb-install';
   import type { PluginForm } from './plugin-install';
+  import { runtimeDisclosureView } from './plugin-runtime-disclosure';
   import PluginFieldForm from './PluginFieldForm.svelte';
 
   /**
@@ -36,6 +37,8 @@
       (info.existing !== null && info.update === null),
   );
   const mcpbItems = $derived(info.mcp.filter((item) => item.kind === 'mcpb'));
+  /** D125 P4：执行型插件的能力披露（null = 数据型，整块不渲染）。 */
+  const runtimeView = $derived(runtimeDisclosureView(info.runtime));
 </script>
 
 <div class="space-y-3" data-testid={testid}>
@@ -72,6 +75,44 @@
     >
       {t('plugins.consent.developerWarn')}
     </p>
+  {/if}
+
+  {#if runtimeView !== null}
+    <div class="space-y-2 rounded-md border px-2.5 py-1.5" data-testid={`${testid}-runtime`}>
+      <Label class="text-xs">{t('plugins.consent.runtime')}</Label>
+      <div class="grid gap-0.5" data-testid={`${testid}-runtime-network`}>
+        <span class="text-xs font-medium">{t('plugins.consent.runtimeNetwork')}</span>
+        {#if runtimeView.networkDomains.length === 0}
+          <span class="text-xs text-muted-foreground">
+            {t('plugins.consent.runtimeNetworkEmpty')}
+          </span>
+        {:else}
+          {#each runtimeView.networkDomains as domain (domain)}
+            <code class="text-xs break-all">{domain}</code>
+          {/each}
+          {#if runtimeView.networkWildcard}
+            <span class="text-xs text-muted-foreground">
+              {t('plugins.consent.runtimeNetworkWildcard')}
+            </span>
+          {/if}
+        {/if}
+      </div>
+      <div class="grid gap-0.5" data-testid={`${testid}-runtime-credentials`}>
+        <span class="text-xs font-medium">{t('plugins.consent.runtimeCredentials')}</span>
+        {#if runtimeView.credentialFields.length === 0}
+          <span class="text-xs text-muted-foreground">
+            {t('plugins.consent.runtimeCredentialsEmpty')}
+          </span>
+        {:else}
+          {#each runtimeView.credentialFields as field (field)}
+            <code class="text-xs break-all">{field}</code>
+          {/each}
+        {/if}
+      </div>
+      <p class="text-xs text-muted-foreground" data-testid={`${testid}-runtime-storage`}>
+        {t('plugins.consent.runtimeStorage', { quota: formatBytes(runtimeView.storageQuotaBytes) })}
+      </p>
+    </div>
   {/if}
 
   {#if hasBlockers}

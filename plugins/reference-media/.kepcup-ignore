@@ -1,0 +1,4 @@
+# 开发期文件：不随 .kepcup 发布（运行时只加载 dist/main.js）。
+build.mjs
+src/
+tsconfig.json

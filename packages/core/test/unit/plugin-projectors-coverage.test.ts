@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  capabilityModelEntrySchema,
   pluginContributionKindSchema,
   pluginConnectorContributionSchema,
   pluginImContributionSchema,
@@ -53,6 +54,8 @@ const CONTRIBUTION_SCHEMAS = {
   connector: pluginConnectorContributionSchema,
   mail: pluginMailContributionSchema,
   im: pluginImContributionSchema,
+  // D124：capability-model 条目（manifest.contributions.capabilityModels，可选数组）。
+  'capability-model': capabilityModelEntrySchema,
 } as const;
 
 const emptyMailManifest = pluginManifestSchema.parse({
@@ -65,12 +68,15 @@ const emptyMailManifest = pluginManifestSchema.parse({
   instances: ['mcp'],
 });
 
-describe('capability kind registry (D105)', () => {
+describe('capability kind registry (D105 + D124)', () => {
   it('covers every contribution kind exactly once, and PLUGIN_PROJECTOR_ORDER derives from it', () => {
     expect(CAPABILITY_KINDS.map((adapter) => adapter.kind)).toEqual([...PLUGIN_PROJECTOR_ORDER]);
+    // D124 起注册表含 'capability-model'（实例 kind，投影末位）；P4 起该值也收编进
+    // pluginContributionKindSchema（市场索引 categories 需要）——两集合恒相等。
     expect([...CAPABILITY_KINDS.map((adapter) => adapter.kind)].sort()).toEqual(
       [...pluginContributionKindSchema.options].sort(),
     );
+    expect(CAPABILITY_KINDS[CAPABILITY_KINDS.length - 1]?.kind).toBe('capability-model');
     expect(new Set(CAPABILITY_KINDS.map((adapter) => adapter.kind)).size).toBe(
       pluginContributionKindSchema.options.length,
     );
@@ -145,6 +151,14 @@ describe('capability kind registry (D105)', () => {
           ],
         },
       }),
+      'capability-model': parse({
+        instances: ['capability-model'],
+        contributions: {
+          capabilityModels: [
+            { id: 'qwen-image', capability: 'image', model: 'qwen-image', engine: 'dashscope' },
+          ],
+        },
+      }),
     } as const;
     for (const adapter of CAPABILITY_KINDS) {
       expect(adapter.hasContribution(byKind[adapter.kind])).toBe(true);
@@ -161,10 +175,13 @@ describe('capability kind registry (D105)', () => {
     }
   });
 
-  it('instance kinds are exactly mail + im + mcp (all materializers landed; P4-M2 for mcp)', () => {
+  it('instance kinds are exactly mail + im + mcp + capability-model (all materializers landed)', () => {
     for (const adapter of CAPABILITY_KINDS) {
       expect(adapter.hasInstances).toBe(
-        adapter.kind === 'mail' || adapter.kind === 'im' || adapter.kind === 'mcp',
+        adapter.kind === 'mail' ||
+          adapter.kind === 'im' ||
+          adapter.kind === 'mcp' ||
+          adapter.kind === 'capability-model',
       );
     }
   });

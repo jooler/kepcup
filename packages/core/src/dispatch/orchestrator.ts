@@ -166,6 +166,7 @@ import {
   type ResponseToolDeps,
 } from '../tools/index.js';
 import { TOOL_SETUP_REQUIRED, type MediaToolFacade } from '../tools/image-tools.js';
+import type { MediaEntrySummariesFn } from '../tools/media-entry-hints.js';
 import { decideMailSetupRequest, mailBoundFor, type MailSetupFacade } from '../tools/mail-tools.js';
 import { visibleMailAccounts } from '../mail/service.js';
 import type { AppToolFacade, LocalConnectorToolFacade } from '../tools/app-tools.js';
@@ -233,6 +234,7 @@ import type { WidgetToolFacade } from '../tools/widget-tools.js';
 import { FileReadState, RUN_FILE_CHANGES_MAX } from '../tools/fs-state.js';
 import type { ToolGateway } from '../gateway/index.js';
 import type { AppPaths } from '../infra/paths.js';
+import { pluginArtifactDirFor } from '../infra/paths.js';
 import { workspacePathFor } from '../infra/paths.js';
 import { neutralizeUntrusted } from '../infra/data-boundary.js';
 import {
@@ -501,8 +503,10 @@ export interface OrchestratorDeps {
   /**
    * 图像生成后端（docs/design/18-inline-setup.md）；omitted in stripped test
    * setups, which then simply have no generate_image tool.
+   * D124 P3：真实装配传 MediaService——条目摘要 `entrySummariesFor` 以可选方法
+   * 叠加（精简测试夹具的门面没有它 → 不注入条目清单，行为不变）。
    */
-  media?: MediaToolFacade | undefined;
+  media?: (MediaToolFacade & { entrySummariesFor?: MediaEntrySummariesFn | undefined }) | undefined;
   /**
    * 联网检索网关（docs/design/21-web-search.md）：web_search / web_fetch 工具；
    * omitted in stripped test setups。web_search 未配置供应商时以结构化 setup
@@ -4333,6 +4337,13 @@ export class Orchestrator {
               },
             })
           : undefined;
+      // D124 P3：Bot 已勾选条目摘要（三个生成工具描述注入的数据面）。精简装配的
+      // 门面没有 entrySummariesFor（或未绑定条目 → 各清单为空）时不注入，工具描述
+      // 与从前逐字节一致；解析失败降级为不注入（工具可用性优先）。
+      const mediaEntryHints =
+        this.#deps.media?.entrySummariesFor !== undefined && identity.botId !== null
+          ? await this.#deps.media.entrySummariesFor(identity.botId).catch(() => undefined)
+          : undefined;
       const toolDeps: ResponseToolDeps = {
         ...(scheduleSource !== null ? { scheduleSource } : {}),
         ...(todoSource !== null ? { todoSource } : {}),
@@ -4421,6 +4432,12 @@ export class Orchestrator {
         // 模型看不到 computer_*（调用期错误引导只对已注册工具存在）。
         ...(await this.#computerToolDeps(identity, loopType)),
         ...(this.#deps.media !== undefined ? { media: this.#mediaFacade(setupHit, identity) } : {}),
+        ...(mediaEntryHints !== undefined ? { mediaEntryHints } : {}),
+        // D125 补丁：执行型插件生成产物的默认落点 = 该插件私有数据目录下的
+        // `artifacts/`；投递 hostOwned 的白名单根 = plugin-data 根。
+        pluginArtifactDir: (pluginId: string) =>
+          pluginArtifactDirFor(this.#deps.paths.pluginDataDir, pluginId),
+        pluginDataDir: this.#deps.paths.pluginDataDir,
         ...(this.#deps.search !== undefined ? { search: this.#searchFacade(setupHit) } : {}),
         ...(appFacade !== undefined ? { apps: appFacade } : {}),
         ...(pluginFacade !== undefined ? { pluginInstall: pluginFacade } : {}),
@@ -5801,19 +5818,80 @@ export class Orchestrator {
           error instanceof AppError &&
           (error.code === 'CAPABILITY_NOT_CONFIGURED' || error.code === 'PROVIDER_AUTH_FAILED')
         ) {
-          setupHit.requirement = { kind: 'capability-model', capability };
+          // D124：条目路径的缺凭据在 error.details 带插件 / 条目 / 实例定位——
+          // 渲染层据此出插件实例凭据卡而不是全局设置卡（全局槽位路径不带定位，
+          // payload 与 D58 现状逐字节一致）。
+          const details =
+            typeof error.details === 'object' && error.details !== null
+              ? (error.details as Record<string, unknown>)
+              : {};
+          const id = (key: string): string | undefined => {
+            const value = details[key];
+            return typeof value === 'string' && value.length > 0 ? value : undefined;
+          };
+          const pluginId = id('pluginId');
+          const instanceId = id('instanceId');
+          const entryId = id('entryId');
+          setupHit.requirement = {
+            kind: 'capability-model',
+            capability,
+            ...(pluginId !== undefined ? { pluginId } : {}),
+            ...(instanceId !== undefined ? { instanceId } : {}),
+            ...(entryId !== undefined ? { entryId } : {}),
+          };
         }
         throw error;
       }
     };
+    // D124：botId 透传给条目解析（MediaService.#resolve 的 ① 分支）；生成工具的
+    // 可选 model 参数同样透传（匹配条目 model / displayName）。缺省（botId 空 /
+    // 无 model）时 MediaService 走全局槽位路径，行为与从前逐字节一致。
+    // D125 P3：工具第 4 参（取消信号 / 插件进度桥）并入 resolve——只有执行型插件
+    // 条目消费，数据型路径不读取（行为零变化）。
+    const resolve = {
+      ...(identity.botId !== null ? { botId: identity.botId } : {}),
+    };
     return {
-      generateImage: (input) => setupGuard('image', () => media.generateImage(input, usage)),
-      understandImage: (input) =>
-        setupGuard('multimodal', () => media.understandImage(input, usage)),
-      synthesizeSpeech: (input) => setupGuard('tts', () => media.synthesizeSpeech(input, usage)),
-      transcribeSpeech: (input) => setupGuard('asr', () => media.transcribeSpeech(input, usage)),
-      generateVideo: (input) => setupGuard('video', () => media.generateVideo(input, usage)),
-      videoStatus: (provider, taskId) => media.videoStatus(provider, taskId),
+      generateImage: (input, _usage, _resolve, controls) =>
+        setupGuard(
+          'image',
+          () =>
+            media.generateImage(input, usage, {
+              ...resolve,
+              ...(input.model !== undefined ? { model: input.model } : {}),
+              ...controls,
+            }),
+        ),
+      understandImage: (input, _usage, _resolve, controls) =>
+        setupGuard('multimodal', () =>
+          media.understandImage(input, usage, { ...resolve, ...controls }),
+        ),
+      synthesizeSpeech: (input, _usage, _resolve, controls) =>
+        setupGuard(
+          'tts',
+          () =>
+            media.synthesizeSpeech(input, usage, {
+              ...resolve,
+              ...(input.model !== undefined ? { model: input.model } : {}),
+              ...controls,
+            }),
+        ),
+      transcribeSpeech: (input, _usage, _resolve, controls) =>
+        setupGuard('asr', () =>
+          media.transcribeSpeech(input, usage, { ...resolve, ...controls }),
+        ),
+      generateVideo: (input, _usage, _resolve, controls) =>
+        setupGuard(
+          'video',
+          () =>
+            media.generateVideo(input, usage, {
+              ...resolve,
+              ...(input.model !== undefined ? { model: input.model } : {}),
+              ...controls,
+            }),
+        ),
+      videoStatus: (provider, taskId, controls) =>
+        media.videoStatus(provider, taskId, { ...resolve, ...controls }),
     };
   }
 

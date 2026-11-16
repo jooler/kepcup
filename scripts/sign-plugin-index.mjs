@@ -45,6 +45,7 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { scanRuntimePackage } from './scan-plugin-runtime.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..');
@@ -152,6 +153,10 @@ export function categoriesOf(manifest) {
   if ((contributions.mcp ?? []).length > 0) categories.push('mcp');
   if ((contributions.mail ?? []).length > 0) categories.push('mail');
   if ((contributions.im ?? []).length > 0) categories.push('im');
+  // D124：能力模型条目插件（阿里云百炼 / 火山方舟数据包）。类别值由 shared 的
+  // pluginContributionKindSchema 收编；不含该贡献的旧宿主在条目级校验单独跳过
+  // （整份索引不受影响），且 `engines.kepcup >=0.5.14` 已在索引层过滤旧客户端。
+  if ((contributions.capabilityModels ?? []).length > 0) categories.push('capability-model');
   return categories;
 }
 
@@ -217,12 +222,43 @@ export async function collectPluginEntries({
     });
     let rawManifest;
     let iconBytes = null;
+    // D125 P4：执行型包在签名前跑静态扫描（scripts/scan-plugin-runtime.mjs）。这里只
+    // 收集文件视图（名称 / 权限位 / symlink / 代码文本），解析校验通过后再判定——扫描
+    // 失败不会掩盖清单本身的 schema 错误。
+    let runtimeScanFiles = null;
     try {
       const manifestEntry = zip.entries.find((candidate) => candidate.name === 'plugin.json');
       if (manifestEntry === undefined) {
         throw new SignError(`${name} has no plugin.json`);
       }
       rawManifest = JSON.parse((await zip.read(manifestEntry)).toString('utf8'));
+      if (
+        rawManifest !== null &&
+        typeof rawManifest === 'object' &&
+        rawManifest.runtime !== undefined &&
+        rawManifest.runtime !== null
+      ) {
+        runtimeScanFiles = [];
+        const runtimeEntry =
+          typeof rawManifest.runtime.entry === 'string'
+            ? rawManifest.runtime.entry.replace(/\\/g, '/').replace(/^\.\//, '')
+            : null;
+        for (const entry of zip.entries) {
+          if (entry.isDirectory) continue;
+          const isCode = /\.(?:[cm]?[jt]sx?)$/i.test(entry.name);
+          // The declared entry is read even without a JS extension: Node executes an
+          // extensionless file, so it must not slip past the code scan.
+          const isEntry = runtimeEntry !== null && entry.name.replace(/^\.\//, '') === runtimeEntry;
+          const isPackageJson = entry.name.replace(/^\.\//, '') === 'package.json';
+          const needsData = !entry.isSymlink && (isCode || isEntry || isPackageJson);
+          runtimeScanFiles.push({
+            path: entry.name,
+            mode: entry.unixMode,
+            ...(entry.isSymlink ? { isSymlink: true } : {}),
+            ...(needsData ? { data: await zip.read(entry) } : {}),
+          });
+        }
+      }
       // The icon is embedded into the signed index so market cards do not fetch images.
       // A declared icon must be present and readable; a manifest without one is allowed
       // (the app falls back to its default icon), but every published plugin SHOULD have one.
@@ -264,6 +300,39 @@ export async function collectPluginEntries({
       );
     }
     const manifest = parsed.data;
+    // D125 P4：执行型包逐版本静态扫描（61 §7 / §10）——fail 不出包（整个签名失败），
+    // pass / warn 结果写进索引条目 `runtimeScan`（warn = 待人工复审）。
+    let runtimeScan = null;
+    if (manifest.runtime !== undefined) {
+      // 执行型插件只开放 builtin / verified / developer（60/61 信任矩阵）；市场只有
+      // verified / community 两档，community 执行型在客户端必被 PLUGIN_INCOMPATIBLE
+      // 拒绝装机——签名侧直接拒，避免发布「市场可见但永远装不上」的版本。
+      if (item.tier !== 'verified') {
+        throw new SignError(
+          `${name}: executable plugins must be curated as tier "verified" (community runtime is rejected at install)`,
+        );
+      }
+      const scan = scanRuntimePackage({ files: runtimeScanFiles ?? [], manifest });
+      if (scan === null) {
+        throw new SignError(`${name}: runtime manifest was not scanned (internal error)`);
+      }
+      if (scan.status === 'fail') {
+        throw new SignError(
+          `${name}: runtime static scan failed: ${scan.errors.slice(0, 3).join('; ')}`,
+        );
+      }
+      runtimeScan = {
+        status: scan.status,
+        // 索引条目 schema 逐条限 500 字（core 解析失败会静默丢条目）。
+        errors: scan.errors.slice(0, 50).map((line) => line.slice(0, 500)),
+        warnings: scan.warnings.slice(0, 50).map((line) => line.slice(0, 500)),
+      };
+      if (scan.warnings.length > 0) {
+        log?.(
+          `warning: ${name}: runtime static scan has ${scan.warnings.length} finding(s); manual review required`,
+        );
+      }
+    }
     // 2026-11-03（51 §15.8）：启用说明是市场发布必填项——Bot 靠它判断用户是否漏了
     // 连接账号 / 添加账号再勾选绑定。schema 为存量兼容回落空串，签名侧拒绝空值。
     if (typeof manifest.usage !== 'string' || manifest.usage.trim() === '') {
@@ -298,6 +367,8 @@ export async function collectPluginEntries({
       ...(manifest.engines !== undefined ? { engines: manifest.engines } : {}),
       ...(manifest.platforms !== undefined ? { platforms: manifest.platforms } : {}),
       categories: categoriesOf(manifest),
+      // D125 P4：执行型包静态扫描结果（非执行型包不带该字段）。
+      ...(runtimeScan !== null ? { runtimeScan } : {}),
       // D105 P4: one-line capability summary derived from the parsed manifest (the same
       // shared function the app's consent and plugin cards use).
       capabilitySummary: shared.pluginCapabilitySummary(shared.capabilityFactsOf(manifest)),

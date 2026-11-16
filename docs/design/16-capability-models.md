@@ -178,7 +178,7 @@ core 侧 `media/` 每家厂商一个适配器，实现厂商无关的 `VendorAda
 
 预置：百炼 `qwen-image / qwen-image-plus / qwen-image-edit / qwen-image-edit-plus`；方舟 `doubao-seedream-4-0-250828 / doubao-seedream-4-5-251128`。
 
-Bot 侧消费入口：响应 loop 工具 `generate_image`（P15）——文生图，产物落 workspace `.generated/` 后由工具**立即作为消息附件发进对话**（确定性投递，不依赖模型再调 `send_message`；漏发会让「已生成」的报告无图可看）。能力未配置 / 厂商缺 Key 时网关抛 `CAPABILITY_NOT_CONFIGURED` / `PROVIDER_AUTH_FAILED`，工具转 `SETUP_REQUIRED`，orchestrator 中断执行并以结构化 setup 失败 settle，对话内呈现图像模型设置卡片（[18-inline-setup.md](18-inline-setup.md)）。
+Bot 侧消费入口：响应 loop 工具 `generate_image`（P15）——文生图，产物落盘（执行型插件条目默认落插件私有目录 `plugin-data/{ns}/{name}/artifacts/`（DEV-131），内置引擎落 workspace `.generated/`；`output_dir` 可显式指定 workspace / 工作目录内的目录）后由工具**立即作为消息附件发进对话**（确定性投递，不依赖模型再调 `send_message`；漏发会让「已生成」的报告无图可看）。能力未配置 / 厂商缺 Key 时网关抛 `CAPABILITY_NOT_CONFIGURED` / `PROVIDER_AUTH_FAILED`，工具转 `SETUP_REQUIRED`，orchestrator 中断执行并以结构化 setup 失败 settle，对话内呈现图像模型设置卡片（[18-inline-setup.md](18-inline-setup.md)）。
 
 ### 视频生成（video，异步任务）
 
@@ -218,3 +218,19 @@ Bot 侧消费入口：响应 loop 工具 `generate_image`（P15）——文生�
 4. 单元测试：适配器端点/载荷/响应解析（`media-adapters.test.ts`）+ 网关路由（`media-service.test.ts`）。
 
 不做旧配置迁移：schema 变更后旧数据中的过时字段由 zod 剥离或回落默认值，用户按新结构重新配置即可。从预置移除的厂商（如 siliconflow）残留配置在设置读取时直接丢弃（`SettingsService` 的 `dropUnknownVendors`），避免严格枚举让设置加载失败。
+
+## 插件条目（D124）
+
+本文上述的全局槽位与厂商路径**原样保留**；D124 起模型另有第二条路：**插件条目**——插件以
+`contributions.capabilityModels` 声明模型条目（一个模型一条，`engine` 绑定 core 内置引擎注册表
+`MEDIA_ENGINES`），用户添加厂商账号实例（凭据入 secrets）、在 Bot 内勾选启用，运行时解析顺序
+「条目 > 全局槽位 > 未配置」。机制、条目契约、实例模型与解析链的唯一事实来源是
+**[60 号（能力模型插件化）](60-capability-model-plugins.md)**，本节不重复。由此，**新增厂商有两条路**：
+
+1. **内置引擎（第一方代码，随应用发版）**：按上文「新增厂商适配指南」实现 `VendorAdapter` 并在
+   `MEDIA_ENGINES` 注册引擎；既有全局槽位路径继续走 `ADAPTERS`（行为不变），该厂商的插件条目
+   即可绑定新引擎。
+2. **官方插件发条目（纯数据，不等发版）**：既有引擎覆盖的平台（如百炼 / 方舟）上新一个模型 =
+   给 `plugins/` 对应数据包加一条 `capabilityModels` 条目并发插件版本，用户更新插件即用
+   （内置先例：`plugins/dashscope` 阿里云百炼 20 条 / `plugins/volcengine-ark` 火山方舟 7 条）；
+   全新平台协议必须先走第 1 条路，插件永远只是数据（执行型插件形态见 61 号，另册）。

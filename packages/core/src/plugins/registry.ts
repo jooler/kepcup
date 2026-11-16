@@ -20,9 +20,13 @@ import {
   type PluginMarketEntry,
   type PluginSource,
   type PluginSummary,
+  type PluginTier,
 } from '@kepcup/shared';
 import { compareConnectorVersions } from '../apps/connector-utils.js';
 import { validateUserConfig } from '../apps/mcpb/manifest.js';
+import { MEDIA_ENGINES } from '../media/engines.js';
+import { ensurePluginDataDir, pluginDataDirFor } from '../infra/paths.js';
+import { assertRuntimeInstallable, runtimeDisclosureOf } from './runtime/install.js';
 import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
 import type { BuiltinPlugins } from './builtin.js';
@@ -31,6 +35,7 @@ import {
   describePermission,
   diffPermissions,
   permissionTokens,
+  unionPermissionTokens,
   type ConsentItems,
 } from './permissions.js';
 import type { PluginRow, PluginStore } from './store.js';
@@ -47,6 +52,7 @@ import { pluginIconDataUri } from './icon.js';
 import { CAPABILITY_KINDS, capabilityKindOf, mergeConsentItems } from './kinds.js';
 import {
   pluginConfigSecretName,
+  pluginSecretScope,
   validatePluginFieldValues,
   type PluginInstanceStore,
 } from './instances.js';
@@ -99,6 +105,8 @@ export interface PluginRegistryDeps {
         hasValue(name: string): boolean;
         setValue?(name: string, value: string): void;
         removeValue?(name: string): void;
+        /** 卸载时按作用域前缀清理 config / 实例 secret（D125 收口审查）。 */
+        names?(): string[];
       }
     | undefined;
   /** Instance rows (D105): `list()` instance counts read it directly. */
@@ -110,6 +118,12 @@ export interface PluginRegistryDeps {
    */
   mailInstanceCount?: ((pluginId: string) => number) | undefined;
   pluginsDir: string;
+  /**
+   * Private writable data root of execution-type plugins (D125 补丁):
+   * `{home}/plugin-data/`. Install / update-of-runtime ensure the plugin's
+   * directory; `#teardown` removes it. Version-independent.
+   */
+  pluginDataDir: string;
   /** App version for marketplace compatibility (`engines`); core `0.0.0` skips the check. */
   appVersion?: string;
   platform?: NodeJS.Platform;
@@ -169,6 +183,11 @@ function itemsOf(inspection: { items: ConsentItems }): ConsentItems {
   return inspection.items;
 }
 
+/** D125：安装来源的层级（本地目录安装恒 developer；市场条目按其 tier）。 */
+function runtimeTierOf(marketplace: ResolvedSource['marketplace']): PluginTier {
+  return marketplace === null ? 'developer' : marketplace.entry.tier;
+}
+
 /** Ledger `dir` is always `{ns}/{name}@{version}` with `/`, never `path.sep`. */
 function pluginLedgerDir(pluginsDir: string, absoluteDir: string): string {
   return path.relative(pluginsDir, absoluteDir).split(path.sep).join('/');
@@ -187,6 +206,24 @@ export class PluginRegistry {
    * every project_plugins row on uninstall — write paths stay strict, nothing dangles.
    */
   #referenceCleanup: ((pluginId: string) => void) | null = null;
+  /**
+   * D125 P2：运行时停止钩子（停用即时 kill switch，61 §7）与卸载钩子（kill +
+   * plugin_storage 清除）。start.ts 在 PluginHost 构造后接线。
+   */
+  #runtimeStop: ((pluginId: string) => void) | null = null;
+  #runtimeTeardown: ((pluginId: string) => void) | null = null;
+  /**
+   * D125：停用 / 卸载进行中立即从「可消费」集合摘掉——`setEnabled(false)` 的投影
+   * 回滚是异步的，若只依赖 store 行的 enabled 翻转，窗口内排队中的执行型调用会
+   * 重新拉起刚被 kill switch 杀掉的进程。
+   */
+  #runtimeHalted = new Set<string>();
+  /**
+   * 已见过 runtime 段的插件 id（`manifestOf` 与安装 / 更新提交时维护）。kill switch /
+   * 更新窗口的「不可消费」只对执行型插件生效——数据型插件（source: engine）在停用 /
+   * 更新事务中的既有解析行为保持 D124 不变。
+   */
+  #runtimeManifestIds = new Set<string>();
 
   constructor(deps: PluginRegistryDeps) {
     // Test-only failure injection (P1-2): the wrapper applies only with test hooks on and
@@ -233,6 +270,16 @@ export class PluginRegistry {
     this.#referenceCleanup = fn;
   }
 
+  /** D125：插件停用（kill switch）时终止其执行型进程（PluginHost.dispose）。 */
+  attachRuntimeStop(fn: (pluginId: string) => void): void {
+    this.#runtimeStop = fn;
+  }
+
+  /** D125：卸载 / 回滚时终止进程并清 plugin_storage（PluginHost.dispose + bridge.clearStorage）。 */
+  attachRuntimeTeardown(fn: (pluginId: string) => void): void {
+    this.#runtimeTeardown = fn;
+  }
+
   // --- lifecycle ----------------------------------------------------------------
 
   /** Startup: clear `.staging/`, recover interrupted installs/uninstalls, activate. */
@@ -256,6 +303,19 @@ export class PluginRegistry {
       if (manifest === null) {
         this.#deps.logger.warn({ plugin: row.id }, 'plugin startup skipped: manifest unreadable');
         continue;
+      }
+      // D125 补丁：应用重启即补齐既有执行型安装的数据目录（改动前安装的行没有经过
+      // install 的初始化；PluginHost 首次调用也会懒创建，但安装后第一时间初始化是
+      // 约定）。失败只告警、不阻断启动；下次首次调用仍会重试。
+      if (manifest.runtime !== undefined) {
+        try {
+          ensurePluginDataDir(this.#deps.pluginDataDir, row.id);
+        } catch (error) {
+          this.#deps.logger.warn(
+            { plugin: row.id, error: error instanceof Error ? error.message : String(error) },
+            'plugin startup: data dir init failed',
+          );
+        }
       }
       // Disabled rows only needed the manifest for the summary list; nothing to activate.
       if (!row.enabled) continue;
@@ -322,20 +382,82 @@ export class PluginRegistry {
     return (this.#deps.builtin?.get(id) ?? null) !== null;
   }
 
+  /**
+   * D124 P4：内置第一方数据插件（只读目录型，不入 `plugins` 表）对运行时恒可消费
+   * ——builtin 来源没有 enabled / state 状态可关（随目录在即在），条目有效集只由
+   * Bot 勾选（`capability_entries` ∩ `plugin_ids`）决定。目录不存在（生产构建）时
+   * 本分支不可达，既有 store 行为逐字节不变。
+   */
+  isBuiltin(id: string): boolean {
+    return this.#isBuiltin(id);
+  }
+
   ownerOf(kind: PluginItemKind, ref: string): string | null {
     return this.#deps.store.ownerOf(kind, ref);
   }
 
   /**
+   * 插件当前是否可被运行时消费（D124 条目仓库的有效集口径，60 号设计决策 5
+   * 「插件已安装启用」）：已装（state installed）、全局启用（enabled）且不在
+   * 更新 / 停用 / 卸载事务中（D125：执行型进程的 kill switch 与目录切换窗口）。与
+   * `#convergeDisabled` 的语义一致——停用插件 = 贡献不再进运行时面；条目的
+   * 运行时状态只住在 Bot profile 与本行上，故消费侧必须查这里。
+   * 诊断面（testCapabilityEntry 的条目 / 实例解析）不经过本判定。
+   * 内置只读目录插件（D124 P4）恒可消费（`isBuiltin`）。
+   */
+  isConsumable(id: string): boolean {
+    if (this.#isBuiltin(id)) return true;
+    const row = this.#deps.store.get(id);
+    if (row === null) return false;
+    // 执行型插件在停用 / 卸载 / 更新事务窗口内不可消费；数据型插件不受影响
+    // （D124 的条目解析 / 软引用语义逐字节不变）。
+    if (
+      this.#runtimeManifestIds.has(id) &&
+      (this.#runtimeHalted.has(id) || row.updateTo !== null)
+    ) {
+      return false;
+    }
+    return row.state === 'installed' && row.enabled;
+  }
+
+  /**
+   * D125 P2：执行型插件的安装目录（PluginHost fork 的 cwd 与 entry 根）。store 行 →
+   * guarded slot dir；builtin 只读目录插件回退到目录加载器的 `dir`（生产构建无
+   * builtin 目录时不存在，行为与从前一致）。未装 / 目录不可解析 = null。
+   */
+  async runtimeDirOf(id: string): Promise<string | null> {
+    const row = this.#deps.store.get(id);
+    if (row === null) return this.#deps.builtin?.get(id)?.dir ?? null;
+    try {
+      return this.#slotDirOf(row);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * 已装插件的完整清单（缓存 → 磁盘）；未装 / 清单损坏 = null。实例服务与 config
    * 读写用它取 `config.fields` / `instances` 声明（D105）。
+   * 内置只读目录插件（D124 P4）：`plugins` 表无行，直读 builtin 加载器已校验的
+   * 清单——条目投影（listCapabilityEntries）、Bot 条目写入校验、媒体条目解析与
+   * 实例表单都经这里取 builtin 清单。目录不存在时与今日逐字节一致。
    */
   async manifestOf(id: string): Promise<PluginManifest | null> {
     const row = this.#deps.store.get(id);
-    if (row === null) return null;
-    const cached = this.#manifests.get(`${row.id}@${row.version}`);
-    if (cached !== undefined) return cached;
-    return this.#readManifestFromDir(this.#dirOf(row.id, row.version));
+    let manifest: PluginManifest | null;
+    if (row === null) {
+      manifest = this.#deps.builtin?.get(id)?.manifest ?? null;
+    } else {
+      const cached = this.#manifests.get(`${row.id}@${row.version}`);
+      manifest =
+        cached !== undefined
+          ? cached
+          : await this.#readManifestFromDir(this.#dirOf(row.id, row.version));
+    }
+    // 维护执行型插件集合（isConsumable 的 kill switch / 更新窗口判定）。
+    if (manifest?.runtime !== undefined) this.#runtimeManifestIds.add(id);
+    else this.#runtimeManifestIds.delete(id);
+    return manifest;
   }
 
   /**
@@ -640,6 +762,14 @@ export class PluginRegistry {
       const { id, version } = manifest;
       // Reserved namespaces are rejected for marketplace / local installs.
       assertInstallablePluginId(id);
+      // D124：条目绑定的引擎必须在当前版本已注册（在任何持久化写入之前拒绝）。
+      this.#assertEnginesKnown(manifest);
+      // D125 P2：执行型插件（runtime 段）的层级限制 / entry 存在性 / 包防护 / hostApi
+      // 校验——同样在一切持久化写入之前（61 §2 / §7）。
+      await assertRuntimeInstallable(manifest, {
+        dir: staged.stagingDir,
+        tier: runtimeTierOf(resolved.marketplace),
+      });
       const row = this.#deps.store.get(id);
       if (row !== null) {
         // P1-2: reinstalling the SAME id from a local source IS the update flow (design 51
@@ -710,9 +840,16 @@ export class PluginRegistry {
       });
 
       this.#manifests.set(`${id}@${version}`, manifest);
+      if (manifest.runtime !== undefined) this.#runtimeManifestIds.add(id);
+      else this.#runtimeManifestIds.delete(id);
       const insertedRow = this.#deps.store.get(id)!;
       const ctx = await this.#contextFor(insertedRow, manifest, input.userConfig);
       try {
+        // D125 补丁：执行型插件安装后第一时间初始化私有数据目录（0700，版本无关）。
+        // 与投影同段：创建失败走下面的回滚（含目录清理），不留半装状态。
+        if (manifest.runtime !== undefined) {
+          ensurePluginDataDir(this.#deps.pluginDataDir, id);
+        }
         for (const projector of this.#projectors) {
           if (!capabilityKindOf(projector.kind).hasContribution(manifest)) continue;
           await projector.project(ctx);
@@ -807,6 +944,13 @@ export class PluginRegistry {
       throw new AppError('PLUGIN_INVALID', '包与确认时不一致，请重新选择');
     }
     this.#assertMatchesMarketplaceEntry(staged, resolved.marketplace);
+    // D124：更新同样不允许引入未注册引擎的条目（① validate 步内，先于一切写入）。
+    this.#assertEnginesKnown(manifest);
+    // D125 P2：更新同样过执行型插件校验（层级 / entry / 包防护 / hostApi）。
+    await assertRuntimeInstallable(manifest, {
+      dir: staged.stagingDir,
+      tier: runtimeTierOf(resolved.marketplace),
+    });
     const origin: PluginRow['origin'] = resolved.marketplace === null ? 'local' : 'marketplace';
     const tier: PluginRow['tier'] =
       resolved.marketplace === null ? 'developer' : resolved.marketplace.entry.tier;
@@ -849,26 +993,45 @@ export class PluginRegistry {
       throw new AppError('PLUGIN_INCOMPATIBLE', newInspection.blockers.join('；'));
     }
     this.#prevalidateUpdateUserConfig(manifest, newInspection, input.userConfig, row.id);
+    // D125 P4：执行型插件的网络域名 / 敏感实例字段也进扩权 diff（扩大 → 重新同意）。
+    const oldRuntimeDisclosure = await runtimeDisclosureOf(oldManifest, {
+      dir: oldDir,
+      tier: this.#identityOf(row).tier,
+    });
+    const newRuntimeDisclosure = await runtimeDisclosureOf(manifest, {
+      dir: staged.stagingDir,
+      tier,
+    });
     const diff = diffPermissions(
-      permissionTokens(
-        itemsOf(
-          await this.#inspectContext({
-            plugin: this.#identityOf(row),
-            manifest: oldManifest,
-            dir: oldDir,
-            userConfig: {},
-            ledger: new NullLedger(),
-            owned,
-          }),
+      unionPermissionTokens(
+        permissionTokens(
+          itemsOf(
+            await this.#inspectContext({
+              plugin: this.#identityOf(row),
+              manifest: oldManifest,
+              dir: oldDir,
+              userConfig: {},
+              ledger: new NullLedger(),
+              owned,
+            }),
+          ),
         ),
+        oldRuntimeDisclosure.runtime,
       ),
-      permissionTokens(itemsOf(newInspection)),
+      unionPermissionTokens(permissionTokens(itemsOf(newInspection)), newRuntimeDisclosure.runtime),
     );
     if (diff.expanded && !input.acknowledgeDiff) {
       throw new AppError('INVALID_INPUT', '更新新增了权限，请先确认差异', {
         permissionsExpanded: true,
         added: diff.added,
       });
+    }
+
+    // D125 补丁：更新时确保私有数据目录存在（版本无关，安装树才换）。放在所有
+    // 校验与授权差异门之后、journal / 文件替换之前：创建失败直接失败，无需补偿；
+    // 被拒的更新也不会留下空目录。更新失败 / 补偿不删这个目录（旧版本仍在使用）。
+    if (manifest.runtime !== undefined) {
+      ensurePluginDataDir(this.#deps.pluginDataDir, row.id);
     }
 
     // ④ journal — from here on a crash rolls back on the next start
@@ -887,6 +1050,21 @@ export class PluginRegistry {
       updateSnapshot: JSON.stringify(snapshots),
       updatedAt: now,
     });
+
+    // D125：更新落盘前先终止执行型进程——目录即将被替换，旧进程继续跑旧代码会
+    // 让新版清单 / 代码 / 权限在校验通过后仍不生效（下次调用懒启动新版本）。
+    // 此后的 isConsumable 因 updateTo != null 为 false，排队调用不会趁机拉起旧版本；
+    // 注意用 stop 而不是 teardown：更新不能清空 plugin_storage。
+    try {
+      this.#runtimeStop?.(row.id);
+    } catch (error) {
+      // 旧进程没能终止就不能继续替换目录 / 提交新版本（否则旧代码可能继续服务）。
+      // 文件尚未改动，清掉 journal 即回到正常状态。
+      this.#deps.store.update(row.id, { updateTo: null, updateSnapshot: null });
+      throw new AppError('INTERNAL', '插件更新失败：无法终止旧的执行型进程', {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
 
     // ⑤ files: same-slot updates park the old dir at `.prev`, then the staged tree moves in
     let prevDir: string | null = null;
@@ -973,6 +1151,8 @@ export class PluginRegistry {
     });
     this.#manifests.delete(`${row.id}@${row.version}`);
     this.#manifests.set(`${row.id}@${manifest.version}`, manifest);
+    if (manifest.runtime !== undefined) this.#runtimeManifestIds.add(row.id);
+    else this.#runtimeManifestIds.delete(row.id);
     for (const kind of PLUGIN_PROJECTOR_ORDER) {
       if (!(kind in snapshots)) continue;
       const projector = this.#projectorOf(kind);
@@ -1292,6 +1472,29 @@ export class PluginRegistry {
   }
 
   /**
+   * D124 安装管线校验步（60 号文档 §2）：能力模型条目绑定的 `engine` 必须已在
+   * `MEDIA_ENGINES` 注册——未知引擎拒绝安装 / 更新（PLUGIN_ENGINE_UNKNOWN，错误
+   * 信息列出已注册引擎 id）。执行逻辑住在第一方引擎里：包内数据指向不存在的
+   * 引擎 = 当前版本无法安全执行，不能静默忽略。
+   */
+  #assertEnginesKnown(manifest: PluginManifest): void {
+    const unknown = new Set<string>();
+    for (const entry of manifest.contributions.capabilityModels ?? []) {
+      // D125 过渡：执行型条目不填 engine（61 §2，与 manifest 的 runtime 段配对），
+      // 其安装期校验归 D125-P2 执行型管线；这里只校验数据型条目（有 engine）。
+      if (entry.engine === undefined) continue;
+      if (MEDIA_ENGINES[entry.engine] === undefined) unknown.add(entry.engine);
+    }
+    if (unknown.size > 0) {
+      throw new AppError(
+        'PLUGIN_ENGINE_UNKNOWN',
+        `条目绑定的引擎未注册：${[...unknown].sort().join('、')}（已注册：${Object.keys(MEDIA_ENGINES).join('、')}）`,
+        { engines: [...unknown].sort() },
+      );
+    }
+  }
+
+  /**
    * Required user_config fields of the NEW version's mcpb contributions must be
    * satisfiable BEFORE any persistent write: provided values count, a declared default
    * counts (same rule as `validateUserConfig` on first install), and a required sensitive
@@ -1383,33 +1586,50 @@ export class PluginRegistry {
     }
     if (row.enabled === enabled) return this.#summaryOf(row);
 
-    const manifest = await this.#readManifestFromDir(this.#dirOf(row.id, row.version));
-    if (manifest === null) {
-      // The flag must never drift from the projected state (design 51 §7: enabled=0
-      // removes every projection). With unreadable content we cannot run the projectors
-      // — refusing keeps `enabled` truthful; uninstall still works from the ledger.
-      throw new AppError('PLUGIN_INVALID', '插件内容不可读，无法启停；如需移除请卸载该插件');
+    // D125 P2：停用 = kill switch 即时生效（61 §7）——先杀掉执行型进程，再做投影回滚。
+    // 投影 / 行更新完成前该 id 从可消费集合摘掉：排队中的调用不得重新拉起进程。
+    if (!enabled) {
+      this.#runtimeHalted.add(id);
+      try {
+        this.#runtimeStop?.(id);
+      } catch (error) {
+        this.#deps.logger.warn(
+          { plugin: id, error: error instanceof Error ? error.message : String(error) },
+          'plugin setEnabled: runtime stop failed',
+        );
+      }
     }
-    const ctx = await this.#contextFor(row, manifest, {});
-    // Disable unwinds in reverse projection order, enable re-projects forward.
-    const order = enabled ? [...PLUGIN_PROJECTOR_ORDER] : [...PLUGIN_PROJECTOR_ORDER].reverse();
-    for (const kind of order) {
-      const refs = this.#deps.store.refs(id, kind);
-      if (refs.length === 0) continue;
-      const projector = this.#projectorOf(kind);
-      if (projector === undefined) continue;
-      await projector.setEnabled(ctx, refs, enabled);
+    try {
+      const manifest = await this.#readManifestFromDir(this.#dirOf(row.id, row.version));
+      if (manifest === null) {
+        // The flag must never drift from the projected state (design 51 §7: enabled=0
+        // removes every projection). With unreadable content we cannot run the projectors
+        // — refusing keeps `enabled` truthful; uninstall still works from the ledger.
+        throw new AppError('PLUGIN_INVALID', '插件内容不可读，无法启停；如需移除请卸载该插件');
+      }
+      const ctx = await this.#contextFor(row, manifest, {});
+      // Disable unwinds in reverse projection order, enable re-projects forward.
+      const order = enabled ? [...PLUGIN_PROJECTOR_ORDER] : [...PLUGIN_PROJECTOR_ORDER].reverse();
+      for (const kind of order) {
+        const refs = this.#deps.store.refs(id, kind);
+        if (refs.length === 0) continue;
+        const projector = this.#projectorOf(kind);
+        if (projector === undefined) continue;
+        await projector.setEnabled(ctx, refs, enabled);
+      }
+      this.#deps.store.update(id, { enabled, updatedAt: this.#deps.clock.now() });
+      this.#deps.audit?.recordSystem('plugin_set_enabled', {
+        pluginId: id,
+        version: row.version,
+        origin: row.origin,
+        tier: row.tier,
+        ...(options.auditReason !== undefined ? { reason: options.auditReason } : {}),
+      });
+      this.#deps.events.emit('plugins.changed', { ids: [id] });
+      return this.#summaryOf(this.#deps.store.get(id)!);
+    } finally {
+      if (!enabled) this.#runtimeHalted.delete(id);
     }
-    this.#deps.store.update(id, { enabled, updatedAt: this.#deps.clock.now() });
-    this.#deps.audit?.recordSystem('plugin_set_enabled', {
-      pluginId: id,
-      version: row.version,
-      origin: row.origin,
-      tier: row.tier,
-      ...(options.auditReason !== undefined ? { reason: options.auditReason } : {}),
-    });
-    this.#deps.events.emit('plugins.changed', { ids: [id] });
-    return this.#summaryOf(this.#deps.store.get(id)!);
   }
 
   uninstall(id: string): Promise<void> {
@@ -1456,6 +1676,17 @@ export class PluginRegistry {
     identity: PluginIdentity,
     options: { throwOnError: boolean },
   ): Promise<void> {
+    // 卸载 / 回滚期间视为不可消费：目录删除与行删除之间的窗口内不允许再拉起进程。
+    this.#runtimeHalted.add(id);
+    // D125：执行型进程必须先终止（目录即将被删；Windows 上打开的文件句柄会阻塞 rm）。
+    try {
+      this.#runtimeTeardown?.(id);
+    } catch (error) {
+      this.#deps.logger.warn(
+        { plugin: id, error: error instanceof Error ? error.message : String(error) },
+        'plugin teardown: runtime dispose failed (continuing)',
+      );
+    }
     // D105: instances go FIRST — materializers may still read projected state, and the
     // rows must be gone before the plugin row deletes (FK CASCADE would drop them raw).
     if (this.#instanceTeardown !== null) {
@@ -1466,6 +1697,25 @@ export class PluginRegistry {
           { plugin: id, error: error instanceof Error ? error.message : String(error) },
           'plugin teardown: instance cascade failed (continuing)',
         );
+      }
+    }
+    // D125 收口审查：插件级 config 敏感字段（`plugin:{scope}:config:*`）此前不在卸载
+    // 清理范围（实例 secrets 由 instance teardown 按实例前缀清）。这里按插件作用域
+    // 前缀兜底清掉**全部** secret（含清单改名 / 删字段后的残留）；作用域编码是单射的，
+    // 前缀带结尾冒号，不会碰到其它插件。best-effort，失败只 warn。
+    const pluginSecrets = this.#deps.secrets;
+    if (pluginSecrets?.names !== undefined && pluginSecrets.removeValue !== undefined) {
+      const prefix = `${pluginSecretScope(id)}:`;
+      for (const name of pluginSecrets.names()) {
+        if (!name.startsWith(prefix)) continue;
+        try {
+          pluginSecrets.removeValue(name);
+        } catch (error) {
+          this.#deps.logger.warn(
+            { plugin: id, name, error: error instanceof Error ? error.message : String(error) },
+            'plugin teardown: secret removal failed (continuing)',
+          );
+        }
       }
     }
     const row = this.#deps.store.get(id);
@@ -1498,8 +1748,20 @@ export class PluginRegistry {
         'plugin teardown: dir removal failed',
       );
     }
+    // D125 补丁：卸载 / 安装回滚清掉私有数据目录（版本无关）。尽力而为：失败只记
+    // 日志，不掩盖卸载本身的错误（数据目录残留已无行引用，不影响再次安装）。
+    try {
+      await rm(pluginDataDirFor(this.#deps.pluginDataDir, id), { recursive: true, force: true });
+    } catch (error) {
+      this.#deps.logger.warn(
+        { plugin: id, error: error instanceof Error ? error.message : String(error) },
+        'plugin teardown: data dir removal failed',
+      );
+    }
     this.#deps.store.delete(id);
     this.#manifests.delete(`${id}@${identity.version}`);
+    this.#runtimeHalted.delete(id);
+    this.#runtimeManifestIds.delete(id);
     if (options.throwOnError && errors.length > 0) {
       const error = errors[0];
       if (error instanceof AppError) throw error;
@@ -1557,6 +1819,7 @@ export class PluginRegistry {
       mcp: new Set(),
       mail: new Set(),
       im: new Set(),
+      'capability-model': new Set(),
     };
     for (const item of this.#deps.store.items(pluginId)) {
       if (item.kind === 'disabled_connection') continue;
@@ -1587,7 +1850,14 @@ export class PluginRegistry {
     conflicts: PluginInspectOutput['conflicts'];
     blockers: string[];
   }> {
-    const items: ConsentItems = { skills: [], connectors: [], mcp: [], mail: [], im: [] };
+    const items: ConsentItems = {
+      skills: [],
+      connectors: [],
+      mcp: [],
+      mail: [],
+      im: [],
+      capabilityModels: [],
+    };
     const conflicts: PluginInspectOutput['conflicts'] = [];
     const blockers: string[] = [];
     for (const projector of this.#projectors) {
@@ -1667,6 +1937,13 @@ export class PluginRegistry {
     const owned = existingRow === null ? emptyOwned() : this.#ownedFor(existingRow.id);
     const inspection = await this.#inspectStaged(staged, identity, owned);
     const blockers = [...inspection.blockers];
+    // D125 P2：执行型插件的能力披露（同意卡数据面）+ 阻断列表（层级 / entry / 包防护 /
+    // hostApi），与安装期同一份判定。
+    const runtimeCheck = await runtimeDisclosureOf(manifest, {
+      dir: staged.stagingDir,
+      tier: runtimeTierOf(marketplace),
+    });
+    blockers.push(...runtimeCheck.blockers);
     // Namespace gate surfaces as a blocker in the consent view (install throws PLUGIN_INVALID).
     try {
       assertInstallablePluginId(manifest.id);
@@ -1695,9 +1972,13 @@ export class PluginRegistry {
             ledger: new NullLedger(),
             owned,
           });
+          const oldRuntimeDisclosure = await runtimeDisclosureOf(oldManifest, {
+            dir: this.#slotDirOf(existingRow),
+            tier: this.#identityOf(existingRow).tier,
+          });
           const diff = diffPermissions(
-            permissionTokens(oldItems.items),
-            permissionTokens(inspection.items),
+            unionPermissionTokens(permissionTokens(oldItems.items), oldRuntimeDisclosure.runtime),
+            unionPermissionTokens(permissionTokens(inspection.items), runtimeCheck.runtime),
           );
           update = {
             from: existingRow.version,
@@ -1745,6 +2026,7 @@ export class PluginRegistry {
       blockers,
       origin: marketplace === null ? 'local' : 'marketplace',
       tier: marketplace === null ? 'developer' : marketplace.entry.tier,
+      runtime: runtimeCheck.runtime,
     };
   }
 
@@ -1756,8 +2038,12 @@ export class PluginRegistry {
     const yielded = this.#yieldedSlugs();
     for (const adapter of CAPABILITY_KINDS) {
       const kind = adapter.kind;
+      // D124：capability-model 条目不进插件卡的 counts / items（共享契约的固定五键），
+      // 条目清单走 `plugins.listCapabilityEntries`；账本行仍由投影器维护。
+      if (kind === 'capability-model') continue;
       const refs = this.#deps.store.refs(row.id, kind);
-      counts[adapter.consentKey] = refs.length;
+      // kind 排除 capability-model 后 consentKey 必在固定五键内（跨属性关系 TS 不可推断）。
+      counts[adapter.consentKey as keyof typeof counts] = refs.length;
       if (refs.length === 0) continue;
       const missing = new Set(this.#projectorOf(kind)?.missing?.(identity, refs) ?? []);
       for (const ref of refs) {

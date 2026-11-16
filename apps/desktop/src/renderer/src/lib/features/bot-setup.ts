@@ -23,6 +23,7 @@ export function emptyProfile(): BotProfile {
       browser_profile: '',
       message_transport: '',
       inkcop_agent_keys: [],
+      capability_entries: [],
       agent: { ...BUILTIN_AGENT_RUNTIME },
     },
     // P10 guardrail defaults — mirrors botBehaviorSchema.prefault({}) (proactive

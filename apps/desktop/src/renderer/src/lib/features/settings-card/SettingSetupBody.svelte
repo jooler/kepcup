@@ -15,7 +15,9 @@
   import MainModelSetupBody from '$lib/features/chats/MainModelSetupBody.svelte';
   import ConfirmLocalConnectorBody from '$lib/features/chats/ConfirmLocalConnectorBody.svelte';
   import ConfirmPluginInstallBody from '$lib/features/chats/ConfirmPluginInstallBody.svelte';
-  import { setupAliasOf } from '$lib/features/chats/setup-alias';
+  import PluginCredentialSetupBody from '$lib/features/chats/PluginCredentialSetupBody.svelte';
+  import { isPluginCredentialEntryPath, setupAliasOf } from '$lib/features/chats/setup-alias';
+  import { plugins } from '$lib/features/plugins/plugins.svelte';
 
   /**
    * 失败续跑卡（D58 SetupRequiredCard）的通用 body 与分发（todo/conversational-app-setup.md
@@ -27,8 +29,12 @@
    * 条目级 CAS 的组件都从这里拿 `expected`。
    *
    * 旧 kind 的处理：
-   * - capability-model / web-search / mail-account：`setupAliasOf` 转成 `kind:'setting'`
-   *   走同一分发（这三个 kind 总能映射；旧 kind 在契约里保留为兼容别名）。
+   * - capability-model：**全局槽位路径**（payload 无 `pluginId`，D124 前唯一形态）
+   *   仍走 `setupAliasOf` → `kind:'setting'` 同一分发；**条目路径**（payload 带
+   *   `pluginId`，D124 插件凭据卡）分发到 `PluginCredentialSetupBody`——别名指向的
+   *   全局能力槽位卡管不到插件实例凭据（凭据永不经模型，60 §6）。
+   * - web-search / mail-account：`setupAliasOf` 转成 `kind:'setting'`
+   *   走同一分发（这两个 kind 总能映射；旧 kind 在契约里保留为兼容别名）。
    * - agent / connect-app：分发到各自的别名 body。载荷里比目录条目多的字段
    *   （`agentId`/`reason`/`detail`；`target`/`connectionId`/`scopes`）与随附行为（Agent 的
    *   自动续跑基线与实验开关、连接的自定义目标 / 重连 / scope 并集 / 已在别处连好的一键继续）
@@ -57,6 +63,19 @@
     onProceed?: () => void;
   } = $props();
   const session = getChatSession();
+
+  // D124：条目路径的缺凭据（payload 带插件定位）出插件实例凭据卡——不走别名
+  // （别名指向全局能力槽位卡）。清单尚未拉到时也按条目路径渲染（凭据卡有载入态，
+  // 见 isPluginCredentialEntryPath）；清单拉到后插件已卸载才回落全局卡。
+  $effect(() => {
+    plugins.start();
+    void plugins.load().catch(() => undefined);
+  });
+  const pluginCredential = $derived(
+    isPluginCredentialEntryPath(requirement, plugins.loaded, (id) => plugins.has(id))
+      ? { requirement }
+      : null,
+  );
 
   /** 旧 kind 的兼容别名（capability-model / web-search / mail-account → setting）。 */
   const alias = $derived(setupAliasOf(requirement, t));
@@ -113,6 +132,10 @@
 {:else if requirement.kind === 'confirm-local-connector'}
   <!-- 本机连接（设计 29 §17）：Bot 提议添加，core 探测后生成的确认卡，不并入设置卡 -->
   <ConfirmLocalConnectorBody {requirement} />
+{:else if pluginCredential !== null}
+  <!-- D124：条目路径缺凭据（payload 带插件 / 条目 / 实例定位）→ 插件实例凭据卡；
+       保存 = 既有实例 RPC，成功后由宿主 proceed（continueAfterSetup → runs.retry）。 -->
+  <PluginCredentialSetupBody requirement={pluginCredential.requirement} onProceed={proceed} />
 {:else if setting !== null}
   <div class="space-y-0.5 pr-6">
     <p class="text-sm font-medium" data-testid="setup-card-title">

@@ -1376,3 +1376,911 @@
   产物写入都查认领），在以后放宽域串行、或域判定出现未预见的保守性缺口时兜底；
   TaskView / 任务详情页照常展示认领，供用户与任务观察协调状态。`claim` 的工具
   说明与任务提示词按「协调原语」措辞，不承诺在现行调度下必然发生拦截。
+
+### DEV-093 能力模型条目 id 复用 mcp 系 id 规则而非「skills 的 id schema」（D124 P1）
+
+- 状态：已落实
+- 阶段：D124 P1（2026-11-15）
+- 是否阻塞：否
+- 问题：P1 任务书步骤 1 写「`id`：复用既有贡献 id 规则（对齐 skills 贡献的 id
+  schema）」，但 skills 贡献（`pluginSkillContributionSchema`）**没有 id 字段**（唯一键
+  是 `dir` 相对路径）；60 号设计 §2 的注释是「贡献 id 规则复用」，示例 `'qwen-image'`。
+  「既有贡献 id 规则」实际只有一条：`pluginMcpIdSchema`（`PLUGIN_MCP_KEY_PATTERN`，
+  mcp / mail / im 同款，小写字母数字连字符、≤32）。
+- 影响范围：`packages/shared/src/domain/plugin-manifest.ts`
+  （`capabilityModelEntrySchema.id`）。
+- 决定：`capabilityModelEntrySchema.id` 复用 `pluginMcpIdSchema`——与设计示例、既有
+  贡献 id 规则及条目 id 作为 `plugin_items` 账本 ref 的用途（同 server id）一致；
+  插件内唯一性仍由 superRefine 查重（大小写不敏感，同既有 `dup` 规则）。
+- 已更新的文档：本条；60 号 §2 注释本身已是「贡献 id 规则复用」，无需改。
+
+### DEV-094 D124 P1 触碰 testkit 一行编译修复；core / renderer 类型检查中断列为 P2/P3 待修（D124 P1）
+
+- 状态：已落实（core / renderer 部分待 P2 / P3）
+- 阶段：D124 P1（2026-11-15）
+- 是否阻塞：否（P1 验收范围内不阻塞；全量收口前必须由 P2 / P3 清零）
+- 问题：P1 的两处 shared 契约扩展有编译面后果，超出「本阶段纯 shared + 迁移」的
+  文件面：
+  1. `botRuntimeSchema` 新增 `capability_entries`（`.default([])`，输出类型必有该键）→
+     手写完整 runtime 字面量的三处编译失败：`packages/testkit/src/helpers.ts`
+     （botProfile fixture）、`packages/core/src/domain/bots.ts`（`emptyProfile`）、
+     `apps/desktop/src/renderer/src/lib/features/bot-setup.ts`（`emptyProfile`）。
+  2. `PLUGIN_INSTANCE_KINDS` 增 `'capability-model'` → core 把共享 kind 联合传入按
+     窄联合收参的 `capabilityKindOf` 系函数，5 处编译失败（`plugins/instances.ts` ×4、
+     `plugins/registry.ts` ×1）——这正是 P2「capabilityModelKind 适配器 + 注册表」
+     的改动面。
+- 影响范围：`packages/testkit/src/helpers.ts`（P1 已修：fixture 恒补
+  `capability_entries: []`，一行、零行为变化）；`packages/core/src/domain/bots.ts`、
+  `packages/core/src/plugins/instances.ts`、`packages/core/src/plugins/registry.ts`
+  （P2 修）；`apps/desktop/src/renderer/src/lib/features/bot-setup.ts`（P3 修）。
+- 决定：testkit 不在 P1 禁改清单（settings-catalog / core / renderer）内，且
+  AGENTS.md 把 testkit 列为 shared 契约改动的联动面——补一行默认值让 desktop
+  node 侧 typecheck（`tsconfig.node.json`，e2e / web 测试经 testkit 消费
+  botProfile fixture）恢复。core 与 renderer 按 P1 硬约束**不动**，typecheck 中断
+  （core 6 处、renderer 1 处；renderer 为 svelte-check `tsconfig.web.json` 下
+  bot-setup.ts 的 `emptyProfile`，desktop 整体 `pnpm --filter @kepcup/desktop
+  typecheck` 在 P3 之前仍不绿）如实交接：P2 落 `capabilityModelKind` 时顺带修 core
+  的 6 处，P3 修 renderer 的 1 处；两阶段落地前全量 `pnpm test` 的 typecheck 段
+  不会绿（P1 定向测试不受影响，vitest 不做类型检查）。
+- 已更新的文档：本条；P1 任务书「实施记录」。
+
+### DEV-095 capabilityModelKind 的 contributionSchema 用单条目 schema 而非数组 schema（D124 P2）
+
+- 状态：已落实
+- 阶段：D124 P2（2026-11-15）
+- 是否阻塞：否
+- 问题：P2 任务书步骤 2.1 写「`contributionSchema = z.array(capabilityModelEntrySchema).max(32)`」，
+  但 `CapabilityKindAdapter.contributionSchema` 的接口契约是「manifest `contributions[kind]`
+  数组**单条目**的 schema」（与 skill / mcp / connector / mail / im 五个适配器一致，均为
+  单条目 schema）；≤32 上限已由 shared 清单 schema（`PLUGIN_MAX_CAPABILITY_MODELS`）
+  承担。该字段当前无运行时消费方，唯一引用是 `plugin-projectors-coverage.test.ts`
+  的「每个适配器引用其 kind 的 shared 条目 schema」断言（`CONTRIBUTION_SCHEMAS[adapter.kind]`）。
+- 影响范围：`packages/core/src/plugins/kinds.ts`（capabilityModelKind）。
+- 决定：跟随接口既有语义用单条目 `capabilityModelEntrySchema`，保持五适配器同构与
+  coverage 测试的派生口径不变；≤32 不在适配器重复声明（shared 是唯一事实来源）。
+- 已更新的文档：本条；P2 任务书「实施记录」。
+
+### DEV-096 MediaEntrySource 增补实例 / 条目读取面与 ResolvedEntry 增补 displayName / instances（D124 P2）
+
+- 状态：已落实
+- 阶段：D124 P2（2026-11-15）
+- 是否阻塞：否
+- 问题：任务书步骤 3 只给 `MediaEntrySource { entriesFor }` 与 `ResolvedEntry = { pluginId,
+  entryId, model, engine, params?, instanceId? }`，但按该最小面无法落实步骤 3.2 / 3.5 的
+  行为：INSTANCE_AMBIGUOUS（多实例未指定）要在**条目选定之后**判（model 匹配在
+  MediaService，条目仓库不知道哪个条目会被选中）→ MediaService 需要候选实例全集；
+  缺凭据 → CAPABILITY_NOT_CONFIGURED 需要读实例凭据（secrets 名含插件 id 转义，
+  media 侧不得反向依赖 plugins 的 `pluginSecretScope`）；`plugins.testCapabilityEntry`
+  需要条目定义与实例解析；generateVideo → videoStatus 的 provider（pli_…）往返需要
+  「实例 → 插件 + 引擎」反查；工具 model 参数要匹配 displayName（60 §6，任务书步骤
+  3.2 同文）→ 条目要带 displayName。
+- 影响范围：`packages/core/src/media/service.ts`（接口与 `ResolvedEntry`）、
+  `packages/core/src/plugins/media-entry-source.ts`（实现）。
+- 决定：`entriesFor(botId, capability)` 签名逐字保留；接口增补五个读取方法
+  （`entryOf` / `instancesOf` / `instanceCredential` / `instanceConfig` /
+  `capabilityInstanceOf`），`ResolvedEntry` 增补可选 `displayName` / `instances`。
+  实例歧义仍由 MediaService 判（源只负责「唯一可解析时填 instanceId，否则留空 +
+  带全集」）；凭据读取经接口注入，media 不 import plugins。均属任务书「阶段内接口
+  细节可微调」授权面，固定契约不受影响。
+- 已更新的文档：本条；P2 任务书「实施记录」。
+
+### DEV-097 embedTexts / rerank 不开条目通道（D124 P2）
+
+- 状态：已落实（按 60 号设计决策压过任务书字面枚举）
+- 阶段：D124 P2（2026-11-15）
+- 是否阻塞：否
+- 问题：任务书步骤 3.3 写「六个媒体方法（generateImage / synthesizeSpeech /
+  transcribeSpeech / understandImage / submitVideo / embed 等）加可选 resolve 透传
+  参数」，但 60 号设计决策 6 明文「条目消费面 = 经 media 网关的五个工具能力
+  （image / video / tts / asr / multimodal）；**embedding / rerank 不开放**」，
+  README「不包含」栏同样写「embedding/rerank 条目消费（永不，本期范围外）」。
+- 影响范围：`packages/core/src/media/service.ts`（embedTexts / rerank 签名不变）。
+- 决定：条目解析只落在五个工具能力对应的五个方法上（generateImage /
+  synthesizeSpeech / transcribeSpeech / generateVideo / understandImage）；embedTexts /
+  rerank 保持原签名与全局槽位语义，条目仓库实现侧也把 embedding / rerank 条目挡在
+  entriesFor 之外（防御直调）。与 60 号 §10 Q4 一致。
+- 已更新的文档：本条；P2 任务书「实施记录」。
+
+### DEV-098 D124 P2 顺带清 P1 遗留三件：renderer 空字面量、两个「回退重放」迁移测试、PluginItemKind 扩条目 kind（D124 P2）
+
+- 状态：已落实
+- 阶段：D124 P2（2026-11-15）
+- 是否阻塞：否
+- 问题：P1 契约与迁移落地后有四处顺带面没被 P1 修（P1 交接记录在 DEV-094 与
+  P2 开工上下文）：
+  1. `apps/desktop/src/renderer/src/lib/features/bot-setup.ts` 的 `emptyProfile` 缺
+     `capability_entries`（DEV-094 第 2 条的 renderer 半句，原定 P3 修）；
+  2. `tool-usage-migration.test.ts` / `public-skills-migration.test.ts` 的「回退重放」
+     手法假设 0073 之后的迁移都是纯新增表——0075 对既有 `usage_ledger` 做
+     ADD COLUMN，重放必失败（P1 加 0075 后即红，不在 P1 定向清单内故未暴露）；
+  3. shared `pluginItemKindSchema`（`PluginItemKind`）未含 `'capability-model'`——0075
+     已扩 `plugin_items` 的 kind CHECK，而设计 60 §2 要求条目「照常记入
+     plugin_items 账本（kind 'capability-model'，ref = 条目 id），卸载可回滚」，
+     账本写入（`PluginLedger.add`）在 P2 的投影器里没有这个枚举值写不了。
+- 影响范围：`apps/desktop/src/renderer/src/lib/features/bot-setup.ts`（一行
+  `capability_entries: []`）；`packages/core/test/unit/tool-usage-migration.test.ts`、
+  `packages/core/test/unit/public-skills-migration.test.ts`（回退块摘除 0075 两列，
+  使 0075 可重放）；`packages/shared/src/domain/plugins.ts`（`pluginItemKindSchema`
+  追加 `'capability-model'`，纯枚举扩展，消费面全在 core 账本侧）；顺带
+  `pnpm --filter @kepcup/desktop typecheck` 提前恢复全绿。
+- 决定：三件全为 P1 契约 / 迁移的机械联动面，零行为变化，随 P2 一次清零；
+  DEV-094 的 core（P2 步骤 2 一并修复的 6 处收窄）与 renderer 待修项就此闭环。
+- 已更新的文档：本条；P2 任务书「实施记录」。
+
+### DEV-099 工具 model 参数匹配键扩到 entryId；entriesFor 输出序 = 插件级勾选序 + 插件内声明序（D124 P2）
+
+- 状态：已落实
+- 阶段：D124 P2（2026-11-15，审查修正时记录）
+- 是否阻塞：否
+- 问题：两处与任务书字面有出入的实现口径，随审查一并定案：
+  1. P2 任务书步骤 3.2 与 60 号决策 7 写工具显式 `model` 参数「匹配条目
+     model / displayName，未命中回默认条目」，实现（`MediaService.#selectEntry`）
+     额外把条目 `entryId` 作为第三个匹配键。
+  2. 任务书步骤 3.1 写 entriesFor 返回「条目声明序」，未界定多插件时的排序；
+     实现输出序 = 插件级按 `capability_entries` 勾选序（与「按插件分组勾选」的
+     UI 语义一致）、插件内按清单声明序——单插件场景与「条目声明序」完全一致。
+- 影响范围：`packages/core/src/media/service.ts`（#selectEntry）、
+  `packages/core/src/plugins/media-entry-source.ts`（entriesFor 排序）。
+- 决定：两处都保留——entryId 匹配只提高显式命中的命中率、不动「未命中回默认」
+  语义与「条目 > 全局槽位」顺序；条目序以插件内声明序为准满足 60 §4「① 内排序」
+  的回退默认条目 = 声明序首个。接口注释（MediaEntrySource）已写明精确口径；
+  `media-entry-resolution.test.ts`（命中三分支）与
+  `plugin-capability-model.test.ts`（声明序回退）锁定行为。
+- 已更新的文档：本条；P2 任务书「实施记录」。
+
+### DEV-100 「插件提供」入口行落在 ModelConfigDetail 而非任务书点名的 CapabilityModelSection（D124 P3）
+
+- 状态：已落实
+- 阶段：D124 P3（2026-11-15）
+- 是否阻塞：否
+- 问题：P3 任务书步骤 2.3 点名 `CapabilityModelSection.svelte` 加「插件提供」入口行，
+  但该组件现仅服务对话内设置卡（`SettingCardEmbed` 唯一消费），设置页能力槽位卡
+  实际在 `ModelConfigDetail.svelte` 的 `settings-capability-slots` 区（CURRENT-STATE §5
+  的组件描述与代码现状有漂移）。
+- 决定：入口行落 `ModelConfigDetail.svelte`（真实设置页面），`CapabilityModelSection`
+  原样不动（60 §决策 10「全局七槽位卡不动」优先）。
+- 已更新的文档：本条；P3 任务书「实施记录」。
+
+### DEV-101 deepLink 新增 shell.extensionCenterPluginFocus 状态；「去配置」落插件详情页顶部（D124 P3）
+
+- 状态：已落实
+- 阶段：D124 P3（2026-11-15，审查修正深链冷启动竞态后定案）
+- 是否阻塞：否
+- 问题：① 任务书要求设置页入口行「deepLink 插件详情」，但既有机制（tab/anchor）
+  无「直达某插件详情视图」的原语，实现仿 `extensionCenterSystemCardFocus` 先例新增
+  `shell.extensionCenterPluginFocus` 状态（消费即复位）；审查补修了冷启动竞态
+  （清单未 loaded 不消费，`tabs.ts#pluginFocusContentView` 纯函数 + 4 用例锁定）。
+  ② 「去配置」跳转落在插件详情页顶部（模型条目区在前、账号实例区在后），
+  未滚动定位到实例区。
+- 决定：① 按先例模式新增状态，属任务书自由度；② 接受现状——详情页信息架构里
+  条目区在前更合理，滚动定位为锦上添花，留待用户反馈。
+- 已更新的文档：本条；P3 任务书「实施记录」。
+
+### DEV-102 Bot 条目保存前渲染端剔除残留 ref（「卸载后 core 忽略」不成立）（D124 P3）
+
+- 状态：已落实
+- 阶段：D124 P3（2026-11-15，审查核实后定案）
+- 是否阻塞：否
+- 问题：60 §决策 5 写「卸载插件后残留引用……保存时由 core 忽略」，但 P2 落地的
+  `plugins.setBotCapabilityEntries` 对未知 ref 是**整批拒绝 `INVALID_INPUT`**
+  （一次列出全部违规项），并非静默忽略——照字面实现会让「带残留 ref 保存」永远失败。
+- 决定：渲染端保存前剔除残留 ref（`bot-plugins.ts#saveableEntryRefs`，注释说明合成
+  语义）；「已卸载」灰行不可勾选照 60 决策 5 保留。core 整批拒绝语义保持不变
+  （对真实误用仍是 fail-fast）。
+- 已更新的文档：本条；P3 任务书「实施记录」。
+
+### DEV-103 条目分组常量放 bot-panel/bot-plugins.ts，extension-center 反向引用（D124 P3）
+
+- 状态：已落实
+- 阶段：D124 P3（2026-11-15）
+- 是否阻塞：否
+- 问题：`ENTRY_GROUP_LABEL_KEYS` / `ENTRY_GROUP_ORDER`（七能力分组）被 bot-panel 与
+  extension-center 两处消费，任务书未指定落点；放 bot-panel 则 extension-center 反向
+  import（bot-panel↔extension-center 双向 import 已有先例：BotPluginsSection 引
+  BotImBindings）。
+- 决定：维持现状不另立共享模块（两处语义本就同源：同一套能力分组）。
+- 已更新的文档：本条。
+
+### DEV-104 shared 新增 media/schema.ts（media 契约 wire schema + 双向漂移断言）（D125 P1）
+
+- 状态：已落实
+- 阶段：D125 P1（2026-11-15）
+- 是否阻塞：否
+- 问题：任务书步骤 1/2 未明列 wire schema 落点；61 §决策 6 要求「schema 定义在
+  shared，两侧共用」。若不落 shared，P2 的 core `contracts.ts` 必然复刻第二份。
+- 决定：shared `media/schema.ts`：全 strictObject wire schema + `MEDIA_CONTRACT_METHOD_WIRE`
+  注册表 + 底部 schema↔types.ts 双向赋值断言（漂移即 shared typecheck 失败）。
+  61 决策 6 的直接落实。
+- 已更新的文档：本条；P1 任务书「实施记录」。
+
+### DEV-105 vitest.config.ts 加 plugin-sdk 项目（D125 P1）
+
+- 状态：已落实
+- 阶段：D125 P1（2026-11-15）
+- 是否阻塞：否
+- 问题：任务书指定跑 `packages/plugin-sdk` 测试，但 monorepo vitest 项目表未含新包。
+- 决定：加两行项目条目（跨包公共配置最小增量；未跑全量，按测试纪律只跑了定向）。
+- 已更新的文档：本条。
+
+### DEV-106 SDK 客户端行为语义三则：并发防御拒绝 / progress 尾随合并 / 进程入口 exit(0)（D125 P1）
+
+- 状态：已落实
+- 阶段：D125 P1（2026-11-15）
+- 是否阻塞：否
+- 问题：任务书步骤 2.3 的三个行为点需要具体化：
+  ①「调用并发=1」实现为防御性拒绝（回 `PLUGIN_CONTRACT_VIOLATION`）而非客户端内排队
+  ——61 §3.1 明确串行排队在宿主侧，插件只防御；
+  ② progress 限速「1 次/秒」具体化为首条立即发 + 窗口内合并最新一条尾随发送 +
+  调用结束丢弃（discardPending 在 finally，无跨调用定时器残留）；
+  ③ shutdown 后谁退出进程任务书未指定——进程入口（缺省 IPC 通道）模式自动 `exit(0)`
+  （61 §3.1「插件应尽快退出」），显式传通道（测试/嵌入）不接管。
+- 决定：三点均按上述语义落地，各有专项用例锁定。
+- 已更新的文档：本条；P1 任务书「实施记录」。
+
+### DEV-107 esbuild 经 createRequire 复用 apps/desktop 0.28.2；参考插件目录含 type:module package.json（D125 P1）
+
+- 状态：已落实
+- 阶段：D125 P1（2026-11-15）
+- 是否阻塞：否
+- 问题：① 参考插件打包需要 esbuild——仓库已有（apps/desktop 0.28.2），按任务书
+  「若仓库已有则复用」经 `createRequire` 引用，零新依赖（lockfile 单实例确认）。
+  ② `plugins/reference-media/` 不是 workspace 包但 `dist/main.js` 是 ESM——fork 的
+  模块类型按最近 package.json 判定，故目录内放一个仅含 `"type":"module"` 的
+  package.json（非 workspace 包，无副作用）。
+- 决定：均按最小面落地。
+- 已更新的文档：本条。
+
+### DEV-108 reference-media dist 产物不入库且暂无自动构建钩子（风险项，D125-P2 须处理）（D125 P1）
+
+- 状态：待处理（移交 D125-P2）
+- 阶段：D125 P1（2026-11-15，审查确认）
+- 是否阻塞：否（P2 前必须解决）
+- 问题：`plugins/reference-media/dist/main.js` 受根 `.gitignore`（`dist/`）既有规则保护
+  不入库；`plugins/` 非 workspace 目录（`pnpm -r build` 不覆盖）、CI 与任何测试都不引用
+  `build.mjs`——全新 clone 上产物静默缺失，而 P2 端到端/fork 冒烟都依赖它。
+  产物本身可复现（审查代理重建后真 fork 冒烟 SMOKE PASS）。
+- 决定：产物不提交（遵守 ignore 既有规则）；**D125-P2 必须把产物构建钩进测试或 CI**
+  （如 checked-in fork 冒烟测试在 dist 缺失时先跑 `node plugins/reference-media/build.mjs`）。
+- 已更新的文档：本条；D125-P2 派工时列入硬要求。
+
+### DEV-109 错误码帧级选择与 engines.kepcup 版本对齐（D125 P1）
+
+- 状态：已落实
+- 阶段：D125 P1（2026-11-15）
+- 是否阻塞：否
+- 问题：① error 帧的 code 字段：若枚举锁死 4 个新码，会挡住 61 §5 允许的「插件显式
+  声明 `PROVIDER_AUTH_FAILED`/`PROVIDER_QUOTA` 映射」——故帧级 code 开放为 string，
+  宿主侧产生的 4 码（`PLUGIN_CRASHED` 等）在 shared 另册登记
+  （`PLUGIN_RUNTIME_ERROR_CODES`）供内部使用。
+  ② 参考插件 `engines.kepcup: ">=0.5.14"` 与当前应用版本对齐。**该值固定不随插件
+  版本号抬高**（用户明确要求）：它是「应用最低版本」，不是插件版本——插件升到 1.x
+  时若把这条同步抬高，当前 0.5.x 应用会直接 `PLUGIN_INCOMPATIBLE` 装不上。
+  `plugin-host.test.ts` 的试点用例断言该值锁定为 `>=0.5.14`。
+- 决定：均按上述口径；61 §5 的映射语义不受影响。
+- 已更新的文档：本条。
+
+### DEV-110 engine 可选化（61 §2 执行型条目）的 core 过渡适配（D125 P1）
+
+- 状态：已落实（过渡语义，D125-P2 接管）
+- 阶段：D125 P1（2026-11-15）
+- 是否阻塞：否
+- 问题：`CapabilityModelEntry.engine` 改可选后，core 6 文件 8 处 typecheck 错误
+  （基线把 engine 当必填消费）。PluginHost 未落地，engine-less 条目暂无解析来源。
+- 决定：最小适配 + 过渡语义「engine-less 条目不可消费、跳过」——
+  `capabilityModelInstanceFields` 空贡献、materializer 与 `#assertEnginesKnown` 跳过
+  （执行型安装校验归 D125-P2 管线）、`entriesFor`/`entryOf` 过滤、
+  `testCapabilityEntry` 视同不存在、`listCapabilityEntries` 条目行 engine 映射 null
+  （shared 该字段 `.nullable()`）。数据型条目（engine 恒有值）行为零变化
+  （既有 continue/filter 分支对其不可达，语义与原 `MEDIA_ENGINES[undefined]` 兜底等价）。
+  D125-P2 落 `HostedAdapter` 分支时替换这些过渡点。
+- 已更新的文档：本条；P1 任务书「实施记录」。
+
+### DEV-111 `pluginContributionKindSchema` 收编 `'capability-model'` + 摘要 / 徽标连带（D124 P4）
+
+- 状态：已落实
+- 阶段：D124 P4（2026-11-15）
+- 是否阻塞：否
+- 问题：任务书步骤 2「市场索引条目」只说加两条 verified 条目，但索引生成流程
+  （`scripts/sign-plugin-index.mjs` 的 `categoriesOf`）与消费端（shared
+  `pluginIndexEntrySchema.categories`、市场卡一句话概述回退、renderer 类别徽标 /
+  i18n）都不认识能力模型贡献——不扩的话两个包的索引条目 `categories` 为空、概述
+  回落「提供扩展能力」，与 im-wechat 上架时补 `im` 分支的先例不一致。
+- 影响范围：shared `plugin-manifest.ts`（枚举 + `PluginCapabilityFacts` +
+  `pluginCapabilitySummary` + `…FromCategories`）、`plugin-index.ts`（categories
+  max 5→6）、`scripts/sign-plugin-index.mjs`、renderer `bot-plugins.ts`
+  （`PLUGIN_KIND_LABEL_KEYS` / `pluginKindBadges`）、zh-CN / en-US 的
+  `plugins.kind.capabilityModel` 与 `plugins.market.category.capability-model` 两键。
+- 决定：按 im 先例收编。旧宿主兼容：索引条目校验是逐条跳过（plugin-index.ts 注释
+  语义）——schema 未收编 `capability-model` 的旧客户端只跳过这两条，整份索引不受
+  影响；已收编但低于 `0.5.14` 的客户端由 `engines.kepcup` 兼容性判定标为不可安装
+  （P1-1 语义，不会下载后解析失败）。概述中文派生维持 DEV-074 单一中文句姿态
+  （「提供 N 个模型；可添加多个厂商账号」）。
+- 已更新的文档：本条；60 号 §11；plugins/README.md 批次清单。
+
+### DEV-112 builtin 只读目录插件的条目通路补齐与实例面定界（D124 P4）
+
+- 状态：已落实
+- 阶段：D124 P4（2026-11-15）
+- 是否阻塞：否
+- 问题：两个官方数据包以 D104 只读目录机制（builtin 来源，不入 `plugins` 表）在
+  开发 / e2e 环境投影时，P2/P3 落地的消费链路全部以 store 行为前提：
+  `PluginRegistry.manifestOf` 返回 null（条目投影 / Bot 条目写入校验 / 媒体条目
+  解析 / testCapabilityEntry 全部落空）、`isConsumable` 恒 false（有效集第三闸
+  拦掉）、`BuiltinPlugins.summaries()` 的 `providesInstances` / `instanceFields` /
+  `configFields` 恒空（渲染层「模型」管理入口不出）、`BotsService` 的
+  `pluginInstalled` 不认 builtin（Bot 无法启用插件）。任务书只点名
+  `listCapabilityEntries` 一处，实际是一组同根缺口。
+- 影响范围：`core/plugins/registry.ts`（`manifestOf` builtin 回退 + 公开
+  `isBuiltin` + `isConsumable` builtin 恒真）、`core/plugins/builtin.ts`
+  （summaries 按清单派生实例供给声明与字段）、`core/start.ts`（`pluginInstalled`
+  认 builtin）、`core/rpc/plugins-bindings.ts`（listCapabilityEntries 注释）、
+  renderer `ExtensionCapabilityModels.svelte` + zh/en i18n（builtin 隐藏账号实例区
+  并显示边界说明）。生产构建无 builtin 目录（resources/plugins 不存在），上述分支
+  不可达，既有路径逐字节不变（行为零变化护栏全绿）。
+- 决定（实例面定界）：**builtin 插件不能持有实例**——`plugin_instances.plugin_id`
+  外键引用 `plugins(id)`（0056/0075），D104 内置插件不入该表，实例行无处挂靠；
+  `#pluginForInstances` 保持 NOT_FOUND 干净拒绝（曾试放行，FK 会以 SqliteError 爆
+  破，已回退并留注释）。builtin 来源只承担「安装可见 / 条目可勾选 / 解析投影」
+  （P4 任务书验收的必需面）；「凭据可配 / 测试连接 / 真机出图出片」走市场安装路径
+  （用户实际分发渠道，P2/P3 已测；市场安装会写入 `plugins` 表，实例外键因此成立）。
+  为避免渲染层出现「添加入口可点、保存必失败」的断裂，能力模型插件详情对
+  `origin: 'builtin'` 不渲染账号实例表单，只显示「从市场安装后可添加账号」的说明。
+- 已更新的文档：本条；60 号 §11；plugins/dashscope/README.md §4、
+  plugins/volcengine-ark/README.md §4（边界声明）；P4 任务书「实施记录」。
+
+### DEV-113 Host API 通道以独立信封复用 fork IPC（九帧调用协议不动）（D125 P2）
+
+- 状态：已落实
+- 阶段：D125 P2（2026-11-16）
+- 是否阻塞：否
+- 问题：61 §4 的 `host.net.fetch / host.secrets.get / host.storage.*` 是插件进程发起、
+  宿主裁决的服务面，但 §3.2 的固定协议只有九帧（init/invoke/cancel/shutdown 与
+  ready/result/error/event/state），没有宿主 API 的请求 / 应答帧。若不新增通道，
+  P2 的能力桥只能作为 core 内部函数存在，插件侧 `host.net` 永远抛
+  `HostApiNotConnectedError`，P4 试点（百炼文生图）无法落地。
+- 影响范围：shared `plugin-runtime/protocol.ts`（新增独立信封
+  `pluginHostApiRequestSchema` / `pluginHostApiResponseSchema` / `pluginHostNetResponseSchema`
+  + `PLUGIN_HOST_API_METHODS` 与两个上限常量）、`packages/plugin-sdk/src/host-channel.ts`
+  （插件侧代理 + 看门狗 ping 应答）、SDK `client.ts`（进程入口模式自动接线）、core
+  `plugins/runtime/host.ts`（信封路由）与 `bridge.ts`（逐方法裁决）。
+- 决定：新增**独立信封**（判别 `type: 'host-api'` / `'host-api-response'`），与
+  `PluginRuntimeFrame` 九帧判别联合并列，**九帧的成员、名字与语义均未改动**；
+  `host-api` 信封只承载 §4 的能力面 + 内部 `ping`（61 §3.1 心跳）。信封同样
+  `strictObject`，宿主对未知 api / 非法信封一律忽略并留痕；插件侧
+  `nodeProcessTransport` 用 `skipMessage` 跳过信封，避免被当成非法调用帧。
+  依据 README「协议帧字段在满足固定契约的前提下可增补（只能增不能改语义）」。
+- 已更新的文档：本条；P2 任务书「实施记录」；`packages/shared/src/plugin-runtime/protocol.ts`
+  文件头注释（Host API 通道落点）。
+
+### DEV-114 执行型插件没有实例字段声明面（v1 runtime 段无 fields）（D125 P2）
+
+- 状态：待决定
+- 阶段：D125 P2（2026-11-16）
+- 是否阻塞：否（P2 验收用参考插件；阻塞 P4 真机试点）
+- 问题：61 §4 的 `context.credentials` 语义是「实例 sensitive 字段注入」，而
+  capability-model 实例表单字段来自引擎 `credentialFields`（D124）。执行型条目不填
+  `engine`（61 §2），`runtime` 段（固定契约为 `entry / hostApi / network.allow? /
+  maxConcurrent`）也没有实例字段声明——执行型插件因此**无法声明**它需要哪些凭据，
+  实例表单恒为空，能力桥注入的 `credentials` 恒为 `{}`。参考插件是零凭据形态
+  （验收锚点 1 成立），但百炼试点需要 API Key。
+- 影响范围：shared `pluginRuntimeSectionSchema`、core `capabilityModelInstanceFields`
+  （执行型条目不贡献字段）、P4 试点插件与同意卡披露的 `credentialFields`（当前恒空）。
+- 可选方案：
+  1. `runtime.instanceFields: pluginFieldSchema[]`（与 `im` 的实例字段同形）——优点：数据
+     声明式、materializer / 表单 / 披露三处一处读取；缺点：manifest 增量段扩面，旧应用
+     读新包会因 strictObject 判 `PLUGIN_UPGRADE_REQUIRED`（符合既有增量字段规则）。
+  2. 复用 `instances: ['capability-model']` + 新建顶层 `instanceFields`——与 54 号文档
+     既有形态一致，但会与 `runtime` 段语义分离。
+  3. P4 试点把 Key 放进插件 `config.fields`（敏感字段走 secrets）——改动最小，但凭据
+     不在实例维度（多账号无法区分），偏离 D124「实例 = 厂商账号」。
+- 推荐：方案 1（`runtime.instanceFields`），P4 落试点时补；本阶段不自行扩 manifest 契约。
+- 决定：（由人工填写）
+- 已更新的文档：本条；P2 任务书「实施记录」。
+
+### DEV-115 参考插件清单新增 video 条目（参考图片之外的第二条验收面）（D125 P2）
+
+- 状态：已落实
+- 阶段：D125 P2（2026-11-16）
+- 是否阻塞：否
+- 问题：P1 参考插件实现了 `submitVideo / videoStatus / cancelVideo`，但清单只声明了
+  `reference-image` 一条能力条目。验收锚点 1 要求「假视频任务轮询成功」，而条目链路
+  （Bot 勾选条目 → `media.generateVideo` → `videoStatus` 往返）必须有 video 条目才会
+  被条目仓库投影。这是 P1 产物的缺口，不是 P2 新增语义。
+- 影响范围：`plugins/reference-media/plugin.json`（新增 `reference-video`，capability
+  `video`，model `reference-video-1`）。
+- 决定：原地补条目（插件实现早已就绪）；不新增任何运行时语义。`plugin.json` 的
+  `engines.kepcup` 不变。
+- 已更新的文档：本条；P2 任务书「实施记录」；参考插件 README（若仍只描述图片，下个
+  触及该文件的阶段顺带补）。
+
+### DEV-116 心跳与 Host API 通道要求插件侧 SDK 为 P2 版本（D125 P2）
+
+- 状态：已落实
+- 阶段：D125 P2（2026-11-16）
+- 是否阻塞：否
+- 问题：61 §3.1「每 15s ping、2 次无响应击杀」需要插件进程应答，而调用协议没有 ping
+  帧（见 DEV-113）。P2 把 ping 放进 host-api 信封，由 P2 版 `@kepcup/plugin-sdk` 的
+  `connectHostApiChannel` 自动应答；**P1 版 SDK 打包的插件不会应答**，会在约 30s 后被
+  看门狗击杀（表现 = `PLUGIN_TIMEOUT` / error 状态）。
+- 影响范围：`packages/plugin-sdk`（P2 起插件需重新打包）、`plugins/reference-media/dist`
+  （DEV-108 构建钩子保证测试前重建）。
+- 决定：接受。D125 尚未发布，插件与 SDK 同步升级是预期路径；`engines.kepcup` /
+  `runtime.hostApi` 仍能挡住版本不匹配。集成测试的 beforeAll 显式重跑
+  `build.mjs`（DEV-108），避免陈旧 dist 造成假阴性。
+- 已更新的文档：本条；`packages/plugin-sdk/README.md` 的 host 命名空间表（P2 状态）。
+
+### DEV-117 条目 `source` / 同意卡 `runtime` 披露字段在该阶段为 optional（D125 P2）
+
+- 状态：已落实
+- 阶段：D125 P2（2026-11-16）
+- 是否阻塞：否
+- 问题：新增 `pluginCapabilityEntryGroupSchema.entries[].source` 与
+  `pluginInspectOutputSchema.runtime` 是 P3 渲染端消费的数据；若设为必填，P3 之前的
+  renderer 测试夹具（`bot-plugins.test.ts` / `plugin-install.test.ts`）会因缺字段
+  typecheck 失败——那是 P3 的 UI 工作，本阶段不做 UI。
+- 影响范围：shared `domain/plugins.ts` 两处字段、core 输出（恒提供）。
+- 决定：字段类型设为 `.optional()`（core 恒写；旧载荷 / 旧渲染端兼容），P3 消费时
+  按可选处理。语义与数据面不受影响。
+- 已更新的文档：本条。
+
+### DEV-118 托管适配器的调用级取消尚未接入工具的 AbortSignal（D125 P2）
+
+- 状态：已落实（D125 P3 接线，见 DEV-119）
+- 阶段：D125 P2（2026-11-16）
+- 是否阻塞：否
+- 问题：61 §4 的 `signal`（用户取消任务 / 工具超时 → 插件 `cancel` 帧）在运行时层
+  已实现并有真实子进程测试（`PluginHost.call` 的 `ctx.signal` → `cancel` 帧；已 abort
+  的调用不发 invoke），但生产媒体调用链没有信号面：`MediaService` 的
+  `MediaResolveOptions` / `VendorCallContext` 不带 `signal`，工具（image/speech）也不
+  把 `ctx.signal` 传给 facade——托管适配器因此无法转发取消。用户取消只能等能力契约
+  超时（image 120s / video 900s）由看门狗收尾。
+- 影响范围：`packages/core/src/media/{service,types}.ts`、`tools/image-tools.ts` /
+  `speech-tools.ts` 的 facade 调用、`HostedAdapter`（传 `signal`）。
+- 决定：P2 保持 D124 媒体方法签名与行为零变化（硬约束），不在本阶段改工具 / facade
+  结构；P3/P4 打通取消与进度 UI 时，在 `MediaResolveOptions` / `VendorCallContext`
+  加可选 `signal`，由工具传 `ctx.signal`，`HostedAdapter` 原样转给 `PluginHost.call`。
+  运行时与测试已就绪，届时只需接线。
+- 已更新的文档：本条。
+
+### DEV-119 取消链以「工具 facade 第 4 参 + 解析选项可选字段」接线（D125 P3）
+
+- 状态：已落实
+- 阶段：D125 P3（2026-11-16）
+- 是否阻塞：否
+- 问题：DEV-118 要求把工具 `ctx.signal` 接到托管适配器，但 `MediaToolFacade` 与
+  `MediaService` 的公开方法只有三个参数（input / usage / resolve），orchestrator 的
+  facade 又自行组装 resolve（botId / model）。把 signal 塞进 input 或改 facade 结构
+  会触碰 D124 数据面契约（工具调用形状与行为零变化是硬约束）。
+- 影响范围：`packages/core/src/media/{types,service}.ts`、`tools/image-tools.ts` /
+  `speech-tools.ts`、`dispatch/orchestrator.ts`（仅 `#mediaFacade` 注入点）、
+  `plugins/runtime/hosted-adapter.ts`。
+- 决定：facade 方法加**可选第 4 参** `MediaCallControls { signal?, onProgress? }`
+  （`videoStatus` 加可选第 3 参）；orchestrator 的 facade 把它并进
+  `MediaResolveOptions`（新增同名可选字段）；`MediaService.#hostedProvider` 只对
+  执行型条目写进 `VendorCallContext`，内置引擎路径不读取（数据面零变化）。
+  `HostedAdapter` 原样转给 `PluginHost.call`（运行时的 cancel 帧 / progress 透传
+  在 P2 已就绪）。取消链：任务卡取消 / 工具超时 → pi 的 `AbortSignal` →
+  `ctx.signal` → facade → `MediaResolveOptions.signal` → `VendorCallContext.signal`
+  → `PluginHost.call` → `cancel` 帧。
+- 已更新的文档：本条；P3 任务书「实施记录」。
+
+### DEV-120 活动历史用 `errorCode: 'CANCELLED'` 表示取消，不扩记录 schema（D125 P3）
+
+- 状态：已落实
+- 阶段：D125 P3（2026-11-16）
+- 是否阻塞：否
+- 问题：README 固定契约的调用历史 shape 是
+  `{at, contract, method, durationMs, ok, errorCode?, message?}`；P3 任务书要求活动
+  抽屉把被取消的调用标 cancelled。新增字段会改动固定契约的载荷形状。
+- 影响范围：`packages/core/src/plugins/runtime/host.ts`（`#settle` / abort 监听）、
+  shared `pluginRuntimeCallRecordSchema`（未改）、renderer 活动抽屉展示口径。
+- 决定：`PluginHost` 在 `AbortSignal` 触发时给在途调用打 `cancelled` 标记；结算时
+  写 `ok:false, errorCode:'CANCELLED', message:'调用已取消'`——即使插件按自己的
+  语义迟到返回了结果，用户取消也是这次调用的真实结局（抽屉不应把迟到结果当成功）。
+  记录 schema 未改；渲染端把 `CANCELLED` 单列为「已取消」结果态，不当作错误码走
+  `errorText`（取消不是厂商错误）。活动历史的 `lastError`（插件卡 error tooltip 的
+  「最近错误」）只收真实失败，CANCELLED 不写，避免取消污染错误提示。宿主不拦截
+  插件在取消后返回的结果（保持 P2 的 invoke promise 结算语义，工具侧自行按
+  `ctx.signal` 决定是否采用）；取消的 UI 结局以活动历史 / 徽标为准。
+- 已更新的文档：本条；P3 任务书「实施记录」。
+
+### DEV-121 视频阶段文案让位：插件开口后才抑制宿主自己的轮询文案（D125 P3）
+
+- 状态：已落实
+- 阶段：D125 P3（2026-11-16）
+- 是否阻塞：否
+- 问题：任务书要求「插件路径用透传避免双份进度（媒体工具自身轮询的 progress
+  上报点要让位给插件阶段文案）」。但宿主在提交前无法知道插件是否会上报进度；
+  一律抑制会让不上报进度的插件（如参考插件的 `submitVideo`）在状态行上完全静默，
+  反而丢失既有反馈。
+- 影响范围：`packages/core/src/tools/speech-tools.ts`（generate_video）、
+  `media/plugin-progress.ts`（新增格式化）。
+- 决定：工具在本次 `generate_video` 调用内记录「是否已收到插件 progress 帧」；收到
+  后不再发自己的「视频任务已提交 / 排队中 / 生成中」文案（同一状态行不出现两份），
+  未收到时保持既有文案（内置引擎与参考插件行为不变）。`generateVideo` 返回值不变
+  （不新增 `source` 字段，避免数据面返回 shape 变化）。
+- 已更新的文档：本条；P3 任务书「实施记录」。
+
+### DEV-122 非执行型插件的判定来源是 `plugins.runtime.list` 快照（D125 P3）
+
+- 状态：已落实
+- 阶段：D125 P3（2026-11-16）
+- 是否阻塞：否
+- 问题：任务书要求「非执行型插件卡片无状态徽标与活动入口（零变化）」。
+  `PluginSummary`（`plugins.list`）没有 `runtime` 标记——只有 `plugins.inspect`
+  的同意卡披露字段（DEV-117 起为 optional）。为此扩 `PluginSummary` 会动 D124 的
+  列表数据面。
+- 影响范围：renderer `plugin-runtime.svelte.ts`（store）、`PluginRuntimeStatus.svelte`、
+  `ExtensionInstalled.svelte` / `ExtensionCapabilityModels.svelte`（落点）。
+- 决定：渲染端以 `plugins.runtime.list` 是否含该 `pluginId` 判定执行型（core 侧
+  `PluginHost.list()` 只列 manifest 含 `runtime` 段的已装插件）；快照未到 / 非执行型
+  = 组件不渲染任何 DOM（`runtimeBadge(null) === null` 有测试）。`PluginSummary`
+  零改动。
+- 已更新的文档：本条；P3 任务书「实施记录」。
+
+### DEV-123 执行型插件实例字段声明面：`runtime.instanceFields` + `invoke.context.instanceId`（D125 P4，落实 DEV-114）
+
+- 状态：已落实
+- 阶段：D125 P4（2026-11-16）
+- 是否阻塞：否（P4 开工前审查已给出方案 1；本阶段按其实施）
+- 问题：DEV-114 记录的事实是「执行型插件没有实例字段声明面」——`runtime` 段只有
+  entry / hostApi / network / maxConcurrent，百炼试点需要的 `apiKey` 无处声明；实例表单
+  由 `capabilityModelInstanceFields` 从条目 `engine` 的 `credentialFields` 派生，而执行型
+  条目**不填 engine**（61 §2），于是表单为空、secrets 管线无法把 Key 送到
+  `invoke.context.credentials`。
+- 影响范围：shared `plugin-manifest.ts`（`pluginRuntimeSectionSchema`）、
+  `plugin-runtime/protocol.ts`（invoke.context）、core `plugins/kinds.ts`、
+  `plugins/runtime/{install,host}.ts`、SDK `plugin.ts` / `client.ts`、同意卡披露、
+  `todo/plugin-runtime/README.md` 固定契约、61 §2。
+- 决定（方案 1）：
+  1. `runtime.instanceFields: z.array(pluginFieldSchema).max(16).optional()`，复用 D105
+     字段 schema；superRefine 查 key 唯一（与 mail / im / mcp 的 `instanceFields` 同规则）。
+  2. `capabilityModelInstanceFields` 对含 `runtime` 的清单合并 `runtime.instanceFields`
+     （声明序在前、去重），随后才追加数据型条目的引擎凭据（混合插件两者并存）。
+     `sensitive: true` 的值走既有实例 secrets（`plugin:{pluginId}:instance:{instanceId}:{key}`），
+     非敏感值进 `config_json`；`PluginSummary.instanceFields` / 自动实例表单自动生效。
+     混合插件中 runtime 字段与引擎凭据字段**重名**时安装期拒绝（PLUGIN_INVALID）：合并
+     顺序会让 runtime 声明覆盖引擎字段，若 runtime 声明成非敏感，用户填的引擎 Key 会
+     落进 `config_json` 而不是 secrets。
+  3. `runtimeDisclosureOf.credentialFields` = runtime 敏感字段名（声明序）∪ 引擎凭据字段，
+     同意卡「将请求的凭据」直接渲染，不含值；`networkDomains` 按声明序去重（同意卡以
+     域名为 keyed each 键，schema 未约束唯一性）。
+  4. `invoke.context.instanceId` 新增**可选**字段（有实例才带）：多实例插件把 credentials
+     与实例的非敏感配置对齐；SDK `MediaCallContext.instanceId` 恒为 string（缺省空串）。
+     兼容性用握手能力位：SDK 在 `ready.features` 声明
+     `invoke.context.instanceId`，宿主只向声明了的插件发送该字段（新增常量
+     `PLUGIN_RUNTIME_INSTANCE_ID_FEATURE`）。
+  5. 能力桥无需改动：`credentialsFor` 已按实例前缀扫描 secrets，实例字段写入即被注入。
+  6. 兼容性：`instanceFields` 是清单增量可选字段，旧清单不受影响。旧 SDK 的 ready 帧
+     没有 `features`，宿主不会发送 `instanceId`，因此其 strict 帧校验不会因未知字段丢弃
+     invoke（旧插件继续可用，只是 `ctx.instanceId` 为空串）；新 SDK 才收到该字段。
+     修正了本条最初草案里「旧 SDK 会走 PLUGIN_UPGRADE_REQUIRED」的错误描述。
+- 已更新的文档：本条；61 §2 / §3.2 runtime 固定段、`todo/plugin-runtime/README.md`
+  固定契约、`packages/plugin-sdk/README.md`（ctx 与实例字段）。
+
+### DEV-124 百炼试点模型选择：wan 视频 id 被真机拒绝 → 改用 qwen-image-3.0（协议后被 DEV-130 改回异步）（D125 P4）
+
+- 状态：已修正（真机确认根因）；协议部分**已被 DEV-130 修订**——同步单请求在真机
+  60s 网络上限失败，试点最终采用异步任务 + 轮询（本条的模型选择与 `params.model`
+  覆盖仍然有效，只有「同步协议」的决定作废）
+- 阶段：D125 P4（2026-11-16）
+- 是否阻塞：否
+- 问题：任务书步骤 3 要求条目 `model` 取「16 号 wan 系列预置 id」。16 号当前登记的
+  wan 系列预置只有视频三条（`wan2.7-t2v / wan3.0-video / wan2.2-t2v-plus`），没有 wan
+  文生图预置；而试点的协议（`input.prompt` 顶层 + `X-DashScope-Async` +
+  `GET /api/v1/tasks/{id}`）是百炼 **text2image/image-synthesis** 的异步文生图形态。
+  首次实现按任务书字面取 `wan2.7-t2v`。
+- **真机结果（用户实测）**：安装 → 填 Key → `plugins.testCapabilityEntry` 报
+  `PROVIDER_UNAVAILABLE / 百炼文生图失败：url error, please check url!`。根因确认：
+  `wan2.7-t2v` 是**视频**（t2v）模型，被发到文生图端点，百炼按 model 路由不到对应
+  API，故以 `url error` 拒绝（该文案易被误读为 URL 写错；宿主 header 透传已核实正常，
+  `Authorization` 与 `X-DashScope-Async` 都到达厂商）。
+- 影响范围：`plugins/dashscope-t2i/plugin.json`（条目 id / model / params）、
+  `plugins/dashscope-t2i/src/main.ts`（协议实现）、`plugin-host.test.ts` 试点用例。
+- 决定（用户指定模型）：改用 **`qwen-image-3.0`**（官方文档
+  `qwen-image-generation-and-editing-api-reference`：qwen-image 系列同步
+  `multimodal-generation/generation`，官方推荐路径；同系列还有 `-3.0-pro` /
+  `-2.1-pro` / `-2.1-turbo`）。条目 id `wan-t2i` → `qwen-image-3`，协议从「异步提交 +
+  轮询」改为「单请求同步返回 `output.choices[0].message.content[].image`」，并支持参考图
+  （3.0 系列最多 3 张，带图即编辑）、`prompt_extend` / `watermark` / `negative_prompt` /
+  `seed`。附带两项增强：条目 `params.model` 可覆盖 model（在售 id 更替时改清单即可）；
+  `url error` 错误文案附带「model 不在本端点支持列表」的可操作指引。
+  代价：同步接口没有中间状态可上报，进度只剩 `submitting → downloading`（后者还会因
+  SDK/宿主 1 次/秒限速与「调用结束丢弃尾随帧」而常不可见）；取消只能在响应返回后丢弃
+  结果（signal 不能跨进程中断宿主代理请求）。A/B 前提随之修正为「同协议、不同执行引擎」。
+- 已更新的文档：本条；`plugins/dashscope-t2i/README.md`、61 §12.4、P4 任务书实施记录。
+
+### DEV-125 RSS > 512MB 观测用插件心跳自报，不引入 pidusage（D125 P4）
+
+- 状态：已落实
+- 阶段：D125 P4（2026-11-16）
+- 是否阻塞：否
+- 问题：61 §3.3 的「RSS > 512MB 记 warn」需要子进程内存；引入 `pidusage` 会新增运行时
+  依赖与平台分支，`process.memoryUsage()` 在宿主进程里读到的不是插件进程。
+- 影响范围：`packages/plugin-sdk/src/host-channel.ts`（pong 带 `rssBytes`）、
+  `packages/core/src/plugins/runtime/host.ts`（阈值 warn、每进程一次）。
+- 决定：SDK 在心跳 `ping` 的 pong 里附 `{ rssBytes: process.memoryUsage().rss }`；宿主
+  消费超过阈值的第一次上报记 warn（`PLUGIN_RUNTIME_RSS_WARN_BYTES = 512MB`），不击杀、
+  不进治理判定。插件可以谎报——这是观测项而非边界；旧 SDK 打包的插件不带该字段，静默
+  不报（可接受的降级）。阈值可经 `PluginHostDeps.rssWarnBytes` 注入（测试调小）。
+- 已更新的文档：本条；61 §12。
+
+### DEV-126 静态扫描的代码面在「掩码文本」上判定，域名一致性在原文上提取（D125 P4）
+
+- 状态：已落实
+- 阶段：D125 P4（2026-11-16）
+- 是否阻塞：否
+- 问题：逐版本扫描直接对打包 JS 文本跑正则会把注释 / 字符串里的字样当成代码——首批
+  dogfood 的两个官方插件都因 zod 打包产物里的一句注释（提到 `import()`）被判 fail，
+  明显是假阳性；同理 `eval(` 出现在文档字符串里也不代表执行。
+- 影响范围：`scripts/scan-plugin-runtime.mjs`。
+- 决定：用一个轻量词法掩码把注释、字符串 / 模板**文本段**、正则字面量替换为空格（保留
+  换行与下标），代码规则在掩码文本上判定；模板 `${…}` 表达式按代码处理，正则 / 模板嵌套
+  不会让掩码失步（D125 P4 审查把初版掩码的引号 / 正则偏移问题修掉，见 DEV-129）。动态
+  import 的 **specifier** 回原文读取（白名单语义：静态相对路径 / 裸包名放行，远程 scheme、
+  计算值、child_process / vm 目标 fail）。域名一致性在原文上提取 `https?://host`
+  （`json-schema.org` 等标识符命名空间豁免），未知域 → warn。
+- 已更新的文档：本条；61 §7 / §12；额外加固见 DEV-129。
+
+### DEV-127 产物下载 SSRF 加固对所有来源生效（数据型路径一并覆盖）（D125 P4）
+
+- 状态：已落实
+- 阶段：D125 P4（2026-11-16）
+- 是否阻塞：否
+- 问题：P2 审查遗留——执行型插件返回的产物 URL 在 core 侧下载（`imageBytes` /
+  视频 `videoUrl`）时是裸 `fetch`，可被指向私网 / 云元数据。任务书要求「只影响执行型
+  来源或对所有来源等价安全（选后者更简单，但必须证明内置厂商 URL 仍可用）」。
+- 影响范围：`packages/core/src/infra/safe-dispatcher.ts`（新增 `safeFetch`）、
+  `tools/image-tools.ts`、`tools/speech-tools.ts`。
+- 决定：统一走 `safeFetch`：http(s) 挂 `sharedSafeDispatcher()`（连接期逐跳校验解析地址，
+  重定向同样经过），IP 字面量先过 `assertNoPrivateAddress`；data: 等非网络协议原样放行。
+  只加连接防线，不改错误文案 / 字节 / 落盘行为；内置厂商与 CDN 均为公网域名，行为等价
+  （媒体工具回归全绿）。`media/http.ts` 错误归一未动。
+  **实现细节（P4 审查修正）**：http(s) 用 `undici` 包的 `fetch`（与 Agent 同版本）而不是
+  全局 `fetch`——Electron / Node 的全局 fetch 是另一个 undici 版本，把外部 Agent 传进去会
+  以 `UND_ERR_INVALID_ARG` 失败（所有公网图片 / 视频下载都挂）。`safe-dispatcher-connect.test.ts`
+  用真实连接链路（localhost → 连接期拒绝）覆盖该集成。
+- 已更新的文档：本条；61 §12。
+
+### DEV-128 扫描/安装的 native 扩展名补 `.dll/.so/.exe/.dylib`（D125 P4）
+
+- 状态：已落实
+- 阶段：D125 P4（2026-11-16）
+- 是否阻塞：否
+- 问题：P2 安装管线的包扫描只拦 `.node` / `.wasm`；Windows 的 `.dll` / `.exe` 与
+  POSIX 的 `.so`（以及 macOS `.dylib`）会漏过。
+- 影响范围：`packages/core/src/plugins/runtime/install.ts`、`scripts/scan-plugin-runtime.mjs`。
+- 决定：两处统一扩展为 `.node/.wasm/.dll/.so/.dylib/.exe`；`.dylib` 是任务书清单之外的
+  补充（macOS 动态库与 `.so` 同类）。仅对含 `runtime` 的包生效，数据型插件安装零变化。
+- 已更新的文档：本条；61 §12。
+
+### DEV-129 静态扫描在任务书规则外的加固：标识符级规则 / 静态 import / 无扩展名 entry / `.kepcup-ignore`（D125 P4 审查）
+
+- 状态：已落实
+- 阶段：D125 P4（2026-11-16 审查）
+- 是否阻塞：否
+- 问题：审查按「扫描是否可被简单绕过」实测初版 `scripts/scan-plugin-runtime.mjs`，确认
+  以下写法**通过**（应为 fail）：`(0,eval)(...)`（规则只匹配 `eval(`）、`Function(...)`
+  不带 `new`、`globalThis["ev"+"al"]` / `process["bin"+"ding"]`、`createRequire` +
+  静态 `import 'node:fs'` / `import 'node:vm'`、静态 `import 'data:text/javascript,…'`、
+  `import("node:"+"child_process")`（拼接 specifier）、`import(/*x*/'…')` 与
+  `import(/* c */ './a.js')`（注释导致误判 / 漏判）、模板插值 `` `${eval(…)}` ``、
+  正则字面量里的引号使掩码失步从而隐藏后续 `eval`、以及 `runtime.entry` 不带 JS 扩展名
+  （Node 可执行，扫描器不读）。另外目录扫描会把 `build.mjs`（`createRequire` /
+  `node:module`）当运行时包代码 fail，与 `.kepcup-ignore` 的发布口径不一致。
+- 影响范围：`scripts/scan-plugin-runtime.mjs`、`scripts/sign-plugin-index.mjs`、
+  `plugins/{dashscope-t2i,reference-media}/.kepcup-ignore`、测试
+  `scan-plugin-runtime.test.ts` / `sign-plugin-index.test.ts`。
+- 决定：
+  1. 代码规则改为标识符级：`eval` / `Function(` / `require` / `createRequire` /
+     `process.binding|_linkedBinding|dlopen|getBuiltinModule|mainModule` / `Worker(` /
+     `globalThis[...]` / `process[...]`；注释、字符串、正则与模板文本先掩码，模板表达式
+     按代码处理。
+  2. 静态 import / re-export 也检查 specifier：拒绝 `fs / fs/promises / net / http(s) /
+     http2 / dgram / dns / tls / child_process / vm / worker_threads / cluster / module /
+     inspector / repl / wasi`（任务书的「不得获得 fs / 子进程 / 网络」在插件直接 import
+     时同样成立），拒绝远程 scheme（含 `data:` / `file:`）与包外路径（绝对路径 / `..`）。
+  3. 动态 import 跳过注释 trivia 后再读 specifier；specifier 带转义、后接 `+`（拼接）、
+     模板插值、包外路径、**相对路径无扩展名**一律 fail（Node 会把无扩展名相对 import 按
+     ESM 加载，否则干净的 entry 可 `import './chunk'` 拉入未扫描代码）；
+     `import(/* local */ './a.js')` 不再假阳性。
+  4. `runtime.entry` 必须是 `.js` / `.mjs`；`.js` 要求根 `package.json` 声明
+     `"type":"module"`，并拒绝嵌套 `package.json`（Node 的「最近 package.json」判定会让
+     `.js` 落回 CommonJS，`module['require']` / `module.constructor._load` 可绕过 require
+     规则）。目录 / `.kepcup` 两种读取都带 entry 与根 package.json 数据；entry 无论
+     扩展名都按代码扫描（策略与代码规则两条都生效）。
+  5. 目录扫描镜像 `kepcup-app pack` 的排除口径（`.git` / `node_modules` / `.kepcup` /
+     `.kepcup-ignore`）；签名仍扫描归档本身、**不**应用 ignore（随包发布的字节全部要扫）。
+     两个官方插件新增 `.kepcup-ignore` 排除 `build.mjs` / `src/` / `tsconfig.json`。
+  6. 静态扫描仍是发布门禁的一层，不是沙箱：计算成员访问经变量别名
+     （`const g = globalThis; g['ev'+'al']`）、`Object.getPrototypeOf(async()=>{}).constructor`、
+     Unicode 转义标识符（`\u0065val`）等仍有假阴性面；`Reflect.get(globalThis, …)` /
+     `getOwnPropertyDescriptor(globalThis, …)` / `constructor.constructor` 已单独 fail。
+     verified 层级仍要求人工复审，运行期依靠进程隔离与「不给 fs / 子进程」的 Host API 面。
+- 已更新的文档：本条；DEV-126 / 61 §7、§12、P4 任务书实施记录。
+
+### DEV-130 超时治理交给插件：`runtime.timeouts` + `net.fetch.init.timeoutMs`，宿主只钳制上限（D125 P4）
+
+- 状态：已落实
+- 阶段：D125 P4（2026-11-16，真机反馈后）
+- 是否阻塞：否
+- 问题：真机调用 `qwen-image-3.0` 时两次都在 60s 失败（`无法连接百炼服务：插件网络请求超时`）。
+  根因是 `CapabilityBridge` 的 `DEFAULT_NET_TIMEOUT_MS = 60_000` —— **应用侧**对每次
+  `host.net.fetch` 的固定上限，比插件声明的调用看门狗（`media.generateImage` 120s）还短。
+  等于应用替插件决定了「单次请求最多多久」，违背「插件在规范内自由 / 应用提供舞台」的
+  定位（D125 支柱 3）：同步出图（含 `prompt_extend` 常 60s+）、异步排队、视频生成的合理
+  时长差异很大，一个固定值必然误杀其中一类。
+- 影响范围：`packages/shared`（`runtime.timeouts` schema + 上限常量、`net.fetch` 的
+  `timeoutMs`）、`packages/core`（host 超时解析、bridge 超时与在途取消、install 键校验）、
+  `packages/plugin-sdk`（`HostNetRequestInit.timeoutMs` 与本地等待）、试点插件。
+- 决定：
+  1. **调用级超时由插件声明**：`runtime.timeouts: Record<'<contract>.<method>', ms>`（1s –
+     15 分钟）。host 取值优先级 = 测试覆盖 > 插件声明 > 契约默认；宿主只 `Math.min` 钳制
+     15 分钟上限。安装期校验键属于已注册契约方法（拼错即拒装，不静默走默认）。
+  2. **单次网络请求超时由插件声明**：`host.net.fetch(url, { timeoutMs })`（1s – 15 分钟）。
+     不声明时用**宿主上限**兜底（原 60s 默认删除）。SDK 侧本地等待 = 声明值 + 5s（让宿主
+     的超时错误先回来）。
+  3. **防泄漏**：`bridge.abortFor(pluginId)` 在 host `dispose` / `#failLive` 时取消该插件
+     全部在途请求（请求由宿主代发，插件进程死亡后不会自动停止）。
+  4. **试点改异步**：`qwen-image-3.0` 走 `image-generation/generation` + `X-DashScope-Async`
+     + `GET /api/v1/tasks/{id}` 轮询（单次请求秒级，不受连接时长限制），清单声明
+     `timeouts['media.generateImage'] = 300000`。
+- 长期收益：应用的职责收敛为「有上限 + 到点必杀 + 进程退出清理」，协议时长由最了解厂商
+  的插件声明；新协议（长轮询 / 大文件 / 慢模型）接入不需要应用改常量发版。
+- 已更新的文档：本条；61 §2 / §3.1 / §3.3 / §4 / §12.4；`plugins/dashscope-t2i/README.md`；
+  P4 任务书实施记录。
+
+### DEV-131 执行型插件可写数据目录与生成产物默认落点（D125 补丁）
+
+- 状态：已落实
+- 阶段：D125 补丁（2026-11-16，真机反馈后）
+- 是否阻塞：否
+- 问题：真机任务里 Bot 绑定的是执行型插件 dashscope-t2i，任务按 `start_task` 声明写域
+  `tmp/**`；`generate_image` 走 `packages/core/src/tools/image-tools.ts` 把产物保存到
+  `<workspace>/.generated/`，被 `gateway.assertWritableArtifact` 判为「写域之外的路径」，
+  **在写文件之前抛出**——插件已经生成的两张图片字节被直接丢弃，用户期望的
+  `tmp/ai-thinking.png` 未产出。根因有两条：①执行型插件没有任何自己的可写目录，产物只能
+  落 workspace；②写域门槛在付费生成之后才触发，失败时无法补救。
+- 影响范围：`packages/core/src/infra/paths.ts`、`start.ts`、`plugins/registry.ts`、
+  `plugins/runtime/host.ts`、`media/types.ts`、`media/service.ts`、`gateway/index.ts`、
+  `tools/{media-delivery,image-tools,speech-tools,index}.ts`、`dispatch/orchestrator.ts`；
+  文档 61 / 51 / 11 / 20、`docs/dev/04-agent-runtime.md`、`packages/plugin-sdk/README.md`。
+- 决定：
+  1. **新增数据目录根** `{home}/plugin-data/`（`AppPaths.pluginDataDir`），每个执行型插件
+     一个与版本无关的私有目录 `{home}/plugin-data/{ns}/{name}/`（0700，plugin id 小写化）。
+     路径用 shared `pluginIdSchema` 严格校验且必须恰好两段，越界抛
+     `AppError('PLUGIN_INVALID')`。产物默认落 `.../artifacts/`。
+  2. **安装期初始化**：manifest 含 `runtime` 时，安装在 `store.insert` 之后、投影之前
+     `ensurePluginDataDir`（失败随安装回滚）；更新时在一切持久化写入前确保存在（更新失败 /
+     补偿**不**删数据目录——版本无关，旧版本仍在使用）；卸载 / 安装回滚在 `#teardown` 内
+     best-effort 删除（只 warn，不掩盖原错误）。`PluginRegistry.start()` 对已装执行型行
+     也补齐数据目录（改动前安装的行没有经过安装期初始化；失败只 warn、不阻断启动，首次
+     调用时 PluginHost 仍会重试）。内置执行型插件（builtin，无 store 行）由 PluginHost
+     首次拉起时按需创建。
+  3. **进程 cwd**：`PluginHost` fork 的 cwd 从插件安装目录改为该插件数据目录，启动前
+     `mkdirSync(..., {recursive:true, mode:0o700})`；失败置 `error`（「插件数据目录不可用」）
+     并抛 `PLUGIN_CRASHED`。插件沿相对路径写入即落在自己的目录（安装树只读、更新会替换）。
+  4. **core 保存插件产物不走任务写域门槛**：插件产物是宿主管理的产物，不是任务写文件。
+     投递（`GeneratedMediaDelivery`）新增显式 `hostOwned` 模式：`send(files, caption,
+     { hostOwned: true })` 只在 `pluginDataDir` 根内（`canonicalPath` + `isInsidePath`，
+     符号链接按 realpath 判定）直接 `readFileSync`，否则该文件记失败；其余情况维持原
+     `gateway.checkPath` 读检查。插件私有目录的投递失败**不登记文件卡**（任务打不开应用
+     数据目录），结果文案只要求模型如实说明，不引导 `attachment_paths` 补发。
+  5. **`output_dir` 参数**：`generate_image` / `generate_speech` / `generate_video` 新增
+     可选 `output_dir`（TypeBox string，maxLength 1000；相对 workspace 或工作目录）。显式
+     指定时在调用厂商 / 插件**之前**经 `gateway.resolveArtifactTarget` 解析并预检写权限
+     （避免付费生成后才发现写不了）。未指定时：执行型插件条目 → 插件 `artifacts/`；
+     内置引擎 / 全局槽位 → 现有 `<workspace>/.generated/`（行为逐字节不变）。
+  6. **来源回调不改 wire 类型**：`MediaResolveOptions` / `MediaCallControls` 增加可选
+     `onResolved?: (origin: { pluginId?: string }) => void`；`ResolvedProvider` 内部
+     `artifactPluginId` 仅由 `#hostedProvider` 设置，`#resolve` 完成后回调。数据型条目 /
+     全局槽位不填。RPC 结果类型（`ImageGenerationResult` 等 strict schema）零改动。
+  7. **新增 gateway 方法** `resolveArtifactTarget(identity, inputPath)`：`checkPath` 写判定
+     — `allowed` 返回 resolvedPath；`outOfDomain` → `WRITE_OUT_OF_DOMAIN`；`claimed` →
+     `WRITE_CLAIMED`；其余（needs_grant / needs_lease / 数据目录 / 只读 run 等）→
+     `PATH_OUT_OF_SCOPE`（带原 reason）。只读 run **不沿用** D75 宿主产物豁免：D75 的
+     豁免只覆盖宿主固定的 `<workspace>/.generated`（`assertWritableArtifact`），
+     `output_dir` 是模型选的路径，不能借豁免写任意位置；三个生成工具本就在最前面用
+     `readOnlyRefusal` 拒绝只读 run，行为无变化。
+  8. **写路径安全**：插件 artifacts 目录写入前 `mkdirSync(dir, {recursive:true, mode:0o700})`；
+     文件名沿用 `sanitizeFileName`；写入保持同步；零新依赖。显式 `output_dir` 即使已在
+     付费前预检，写文件前仍对目录与**每个目标文件**再过 `assertWritableArtifact`——预检
+     只解析目录，预先放好的 `file_name.png` 符号链接不能成为写域绕过。该门同步改为
+     fail-closed：除 `allowed` 与只读 run 的 D75 固定 workspace 产物豁免外，其余判定
+     （needs_grant / needs_lease / 应用数据 / 技能目录 / 外部硬链接 / 保护规则）一律
+     `PATH_OUT_OF_SCOPE`，宿主写不再跟随指向范围外的符号链接 / 硬链接。
+  9. **明确不是 Q5 fs 能力**：本次不新增 `host.files`、不放开 fs / secrets / env Host API；
+     插件进程只是以数据目录为 cwd。需要如实说明的是：插件进程仍以用户权限运行，市场
+     静态扫描（禁 `fs` / 子进程 / 网络直连等）是代码审查层，**不是 OS 沙箱**——本次不
+     声称插件「不能读取任意本地文件」，只声称 Host API 不提供文件读写通道、扫描约束不变。
+     插件通过 `process.cwd()` 能知道自己的数据目录绝对路径；生成产物仍由 core 下载并按
+     `artifacts/` 默认落盘 + 投递，插件不参与投递语义。
+- 测试证据：定向测试 `node scripts/run-tests.mjs run` 的 10 个文件（paths / plugin-registry /
+  plugin-host / plugin-builtin-capability-models / plugin-capability-model / media-tools /
+  media-delivery / gateway-read-only / plugin-bridge / media-entry-resolution）共
+  **247 个用例通过 / 0 失败**（2026-11-16）；`pnpm --filter @kepcup/core typecheck` 通过。
+  全量 `pnpm test` 收口：803 个文件通过 / 3 跳过，**8693 passed / 44 skipped / 0 failed**。
+  另：三个 `output_dir` 参数使工具 schema 估算 +328 token（14,770 → 15,098），
+  `task-context-compaction` 的 20k 窗口原本只剩 230 token 可用，因此把该测试的 mock
+  上下文窗口调到 26k（只调整测试窗口；压缩实现与工具 schema 不变）。
+- 已更新的文档：本条；61 §3.1 / §3.3 / §10 Q5 / §12；51 §5；11 数据目录；16（Bot
+  消费入口）；20 §4；28（外部 Agent）；`docs/dev/04-agent-runtime.md` 工具表；
+  `packages/plugin-sdk/README.md`。
+
+### DEV-132 D125 收口独立审查修复（跨阶段集成 / 回归）
+
+- 状态：已落实
+- 阶段：D125 收口审查（2026-11-16）
+- 是否阻塞：否
+- 问题（按严重度）：审查 `v0.5.14...HEAD` 的插件系统全部改动时发现以下跨阶段问题：
+  1. **混合插件执行体来源按插件整体判定**：清单含 `runtime` 时 `entriesFor` /
+     `listCapabilityEntries` / `testCapabilityEntry` / `capabilityInstanceOf` 把所有条目
+     都标成 `source:'plugin'`，而 60 §2 / manifest 注解明确「数据型条目（有 engine）语义
+     不变」、安装管线也显式支持 runtime + engine 混合清单（重名凭据拒绝）——混合插件的
+     engine 条目会被错误送进插件子进程，engine 绑定静默失效。
+  2. **握手 `init.instances` 误用清单常量 `PLUGIN_MAX_INSTANCES`（=4）**：该常量是清单
+     可声明的**实例 kind 数**上限，不是账号数；用户添加第 5 个厂商账号实例后 init 帧
+     schema 校验失败 → `#failLive` → 插件永远起不来（`PLUGIN_CRASHED`）。账号实例数在
+     实例服务里本来就不设限（mail / mcp / im 同口径）。
+  3. **执行型产物下载没有字节上限**：`imageBytes` 对插件返回的 URL 直接
+     `arrayBuffer()`（图片无任何上限）；视频只预检 `content-length`，chunked / 谎报的
+     响应仍会整份读进内存——不可信 URL 可打爆宿主内存。
+  4. **条目级「未保存先测」对执行型条目静默忽略 `keyOverride`**：数据型条目走
+     `#resolvePluginInstance(..., keyOverride)`，托管路径不读它——用户在实例表单改 Key
+     后点「测试连接」实际测的是已存 Key（误导），新增实例未保存时也无从测试。
+  5. **Bot 条目 16 条上限计入不可达引用**：插件被移出 Bot / 卸载 / **更新删掉条目**后
+     `capability_entries` 残留不生效却占上限，且卡上没有可取消的勾选框（勾满后新条目
+     永久置灰）；后两种情况还会让下一次条目保存因「条目不存在」整批拒绝。
+  6. **签名前静态扫描不校验 `runtime.entry` 是否存在，也不拦 community 执行型**：前者的
+     包会被安装管线拒绝，后者在客户端必被 `PLUGIN_INCOMPATIBLE` 拒绝——市场都会发布
+     「永远装不上」的版本。
+  7. **Electron utilityProcess 里 fork 插件未显式 `ELECTRON_RUN_AS_NODE`**：macOS 的
+     Helper 二进制实测可按 Node 执行；不同平台 / Electron 版本的 `process.execPath`
+     行为并不一致，缺该标志时子进程可能按 Electron 应用启动而不是执行插件入口。
+  8. **`hostApi` semver 解析偏差**：完整版本 `1.2.3` 被当成「>=1.2.3 无上界」（会接受
+     2.x），`~1` 被当成 `<1.1.0`（过窄）；该函数此前零测试。
+  9. **卸载 / 安装回滚不清插件级 config 敏感字段**：实例 teardown 只按
+     `plugin:{scope}:instance:*` 清实例 secrets，`plugin:{scope}:config:*`（D105
+     `config.fields` 的 sensitive 值）永久留在密钥库——61 验收锚点却声称「卸载插件
+     … secrets 清除」。
+  10. 其余小项：条目 displayName/model 进工具描述前未清洗（控制字符 / 双向控制可直接进
+      系统提示词）；扩展中心条目行对执行型条目的 `engine: null` 渲染出字面「null」；取消
+      信号在 `isAborted` 检查与 `addEventListener` 之间触发会永久丢取消（只能等超时）；
+      空闲回收路径未取消宿主代发的在途 `net.fetch`（fire-and-forget 请求会挂到 15 分钟
+      上限）；`plugins.setBotCapabilityEntries` 对未安装插件的违规文案误报「条目不存在」；
+      试点 `src/main.ts` 头注释 / 测试注释 / P4 步骤仍写「同步协议」。
+- 决定：逐项修复，不改变 D125 的对外契约：
+  - 执行体来源**逐条判定**（`entry.engine !== undefined ? 'engine' : 'plugin'`）；混合
+    插件的 engine 条目继续走 `MEDIA_ENGINES`，托管路径只接不填 engine 的条目。
+  - 新增 `PLUGIN_RUNTIME_MAX_INIT_INSTANCES = 64`（协议安全界），宿主按此截断 init
+    列表；超出的实例仍可在调用时经 `context.credentials` 取得凭据。
+  - 新增 `readBodyCapped(response, maxBytes)`：`content-length` 预检 + 流式累计，超限
+    `cancel()` 并返回 null；图片 30MB（附件上限同量级）、视频沿用 200MB。
+  - `MediaEntrySource.sensitiveFieldKeysOf` + `VendorCallContext.credentialOverrides` +
+    `PluginCallContext.credentialOverrides`：仅 `testCapabilityEntry` 携带，宿主在实例
+    secrets 之后同名覆盖；真实调用路径不经过。
+  - Bot 条目上限与保存只认「已添加（`plugin_ids`）、已安装、且条目仍在当前清单投影里」
+    的引用；残留引用在下次保存时清理（core 的软引用语义不变）。
+  - 静态扫描补 `runtime.entry` 存在性（缺失 / 符号链接 = fail）；签名侧拒绝
+    community 层级的执行型包（市场只有 verified 可装）。
+  - `PluginRegistry.#teardown` 在实例 teardown 之后按 `plugin:{scope}:` 前缀兜底清理
+    该插件全部 secrets（config + 实例 + 清单改名残留）；作用域编码单射、前缀带结尾
+    冒号，不会误伤命名空间相近的其它插件；失败只 warn。
+  - `minimalPluginEnv` 在 Electron 宿主追加 `ELECTRON_RUN_AS_NODE=1`（纯 Node 宿主不变，
+    有单测）。
+  - semver 解析按 npm 语义修正（`^0.x` caret、`~1`、完整版本精确匹配），补
+    `plugin-runtime-version.test.ts`（此前无覆盖）。
+  - 工具描述条目名经 `sanitizeDisplayText`；条目行文案 `entryDetailText`（engine null
+    不显示）；取消在注册监听后复查 `aborted`；未安装插件的违规文案分开；试点文档 /
+    注释统一为异步任务实现（DEV-124 标注被 DEV-130 修订）。
+- 测试证据：定向测试（`node scripts/run-tests.mjs run`）覆盖 plugin-registry / plugin-host /
+  plugin-bridge / media-entry-resolution / media-tools / media-delivery / gateway-read-only /
+  scan-plugin-runtime / sign-plugin-index / plugin-capability-model / plugin-runtime-version /
+  plugin-sdk client + host-channel / shared protocol / paths / usage / migrations / safe-dispatcher
+  ——**26 个文件 / 463 个用例通过 / 0 失败**；renderer（bot-panel / plugins / extension-center /
+  chats / i18n）+ locales ——**63 个文件 / 590 个用例通过 / 0 失败**（2026-11-16）。
+  `pnpm --filter @kepcup/core typecheck`、`@kepcup/shared` / `@kepcup/plugin-sdk` /
+  `@kepcup/desktop`（svelte-check 0 error / 0 warning）通过。全量 `pnpm test` 收口：
+  **804 个文件通过 / 3 跳过，8721 passed / 44 skipped / 0 failed**（2026-11-16）。
+- 已更新的文档：本条；61 §12.3 / 验收锚点；`todo/plugin-runtime/P4-governance-pilot.md`；
+  `plugins/dashscope-t2i/src/main.ts` 头注释。

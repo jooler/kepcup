@@ -13,6 +13,7 @@
   import ExtensionMcpInstances from './ExtensionMcpInstances.svelte';
   import ExtensionMail from './ExtensionMail.svelte';
   import ExtensionIm from './ExtensionIm.svelte';
+  import ExtensionCapabilityModels from './ExtensionCapabilityModels.svelte';
   import ExtensionLocalCollab from './ExtensionLocalCollab.svelte';
   import LocalConnectorsSection from './LocalConnectorsSection.svelte';
   import AppConnectionsList from '$lib/features/apps/AppConnectionsList.svelte';
@@ -22,12 +23,15 @@
   import McpSection from '$lib/features/settings/McpSection.svelte';
   import {
     FILTER_COUNT_KEYS,
+    pluginFocusContentView,
     type ExtensionCenterFilter,
     type ExtensionCenterKindFilter,
   } from './tabs';
   import PluginInstallDialog from '../plugins/PluginInstallDialog.svelte';
   import PluginFieldForm from '../plugins/PluginFieldForm.svelte';
   import PluginIcon from '../plugins/PluginIcon.svelte';
+  import PluginRuntimeStatus from '../plugins/PluginRuntimeStatus.svelte';
+  import { pluginRuntime } from '../plugins/plugin-runtime.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
@@ -61,6 +65,8 @@
 
   $effect(() => {
     plugins.start();
+    // D125 P3：执行型插件运行状态（事件 + 初始快照）；非执行型插件没有条目。
+    pluginRuntime.start();
     void plugins.load(true);
   });
 
@@ -72,9 +78,10 @@
   let updatingAll = $state(false);
   let uninstallTarget = $state<string | null>(null);
   /** 插件卡片「管理」进入的内容管理视图；null = 插件网格。 */
-  let contentView = $state<{ kind: 'connector' | 'mcp' | 'mail' | 'im'; pluginId: string } | null>(
-    null,
-  );
+  let contentView = $state<{
+    kind: 'connector' | 'mcp' | 'mail' | 'im' | 'capability-model';
+    pluginId: string;
+  } | null>(null);
   /** 卡片「设置」就地展开的插件 config 表单（声明了 config.fields 的插件）；null = 收起。 */
   let configPanelId = $state<string | null>(null);
   let configValues = $state<Record<string, unknown>>({});
@@ -116,6 +123,20 @@
     managingConnectorId = null;
     detailConnectionId = null;
     closeConfig();
+  });
+
+  // D124：插件详情深链（设置页「插件提供」行 / Bot 详情条目的「去配置」）——消费即复位；
+  // 深链会改写筛选，上面的复位 effect 先跑，这里随后落视图。清单尚未拉到（冷启动
+  // 直达深链）不立即消费，等 load 完成后本 effect 随 plugins 重跑再落视图。
+  $effect(() => {
+    const view = pluginFocusContentView(
+      shell.extensionCenterPluginFocus,
+      plugins.loaded,
+      plugins.plugins.map((plugin) => plugin.id),
+    );
+    if (view === null) return;
+    shell.extensionCenterPluginFocus = null;
+    contentView = view;
   });
 
   // localCollab 旧深链：展开并滚动到「本机应用协作」系统卡（shell 深链置位，消费即复位）。
@@ -200,32 +221,43 @@
 
   /** 卡片的「管理」入口类别（按连接 → MCP → 邮件排序；纯技能插件没有管理面）。 */
   const MANAGE_KINDS: ReadonlyArray<{
-    kind: 'connector' | 'mcp' | 'mail' | 'im';
-    countKey: 'connectors' | 'mcp' | 'mail' | 'im';
+    kind: 'connector' | 'mcp' | 'mail' | 'im' | 'capability-model';
+    countKey: 'connectors' | 'mcp' | 'mail' | 'im' | null;
     labelKey: Parameters<typeof t>[0];
   }> = [
     { kind: 'connector', countKey: 'connectors', labelKey: 'plugins.kind.connector' },
     { kind: 'mcp', countKey: 'mcp', labelKey: 'plugins.kind.mcp' },
     { kind: 'mail', countKey: 'mail', labelKey: 'plugins.kind.mail' },
     { kind: 'im', countKey: 'im', labelKey: 'plugins.kind.im' },
+    // D124：能力模型插件 =「模型」管理入口（条目 + 账号实例）；`providesInstances`
+    // 判定，countKey 为 null（条目不进插件卡的固定五键计数）。
+    { kind: 'capability-model', countKey: null, labelKey: 'plugins.kind.capabilityModel' },
   ];
 
   function manageKinds(
     plugin: PluginSummary,
-  ): Array<{ kind: 'connector' | 'mcp' | 'mail' | 'im'; labelKey: Parameters<typeof t>[0] }> {
+  ): Array<{ kind: 'connector' | 'mcp' | 'mail' | 'im' | 'capability-model'; labelKey: Parameters<typeof t>[0] }> {
     // P4-M2：实例型插件（counts / instanceCounts 为 0 的模版插件）也要出「管理」
     // 入口——添加第一个实例的唯一路径就是这张卡。
-    return MANAGE_KINDS.filter(({ countKey }) => {
+    return MANAGE_KINDS.filter(({ kind, countKey }) => {
+      if (kind === 'capability-model') return plugin.providesInstances.includes('capability-model');
       if (countKey === 'connectors') return plugin.counts.connectors > 0;
       return (
-        plugin.counts[countKey] > 0 ||
-        plugin.instanceCounts[countKey] > 0 ||
-        plugin.providesInstances.includes(countKey)
+        plugin.counts[countKey!] > 0 ||
+        plugin.instanceCounts[countKey!] > 0 ||
+        plugin.providesInstances.includes(countKey!)
       );
     }).map(({ kind, labelKey }) => ({ kind, labelKey }));
   }
 
-  function openManage(plugin: PluginSummary, kind: 'connector' | 'mcp' | 'mail' | 'im'): void {
+  function openManage(
+    plugin: PluginSummary,
+    kind: 'connector' | 'mcp' | 'mail' | 'im' | 'capability-model',
+  ): void {
+    if (kind === 'capability-model') {
+      contentView = { kind, pluginId: plugin.id };
+      return;
+    }
     if (kind === 'connector') {
       // 单连接插件直达账号管理流（账本 ref = 连接 slug = 目录 connectorId），
       // 不再经过应用卡网格；多连接插件回落到按插件圈定的目录网格。
@@ -598,6 +630,11 @@
           {t('plugins.update.available', { version: plugin.updateAvailable.version })}
         </Badge>
       {/if}
+      <!-- D125 P3：执行型插件运行状态徽标 / 活动入口（非执行型插件连组件都不挂载，
+           无徽标 / 活动入口节点，数据型插件卡零可见变化）。 -->
+      {#if pluginRuntime.isExecuting(plugin.id)}
+        <PluginRuntimeStatus pluginId={plugin.id} class="ms-auto" />
+      {/if}
     </div>
     {#if plugin.description.length > 0}
       <p class="text-xs text-muted-foreground">{plugin.description}</p>
@@ -904,6 +941,22 @@
         {t('plugins.backToList')}
       </Button>
       <ExtensionIm embedded pluginId={contentView.pluginId} />
+    </div>
+  {:else if contentView.kind === 'capability-model'}
+    <!-- D124：能力模型插件的详情（模型条目 + 账号实例）——设置页「插件提供」与
+         Bot 详情「去配置」的 deepLink 落点。 -->
+    <div class="space-y-2" data-testid="plugins-content-capability-model">
+      <Button
+        size="sm"
+        variant="ghost"
+        class="-ml-2 gap-1"
+        onclick={() => (contentView = null)}
+        data-testid="plugins-content-back"
+      >
+        <ArrowLeft class="size-3.5" aria-hidden="true" />
+        {t('plugins.backToList')}
+      </Button>
+      <ExtensionCapabilityModels pluginId={contentView.pluginId} />
     </div>
   {:else}
     <div class="space-y-2" data-testid="plugins-content-mail">
