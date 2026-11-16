@@ -157,6 +157,7 @@ export const enUS = {
   'setupCard.mailAccountNoBot':
     "Can't find the current bot, so email can't be linked. Close the card and try again, or add it from the Extensions Center.",
   'composer.attach': 'Add attachment',
+  'composer.dropToAttach': 'Drop files to attach',
   'composer.attachmentRemove': 'Remove attachment',
   'composer.attachmentTooLarge': '{name} exceeds the 30 MB attachment limit',
   'composer.attachmentUploadFailed': 'Failed to upload {name}',

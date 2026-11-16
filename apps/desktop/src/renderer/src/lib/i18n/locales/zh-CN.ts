@@ -140,6 +140,7 @@ export const zhCN = {
   'setupCard.mailAccountNoBot':
     '找不到当前 Bot，无法绑定邮箱。请关闭卡片后重试，或到扩展中心添加。',
   'composer.attach': '添加附件',
+  'composer.dropToAttach': '松开即附加文件',
   'composer.attachmentRemove': '移除附件',
   'composer.attachmentTooLarge': '{name} 超过 30MB 附件上限',
   'composer.attachmentUploadFailed': '{name} 上传失败',

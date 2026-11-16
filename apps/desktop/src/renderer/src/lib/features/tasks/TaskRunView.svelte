@@ -4,12 +4,14 @@
   import type { RunStep, TaskRunUsage } from '@kepcup/shared';
   import {
     ArrowLeft,
+    Check,
     ChevronDown,
     ChevronRight,
     CircleCheck,
     CircleSlash,
     CircleX,
     Clock,
+    Copy,
     CornerDownRight,
     Loader2,
   } from '@lucide/svelte';
@@ -19,6 +21,10 @@
   import { ChatSession } from '$lib/stores/chat-session.svelte';
   import { tasks } from '$lib/stores/tasks.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
+  import { composerDrafts } from '$lib/features/chats/composer-drafts.svelte';
+  import { taskDraftKey } from '$lib/features/chats/composer-inject';
+  import { createFileDropZone } from '$lib/features/chats/file-drop.svelte';
+  import FileDropOverlay from '$lib/features/chats/FileDropOverlay.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import { registerEscapeLayer, ESCAPE_PRIORITY } from '$lib/features/shell/escape-layers';
   import { Button } from '$lib/components/ui/button';
@@ -104,6 +110,40 @@
   let transcriptReport = $state('');
   const reportText = $derived((task?.result?.text ?? transcriptReport).trim());
   const active = $derived(task !== null && isActiveTask(task) && reportText.length === 0);
+
+  /** 报告标题旁的复制按钮（与 TaskRunToolCard 同款反馈）：复制报告 markdown 原文。 */
+  let reportCopied = $state(false);
+  let reportCopyTimer: ReturnType<typeof setTimeout> | null = null;
+  async function copyReport(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(reportText);
+      reportCopied = true;
+      if (reportCopyTimer !== null) clearTimeout(reportCopyTimer);
+      reportCopyTimer = setTimeout(() => (reportCopied = false), 1500);
+    } catch {
+      // Clipboard unavailable (permissions / non-secure context): leave the label.
+    }
+  }
+
+  $effect(() => () => {
+    if (reportCopyTimer !== null) clearTimeout(reportCopyTimer);
+  });
+
+  /**
+   * 父视图级文件拖拽附加（file-drop.svelte.ts）：任务详情页整片区域拖入文件即
+   * 附加。门禁与注入坞（D115，页面底部 {#if task !== null && active}）同闸——
+   * 只有正在执行、注入坞在渲染时才收：没有输入组件就没有可落的附件（终态
+   * 任务拖文件不提示也不上传）。上传与注入坞的 pill drop / 粘贴同源，走
+   * `task:<id>` 草稿键，附件随下一次 tasks.inject 直发。
+   */
+  const fileDropZone = createFileDropZone({
+    enabled: () => active,
+    onFiles: (files) => {
+      const current = task;
+      if (current === null || current.conversationId === null) return;
+      composerDrafts.uploadFiles(taskDraftKey(taskId), files, current.conversationId);
+    },
+  });
   // 会话消息随打开详情页的对话而来（主页对话回退 chat.main，卡片弹层是自己的
   // session）：提问卡最终取自 questionSession（归属会话直连或下面的后台
   // session），message.created / updated 事件保持同源实时。
@@ -384,11 +424,15 @@
   }
 </script>
 
+<!-- svelte-ignore a11y_no_static_element_interactions --><!-- 整片 drop 区无指针交互语义；键盘路径走注入坞的 + 键 -->
 <div
   class="relative flex min-h-0 flex-1 flex-col bg-background"
   data-testid="task-run-view"
   data-task-id={taskId}
   data-task-state={task?.state ?? 'unknown'}
+  ondragover={fileDropZone.onDragOver}
+  ondragleave={fileDropZone.onDragLeave}
+  ondrop={fileDropZone.onDrop}
 >
   <header
     class="app-drag flex shrink-0 items-start gap-2 border-b px-3 py-2.5 {narrow && isMac
@@ -700,9 +744,25 @@
             data-testid="task-run-report"
             data-report-status={task?.result?.status ?? ''}
           >
-            <h3 class="mb-2 text-xs font-medium text-muted-foreground">
-              {t('task.run.reportTitle')}
-            </h3>
+            <div class="mb-2 flex items-center justify-between">
+              <h3 class="text-xs font-medium text-muted-foreground">
+                {t('task.run.reportTitle')}
+              </h3>
+              <button
+                type="button"
+                class="flex items-center rounded-md p-1 text-muted-foreground transition-colors hover:text-foreground"
+                onclick={() => void copyReport()}
+                aria-label={t('task.run.copy')}
+                title={reportCopied ? t('task.run.copied') : t('task.run.copy')}
+                data-testid="task-run-report-copy"
+              >
+                {#if reportCopied}
+                  <Check class="size-3 text-emerald-600" aria-hidden="true" />
+                {:else}
+                  <Copy class="size-3" aria-hidden="true" />
+                {/if}
+              </button>
+            </div>
             <div class="text-sm">
               <Markdown content={reportText} />
             </div>
@@ -752,4 +812,7 @@
     -->
     <TaskInjectDock {taskId} conversationId={task.conversationId} modelRef={task.model ?? null} awaitingInput={task.awaitingInput} />
   {/if}
+
+  <!-- 拖拽提示浮层：文件拖到视图上方时整片加罩（pointer-events-none，仅运行中任务显示）。 -->
+  <FileDropOverlay active={fileDropZone.dragActive} />
 </div>
