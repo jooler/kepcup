@@ -44,8 +44,9 @@ P1 与 capability-model-plugins P3/P4 可并行；P2 依赖其 P2（`MediaEntryS
 
 **shared**
 - 协议模块：`packages/shared/src/plugin-runtime/protocol.ts`；帧判别联合：`PluginRuntimeFrame`（`init / ready / invoke / cancel / shutdown / result / error / event / state`），事件 kind：`'progress' | 'log'`
-- manifest 增量段：`runtime`（`entry / hostApi / network.allow? / instanceFields? / maxConcurrent`）——`instanceFields` 为 D125 P4（DEV-114）新增的实例字段声明面，复用 D105 `pluginFieldSchema`，`sensitive:true` 走实例 secrets 并经 `invoke.context.credentials` 注入
+- manifest 增量段：`runtime`（`entry / hostApi / network.allow? / instanceFields? / timeouts? / maxConcurrent`）——`instanceFields` 为 D125 P4（DEV-114）新增的实例字段声明面，复用 D105 `pluginFieldSchema`，`sensitive:true` 走实例 secrets 并经 `invoke.context.credentials` 注入；`timeouts` 为 DEV-130 新增的**方法级调用超时声明**（key = `<contract>.<method>`，1s–15min），宿主只钳制上限、未声明走契约默认
 - invoke 上下文：`context.instanceId` 为 P4 新增可选字段（多实例插件把凭据与实例非敏感配置对齐）；宿主只发给在 `ready.features` 里声明 `invoke.context.instanceId` 的插件（旧 SDK 不带 features → 不发送，兼容其 strict 帧校验）
+- Host API `net.fetch` 的 `init.timeoutMs`（1s–15min）为 DEV-130 新增：单次请求超时由插件声明，宿主钳制上限（不再有 60s 隐含上限），进程退出时在途请求由 `bridge.abortFor` 取消
 - 错误码：`PLUGIN_CRASHED` / `PLUGIN_TIMEOUT` / `PLUGIN_CONTRACT_VIOLATION` / `PLUGIN_NETWORK_DENIED`（版本不匹配复用既有 `PLUGIN_UPGRADE_REQUIRED`）
 
 **core**

@@ -2094,3 +2094,34 @@
      `getOwnPropertyDescriptor(globalThis, …)` / `constructor.constructor` 已单独 fail。
      verified 层级仍要求人工复审，运行期依靠进程隔离与「不给 fs / 子进程」的 Host API 面。
 - 已更新的文档：本条；DEV-126 / 61 §7、§12、P4 任务书实施记录。
+
+### DEV-130 超时治理交给插件：`runtime.timeouts` + `net.fetch.init.timeoutMs`，宿主只钳制上限（D125 P4）
+
+- 状态：已落实
+- 阶段：D125 P4（2026-11-16，真机反馈后）
+- 是否阻塞：否
+- 问题：真机调用 `qwen-image-3.0` 时两次都在 60s 失败（`无法连接百炼服务：插件网络请求超时`）。
+  根因是 `CapabilityBridge` 的 `DEFAULT_NET_TIMEOUT_MS = 60_000` —— **应用侧**对每次
+  `host.net.fetch` 的固定上限，比插件声明的调用看门狗（`media.generateImage` 120s）还短。
+  等于应用替插件决定了「单次请求最多多久」，违背「插件在规范内自由 / 应用提供舞台」的
+  定位（D125 支柱 3）：同步出图（含 `prompt_extend` 常 60s+）、异步排队、视频生成的合理
+  时长差异很大，一个固定值必然误杀其中一类。
+- 影响范围：`packages/shared`（`runtime.timeouts` schema + 上限常量、`net.fetch` 的
+  `timeoutMs`）、`packages/core`（host 超时解析、bridge 超时与在途取消、install 键校验）、
+  `packages/plugin-sdk`（`HostNetRequestInit.timeoutMs` 与本地等待）、试点插件。
+- 决定：
+  1. **调用级超时由插件声明**：`runtime.timeouts: Record<'<contract>.<method>', ms>`（1s –
+     15 分钟）。host 取值优先级 = 测试覆盖 > 插件声明 > 契约默认；宿主只 `Math.min` 钳制
+     15 分钟上限。安装期校验键属于已注册契约方法（拼错即拒装，不静默走默认）。
+  2. **单次网络请求超时由插件声明**：`host.net.fetch(url, { timeoutMs })`（1s – 15 分钟）。
+     不声明时用**宿主上限**兜底（原 60s 默认删除）。SDK 侧本地等待 = 声明值 + 5s（让宿主
+     的超时错误先回来）。
+  3. **防泄漏**：`bridge.abortFor(pluginId)` 在 host `dispose` / `#failLive` 时取消该插件
+     全部在途请求（请求由宿主代发，插件进程死亡后不会自动停止）。
+  4. **试点改异步**：`qwen-image-3.0` 走 `image-generation/generation` + `X-DashScope-Async`
+     + `GET /api/v1/tasks/{id}` 轮询（单次请求秒级，不受连接时长限制），清单声明
+     `timeouts['media.generateImage'] = 300000`。
+- 长期收益：应用的职责收敛为「有上限 + 到点必杀 + 进程退出清理」，协议时长由最了解厂商
+  的插件声明；新协议（长轮询 / 大文件 / 慢模型）接入不需要应用改常量发版。
+- 已更新的文档：本条；61 §2 / §3.1 / §3.3 / §4 / §12.4；`plugins/dashscope-t2i/README.md`；
+  P4 任务书实施记录。

@@ -11,15 +11,22 @@ manifest 带 `runtime` 段、包内带打包后的 JS（`dist/main.js`），由�
 
 ## 协议
 
-- 生成：`POST https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation`
-  - 头：`Authorization: Bearer <apiKey>`、`Content-Type: application/json`
+- 提交：`POST https://dashscope.aliyuncs.com/api/v1/services/aigc/image-generation/generation`
+  - 头：`Authorization: Bearer <apiKey>`、`Content-Type: application/json`、`X-DashScope-Async: enable`
   - 体：`{ model, input: { messages: [{ role: 'user', content: [{ text }, ...{ image }] }] }, parameters: { size, n, prompt_extend, watermark, negative_prompt?, seed? } }`
   - 纯文生图只放 `text`；带参考图（`images`）即编辑（3.0 系列最多 3 张）。
-  - 返回 `output.choices[0].message.content[].image`（PNG 直链，24h 有效）。
-- 进度：请求开始 → `submitting`；拿到图片 → `downloading`（100%）。同步接口没有中间
-  状态可上报，SDK / 宿主各限速 1 次/秒。
-- 取消：`host.signal` 不能跨进程中断宿主代理请求；插件在响应返回后立即检查 abort，
-  已取消则丢弃结果并报「调用已取消」。
+  - 返回 `output.task_id`（秒级，不等出图）。
+- 轮询：`GET /api/v1/tasks/{task_id}`，3s 间隔；`PENDING / RUNNING` 继续，`SUCCEEDED` 取
+  `output.choices[0].message.content[].image`（PNG 直链，24h 有效），`FAILED / CANCELED` 映射错误。
+- **为什么异步而非同步**：同步接口要求单条 HTTP 连接挂到出图完成（含 `prompt_extend`
+  常 60s+），任何网络抖动 / 代理超时都会让整次调用失败，且无法上报阶段或响应取消；
+  异步提交是秒级短请求，轮询失败可重试，进度与取消都有自然的介入点。
+- 进度：提交 → `submitting`；排队 → `queued`；生成中 → `generating`（百分比估算）；
+  成功 → `downloading`（100%）。SDK / 宿主各限速 1 次/秒。
+- 取消：`host.signal` abort 后在轮询间隙尽快返回，**不调用删除接口**（服务端任务自然过期）。
+- 超时：单次网络请求由插件声明 `timeoutMs: 30_000`；整个调用由清单
+  `runtime.timeouts['media.generateImage'] = 300000`（5 分钟）声明——**宿主只钳制上限
+  （15 分钟），不用固定值干涉插件**。插件自设等待上限 285s（留 15s 回传结果）。
 - 错误映射：401 → `PROVIDER_AUTH_FAILED`；402 / 配额词 → `PROVIDER_QUOTA`；
   429 → `PROVIDER_RATE_LIMITED`；其余 → `PROVIDER_UNAVAILABLE`（`url error` 附带
   「model 不在本端点支持列表」指引）。

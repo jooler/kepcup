@@ -3,6 +3,7 @@ import {
   PLUGIN_MAX_INSTANCES,
   PLUGIN_RUNTIME_ERROR_CODES,
   PLUGIN_RUNTIME_HOST_API_VERSION,
+  isPluginHostApiRequest,
   pluginManifestSchema,
   pluginRuntimeEventFrameSchema,
   pluginRuntimeHostToPluginFrameSchema,
@@ -308,6 +309,51 @@ describe('plugin manifest runtime section (D125 P1, 61 §2)', () => {
     expect(() =>
       parse({ ...baseManifest, runtime: { ...baseManifest.runtime, maxConcurrent: 1.5 } }),
     ).toThrow();
+  });
+
+  it('accepts runtime.timeouts keyed by <contract>.<method> and rejects bad keys / values', () => {
+    // 超时由插件按自己的厂商协议声明（DEV-130）；宿主只钳制上限。
+    const ok = parse({
+      ...baseManifest,
+      runtime: {
+        ...baseManifest.runtime,
+        timeouts: { 'media.generateImage': 300_000, 'media.submitVideo': 900_000 },
+      },
+    });
+    expect(ok.runtime?.timeouts).toEqual({
+      'media.generateImage': 300_000,
+      'media.submitVideo': 900_000,
+    });
+    for (const bad of [
+      { 'media.generateImage': 500 }, // < 1s
+      { 'media.generateImage': 900_001 }, // > 上限 15 分钟
+      { 'media.generateImage': 1.5 }, // 非整数
+      { generateImage: 60_000 }, // 缺 contract 前缀
+      { 'Media.GenerateImage': 60_000 }, // 契约名必须小写
+      { 'media.generate-image': 60_000 }, // 方法名不能带连字符
+    ]) {
+      expect(
+        () => parse({ ...baseManifest, runtime: { ...baseManifest.runtime, timeouts: bad } }),
+        JSON.stringify(bad),
+      ).toThrow();
+    }
+  });
+
+  it('accepts net.fetch init.timeoutMs within 1s..15min and rejects outside', () => {
+    const frame = {
+      type: 'host-api',
+      requestId: 'r1',
+      api: 'net.fetch',
+      url: 'https://example.invalid/x',
+      init: { timeoutMs: 300_000 },
+    };
+    expect(isPluginHostApiRequest(frame)).toBe(true);
+    for (const bad of [500, 900_001, 1.5]) {
+      expect(
+        isPluginHostApiRequest({ ...frame, init: { timeoutMs: bad } }),
+        String(bad),
+      ).toBe(false);
+    }
   });
 
   it('keeps runtime optional (data-shaped manifests unchanged)', () => {

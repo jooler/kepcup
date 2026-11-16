@@ -40,7 +40,8 @@ export interface HostApiChannel {
   dispose(): void;
 }
 
-const NET_TIMEOUT_MS = 120_000;
+/** `net.fetch` 的本地等待默认值：与宿主上限（15 分钟）一致，插件可用 `init.timeoutMs` 收窄。 */
+const NET_TIMEOUT_MS = 15 * 60_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 interface PendingRequest {
@@ -221,6 +222,7 @@ export function connectHostApiChannel(ipc: HostChannelIpc): HostApiChannel {
         init?.body !== undefined && typeof init.body !== 'string'
           ? encodeBase64(init.body)
           : undefined;
+      const netTimeoutMs = init?.timeoutMs ?? NET_TIMEOUT_MS;
       const raw = await request(
         {
           api: 'net.fetch',
@@ -230,6 +232,7 @@ export function connectHostApiChannel(ipc: HostChannelIpc): HostApiChannel {
                 init: {
                   ...(init.method !== undefined ? { method: init.method } : {}),
                   ...(init.headers !== undefined ? { headers: init.headers } : {}),
+                  ...(init.timeoutMs !== undefined ? { timeoutMs: init.timeoutMs } : {}),
                   ...(typeof init.body === 'string'
                     ? { body: init.body }
                     : bodyBase64 !== undefined
@@ -239,7 +242,9 @@ export function connectHostApiChannel(ipc: HostChannelIpc): HostApiChannel {
               }
             : {}),
         },
-        NET_TIMEOUT_MS,
+        // 本地等待比宿主侧超时多 5s：让宿主的超时错误先回来（插件得到「请求超时」
+        // 而不是「宿主无响应」，两者的人话与重试语义不同）。
+        netTimeoutMs + 5_000,
       );
       return toNetResponse(raw);
     },

@@ -750,6 +750,18 @@ export const PLUGIN_IM_BUILTIN_INSTANCE_FIELD_KEYS: readonly string[] = ['bot_to
 const PLUGIN_RUNTIME_NETWORK_ALLOW_PATTERN =
   /^(?:\*\.)?[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$/i;
 
+/** `runtime.timeouts` 的键形状：`<contract>.<method>`，如 `media.generateImage`。 */
+const PLUGIN_RUNTIME_TIMEOUT_KEY_PATTERN = /^[a-z][a-z0-9-]*\.[A-Za-z][A-Za-z0-9]*$/;
+
+/**
+ * 插件可声明的单次调用超时上限（15 分钟，与视频契约对齐）。
+ *
+ * 调用级超时**由插件按自己的厂商协议声明**（`runtime.timeouts`），宿主只钳制上限——
+ * 同步出图、异步排队、视频生成的合理时长差异很大，应用不用一个固定值干涉插件实现。
+ * 未声明时用契约默认（`capabilityContractTimeout`）；看门狗击杀阈值即该值。
+ */
+export const PLUGIN_RUNTIME_MAX_CALL_TIMEOUT_MS = 15 * 60_000;
+
 /**
  * 执行型插件清单增量段（D125，docs/design/61-plugin-runtime-platform.md §2）：manifest
  * 含 `runtime` 即执行型（形态 B）——包内携带代码、由宿主外子进程按 61 §3.2 协议执行，
@@ -784,6 +796,24 @@ export const pluginRuntimeSectionSchema = z
      * 并集构成实例表单（core `capabilityModelInstanceFields`）。
      */
     instanceFields: z.array(pluginFieldSchema).max(16).optional(),
+    /**
+     * 方法级调用超时覆盖（毫秒）：key = `<contract>.<method>`（如 `media.generateImage`）。
+     * 插件按自己的厂商协议声明合理时长（同步出图 / 异步排队差异大），宿主只钳制上限
+     * {@link PLUGIN_RUNTIME_MAX_CALL_TIMEOUT_MS}；未声明的方走契约默认（`contracts.ts`）。
+     * 键形状在此校验；方法是否属于已注册契约由安装管线校验（core）。
+     */
+    timeouts: z
+      .record(
+        z
+          .string()
+          .min(3)
+          .max(64)
+          .regex(PLUGIN_RUNTIME_TIMEOUT_KEY_PATTERN, {
+            message: '必须是 <contract>.<method> 形式，如 media.generateImage',
+          }),
+        z.number().int().min(1_000).max(PLUGIN_RUNTIME_MAX_CALL_TIMEOUT_MS),
+      )
+      .optional(),
     /** 每插件进程内调用并发上限（v1 运行时恒串行排队，本字段预留）。 */
     maxConcurrent: z.number().int().min(1).max(4).default(1),
   })
