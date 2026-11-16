@@ -3,9 +3,9 @@
   "id": "io.kepcup/dashscope",
   "name": "阿里云百炼",
   "icon": "icon.png",
-  "version": "1.0.0",
-  "description": "阿里云百炼（DashScope）官方模型条目包：图片生成 / 视频生成 / 语音合成 / 语音识别 / 图文理解 / 向量 / 重排共 20 个预置模型，一个模型一条，勾选即用；凭据只保存在本机。",
-  "usage": "安装后在插件详情「账号实例」添加阿里云百炼账号并填入 API Key（百炼控制台 bailian.console.aliyun.com 获取），再到 Bot 详情展开本插件卡片勾选要启用的模型条目；勾选后该 Bot 的媒体生成即可使用所选模型，未填 Key 时调用会引导补配。",
+  "version": "1.0.1",
+  "description": "阿里云百炼（DashScope）官方模型条目包：语音合成 / 语音识别 / 图文理解 / 向量 / 重排共 13 个预置模型，一个模型一条，勾选即用；凭据只保存在本机。（DEV-133：图片 / 视频生成由执行型插件提供，如 dashscope-t2i）",
+  "usage": "安装后在插件详情「账号实例」添加阿里云百炼账号并填入 API Key（百炼控制台 bailian.console.aliyun.com 获取），再到 Bot 详情展开本插件卡片勾选要启用的模型条目；勾选后该 Bot 即可用所选模型，未填 Key 时调用会引导补配。",
   "author": {
     "name": "KepCup",
     "url": "https://kepcup.com"
@@ -76,38 +76,6 @@
         "description": "长期在售的 Qwen-VL 图片理解模型。"
       },
       {
-        "id": "qwen-image",
-        "capability": "image",
-        "model": "qwen-image",
-        "engine": "dashscope",
-        "displayName": "Qwen-Image 图片生成",
-        "description": "qwen-image 家族走原生 multimodal-generation 同步接口，引擎内部完成提交与取图。"
-      },
-      {
-        "id": "qwen-image-plus",
-        "capability": "image",
-        "model": "qwen-image-plus",
-        "engine": "dashscope",
-        "displayName": "Qwen-Image 图片生成（Plus）",
-        "description": "qwen-image 的增强版，同样走原生 multimodal-generation 同步接口。"
-      },
-      {
-        "id": "qwen-image-edit",
-        "capability": "image",
-        "model": "qwen-image-edit",
-        "engine": "dashscope",
-        "displayName": "Qwen-Image 图片编辑",
-        "description": "带参考图与编辑指令的图片编辑模型（模型 id 含 edit 自动走编辑路径）。"
-      },
-      {
-        "id": "qwen-image-edit-plus",
-        "capability": "image",
-        "model": "qwen-image-edit-plus",
-        "engine": "dashscope",
-        "displayName": "Qwen-Image 图片编辑（Plus）",
-        "description": "qwen-image-edit 的增强版图片编辑模型。"
-      },
-      {
         "id": "qwen-audio-3-1-tts-next",
         "capability": "tts",
         "model": "qwen-audio-3.1-tts-next",
@@ -154,30 +122,6 @@
         "engine": "dashscope",
         "displayName": "Qwen3-ASR 语音识别（Flash）",
         "description": "录音文件识别的快速版语音转文本模型。"
-      },
-      {
-        "id": "wan2-7-t2v",
-        "capability": "video",
-        "model": "wan2.7-t2v",
-        "engine": "dashscope",
-        "displayName": "万相 2.7 文生视频",
-        "description": "wan 系列异步视频任务（X-DashScope-Async），引擎内部提交并轮询到完成。"
-      },
-      {
-        "id": "wan3-0-video",
-        "capability": "video",
-        "model": "wan3.0-video",
-        "engine": "dashscope",
-        "displayName": "万相 3.0 视频生成",
-        "description": "wan 系列异步视频任务（X-DashScope-Async），引擎内部提交并轮询到完成。"
-      },
-      {
-        "id": "wan2-2-t2v-plus",
-        "capability": "video",
-        "model": "wan2.2-t2v-plus",
-        "engine": "dashscope",
-        "displayName": "万相 2.2 文生视频（Plus）",
-        "description": "wan 系列异步视频任务的 Plus 档位。"
       }
     ]
   }

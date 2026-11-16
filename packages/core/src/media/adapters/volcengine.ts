@@ -1,18 +1,7 @@
 import { AppError } from '@kepcup/shared';
 import { trimTrailingSlash, vendorFetch } from '../http.js';
 import { openAICompatibleUnderstandImage } from '../vision.js';
-import type {
-  GeneratedImage,
-  ImageGenerationParams,
-  ImageGenerationResult,
-  UnderstandImageParams,
-  VendorAdapter,
-  VendorCallContext,
-  VideoGenerationHandle,
-  VideoGenerationParams,
-  VideoTaskPhase,
-  VideoTaskStatus,
-} from '../types.js';
+import type { UnderstandImageParams, VendorAdapter, VendorCallContext } from '../types.js';
 
 /**
  * 火山方舟（Ark）。数据面全部挂 OpenAI 风格的 `{baseUrl}`（默认
@@ -21,41 +10,14 @@ import type {
  *   模型与纯文本 /embeddings 端点均已下线，多模态端点整个 input 融合为
  *   **单个**向量，批量时逐条请求再按输入顺序拼接）
  * - 图片理解：POST /chat/completions + image_url 内容块（vision.ts）
- * - 图片生成 / 编辑：POST /images/generations（编辑 = image 参考图 +
- *   编辑指令；方舟没有 /images/edits 端点，seedream 系列同端点编辑）
- * - 视频：POST /contents/generations/tasks 提交异步任务，
- *   GET /tasks/{id} 轮询（status: queued/running/succeeded/failed/cancelled）
  * - 重排 / TTS / ASR：方舟数据面均不提供（重排在 VikingDB、语音在独立
  *   语音产品线），适配器不挂对应方法，网关层会给出明确提示。
+ *
+ * DEV-133：图片生成 / 编辑（seedream，/images/generations）与视频生成
+ * （seedance，/contents/generations/tasks 异步任务）的内置实现已移除
+ * （generateImage / submitVideo / videoStatus / cancelVideo）——图像 /
+ * 视频生成统一由能力模型插件条目提供，本适配器不再承载。
  */
-
-interface ArkImageResponse {
-  data?: Array<{ url?: string; b64_json?: string }>;
-}
-
-interface ArkTaskResponse {
-  id?: string;
-  status?: string;
-  content?: { video_url?: string };
-  error?: { message?: string; code?: string };
-}
-
-function mapTaskStatus(data: ArkTaskResponse): VideoTaskStatus {
-  const raw = data.status ?? 'queued';
-  let status: VideoTaskPhase;
-  if (raw === 'succeeded') status = 'succeeded';
-  else if (raw === 'queued' || raw === 'running') status = raw === 'queued' ? 'queued' : 'running';
-  else status = 'failed';
-  return {
-    status,
-    ...(status === 'succeeded' && data.content?.video_url
-      ? { videoUrl: data.content.video_url }
-      : {}),
-    ...(status === 'failed'
-      ? { error: data.error?.message ?? data.error?.code ?? `任务状态 ${raw}` }
-      : {}),
-  };
-}
 
 export const volcengineAdapter: VendorAdapter = {
   async embed(ctx: VendorCallContext, model: string, texts: string[]): Promise<number[][]> {
@@ -90,103 +52,5 @@ export const volcengineAdapter: VendorAdapter = {
     params: UnderstandImageParams,
   ): Promise<{ text: string }> {
     return openAICompatibleUnderstandImage(ctx, model, params);
-  },
-
-  async generateImage(
-    ctx: VendorCallContext,
-    model: string,
-    params: ImageGenerationParams,
-  ): Promise<ImageGenerationResult> {
-    const images = params.images ?? [];
-    const response = await vendorFetch(
-      `${trimTrailingSlash(ctx.baseUrl)}/images/generations`,
-      ctx.apiKey,
-      {
-        json: {
-          model,
-          prompt: params.prompt,
-          // 编辑 / 多参考图：image 接受字符串或数组。
-          ...(images.length > 0 ? { image: images.length === 1 ? images[0] : images } : {}),
-          ...(params.size ? { size: params.size } : {}),
-          ...(params.n && params.n > 1
-            ? {
-                sequential_image_generation: 'auto',
-                sequential_image_generation_options: { max_images: params.n },
-              }
-            : {}),
-          ...(params.seed !== undefined ? { seed: params.seed } : {}),
-        },
-        timeoutMs: 120_000,
-      },
-      ctx.fetchImpl,
-    );
-    const data = response.json() as ArkImageResponse;
-    const results: GeneratedImage[] = [];
-    for (const item of data.data ?? []) {
-      if (item.url) results.push({ url: item.url });
-      else if (item.b64_json) results.push({ b64: item.b64_json, mimeType: 'image/png' });
-    }
-    if (results.length === 0) {
-      throw new AppError('PROVIDER_UNAVAILABLE', '方舟图片接口未返回图片', {
-        body: response.bodyText.slice(0, 300),
-      });
-    }
-    return { images: results };
-  },
-
-  async submitVideo(
-    ctx: VendorCallContext,
-    model: string,
-    params: VideoGenerationParams,
-  ): Promise<VideoGenerationHandle> {
-    const images = params.images ?? [];
-    const response = await vendorFetch(
-      `${trimTrailingSlash(ctx.baseUrl)}/contents/generations/tasks`,
-      ctx.apiKey,
-      {
-        json: {
-          model,
-          content: [
-            { type: 'text', text: params.prompt },
-            ...(images.length > 0
-              ? [{ type: 'image_url', image_url: { url: images[0] }, role: 'first_frame' }]
-              : []),
-          ],
-          resolution: params.resolution,
-          ratio: params.ratio,
-          duration: params.duration,
-          // 文本生成视频默认关水印。
-          watermark: false,
-        },
-        timeoutMs: 60_000,
-      },
-      ctx.fetchImpl,
-    );
-    const data = response.json() as ArkTaskResponse;
-    if (!data.id) {
-      throw new AppError('PROVIDER_UNAVAILABLE', '方舟视频任务提交失败', {
-        body: response.bodyText.slice(0, 300),
-      });
-    }
-    return { taskId: data.id };
-  },
-
-  async videoStatus(ctx: VendorCallContext, taskId: string): Promise<VideoTaskStatus> {
-    const response = await vendorFetch(
-      `${trimTrailingSlash(ctx.baseUrl)}/contents/generations/tasks/${encodeURIComponent(taskId)}`,
-      ctx.apiKey,
-      { timeoutMs: 30_000 },
-      ctx.fetchImpl,
-    );
-    return mapTaskStatus(response.json() as ArkTaskResponse);
-  },
-
-  async cancelVideo(ctx: VendorCallContext, taskId: string): Promise<void> {
-    await vendorFetch(
-      `${trimTrailingSlash(ctx.baseUrl)}/contents/generations/tasks/${encodeURIComponent(taskId)}`,
-      ctx.apiKey,
-      { method: 'DELETE', timeoutMs: 30_000 },
-      ctx.fetchImpl,
-    );
   },
 };

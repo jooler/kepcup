@@ -24,30 +24,24 @@ const SETTINGS: Settings = settingsSchema.parse({
   capabilityModels: {
     embedding: null,
     rerank: null,
-    multimodal: null,
+    // 全局槽位仍服务 multimodal / tts / asr / embedding / rerank（回退分支用
+    // understandImage 验证）。
+    multimodal: { provider: 'volcengine', model: 'doubao-seed-2-1-pro-260915' },
     asr: null,
     tts: null,
-    // 全局槽位配置了 image（回退分支用）；video 未配置（未配置分支用）。
-    image: { provider: 'volcengine', model: 'global-image-model' },
-    video: null,
   },
 });
 
 const KEYS: Record<string, string> = { 'provider:volcengine': 'sk-ark' };
 
-/** 百炼多模态生成的最小成功响应（一张图）。 */
-const okDashscopeImage = (async () =>
+/** 方舟图片理解（OpenAI 兼容 chat/completions）的最小成功响应。 */
+const okArkVision = (async () =>
   new Response(
-    JSON.stringify({
-      output: { choices: [{ message: { content: [{ image: 'https://out.example/i.png' }] } }] },
-    }),
+    JSON.stringify({ choices: [{ message: { content: '一张图' } }] }),
   )) as unknown as typeof fetch;
 
-/** 方舟图像同步响应（一张图）。 */
-const okArkImage = (async () =>
-  new Response(
-    JSON.stringify({ data: [{ url: 'https://out.example/ark.png' }] }),
-  )) as unknown as typeof fetch;
+/** 任意二进制成功响应（openai-compatible 语音合成的 audio/speech 用）。 */
+const okAudioBytes = (async () => new Response(Buffer.from('fake-mp3-bytes'))) as unknown as typeof fetch;
 
 function fakeSecrets(values: Record<string, string | null>): SecretsService {
   return {
@@ -73,24 +67,27 @@ function makeService(
   return service;
 }
 
-/** 两个条目（dashscope 引擎；第二个多实例未指定实例）。 */
+/**
+ * 两个数据型条目（DEV-133：图像 / 视频生成不再有引擎条目——语音走
+ * openai-compatible 引擎的标准端点；第二个条目用于 model 匹配与多实例用例）。
+ */
 const ENTRIES: ResolvedEntry[] = [
   {
-    pluginId: 'io.kepcup/dashscope',
-    entryId: 'qwen-image',
-    model: 'qwen-image-2.0',
-    displayName: 'Qwen-Image 图片生成',
-    engine: 'dashscope',
+    pluginId: 'io.kepcup/compatible',
+    entryId: 'kimi-tts',
+    model: 'kimi-audio-tts',
+    displayName: 'Kimi 语音合成',
+    engine: 'openai-compatible',
     source: 'engine',
     instanceId: 'pli_a',
     instances: ['pli_a'],
   },
   {
-    pluginId: 'io.kepcup/dashscope',
-    entryId: 'wan-image',
-    model: 'wan2.7-t2v-plus',
-    displayName: '万相文生图',
-    engine: 'dashscope',
+    pluginId: 'io.kepcup/compatible',
+    entryId: 'minimax-tts',
+    model: 'minimax-speech-02',
+    displayName: 'MiniMax 语音',
+    engine: 'openai-compatible',
     source: 'engine',
     instanceId: 'pli_a',
     instances: ['pli_a'],
@@ -100,11 +97,13 @@ const ENTRIES: ResolvedEntry[] = [
 function fakeSource(
   entries: ResolvedEntry[],
   overrides: Partial<MediaEntrySource> = {},
+  /** entriesFor 对哪些能力返回条目（entrySummaries 的 image 分组用例可覆盖）。 */
+  capabilities: readonly string[] = ['tts', 'image'],
 ): MediaEntrySource {
   return {
     entriesFor: async (botId, capability) => {
       if (botId === undefined || botId === '') return [];
-      return capability === 'image' ? entries : [];
+      return capabilities.includes(capability) ? entries : [];
     },
     entryOf: async () => null,
     instancesOf: () => ['pli_a', 'pli_b'],
@@ -112,13 +111,14 @@ function fakeSource(
       if (keyOverride !== undefined) return keyOverride;
       return instanceId === 'pli_nocred' ? null : 'sk-plugin';
     },
-    instanceConfig: () => ({}),
+    // openai-compatible 引擎的 baseUrl 是必填实例字段；缺省给一个兼容根。
+    instanceConfig: () => ({ baseUrl: 'https://plugin.example/v1' }),
     capabilityInstanceOf: async () => ({
-      pluginId: 'io.kepcup/dashscope',
-      engine: 'dashscope',
+      pluginId: 'io.kepcup/compatible',
+      engine: 'openai-compatible',
       source: 'engine',
-      entryId: 'qwen-image',
-      model: 'qwen-image-2.0',
+      entryId: 'kimi-tts',
+      model: 'kimi-audio-tts',
     }),
     ...overrides,
   } as MediaEntrySource;
@@ -132,30 +132,22 @@ describe('MediaService 条目解析链（D124：条目 > 全局槽位 > 未配�
         url: String(url),
         key: new Headers(init?.headers).get('authorization')?.replace('Bearer ', '') ?? null,
       });
-      return new Response(
-        JSON.stringify({
-          output: { choices: [{ message: { content: [{ image: 'https://out.example/i.png' }] } }] },
-        }),
-      );
+      return new Response(Buffer.from('fake-mp3-bytes'));
     }) as unknown as typeof fetch;
     const service = makeService(
       fetchImpl,
       fakeSource(ENTRIES, {
-        // dashscope 适配器的 apiRoot 语义：baseUrl 以 /compatible-mode/v1 结尾时取其
-        // 前缀作原生根（与全局槽位路径同款），其他值回落内置 apiRoot。
-        instanceConfig: () => ({ baseUrl: 'https://plugin.example/compatible-mode/v1' }),
+        instanceConfig: () => ({ baseUrl: 'https://plugin.example/v1' }),
       }),
     );
-    const result = await service.generateImage(
-      { prompt: '图' },
+    const result = await service.synthesizeSpeech(
+      { text: '你好' },
       { loopType: 'task', botId: 'bot_1' },
       { botId: 'bot_1' },
     );
-    expect(result.images).toHaveLength(1);
-    // dashscope 引擎适配器的原生多模态生成端点；实例 config 的 baseUrl 覆盖生效。
-    expect(calls[0]?.url).toBe(
-      'https://plugin.example/api/v1/services/aigc/multimodal-generation/generation',
-    );
+    expect(result.audioBase64.length).toBeGreaterThan(0);
+    // openai-compatible 引擎的标准 TTS 端点；实例 config 的 baseUrl 覆盖生效。
+    expect(calls[0]?.url).toBe('https://plugin.example/v1/audio/speech');
     expect(calls[0]?.key).toBe('sk-plugin');
   });
 
@@ -164,39 +156,35 @@ describe('MediaService 条目解析链（D124：条目 > 全局槽位 > 未配�
       let usedModel = '';
       const tracing = (async (_url: RequestInfo | URL, init?: RequestInit) => {
         usedModel = (JSON.parse(String(init?.body)) as { model?: string }).model ?? '';
-        return new Response(
-          JSON.stringify({
-            output: { choices: [{ message: { content: [{ image: 'https://x.example/a.png' }] } }] },
-          }),
-        );
+        return new Response(Buffer.from('mp3'));
       }) as unknown as typeof fetch;
       const service = makeService(tracing, fakeSource(ENTRIES));
-      await service.generateImage(
-        { prompt: '图' },
+      await service.synthesizeSpeech(
+        { text: '你好' },
         { loopType: 'task' },
         { botId: 'bot_1', ...(model !== undefined ? { model } : {}) },
       );
       return usedModel;
     };
-    expect(await probe('qwen-image-2.0')).toBe('qwen-image-2.0'); // model 精确命中
-    expect(await probe('万相文生图')).toBe('wan2.7-t2v-plus'); // displayName 命中
-    expect(await probe('wan-image')).toBe('wan2.7-t2v-plus'); // entryId 命中
-    expect(await probe('不存在的模型')).toBe('qwen-image-2.0'); // 未命中回首个
-    expect(await probe(undefined)).toBe('qwen-image-2.0'); // 缺省 = 首个条目
+    expect(await probe('kimi-audio-tts')).toBe('kimi-audio-tts'); // model 精确命中
+    expect(await probe('MiniMax 语音')).toBe('minimax-speech-02'); // displayName 命中
+    expect(await probe('minimax-tts')).toBe('minimax-speech-02'); // entryId 命中
+    expect(await probe('不存在的模型')).toBe('kimi-audio-tts'); // 未命中回首个
+    expect(await probe(undefined)).toBe('kimi-audio-tts'); // 缺省 = 首个条目
   });
 
   it('① 多实例未指定 → INSTANCE_AMBIGUOUS（payload 带插件 / 条目 / 实例全集）', async () => {
     const service = makeService(
-      okDashscopeImage,
+      okAudioBytes,
       fakeSource([{ ...ENTRIES[1]!, instanceId: undefined, instances: ['pli_a', 'pli_b'] }]),
     );
     await expect(
-      service.generateImage({ prompt: '图' }, { loopType: 'task' }, { botId: 'bot_1' }),
+      service.synthesizeSpeech({ text: '你好' }, { loopType: 'task' }, { botId: 'bot_1' }),
     ).rejects.toMatchObject({
       code: 'INSTANCE_AMBIGUOUS',
       details: {
-        pluginId: 'io.kepcup/dashscope',
-        entryId: 'wan-image',
+        pluginId: 'io.kepcup/compatible',
+        entryId: 'minimax-tts',
         instances: ['pli_a', 'pli_b'],
       },
     });
@@ -204,37 +192,37 @@ describe('MediaService 条目解析链（D124：条目 > 全局槽位 > 未配�
 
   it('① 实例缺凭据 → CAPABILITY_NOT_CONFIGURED（details 定位插件 / 条目 / 实例）', async () => {
     const service = makeService(
-      okDashscopeImage,
+      okAudioBytes,
       fakeSource([{ ...ENTRIES[0]!, instanceId: 'pli_nocred', instances: ['pli_nocred'] }]),
     );
     await expect(
-      service.generateImage({ prompt: '图' }, { loopType: 'task' }, { botId: 'bot_1' }),
+      service.synthesizeSpeech({ text: '你好' }, { loopType: 'task' }, { botId: 'bot_1' }),
     ).rejects.toMatchObject({
       code: 'CAPABILITY_NOT_CONFIGURED',
-      details: { pluginId: 'io.kepcup/dashscope', instanceId: 'pli_nocred' },
+      details: { pluginId: 'io.kepcup/compatible', instanceId: 'pli_nocred' },
     });
   });
 
   it('① 零实例 → CAPABILITY_NOT_CONFIGURED（details 带条目定位，无 instanceId）', async () => {
     const service = makeService(
-      okDashscopeImage,
+      okAudioBytes,
       fakeSource([{ ...ENTRIES[0]!, instanceId: undefined, instances: [] }]),
     );
     await expect(
-      service.generateImage({ prompt: '图' }, { loopType: 'task' }, { botId: 'bot_1' }),
+      service.synthesizeSpeech({ text: '你好' }, { loopType: 'task' }, { botId: 'bot_1' }),
     ).rejects.toMatchObject({
       code: 'CAPABILITY_NOT_CONFIGURED',
-      details: { pluginId: 'io.kepcup/dashscope', entryId: 'qwen-image' },
+      details: { pluginId: 'io.kepcup/compatible', entryId: 'kimi-tts' },
     });
   });
 
   it('testCapabilityEntry 数据型条目：未知引擎先于实例解析报 PLUGIN_ENGINE_UNKNOWN（D124 顺序不变）', async () => {
     const service = makeService(
-      okArkImage,
+      okArkVision,
       fakeSource([], {
         entryOf: async () => ({
           id: 'ghost-engine',
-          capability: 'image',
+          capability: 'tts',
           model: 'ghost-model',
           engine: 'missing-engine',
         }),
@@ -247,52 +235,52 @@ describe('MediaService 条目解析链（D124：条目 > 全局槽位 > 未配�
     });
   });
 
-  it('② 条目仓库返回空 → 原全局槽位路径生效（settings 实例 + 全局模型）', async () => {
-    const service = makeService(okArkImage, fakeSource([]));
-    const result = await service.generateImage(
-      { prompt: '图' },
-      { loopType: 'task', botId: 'bot_1' },
-      { botId: 'bot_1' },
-    );
-    expect(result.images).toHaveLength(1);
-    expect(result.images[0]?.url).toBe('https://out.example/ark.png');
-  });
-
-  it('② 未装任何插件（未注入条目仓库）→ 行为与从前一致（全局路径 / 未配置报错）', async () => {
-    const service = makeService(okArkImage, null);
-    const result = await service.generateImage(
-      { prompt: '图' },
-      { loopType: 'task', botId: 'bot_1' },
-      { botId: 'bot_1' },
-    );
-    expect(result.images).toHaveLength(1);
-    // video 全局未配置：现状语义 CAPABILITY_NOT_CONFIGURED。
+  it('① DEV-133：image / video 无全局槽位——条目为空时抛插件导向的 CAPABILITY_NOT_CONFIGURED', async () => {
+    const service = makeService(okArkVision, fakeSource([]));
     await expect(
-      service.generateVideo(
-        { prompt: 'v' },
-        { loopType: 'task', botId: 'bot_1' },
-        { botId: 'bot_1' },
-      ),
-    ).rejects.toMatchObject({ code: 'CAPABILITY_NOT_CONFIGURED' });
-    // resolve 缺省（无 botId）也走全局路径。
-    await expect(
-      service.generateVideo({ prompt: 'v' }, { loopType: 'task' }),
+      service.generateImage({ prompt: '图' }, { loopType: 'task', botId: 'bot_1' }, { botId: 'bot_1' }),
     ).rejects.toMatchObject({
       code: 'CAPABILITY_NOT_CONFIGURED',
+      message: expect.stringContaining('插件条目'),
     });
+    await expect(
+      service.generateVideo({ prompt: 'v' }, { loopType: 'task', botId: 'bot_1' }, { botId: 'bot_1' }),
+    ).rejects.toMatchObject({
+      code: 'CAPABILITY_NOT_CONFIGURED',
+      message: expect.stringContaining('插件条目'),
+    });
+    // resolve 缺省（无 botId）同样没有全局路径可回退。
+    await expect(service.generateImage({ prompt: '图' }, { loopType: 'task' })).rejects.toMatchObject(
+      { code: 'CAPABILITY_NOT_CONFIGURED' },
+    );
   });
 
-  it('① video 条目路径：generateVideo 返回插件实例 id，videoStatus 按插件实例往返', async () => {
-    const submitted: string[] = [];
-    const fetchImpl = (async (url: RequestInfo | URL) => {
-      if (String(url).endsWith('/contents/generations/tasks')) {
-        submitted.push(String(url));
-        return new Response(JSON.stringify({ id: 'task-9' }));
-      }
-      return new Response(
-        JSON.stringify({ status: 'succeeded', content: { video_url: 'https://v.example/f.mp4' } }),
-      );
-    }) as unknown as typeof fetch;
+  it('② 条目仓库返回空 → 原全局槽位路径生效（settings 实例 + 全局模型；保留键）', async () => {
+    const service = makeService(okArkVision, fakeSource([]));
+    const result = await service.understandImage(
+      { images: ['data:image/png;base64,xxx'], prompt: '图中是什么' },
+      { loopType: 'task', botId: 'bot_1' },
+      { botId: 'bot_1' },
+    );
+    expect(result.text).toBe('一张图');
+  });
+
+  it('② 未装任何插件（未注入条目仓库）→ 保留键走全局路径，image / video 直接未配置', async () => {
+    const service = makeService(okArkVision, null);
+    const result = await service.understandImage(
+      { images: ['data:image/png;base64,xxx'], prompt: '图中是什么' },
+      { loopType: 'task', botId: 'bot_1' },
+      { botId: 'bot_1' },
+    );
+    expect(result.text).toBe('一张图');
+    await expect(
+      service.generateVideo({ prompt: 'v' }, { loopType: 'task' }),
+    ).rejects.toMatchObject({ code: 'CAPABILITY_NOT_CONFIGURED' });
+  });
+
+  it('① DEV-133：旧清单的 video 引擎条目（绑内置引擎）运行时明确 NOT_IMPLEMENTED', async () => {
+    // 安装期已拒绝新装（PLUGIN_INVALID）；已装的旧清单解析到引擎路径时由
+    // 适配器能力检查给出可读错误，而不是静默失败。
     const videoEntry: ResolvedEntry = {
       pluginId: 'io.kepcup/ark',
       entryId: 'seedance',
@@ -303,32 +291,20 @@ describe('MediaService 条目解析链（D124：条目 > 全局槽位 > 未配�
       instances: ['pli_s'],
     };
     const service = makeService(
-      fetchImpl,
+      okArkVision,
       fakeSource([], {
         entriesFor: async (_botId, capability) => (capability === 'video' ? [videoEntry] : []),
         instanceCredential: () => 'sk-plugin',
-        instanceConfig: () => ({}), // 无覆盖 → 用引擎厂商内置根
-        capabilityInstanceOf: async () => ({
-          pluginId: 'io.kepcup/ark',
-          engine: 'volcengine-ark',
-          source: 'engine',
-          entryId: 'seedance',
-          model: 'doubao-seedance-2-0',
-        }),
+        instanceConfig: () => ({}),
       }),
     );
-    const handle = await service.generateVideo(
-      { prompt: '夜景' },
-      { loopType: 'task', botId: 'bot_1' },
-      { botId: 'bot_1' },
-    );
-    // provider 是插件实例 id（pli_…），请求打到方舟内置根（无 config 覆盖时）。
-    expect(handle.provider).toBe('pli_s');
-    expect(submitted[0]).toContain(
-      'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks',
-    );
-    const status = await service.videoStatus(handle.provider, handle.taskId);
-    expect(status.status).toBe('succeeded');
+    await expect(
+      service.generateVideo(
+        { prompt: '夜景' },
+        { loopType: 'task', botId: 'bot_1' },
+        { botId: 'bot_1' },
+      ),
+    ).rejects.toMatchObject({ code: 'NOT_IMPLEMENTED' });
   });
 });
 
@@ -363,7 +339,7 @@ describe('D125 P2 执行型条目（source: plugin → HostedAdapter 分支）',
       },
     };
     const service = makeService(
-      okArkImage,
+      okArkVision,
       fakeSource([HOSTED_ENTRY], {
         hostedAdapterOf: async () => adapter as never,
         capabilityInstanceOf: async () => ({
@@ -394,7 +370,7 @@ describe('D125 P2 执行型条目（source: plugin → HostedAdapter 分支）',
 
   it('① 插件条目多实例未指定 → INSTANCE_AMBIGUOUS；零实例 → CAPABILITY_NOT_CONFIGURED', async () => {
     const ambiguous = makeService(
-      okArkImage,
+      okArkVision,
       fakeSource([{ ...HOSTED_ENTRY, instanceId: undefined, instances: ['pli_a', 'pli_b'] }], {
         hostedAdapterOf: async () => ({ embed: async () => [] }) as never,
       }),
@@ -404,7 +380,7 @@ describe('D125 P2 执行型条目（source: plugin → HostedAdapter 分支）',
     ).rejects.toMatchObject({ code: 'INSTANCE_AMBIGUOUS' });
 
     const zero = makeService(
-      okArkImage,
+      okArkVision,
       fakeSource([{ ...HOSTED_ENTRY, instanceId: undefined, instances: [] }], {
         hostedAdapterOf: async () => ({ embed: async () => [] }) as never,
       }),
@@ -419,7 +395,7 @@ describe('D125 P2 执行型条目（source: plugin → HostedAdapter 分支）',
 
   it('① 托管运行时未装配（hostedAdapterOf = null）→ NOT_IMPLEMENTED', async () => {
     const service = makeService(
-      okArkImage,
+      okArkVision,
       fakeSource([HOSTED_ENTRY], { hostedAdapterOf: async () => null }),
     );
     await expect(
@@ -442,7 +418,7 @@ describe('D125 P2 执行型条目（source: plugin → HostedAdapter 分支）',
       instancesOf: () => ['pli_h'],
       hostedAdapterOf: async () => adapter as never,
     });
-    const service = makeService(okArkImage, source);
+    const service = makeService(okArkVision, source);
     await service.testCapabilityEntry(HOSTED_PLUGIN, 'hosted-image');
     expect(calls).toHaveLength(1);
     expect(calls[0]?.model).toBe('hosted-model-1');
@@ -459,7 +435,7 @@ describe('D125 P2 执行型条目（source: plugin → HostedAdapter 分支）',
       instancesOf: () => ['pli_h'],
       hostedAdapterOf: async () => null,
     });
-    const service = makeService(okArkImage, source);
+    const service = makeService(okArkVision, source);
     await expect(service.testCapabilityEntry(HOSTED_PLUGIN, 'hosted-image')).rejects.toMatchObject({
       code: 'NOT_IMPLEMENTED',
     });
@@ -475,7 +451,7 @@ describe('D125 P2 执行型条目（source: plugin → HostedAdapter 分支）',
       },
     };
     const service = makeService(
-      okArkImage,
+      okArkVision,
       fakeSource([], {
         hostedAdapterOf: async () => adapter as never,
         capabilityInstanceOf: async () => ({
@@ -490,6 +466,41 @@ describe('D125 P2 执行型条目（source: plugin → HostedAdapter 分支）',
     const status = await service.videoStatus('pli_h', 'task-42');
     expect(status.status).toBe('running');
     expect(seen).toEqual(['task-42']);
+  });
+
+  it('DEV-133：数据型引擎实例的 videoStatus 往返仍解析到引擎适配器（旧清单收敛为 NOT_IMPLEMENTED）', async () => {
+    // 已装的旧清单（数据型 video 条目绑内置引擎）：generateVideo 返回的
+    // provider 恒为插件实例 id（pli_…），videoStatus 经 capabilityInstanceOf
+    // 走引擎分支（#resolvePluginInstance）——适配器不再挂 videoStatus，给出
+    // 可读的 NOT_IMPLEMENTED 而不是 NOT_FOUND（解析链仍然走通）。
+    const service = makeService(
+      okArkVision,
+      fakeSource([], {
+        capabilityInstanceOf: async () => ({
+          pluginId: 'io.kepcup/ark',
+          engine: 'volcengine-ark',
+          source: 'engine' as const,
+          entryId: 'seedance',
+          model: 'doubao-seedance-2-0',
+        }),
+        instanceCredential: () => 'sk-plugin',
+        instanceConfig: () => ({}),
+      }),
+    );
+    await expect(service.videoStatus('pli_s', 'task-9')).rejects.toMatchObject({
+      code: 'NOT_IMPLEMENTED',
+    });
+  });
+
+  it('videoStatus：provider 查不到（实例已卸载 / 非插件实例）→ NOT_FOUND', async () => {
+    const service = makeService(
+      okArkVision,
+      fakeSource([], { capabilityInstanceOf: async () => null }),
+    );
+    await expect(service.videoStatus('pli_gone', 'task-9')).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+      message: expect.stringContaining('视频任务实例'),
+    });
   });
 
   // --- D125 P3：取消 / 进度只进托管路径的 VendorCallContext ----------------------
@@ -519,7 +530,7 @@ describe('D125 P2 执行型条目（source: plugin → HostedAdapter 分支）',
       instances: ['pli_h'],
     };
     const service = makeService(
-      okArkImage,
+      okArkVision,
       fakeSource([hostedVideoEntry], {
         entriesFor: async (_botId, capability) =>
           capability === 'video' ? [hostedVideoEntry] : [],
@@ -554,16 +565,12 @@ describe('D125 P2 执行型条目（source: plugin → HostedAdapter 分支）',
     let seen: RequestInit | undefined;
     const fetchImpl = (async (_url: RequestInfo | URL, init?: RequestInit) => {
       seen = init;
-      return new Response(
-        JSON.stringify({
-          output: { choices: [{ message: { content: [{ image: 'https://out.example/i.png' }] } }] },
-        }),
-      );
+      return new Response(Buffer.from('fake-mp3-bytes'));
     }) as unknown as typeof fetch;
     const service = makeService(fetchImpl, fakeSource(ENTRIES));
     const controller = new AbortController();
-    await service.generateImage(
-      { prompt: '图' },
+    await service.synthesizeSpeech(
+      { text: '你好' },
       { loopType: 'task', botId: 'bot_1' },
       { botId: 'bot_1', signal: controller.signal, onProgress: () => {} },
     );
@@ -594,7 +601,7 @@ describe('onResolved 来源回调（D125 补丁）', () => {
       generateImage: async () => ({ images: [{ url: 'https://hosted.example/out.png' }] }),
     };
     const service = makeService(
-      okArkImage,
+      okArkVision,
       fakeSource([hostedEntry], { hostedAdapterOf: async () => adapter as never }),
     );
     await service.generateImage(
@@ -607,9 +614,9 @@ describe('onResolved 来源回调（D125 补丁）', () => {
 
   it('数据型条目（source=engine）→ {}（绝不带 pluginId）', async () => {
     const origins: Array<{ pluginId?: string }> = [];
-    const service = makeService(okDashscopeImage, fakeSource(ENTRIES));
-    await service.generateImage(
-      { prompt: '图' },
+    const service = makeService(okAudioBytes, fakeSource(ENTRIES));
+    await service.synthesizeSpeech(
+      { text: '你好' },
       { loopType: 'task', botId: 'bot_1' },
       { botId: 'bot_1', onResolved: (origin) => origins.push(origin) },
     );
@@ -618,18 +625,18 @@ describe('onResolved 来源回调（D125 补丁）', () => {
 
   it('全局槽位（无条目 / 无条目仓库）→ {}', async () => {
     const fromEmptyEntries: Array<{ pluginId?: string }> = [];
-    const viaEmpty = makeService(okArkImage, fakeSource([]));
-    await viaEmpty.generateImage(
-      { prompt: '图' },
+    const viaEmpty = makeService(okArkVision, fakeSource([]));
+    await viaEmpty.understandImage(
+      { images: ['data:image/png;base64,xxx'], prompt: '图中是什么' },
       { loopType: 'task', botId: 'bot_1' },
       { botId: 'bot_1', onResolved: (origin) => fromEmptyEntries.push(origin) },
     );
     expect(fromEmptyEntries).toEqual([{}]);
 
     const fromGlobal: Array<{ pluginId?: string }> = [];
-    const viaGlobal = makeService(okArkImage, null);
-    await viaGlobal.generateImage(
-      { prompt: '图' },
+    const viaGlobal = makeService(okArkVision, null);
+    await viaGlobal.understandImage(
+      { images: ['data:image/png;base64,xxx'], prompt: '图中是什么' },
       { loopType: 'task', botId: 'bot_1' },
       { botId: 'bot_1', onResolved: (origin) => fromGlobal.push(origin) },
     );
@@ -637,9 +644,9 @@ describe('onResolved 来源回调（D125 补丁）', () => {
   });
 
   it('回调抛错被记录并忽略，不破坏媒体调用', async () => {
-    const service = makeService(okArkImage, fakeSource([]));
-    const result = await service.generateImage(
-      { prompt: '图' },
+    const service = makeService(okArkVision, fakeSource([]));
+    const result = await service.understandImage(
+      { images: ['data:image/png;base64,xxx'], prompt: '图中是什么' },
       { loopType: 'task', botId: 'bot_1' },
       {
         botId: 'bot_1',
@@ -648,7 +655,7 @@ describe('onResolved 来源回调（D125 补丁）', () => {
         },
       },
     );
-    expect(result.images).toHaveLength(1);
+    expect(result.text).toBe('一张图');
   });
 });
 
@@ -662,18 +669,19 @@ describe('entrySummariesFor（D124 P3 工具描述注入的数据面）', () => 
       // 重复名只留一份。
       { ...ENTRIES[0]!, entryId: 'd', displayName: undefined, model: 'plain' },
     ];
-    const summaries = await makeService(okDashscopeImage, fakeSource(entries)).entrySummariesFor(
-      'bot_1',
-    );
+    const summaries = await makeService(
+      okArkVision,
+      fakeSource(entries, {}, ['image']),
+    ).entrySummariesFor('bot_1');
     expect(summaries.image).toEqual(['水 墨（ink）', 'ink', 'plain']);
     expect(summaries.tts).toEqual([]);
     expect(summaries.video).toEqual([]);
   });
 
   it('条目仓库未装配 / botId 为空 → 三个能力恒空（工具描述与从前逐字节一致）', async () => {
-    const detached = await makeService(okDashscopeImage, null).entrySummariesFor('bot_1');
+    const detached = await makeService(okArkVision, null).entrySummariesFor('bot_1');
     expect(detached).toEqual({ image: [], tts: [], video: [] });
-    const emptyBot = await makeService(okDashscopeImage, fakeSource(ENTRIES)).entrySummariesFor(
+    const emptyBot = await makeService(okArkVision, fakeSource(ENTRIES)).entrySummariesFor(
       undefined,
     );
     expect(emptyBot).toEqual({ image: [], tts: [], video: [] });

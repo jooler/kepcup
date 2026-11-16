@@ -897,26 +897,10 @@ export const providersFetchModelsOutputSchema = z.object({
 // 厂商后路由到各自的适配器（见 packages/core/src/media/ 与
 // docs/design/16-capability-models.md）。新增厂商 = 增加描述符
 // （shared/domain/vendors.ts）+ 适配器（core/media/adapters/）。
-
-export const mediaGenerateImageInputSchema = z.object({
-  /** 省略时用 capabilityModels.image 的模型。 */
-  model: z.string().min(1).optional(),
-  prompt: z.string().min(1).max(8000),
-  /** 参考图（URL 或 data URI）：传入即图片编辑 / 图生图（部分模型支持）。 */
-  images: z.array(z.string().min(1).max(2_000_000)).max(3).optional(),
-  n: z.number().int().min(1).max(4).optional(),
-  /** "宽x高"（如 1024x1024）；厂商各自转换（百炼原生为 "1024*1024"）。 */
-  size: z.string().min(3).max(32).optional(),
-  negativePrompt: z.string().max(2000).optional(),
-});
-export const mediaImageSchema = z.object({
-  url: z.string().optional(),
-  b64: z.string().optional(),
-  mimeType: z.string().optional(),
-});
-export const mediaGenerateImageOutputSchema = z.object({
-  images: z.array(mediaImageSchema),
-});
+//
+// DEV-133：image / video 的 generateImage / generateVideo / videoStatus RPC
+// 已删除——图像 / 视频生成统一由能力模型插件条目提供（Bot 工具域），不再
+// 暴露全局槽位 RPC；渲染层生产代码只使用 synthesizeSpeech / transcribeSpeech。
 
 export const mediaSynthesizeSpeechInputSchema = z.object({
   /** 省略时用 capabilityModels.tts 的模型。 */
@@ -940,33 +924,6 @@ export const mediaTranscribeSpeechInputSchema = z.object({
   language: z.string().max(20).optional(),
 });
 export const mediaTranscribeSpeechOutputSchema = z.object({ text: z.string() });
-
-export const mediaGenerateVideoInputSchema = z.object({
-  /** 省略时用 capabilityModels.video 的模型。 */
-  model: z.string().min(1).optional(),
-  prompt: z.string().min(1).max(20_000),
-  /** 首帧等参考图（图生视频）。 */
-  images: z.array(z.string().min(1).max(2_000_000)).max(3).optional(),
-  /** 厂商各自取值（百炼/火山 "720P"/"1080p" 等）。 */
-  resolution: z.string().max(32).optional(),
-  ratio: z.string().max(16).optional(),
-  /** 画幅 "宽x高"。 */
-  size: z.string().max(32).optional(),
-  duration: z.number().int().min(1).max(60).optional(),
-});
-export const mediaGenerateVideoOutputSchema = z.object({
-  provider: z.string(),
-  taskId: z.string(),
-});
-export const mediaVideoStatusInputSchema = z.object({
-  provider: z.string().min(1),
-  taskId: z.string().min(1),
-});
-export const mediaVideoStatusOutputSchema = z.object({
-  status: z.enum(['queued', 'running', 'succeeded', 'failed']),
-  videoUrl: z.string().optional(),
-  error: z.string().optional(),
-});
 
 export const mediaRerankInputSchema = z.object({
   /** 省略时用 capabilityModels.rerank 的模型。 */
@@ -2783,10 +2740,6 @@ export const rpcMethodSchemas = {
   'websearch.removeKey': { input: webSearchRemoveKeyInputSchema, output: okOutput },
 
   // 统一媒体调用：方法内按 model 引用的厂商自动路由（media/gateway）。
-  'media.generateImage': {
-    input: mediaGenerateImageInputSchema,
-    output: mediaGenerateImageOutputSchema,
-  },
   'media.synthesizeSpeech': {
     input: mediaSynthesizeSpeechInputSchema,
     output: mediaSynthesizeSpeechOutputSchema,
@@ -2794,14 +2747,6 @@ export const rpcMethodSchemas = {
   'media.transcribeSpeech': {
     input: mediaTranscribeSpeechInputSchema,
     output: mediaTranscribeSpeechOutputSchema,
-  },
-  'media.generateVideo': {
-    input: mediaGenerateVideoInputSchema,
-    output: mediaGenerateVideoOutputSchema,
-  },
-  'media.videoStatus': {
-    input: mediaVideoStatusInputSchema,
-    output: mediaVideoStatusOutputSchema,
   },
   'media.rerank': {
     input: mediaRerankInputSchema,
@@ -3538,11 +3483,8 @@ const APP_METHODS = [
   'providers.setKeyMeta',
   'providers.removeKey',
   'providers.test',
-  'media.generateImage',
   'media.synthesizeSpeech',
   'media.transcribeSpeech',
-  'media.generateVideo',
-  'media.videoStatus',
   'media.rerank',
   'media.understandImage',
   'mcp.test',

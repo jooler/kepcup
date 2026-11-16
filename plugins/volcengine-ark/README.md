@@ -8,10 +8,10 @@
 执行逻辑全部住在 core 内置引擎 `MEDIA_ENGINES['volcengine-ark']`（既有 `volcengineAdapter`
 原样注册，行为逐字节不变）。条目 = `VENDOR_DESCRIPTORS.volcengine.presets` 的非 chat 部分全量逐 preset
 一条（**只迁描述符已有信息**；描述符注释明确「方舟数据面没有 Rerank / TTS / ASR 接口」，
-故条目只含 embedding / multimodal / image / video，不发明能力）。用户配置路径与既有全局
+故条目只含 embedding / multimodal；DEV-133 起生成能力（image / video）由执行型插件提供，内置引擎不再承载）。用户配置路径与既有全局
 槽位并存不迁移。
 
-- 条目数：**7**（embedding 1 / multimodal 2 / image 2 / video 2）；
+- 条目数：**3**（embedding 1 / multimodal 2；DEV-133 起不再携带 image / video 条目）；
 - 引擎绑定：全部 `engine: 'volcengine-ark'`（安装期 `PLUGIN_ENGINE_UNKNOWN` 校验）；
 - 实例：`instances: ['capability-model']`，凭据字段由引擎声明（apiKey 必填敏感 + baseUrl 可选），
   敏感值只进 secrets（`plugin:{pluginId}:instance:{instanceId}:{key}`）；
@@ -21,7 +21,7 @@
 
 | 文件 | 说明 |
 |---|---|
-| `plugin.json` | 清单：7 条 `contributions.capabilityModels`（条目 id 即模型 id——方舟模型 id 全落在 `[a-z0-9-]` 规则内，`model` 字段同值） |
+| `plugin.json` | 清单：3 条 `contributions.capabilityModels`（条目 id 即模型 id——方舟模型 id 全落在 `[a-z0-9-]` 规则内，`model` 字段同值） |
 | `icon.png` | 复用渲染层 `assets/provider-icons/model-provider-volcengine.png`（7.5 KiB，市场图标上限 64 KiB） |
 | `README.md` | 本文档 |
 

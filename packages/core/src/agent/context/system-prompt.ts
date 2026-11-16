@@ -1210,7 +1210,7 @@ export function buildAgentToolPolicy(tools: AgentPromptTools): string {
   }
   if (tools.toolNames.some((name) => GENERATION_TOOLS.includes(name))) {
     supplementLines.push(
-      '- 生成类工具产物由宿主落盘并自动作为消息附件发出；执行型插件条目默认落插件私有目录（外部 Agent 的工具读不到），内置引擎落 workspace 的 .generated/；需要自己读取/再发送时用 output_dir 指定 workspace / 工作目录内的目录。',
+      '- 图片 / 视频生成一律由能力模型插件条目提供（应用内置引擎已移除）；生成类工具产物由宿主落盘并自动作为消息附件发出，执行型插件条目默认落插件私有目录（外部 Agent 的工具读不到），数据型条目落 workspace 的 .generated/；需要自己读取/再发送时用 output_dir 指定 workspace / 工作目录内的目录。语音合成 / 语音识别仍是设置里的能力模型配置。',
     );
   }
   const hostLines = HOST_POLICY_LINES.flatMap((line) => {

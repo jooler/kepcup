@@ -28,15 +28,17 @@ export const DIRECT_ITEM_IDS = [
 ] as const;
 export type DirectItemId = (typeof DIRECT_ITEM_IDS)[number];
 
-/** 能力模型条目 id（`capability.{能力}`）与设置键 `capabilityModels.{能力}` 一一对应。 */
+/**
+ * 能力模型条目 id（`capability.{能力}`）与设置键 `capabilityModels.{能力}` 一一对应。
+ * DEV-133：image / video 两项已删除——图像 / 视频生成统一由能力模型插件条目提供，
+ * 不再有全局槽位配置。
+ */
 export const CAPABILITY_SETTING_IDS = {
   embedding: 'capability.embedding',
   rerank: 'capability.rerank',
   multimodal: 'capability.multimodal',
   asr: 'capability.asr',
   tts: 'capability.tts',
-  image: 'capability.image',
-  video: 'capability.video',
 } as const;
 
 const CAPABILITY_ITEMS: readonly SettingItem[] = (
@@ -76,14 +78,6 @@ const CAPABILITY_ITEMS: readonly SettingItem[] = (
       ['朗读', '生成语音', '配音'],
       ['tts', '语音合成', '朗读'],
     ],
-    [
-      'image',
-      '图像生成模型',
-      '让 Bot 生成图片',
-      ['生成图片', '画图', '做海报'],
-      ['图像', '图片', '画图', 'image'],
-    ],
-    ['video', '视频生成模型', '让 Bot 生成视频', ['生成视频', '做视频'], ['视频', 'video']],
   ] as const
 ).map(([capability, title, summary, enables, keywords]) =>
   item({

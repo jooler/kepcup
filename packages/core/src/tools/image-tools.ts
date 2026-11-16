@@ -25,16 +25,17 @@ import {
 } from './media-entry-hints.js';
 
 /**
- * 图像生成的 Bot 工具（docs/design/18-inline-setup.md）：图像能力在
- * settings.capabilityModels.image 按厂商配置（MediaService 解析适配器）。
+ * 图像生成的 Bot 工具（docs/design/18-inline-setup.md）：DEV-133 起图像生成
+ * 由能力模型插件条目提供（应用内置引擎已移除，无全局槽位）——MediaService
+ * 只解析该 Bot 勾选的插件条目，条目可用的厂商实例凭据在插件详情里配置。
  * 生成的图片按来源落盘：执行型插件条目 → 该插件私有目录的 `artifacts/`；
- * 内置引擎 / 全局槽位 → workspace 的 `.generated/`（显式 `output_dir` 优先）。
+ * 数据型条目 → workspace 的 `.generated/`（显式 `output_dir` 优先）。
  * 落盘后由 delivery **立即作为消息附件发进对话**（确定性投递，不再依赖模型
  * 记得调 send_message）。
  *
- * 未配置（能力缺失或厂商缺 Key）时返回 SETUP_REQUIRED 错误码——它对模型
+ * 未绑定条目（或条目缺凭据）时返回 SETUP_REQUIRED 错误码——它对模型
  * 只是普通的失败结果，但 orchestrator 监听该错误码中断 run 并以结构化
- * setup 需求 settle，界面据此在消息列表内嵌图像模型设置卡片，完成后原
+ * setup 需求 settle，界面据此内嵌插件凭据卡 / 设置卡片，完成后原
  * run 自动重试。
  */
 
@@ -187,7 +188,7 @@ export function buildImageTools(input: {
     name: 'generate_image',
     // D124 P3：Bot 绑定了模型条目时在描述尾部追加条目清单（appendEntryHint 空清单原样返回）。
     description: appendEntryHint(
-      '生成图片（文生图）。用户要图片、图标、插画、海报等真实图片文件时必须调用本工具产出，不要用文字描述或字符画代替；图片保存后会自动作为消息附件发给用户，无需再调 send_message。可用 output_dir 指定保存目录（相对 workspace 或工作目录）；不指定时，执行型插件生成的图片保存到该插件的私有产物目录，内置引擎保存到 workspace 的 .generated/。未配置图像生成模型时本工具会返回「需要设置」，由系统引导用户完成配置并自动继续，不要因此改用文字方案或推荐外部工具。',
+      '生成图片（文生图，由能力模型插件条目提供，应用内置引擎已移除）。用户要图片、图标、插画、海报等真实图片文件时必须调用本工具产出，不要用文字描述或字符画代替；图片保存后会自动作为消息附件发给用户，无需再调 send_message。可用 output_dir 指定保存目录（相对 workspace 或工作目录）；不指定时，执行型插件生成的图片保存到该插件的私有产物目录，数据型条目保存到 workspace 的 .generated/。当前 Bot 未绑定图像生成条目（或条目缺凭据）时本工具会返回「需要设置」，由系统引导用户完成配置并自动继续，不要因此改用文字方案或推荐外部工具。',
       ENTRY_CAPABILITY_LABELS.image,
       input.entryHints?.image,
     ),
@@ -270,7 +271,7 @@ export function buildImageTools(input: {
       } catch (error) {
         if (error instanceof AppError) {
           if (error.code === 'CAPABILITY_NOT_CONFIGURED' || error.code === 'PROVIDER_AUTH_FAILED') {
-            return setupRequiredResult('图像生成模型未配置或 API Key 无效');
+            return setupRequiredResult('图像生成插件条目未绑定或凭据未配齐');
           }
           return { ok: false, content: error.message, errorCode: error.code };
         }

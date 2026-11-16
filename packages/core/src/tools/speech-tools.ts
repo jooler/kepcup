@@ -24,16 +24,17 @@ import {
 
 /**
  * 语音合成、语音转写与视频生成的 Bot 工具（docs/design/20-conversation-media.md、
- * docs/design/25-capability-tools.md）。与 generate_image 同一模式：能力按
- * settings.capabilityModels 配置，未配置（能力缺失或厂商缺 Key）返回
- * SETUP_REQUIRED——orchestrator 监听后中断 run 以结构化 setup 需求 settle，
- * 界面内嵌设置卡，完成后原 run 自动重试。
+ * docs/design/25-capability-tools.md）。与 generate_image 同一模式：语音合成 /
+ * 转写按 settings.capabilityModels 的全局槽位 + Bot 绑定条目配置；视频生成
+ * （DEV-133）由能力模型插件条目提供，无全局槽位。未配置 / 未绑定条目（或缺
+ * 凭据）返回 SETUP_REQUIRED——orchestrator 监听后中断 run 以结构化 setup
+ * 需求 settle，界面内嵌设置卡 / 插件凭据卡，完成后原 run 自动重试。
  *
- * 产物按来源落盘：执行型插件条目 → 该插件私有目录的 `artifacts/`；内置引擎 /
- * 全局槽位 → workspace 的 `.generated/`（显式 `output_dir` 优先）。落盘后由
- * `GeneratedMediaDelivery` 立即作为消息附件随消息发出；失败时把未送达路径与
- * 原因交还模型。视频是异步任务：工具内轮询（约 5s）并以 progress 汇报阶段，
- * 总时限 10 分钟。
+ * 产物按来源落盘：执行型插件条目 → 该插件私有目录的 `artifacts/`；数据型
+ * 条目 / 全局槽位 → workspace 的 `.generated/`（显式 `output_dir` 优先）。
+ * 落盘后由 `GeneratedMediaDelivery` 立即作为消息附件随消息发出；失败时把
+ * 未送达路径与原因交还模型。视频是异步任务：工具内轮询（约 5s）并以
+ * progress 汇报阶段，总时限 10 分钟。
  */
 
 const VIDEO_POLL_INTERVAL_MS = 5_000;
@@ -233,7 +234,7 @@ export function buildSpeechTools(input: {
     name: 'generate_video',
     // D124 P3：同 generate_speech——条目清单注入，空清单不追加。
     description: appendEntryHint(
-      '根据文字描述生成一段短视频（文生视频，异步任务，通常需要几十秒到几分钟）。用户要真实视频文件时必须调用本工具产出，不要只给分镜脚本；视频保存后会自动作为消息附件发给用户，无需再调 send_message。可用 output_dir 指定保存目录（相对 workspace 或工作目录）；不指定时，执行型插件生成的视频保存到该插件的私有产物目录，内置引擎保存到 workspace 的 .generated/。未配置视频生成模型时本工具会返回「需要设置」，由系统引导用户完成配置并自动继续。',
+      '根据文字描述生成一段短视频（文生视频，异步任务，通常需要几十秒到几分钟；由能力模型插件条目提供，应用内置引擎已移除）。用户要真实视频文件时必须调用本工具产出，不要只给分镜脚本；视频保存后会自动作为消息附件发给用户，无需再调 send_message。可用 output_dir 指定保存目录（相对 workspace 或工作目录）；不指定时，执行型插件生成的视频保存到该插件的私有产物目录，数据型条目保存到 workspace 的 .generated/。当前 Bot 未绑定视频生成条目（或条目缺凭据）时本工具会返回「需要设置」，由系统引导用户完成配置并自动继续。',
       ENTRY_CAPABILITY_LABELS.video,
       input.entryHints?.video,
     ),
@@ -307,7 +308,7 @@ export function buildSpeechTools(input: {
       } catch (error) {
         if (error instanceof AppError) {
           if (error.code === 'CAPABILITY_NOT_CONFIGURED' || error.code === 'PROVIDER_AUTH_FAILED') {
-            return setupRequiredResult('视频生成模型未配置或 API Key 无效');
+            return setupRequiredResult('视频生成插件条目未绑定或凭据未配齐');
           }
           return { ok: false, content: error.message, errorCode: error.code };
         }

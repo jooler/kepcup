@@ -519,10 +519,11 @@ export function capabilityAdapter(deps: AdapterDeps): ItemAdapter {
   const providerName = (id: string): string =>
     deps.providers.list().find((p) => p.id === id)?.name ?? id;
 
-  /** 支持该能力的供应商实例：内置厂商按描述符能力矩阵，自定义实例仅向量
-   *  （OpenAI 兼容端点只有向量有事实标准）；停用的实例不进候选。 */
+  /** 支持该能力的供应商实例：内置厂商按描述符能力矩阵，自定义实例限有事实
+   *  标准的 OpenAI 兼容接口（向量 / TTS / ASR，DEV-133 起语音也是标准端点）；
+   *  停用的实例不进候选。 */
   const capableProviders = (capability: CapabilityModelKey): ProviderInfo[] => {
-    // Anthropic 协议端点没有 OpenAI 兼容的 /embeddings，向量化候选要排除。
+    // Anthropic 协议端点没有 OpenAI 兼容的媒体接口，候选要排除。
     const apiById = new Map(
       deps.settings.get().modelProviders.map((p) => [p.id, p.api] as const),
     );
@@ -535,7 +536,10 @@ export function capabilityAdapter(deps: AdapterDeps): ItemAdapter {
           return VENDOR_DESCRIPTORS[provider.vendor].capabilities.includes(capability);
         }
         return (
-          capability === 'embedding' && apiById.get(provider.id) !== 'anthropic-messages'
+          (capability === 'embedding' ||
+            capability === 'tts' ||
+            capability === 'asr') &&
+          apiById.get(provider.id) !== 'anthropic-messages'
         );
       })
       .sort((a, b) => Number(keyedIds.has(b.id)) - Number(keyedIds.has(a.id)));

@@ -174,7 +174,7 @@ describe('settingValuesProblems', () => {
     ).toEqual([]);
     expect(settingValuesProblems(item('bot.network'), { allowlist: 'a.com, b.com' })).toEqual([]);
     expect(
-      settingValuesProblems(item('capability.image'), { provider: 'dashscope', apiKey: 'k' }),
+      settingValuesProblems(item('capability.tts'), { provider: 'dashscope', apiKey: 'k' }),
     ).toEqual([]);
     expect(settingValuesProblems(item('general.language'), { language: 'zh-CN' })).toEqual([]);
   });

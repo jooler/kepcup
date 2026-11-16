@@ -18,8 +18,8 @@
   /**
    * 模型新增 / 编辑弹框（对齐 ZCode 的模型配置弹框，字段按本项目语义裁剪）：
    * 模型 ID（实例内唯一）、显示名、上下文窗口、输入类型（文本恒开 + 图片）、
-   * 能力多选（内置厂商实例按描述符能力矩阵限定；自定义实例仅 对话+向量——
-   * 重排/图片/语音/视频没有跨厂商的事实标准）。保存 = 在实例的 models 里
+   * 能力多选（内置厂商实例按描述符能力矩阵限定；自定义实例为 对话+向量+标准
+   * 语音——重排/图片/视频没有跨厂商的事实标准）。保存 = 在实例的 models 里
    * 按 id upsert；能力槽位的默认选择在「模型配置」里做（弹框内提示）。
    */
   let {
@@ -46,13 +46,14 @@
     settingsStore.settings?.modelProviders.find((p) => p.id === instanceId) ?? null,
   );
   /** 该实例允许声明的能力：内置厂商按描述符能力矩阵；Anthropic 协议端点
-   * 仅对话（没有 OpenAI 兼容媒体接口）；其余自定义实例为 对话+向量。 */
+   * 仅对话（没有 OpenAI 兼容媒体接口）；其余自定义实例为 对话+向量+标准语音
+   * （DEV-133：通用适配器补齐 /audio/speech、/audio/transcriptions）。 */
   const allowedCapabilities = $derived.by((): ModelCapability[] => {
     const current = instance;
     if (current === undefined || current === null) return ['chat'];
     if (current.vendor !== null) return [...VENDOR_DESCRIPTORS[current.vendor].capabilities];
     if (current.api === 'anthropic-messages' || current.builtinCatalog) return ['chat'];
-    return ['chat', 'embedding'];
+    return ['chat', 'embedding', 'tts', 'asr'];
   });
 
   // 打开时从 props 播种草稿（open 翻转触发一次）。

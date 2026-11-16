@@ -27,15 +27,16 @@ import type { SettingsService } from './settings.js';
 import type { SecretsService } from './secrets.js';
 import type { CoreLogger } from '../infra/logger.js';
 
-/** 无对话模型的实例做连通性测试时，按能力配置的引用顺序探测第一种能力。 */
+/**
+ * 无对话模型的实例做连通性测试时，按能力配置的引用顺序探测第一种能力。
+ * DEV-133：image / video 槽位已删（生成能力走插件条目），不再参与探测。
+ */
 const CAPABILITY_PROBE_ORDER = [
   'embedding',
   'rerank',
   'multimodal',
   'asr',
   'tts',
-  'image',
-  'video',
 ] as const;
 
 /** Provider management behind the `providers.*` RPC methods. */

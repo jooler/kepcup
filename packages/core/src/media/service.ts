@@ -40,11 +40,14 @@ import type {
 import type { CapabilityModelEntry } from '@kepcup/shared';
 
 /**
- * 媒体网关：统一调用入口，按能力取 settings.capabilityModels 的配置
- * （供应商实例 + 模型，见 docs/design/16-capability-models.md）解析出实例后
- * 路由到适配器：内置厂商实例走各家原生适配器，自定义实例（vendor = null）
- * 走 OpenAI 兼容通用适配器（目前只有向量有跨厂商的事实标准）。调用方
- * （RPC media.*、memory 检索、Bot 工具）只面对厂商无关的参数。
+ * 媒体网关：统一调用入口，按能力解析调用面后路由到适配器：
+ * - embedding / rerank / multimodal / tts / asr（见 docs/design/16-capability-models.md）：
+ *   Bot 绑定条目 → settings.capabilityModels 全局槽位 → CAPABILITY_NOT_CONFIGURED；
+ *   全局槽位解析出实例后路由适配器——内置厂商实例走各家原生适配器，自定义实例
+ *   （vendor = null）走 OpenAI 兼容通用适配器（向量 / TTS / ASR 有事实标准）。
+ * - image / video（DEV-133）：条目路径 only——全局槽位已删除，能力统一由能力
+ *   模型插件条目提供（Bot 绑定域），未绑定条目即插件导向的 CAPABILITY_NOT_CONFIGURED。
+ * 调用方（Bot 工具、memory 检索、语音输入/回复）只面对厂商无关的参数。
  *
  * API key 按实例共享（provider:{实例id}，与对话配置同一条）；baseUrl 取实例
  * 上的值。media.* 入参的 model 是裸模型 id，省略时用该能力的配置。
@@ -67,7 +70,11 @@ export interface MediaUsageContext {
   loopType: LoopType;
 }
 
-/** 除 chat 外的全部模型能力（settings.capabilityModels 的 key）。 */
+/**
+ * 仍保留全局槽位的模型能力（settings.capabilityModels 的 key）。DEV-133：
+ * image / video 已从 settings 键收窄掉——这两类能力只走插件条目路径
+ * （`#resolveEntryOnly`），参数类型用 `Exclude<ModelCapability, 'chat'>`。
+ */
 type MediaCapability = Exclude<keyof Settings['capabilityModels'], number>;
 
 /**
@@ -81,7 +88,15 @@ type MediaCapability = Exclude<keyof Settings['capabilityModels'], number>;
  * - 零实例留空（MediaService 报 CAPABILITY_NOT_CONFIGURED，payload 带条目定位）。
  */
 export interface MediaEntrySource {
-  entriesFor(botId: string | undefined, capability: MediaCapability): Promise<ResolvedEntry[]>;
+  /**
+   * 该 Bot 在该能力下可用的条目。capability 含 image / video（DEV-133：这两类
+   * 能力的全局槽位已删，条目是唯一通道）；embedding / rerank 不被 media 网关
+   * 消费（60 §10 Q4），实现侧仍会挡一层。
+   */
+  entriesFor(
+    botId: string | undefined,
+    capability: Exclude<ModelCapability, 'chat'>,
+  ): Promise<ResolvedEntry[]>;
   /** 单个条目定义（清单投影；null = 插件 / 条目不存在）。 */
   entryOf(pluginId: string, entryId: string): Promise<CapabilityModelEntry | null>;
   /** 插件当前的 capability-model 实例 id 全集（条目测试的实例解析用）。 */
@@ -171,7 +186,8 @@ interface ResolvedProvider {
   context: VendorCallContext;
   adapter: VendorAdapter;
   /** 条目命中时携带（用量记账写 capability / model_entry_id，provider 记插件 id）。 */
-  entry?: { pluginId: string; entryId: string; capability: MediaCapability } | undefined;
+  entry?: { pluginId: string; entryId: string; capability: Exclude<ModelCapability, 'chat'> } |
+    undefined;
   /**
    * D125 补丁：仅托管路径（`#hostedProvider`）设置——执行型插件 id。工具据此把
    * 产物默认写进该插件的数据目录（不是任务写域门槛能覆盖的位置）；数据型条目 /
@@ -215,12 +231,17 @@ export class MediaService {
 
   // --- 统一调用入口（media.* RPC 背后的方法） ------------------------------
 
+  /**
+   * DEV-133：图像生成走条目路径 only——全局槽位（settings.capabilityModels.image）
+   * 已删除，能力统一由能力模型插件条目提供。Bot 绑定了可用条目时解析与 #resolve
+   * 的 ① 分支一致；否则抛插件导向的 CAPABILITY_NOT_CONFIGURED。
+   */
   async generateImage(
     input: ImageGenerationParams & { model?: string },
     usage?: MediaUsageContext | null,
     resolve?: MediaResolveOptions,
   ): Promise<ImageGenerationResult> {
-    const resolved = await this.#resolve('image', input.model, resolve);
+    const resolved = await this.#resolveEntryOnly('image', input.model, resolve);
     const fn = resolved.adapter.generateImage;
     if (fn === undefined) throw this.#unsupported(resolved, 'image');
     const result = await fn(resolved.context, resolved.modelId, {
@@ -270,12 +291,16 @@ export class MediaService {
     return result;
   }
 
+  /**
+   * DEV-133：视频生成走条目路径 only（同 generateImage）；提交返回的 provider
+   * 恒为插件实例 id（pli_…），videoStatus 经条目仓库解析回插件凭据。
+   */
   async generateVideo(
     input: VideoGenerationParams & { model?: string },
     usage?: MediaUsageContext | null,
     resolve?: MediaResolveOptions,
   ): Promise<{ provider: string; taskId: string }> {
-    const resolved = await this.#resolve('video', input.model, resolve);
+    const resolved = await this.#resolveEntryOnly('video', input.model, resolve);
     const fn = resolved.adapter.submitVideo;
     if (fn === undefined) throw this.#unsupported(resolved, 'video');
     const handle = await fn(resolved.context, resolved.modelId, {
@@ -288,8 +313,6 @@ export class MediaService {
     });
     // 记在提交成功处：一次任务一行，轮询状态不计。
     this.#recordUsage(resolved.instanceId, resolved.modelId, usage, resolved.entry);
-    // provider 返回给调用方做 videoStatus 往返：条目路径是插件实例 id（pli_…），
-    // videoStatus 经条目仓库解析回插件凭据（全局路径仍是供应商实例 id，不变）。
     return { provider: resolved.instanceId, taskId: handle.taskId };
   }
 
@@ -678,6 +701,9 @@ export class MediaService {
    * 且条目仓库返回非空时——显式 model 匹配条目 model/displayName，未命中回首个）
    * → ② 全局槽位（`#resolveGlobal`，现状路径逐字节保留）→ ③ 未配置
    * （CAPABILITY_NOT_CONFIGURED，现状语义）。`modelId` 是全局路径的裸模型覆盖。
+   *
+   * DEV-133：只服务仍保留全局槽位的五个键；image / video 走 `#resolveEntryOnly`
+   * （条目路径 only）。
    */
   async #resolve(
     capability: MediaCapability,
@@ -699,7 +725,41 @@ export class MediaService {
     } else {
       resolved = this.#resolveGlobal(capability, modelId);
     }
-    // D125 补丁：来源回调（entry 的托管分支带 artifactPluginId；数据型 / 全局不带）。
+    this.#notifyResolved(resolved, resolve);
+    return resolved;
+  }
+
+  /**
+   * DEV-133：image / video 的解析——条目路径 only。Bot 绑定了可用条目时与
+   * `#resolve` 的 ① 分支一致；否则抛插件导向的 CAPABILITY_NOT_CONFIGURED
+   * （不再有全局槽位可回退，文案引导插件安装 / 勾选而不是设置-模型）。
+   */
+  async #resolveEntryOnly(
+    capability: 'image' | 'video',
+    modelId: string | undefined,
+    resolve: MediaResolveOptions | undefined,
+  ): Promise<ResolvedProvider> {
+    const capabilityLabel = capability === 'image' ? '图像生成' : '视频生成';
+    if (resolve?.botId != null && resolve.botId !== '' && this.#entrySource !== undefined) {
+      const entries = await this.#entrySource.entriesFor(resolve.botId, capability);
+      if (entries.length > 0) {
+        const resolved = await this.#resolveEntry(
+          capability,
+          this.#selectEntry(entries, modelId),
+          resolve,
+        );
+        this.#notifyResolved(resolved, resolve);
+        return resolved;
+      }
+    }
+    throw new AppError(
+      'CAPABILITY_NOT_CONFIGURED',
+      `未绑定提供${capabilityLabel}的插件条目：请安装 / 启用相应能力模型插件，并在 Bot 的插件能力里勾选对应条目`,
+    );
+  }
+
+  /** D125 补丁：来源回调（entry 的托管分支带 artifactPluginId；数据型 / 全局不带）。 */
+  #notifyResolved(resolved: ResolvedProvider, resolve: MediaResolveOptions | undefined): void {
     // 回调只用于工具的落点选择，抛错不能破坏一次已成型的媒体调用（日志 + 忽略）。
     try {
       resolve?.onResolved?.({
@@ -711,7 +771,6 @@ export class MediaService {
         'media resolve onResolved callback failed (ignored)',
       );
     }
-    return resolved;
   }
 
   /** 条目挑选：显式 model 依次命中条目 model / displayName / entryId 才生效，否则用首个（声明序）。 */
@@ -736,7 +795,7 @@ export class MediaService {
    * 逐字节一致。
    */
   async #resolveEntry(
-    capability: MediaCapability,
+    capability: Exclude<ModelCapability, 'chat'>,
     entry: ResolvedEntry,
     resolve?: MediaResolveOptions,
   ): Promise<ResolvedProvider> {
@@ -968,55 +1027,49 @@ export class MediaService {
   }
 
   /**
-   * videoStatus / cancelVideo 的 provider 解析：settings 实例优先（现状逐字节），
-   * NOT_FOUND 时回落插件实例（D124 条目路径的 generateVideo 返回 pli_…，凭据
-   * 经条目仓库读回）；都查不到维持原 NOT_FOUND。
+   * videoStatus / cancelVideo 的 provider 解析（DEV-133：条目路径 only）——
+   * 视频全局槽位已删，generateVideo 返回的 provider 恒为插件实例 id（pli_…），
+   * 凭据经条目仓库读回；查不到维持 NOT_FOUND。
    */
   async #resolveVideoProvider(
     provider: string,
     resolve?: MediaResolveOptions,
   ): Promise<ResolvedProvider> {
-    try {
-      return this.#resolveProvider(provider);
-    } catch (error) {
-      if (
-        error instanceof AppError &&
-        error.code === 'NOT_FOUND' &&
-        this.#entrySource !== undefined
-      ) {
-        const pluginInstance = await this.#entrySource.capabilityInstanceOf(provider);
-        if (pluginInstance !== null && pluginInstance.source === 'plugin') {
-          // D125 执行型条目：轮询 / 取消走托管适配器（凭据由宿主按实例注入）。
-          const adapter =
-            (await this.#entrySource.hostedAdapterOf?.(pluginInstance.pluginId)) ?? null;
-          if (adapter !== null) {
-            const resolved = this.#hostedProvider(
-              pluginInstance.pluginId,
-              pluginInstance.entryId,
-              provider,
-              pluginInstance.model,
-              adapter,
-              resolve,
-            );
-            resolved.entry = {
-              pluginId: pluginInstance.pluginId,
-              entryId: pluginInstance.entryId,
-              capability: 'video',
-            };
-            return resolved;
-          }
-        }
-        const engine = pluginInstance === null ? undefined : MEDIA_ENGINES[pluginInstance.engine];
-        if (pluginInstance !== null && engine !== undefined) {
-          return this.#resolvePluginInstance(pluginInstance.pluginId, provider, engine);
+    if (this.#entrySource !== undefined) {
+      const pluginInstance = await this.#entrySource.capabilityInstanceOf(provider);
+      if (pluginInstance !== null && pluginInstance.source === 'plugin') {
+        // D125 执行型条目：轮询 / 取消走托管适配器（凭据由宿主按实例注入）。
+        const adapter = (await this.#entrySource.hostedAdapterOf?.(pluginInstance.pluginId)) ?? null;
+        if (adapter !== null) {
+          const resolved = this.#hostedProvider(
+            pluginInstance.pluginId,
+            pluginInstance.entryId,
+            provider,
+            pluginInstance.model,
+            adapter,
+            resolve,
+          );
+          resolved.entry = {
+            pluginId: pluginInstance.pluginId,
+            entryId: pluginInstance.entryId,
+            capability: 'video',
+          };
+          return resolved;
         }
       }
-      throw error;
+      const engine = pluginInstance === null ? undefined : MEDIA_ENGINES[pluginInstance.engine];
+      if (pluginInstance !== null && engine !== undefined) {
+        return this.#resolvePluginInstance(pluginInstance.pluginId, provider, engine);
+      }
     }
+    throw new AppError('NOT_FOUND', `视频任务实例 "${provider}" 不存在`);
   }
 
   /** 适配器未实现该能力（应与描述符能力矩阵一致）时的明确提示。 */
-  #requireAdapterCapability(resolved: ResolvedProvider, capability: MediaCapability): void {
+  #requireAdapterCapability(
+    resolved: ResolvedProvider,
+    capability: Exclude<ModelCapability, 'chat'>,
+  ): void {
     const adapter = resolved.adapter;
     const supported =
       (capability === 'embedding' && adapter.embed !== undefined) ||
