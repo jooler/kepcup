@@ -115,14 +115,14 @@ describe('值格式化与对比行', () => {
 
   it('只列建议里出现的非敏感字段，并标出是否变化', () => {
     const rows = settingDiffRows(
-      item('capability.image'),
-      { provider: 'dashscope', model: 'wanx' },
-      { provider: 'dashscope', model: 'qwen-image', apiKey: 'sk-should-not-show' },
+      item('capability.tts'),
+      { provider: 'dashscope', model: 'cosyvoice-v3' },
+      { provider: 'dashscope', model: 'cosyvoice-v2', apiKey: 'sk-should-not-show' },
       text,
     );
     expect(rows.map((row) => row.name)).toEqual(['provider', 'model']);
     expect(rows[0]).toMatchObject({ before: 'dashscope', after: 'dashscope', changed: false });
-    expect(rows[1]).toMatchObject({ before: 'wanx', after: 'qwen-image', changed: true });
+    expect(rows[1]).toMatchObject({ before: 'cosyvoice-v3', after: 'cosyvoice-v2', changed: true });
     expect(JSON.stringify(rows)).not.toContain('sk-should-not-show');
   });
 
@@ -142,7 +142,7 @@ describe('值格式化与对比行', () => {
 
 describe('预填过滤', () => {
   it('user-only / link / 回执卡不预填；其余只保留非敏感的已登记字段', () => {
-    const capability = item('capability.image');
+    const capability = item('capability.tts');
     const proposed = { provider: 'dashscope', apiKey: 'sk-x', bogus: 1 };
     expect(settingCardPrefill(capability, 'user-only', proposed)).toBeNull();
     expect(settingCardPrefill(capability, 'link', proposed)).toBeNull();
@@ -235,8 +235,8 @@ describe('卡片形态的分发', () => {
   const always = () => true;
 
   it('link / 回执 / 无卡片键不内嵌；不能嵌（embeddable=false）退回跳转卡', () => {
-    expect(embeddedCardKey(item('capability.image'), 'form', always)).toBe('capability-model');
-    expect(embeddedCardKey(item('capability.image'), 'link', always)).toBeNull();
+    expect(embeddedCardKey(item('capability.tts'), 'form', always)).toBe('capability-model');
+    expect(embeddedCardKey(item('capability.tts'), 'link', always)).toBeNull();
     expect(embeddedCardKey(item('models.default-main'), 'receipt', always)).toBeNull();
     expect(embeddedCardKey(item('profile.user-facts'), 'confirm', always)).toBeNull();
     expect(embeddedCardKey(item('environment.allowlist'), 'user-only', always)).toBe(
@@ -249,16 +249,16 @@ describe('卡片形态的分发', () => {
       'environment-sandbox',
     );
     expect(embeddedCardKey(item('general.theme'), 'confirm', always)).toBe('appearance');
-    expect(embeddedCardKey(item('capability.image'), 'form', () => false)).toBeNull();
+    expect(embeddedCardKey(item('capability.tts'), 'form', () => false)).toBeNull();
   });
 
   it('宿主「应用」：confirm + 有建议值 + 组件不自带 CAS 保存', () => {
-    expect(hostApplies(item('capability.image'), 'confirm', { provider: 'dashscope' })).toBe(true);
+    expect(hostApplies(item('capability.tts'), 'confirm', { provider: 'dashscope' })).toBe(true);
     expect(hostApplies(item('hardware.microphone'), 'confirm', { enabled: true })).toBe(true);
     expect(hostApplies(item('models.default-main'), 'confirm', { model: 'x' })).toBe(false);
     expect(hostApplies(item('bot.model'), 'confirm', { model: 'x' })).toBe(false);
-    expect(hostApplies(item('capability.image'), 'confirm', null)).toBe(false);
-    expect(hostApplies(item('capability.image'), 'form', { provider: 'dashscope' })).toBe(false);
+    expect(hostApplies(item('capability.tts'), 'confirm', null)).toBe(false);
+    expect(hostApplies(item('capability.tts'), 'form', { provider: 'dashscope' })).toBe(false);
     expect(hostApplies(item('project.title'), 'confirm', { title: '新项目名' })).toBe(false);
     expect(hostApplies(item('project.members'), 'confirm', { bots: ['bot_b'] })).toBe(false);
     expect(hostApplies(item('workdir.protect-rules'), 'user-only', { denyRead: [] })).toBe(false);
@@ -309,8 +309,11 @@ describe('卡片形态的分发', () => {
   });
 
   it('条目 id → 能力 / 传感器', () => {
-    expect(capabilityOfItem('capability.image')).toBe('image');
-    expect(capabilityOfItem('capability.video')).toBe('video');
+    expect(capabilityOfItem('capability.tts')).toBe('tts');
+    expect(capabilityOfItem('capability.asr')).toBe('asr');
+    // DEV-133：capability.image / video 条目已删（生成能力走插件条目）。
+    expect(capabilityOfItem('capability.image')).toBeNull();
+    expect(capabilityOfItem('capability.video')).toBeNull();
     expect(capabilityOfItem('models.default-main')).toBeNull();
     expect(sensorOfItem('hardware.microphone')).toBe('microphone');
     expect(sensorOfItem('hardware.camera')).toBe('camera');

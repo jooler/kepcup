@@ -573,15 +573,18 @@ export const capabilityModelSchema = z.object({
 });
 export type CapabilityModel = z.infer<typeof capabilityModelSchema>;
 
-/** `settings.capabilityModels`：除对话外的全部模型能力，各 section 一条。 */
+/**
+ * `settings.capabilityModels`：仍由应用内全局槽位承载的模型能力，各 section 一条。
+ * DEV-133：图像 / 视频生成的槽位已删除——这两类能力统一由能力模型插件条目提供
+ * （Bot 绑定域），不再有全局配置；存量设置 JSON 里残留的 image / video 键在
+ * parse 时按 zod object 默认行为静默剥离。
+ */
 export const capabilityModelsSchema = z.object({
   embedding: capabilityModelSchema.nullable().default(null),
   rerank: capabilityModelSchema.nullable().default(null),
   multimodal: capabilityModelSchema.nullable().default(null),
   asr: capabilityModelSchema.nullable().default(null),
   tts: capabilityModelSchema.nullable().default(null),
-  image: capabilityModelSchema.nullable().default(null),
-  video: capabilityModelSchema.nullable().default(null),
 });
 export type CapabilityModels = z.infer<typeof capabilityModelsSchema>;
 /** 能力模型配置的 key（不含 chat）。 */

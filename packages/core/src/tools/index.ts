@@ -370,6 +370,18 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   '.csv': 'text/csv',
   '.html': 'text/html',
   '.zip': 'application/zip',
+  // 生成类媒体产物的投递走这里的扩展名映射（generate_speech 的 mp3/wav/ogg
+  // 与 generate_video 的 mp4，见 media-delivery → attachments.upload 的
+  // guessMime）：缺了会让音频 / 视频附件带上 application/octet-stream，
+  // 渲染层只能退回文件 chip，无法内联播放。
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.m4a': 'audio/mp4',
+  '.flac': 'audio/flac',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
 };
 
 function guessMime(fileName: string): string {

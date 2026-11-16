@@ -78,9 +78,9 @@ export function buildProviderNavGroups(
 
 /**
  * 能力槽位候选：声明了该能力的供应商实例（内置厂商实例还要求描述符能力
- * 矩阵开放该能力；自定义实例只有向量有跨厂商事实标准）。与 core 侧
- * capabilityAdapter 的 capableProviders 同一语义；hasKeyById 用于把
- * 已配 Key 的实例排前面。
+ * 矩阵开放该能力；自定义实例限有事实标准的 OpenAI 兼容接口——向量与
+ * DEV-133 起的语音 TTS / ASR）。与 core 侧 capabilityAdapter 的
+ * capableProviders 同一语义；hasKeyById 用于把已配 Key 的实例排前面。
  */
 export function capabilityProviderCandidates(
   providers: readonly ProviderInstance[],
@@ -93,9 +93,9 @@ export function capabilityProviderCandidates(
       if (instance.vendor !== null) {
         return VENDOR_DESCRIPTORS[instance.vendor].capabilities.includes(capability);
       }
-      // Anthropic 协议端点没有 OpenAI 兼容的 /embeddings；pi 目录实例同理不进。
+      // Anthropic 协议端点没有 OpenAI 兼容的媒体接口；pi 目录实例同理不进。
       if (instance.api === 'anthropic-messages' || instance.builtinCatalog) return false;
-      return capability === 'embedding';
+      return capability === 'embedding' || capability === 'tts' || capability === 'asr';
     })
     .sort(
       (a, b) => Number(hasKeyById.get(b.id) ?? false) - Number(hasKeyById.get(a.id) ?? false),

@@ -152,65 +152,31 @@ describe('MediaService 路由（capabilityModels）', () => {
       multimodal: null,
       asr: null,
       tts: null,
-      image: { provider: 'volcengine', model: 'doubao-seedream-4-0-250828' },
-      video: { provider: 'volcengine', model: 'doubao-seedance-1-0-pro-250528' },
     },
   });
 
-  it('generateImage：按能力配置路由（模型 id 完整传递）', async () => {
-    const fetchImpl = (async (url: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(url)).toBe('https://ark.cn-beijing.volces.com/api/v3/images/generations');
-      const body = JSON.parse(String(init?.body)) as { model: string };
-      expect(body.model).toBe('doubao-seedream-4-0-250828');
-      return new Response(JSON.stringify({ data: [{ url: 'https://out.example/i.png' }] }));
-    }) as unknown as typeof fetch;
-    const result = await mediaService(SETTINGS, KEYS, fetchImpl).generateImage({
-      prompt: '测试图',
+  it('DEV-133：generateImage 条目路径 only——无条目时抛插件导向的未配置错误', async () => {
+    const service = mediaService(SETTINGS, KEYS);
+    await expect(service.generateImage({ prompt: 'x' })).rejects.toMatchObject({
+      code: 'CAPABILITY_NOT_CONFIGURED',
+      message: expect.stringContaining('插件条目'),
     });
-    expect(result.images).toEqual([{ url: 'https://out.example/i.png' }]);
   });
 
-  it('显式 model 覆盖能力配置中的模型 id', async () => {
-    const fetchImpl = (async (_url: RequestInfo | URL, init?: RequestInit) => {
-      const body = JSON.parse(String(init?.body)) as { model: string };
-      expect(body.model).toBe('doubao-seedream-4-5-251128');
-      return new Response(JSON.stringify({ data: [{ url: 'https://out.example/e.png' }] }));
-    }) as unknown as typeof fetch;
-    const result = await mediaService(SETTINGS, KEYS, fetchImpl).generateImage({
-      model: 'doubao-seedream-4-5-251128',
-      prompt: 'x',
-    });
-    expect(result.images).toEqual([{ url: 'https://out.example/e.png' }]);
-  });
-
-  it('未配置该能力（CAPABILITY_NOT_CONFIGURED）、缺 key、非厂商 id 各自给出明确错误', async () => {
+  it('未配置该能力（CAPABILITY_NOT_CONFIGURED）给出明确错误', async () => {
     const service = mediaService(SETTINGS, KEYS);
     await expect(service.synthesizeSpeech({ text: 'hi' })).rejects.toMatchObject({
-      code: 'CAPABILITY_NOT_CONFIGURED',
-    });
-    await expect(mediaService(SETTINGS, {}).generateImage({ prompt: 'x' })).rejects.toMatchObject({
-      code: 'PROVIDER_AUTH_FAILED',
-    });
-    const none = makeSettings({
-      capabilityModels: {
-        embedding: null,
-        rerank: null,
-        multimodal: null,
-        asr: null,
-        tts: null,
-        image: null,
-        video: null,
-      },
-    });
-    await expect(mediaService(none, KEYS).generateImage({ prompt: 'x' })).rejects.toMatchObject({
       code: 'CAPABILITY_NOT_CONFIGURED',
     });
   });
 
   it('capabilityConfigured 只看配置存在与否，不发网络请求', () => {
-    const service = mediaService(SETTINGS, KEYS);
-    expect(service.capabilityConfigured('image')).toBe(true);
-    expect(service.capabilityConfigured('tts')).toBe(false);
+    const configured = makeSettings({
+      capabilityModels: { ...SETTINGS.capabilityModels, tts: { provider: 'dashscope', model: 'qwen3-tts-flash' } },
+    });
+    const service = mediaService(configured, KEYS);
+    expect(service.capabilityConfigured('tts')).toBe(true);
+    expect(service.capabilityConfigured('asr')).toBe(false);
   });
 
   it('方舟的 tts/asr 为 NOT_IMPLEMENTED；描述符能力矩阵与适配器一致', async () => {
@@ -226,31 +192,21 @@ describe('MediaService 路由（capabilityModels）', () => {
     });
   });
 
-  it('generateVideo/videoStatus：提交与查询分别路由；pollVideo 到终态为止', async () => {
-    let polled = 0;
-    const fetchImpl = (async (url: RequestInfo | URL) => {
-      const target = String(url);
-      if (target.endsWith('/contents/generations/tasks')) {
-        return new Response(JSON.stringify({ id: 'req-9' }));
-      }
-      expect(target.endsWith('/contents/generations/tasks/req-9')).toBe(true);
-      polled += 1;
-      return new Response(
-        JSON.stringify(
-          polled >= 2
-            ? { status: 'succeeded', content: { video_url: 'https://v.example/f.mp4' } }
-            : { status: 'running' },
-        ),
-      );
-    }) as unknown as typeof fetch;
-    const service = mediaService(SETTINGS, KEYS, fetchImpl);
-    const handle = await service.generateVideo({ prompt: '夜景' });
-    expect(handle).toEqual({ provider: 'volcengine', taskId: 'req-9' });
-    const done = await service.pollVideo('volcengine', 'req-9', {
-      intervalMs: 1,
-      timeoutMs: 5_000,
-    });
-    expect(done.status).toBe('succeeded');
+  it('DEV-133：内置厂商不再声称 image / video（providers.test 能力探测按矩阵拒绝）', async () => {
+    const service = mediaService(makeSettings({}), { 'provider:dashscope': 'k' });
+    await expect(
+      service.testCapability('image', { provider: 'dashscope', model: 'qwen-image' }),
+    ).rejects.toMatchObject({ code: 'NOT_IMPLEMENTED' });
+    await expect(
+      service.testCapability('video', { provider: 'dashscope', model: 'wan2.7-t2v' }),
+    ).rejects.toMatchObject({ code: 'NOT_IMPLEMENTED' });
+    const ark = mediaService(makeSettings({}), KEYS);
+    await expect(
+      ark.testCapability('video', {
+        provider: 'volcengine',
+        model: 'doubao-seedance-1-0-pro-250528',
+      }),
+    ).rejects.toMatchObject({ code: 'NOT_IMPLEMENTED' });
   });
 
   it('rerank：百炼原生 text-rerank 端点，响应按 score 降序解析', async () => {
@@ -283,8 +239,6 @@ describe('MediaService 路由（capabilityModels）', () => {
     const settings = makeSettings({
       capabilityModels: {
         ...SETTINGS.capabilityModels,
-        image: null,
-        video: null,
         rerank: { provider: 'dashscope', model: 'gte-rerank-v2' },
       },
     });
@@ -316,8 +270,6 @@ describe('MediaService 路由（capabilityModels）', () => {
     const settings = makeSettings({
       capabilityModels: {
         ...SETTINGS.capabilityModels,
-        image: null,
-        video: null,
         multimodal: { provider: 'dashscope', model: 'qwen3-vl-plus' },
       },
     });
@@ -432,58 +384,21 @@ describe('按能力连通性测试（testCapability）', () => {
       { provider: 'custom:mine', model: 'm1' },
     );
     expect(seen).toEqual(['https://mine.example/v1/embeddings']);
-    // 自定义适配器没实现的照旧 NOT_IMPLEMENTED；方舟能力矩阵未开放的也是。
+    // DEV-133：自定义适配器补了标准 TTS / ASR——tts 探测会真实发起
+    // /audio/speech（这里 fetch 未 mock → PROVIDER_UNREACHABLE 证明已过能力
+    // 检查）；方舟矩阵未开放 tts 的照旧 NOT_IMPLEMENTED。
     await expect(
       mediaService(settings, { 'provider:custom:mine': 'k' }).testCapability('tts', {
         provider: 'custom:mine',
         model: 'm1',
       }),
-    ).rejects.toMatchObject({ code: 'NOT_IMPLEMENTED' });
+    ).rejects.toMatchObject({ code: 'PROVIDER_UNREACHABLE' });
     await expect(
       mediaService(makeSettings({}), { 'provider:volcengine': 'k' }).testCapability('tts', {
         provider: 'volcengine',
         model: 'x',
       }),
     ).rejects.toMatchObject({ code: 'NOT_IMPLEMENTED' });
-  });
-
-  it('video（百炼）：提交成功即通过并尽力取消；取消失败不影响判定', async () => {
-    const urls: string[] = [];
-    const fetchImpl = (async (url: RequestInfo | URL, init?: RequestInit) => {
-      urls.push(`${init?.method ?? 'GET'} ${String(url)}`);
-      if (String(url).endsWith('/video-synthesis')) {
-        return new Response(JSON.stringify({ output: { task_id: 't-1', task_status: 'PENDING' } }));
-      }
-      // 取消接口 500：仍应判定通过（提交已证明 key/模型可用）。
-      return new Response('boom', { status: 500 });
-    }) as unknown as typeof fetch;
-    await mediaService(makeSettings({}), { 'provider:dashscope': 'k' }, fetchImpl).testCapability(
-      'video',
-      { provider: 'dashscope', model: 'wan2.7-t2v' },
-    );
-    expect(urls).toEqual([
-      'POST https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis',
-      'POST https://dashscope.aliyuncs.com/api/v1/tasks/t-1/cancel',
-    ]);
-  });
-
-  it('video（方舟）：提交拿到 taskId 后立即 DELETE 取消', async () => {
-    const urls: string[] = [];
-    const fetchImpl = (async (url: RequestInfo | URL, init?: RequestInit) => {
-      urls.push(`${init?.method ?? 'GET'} ${String(url)}`);
-      if (String(url).endsWith('/contents/generations/tasks')) {
-        return new Response(JSON.stringify({ id: 'ark-1' }));
-      }
-      return new Response(JSON.stringify({ status: 'cancelled' }));
-    }) as unknown as typeof fetch;
-    await mediaService(makeSettings({}), KEYS, fetchImpl).testCapability('video', {
-      provider: 'volcengine',
-      model: 'doubao-seedance-1-0-pro-250528',
-    });
-    expect(urls).toEqual([
-      'POST https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks',
-      'DELETE https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/ark-1',
-    ]);
   });
 
   it('tts：qwen3-tts 走 multimodal-generation；asr：静音 WAV 以 input_audio 发给兼容对话接口', async () => {
@@ -538,16 +453,15 @@ describe('ProvidersService.test 厂商缺省路由', () => {
   }
 
   it('缺省 capability：条目有对话模型 → 对话探测；只有能力配置 → 按该能力探测', async () => {
-    // 「更换 Key」弹框的测试按钮不带 capability。
-    const imageOnly = makeSettings({
+    // 「更换 Key」弹框的测试按钮不带 capability。（DEV-133：image / video 槽位
+    // 已删，缺省路由只看保留的五个能力键——这里用 tts 验证。）
+    const ttsOnly = makeSettings({
       capabilityModels: {
         embedding: null,
         rerank: null,
         multimodal: null,
         asr: null,
-        tts: null,
-        image: { provider: 'dashscope', model: 'qwen-image' },
-        video: null,
+        tts: { provider: 'dashscope', model: 'qwen3-tts-flash' },
       },
     });
     const fetchImpl = (async (url: RequestInfo | URL) => {
@@ -555,14 +469,12 @@ describe('ProvidersService.test 厂商缺省路由', () => {
         'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
       );
       return new Response(
-        JSON.stringify({
-          output: { choices: [{ message: { content: [{ image: 'https://out.example/1.png' }] } }] },
-        }),
+        JSON.stringify({ output: { audio: { data: Buffer.from('mp3').toString('base64') } } }),
       );
     }) as unknown as typeof fetch;
-    const service = providersService(imageOnly, { 'provider:dashscope': 'k' }, fetchImpl);
+    const service = providersService(ttsOnly, { 'provider:dashscope': 'k' }, fetchImpl);
     await expect(service.test('dashscope')).resolves.toBeUndefined();
-    await expect(service.test('dashscope', 'qwen-image')).resolves.toBeUndefined();
+    await expect(service.test('dashscope', 'qwen3-tts-flash')).resolves.toBeUndefined();
   });
 
   it('缺省 capability 且实例登记了对话模型 → 仍走对话注册表（连接错误而非 Unknown provider）', async () => {

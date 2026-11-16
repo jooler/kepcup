@@ -1,6 +1,8 @@
 # 16 能力模型（非对话模型）与厂商适配
 
-对话（推理）模型走 pi 的厂商注册表（见 [14-models-and-browser.md](14-models-and-browser.md)），本篇定义其余模型能力——向量、重排、多模态（图片理解）、语音识别、语音生成、图片生成、视频生成——的**配置方式**与**逐厂商 API 适配**。联网检索供应商（web_search 工具的配置）见 [21-web-search.md](21-web-search.md)；语音/视频的 Bot 工具消费见 [20-conversation-media.md](20-conversation-media.md)。
+对话（推理）模型走 pi 的厂商注册表（见 [14-models-and-browser.md](14-models-and-browser.md)），本篇定义其余模型能力——向量、重排、多模态（图片理解）、语音识别、语音生成——的**配置方式**与**逐厂商 API 适配**。联网检索供应商（web_search 工具的配置）见 [21-web-search.md](21-web-search.md)；语音/视频的 Bot 工具消费见 [20-conversation-media.md](20-conversation-media.md)。
+
+**DEV-133（2026-11-17）**：图片生成与视频生成的应用内实现（内置厂商引擎方法 + `settings.capabilityModels.image/video` 全局槽位 + `media.generateImage / generateVideo / videoStatus` RPC）已**全部删除**——这两类能力统一由能力模型插件条目提供（唯一通道），见文末「插件条目」与 [60 号](60-capability-model-plugins.md) / [61 号](61-plugin-runtime-platform.md)。`ModelCapability` 枚举保留 `image / video`（插件清单条目仍以这两种能力声明）。ASR / TTS 保留全局槽位：语音输入 / 语音回复（`media.transcribeSpeech` / `media.synthesizeSpeech`）是**无 Bot 上下文的前台功能**，插件条目是 Bot 绑定域、无法接管。
 
 ## 设计原则
 
@@ -22,9 +24,9 @@
 | rerank | ✓（原生 text-rerank） | ✗（数据面无 rerank 接口，重排在 VikingDB） |
 | multimodal | ✓ | ✓（seed-2.1 系自带多模态理解） |
 | asr / tts | ✓ | ✗（语音属火山独立语音产品线） |
-| image / video | ✓ | ✓（seedream / seedance 系列） |
+| image / video | ✗（DEV-133：交由能力模型插件条目，dashscope-t2i 插件为图片试点） | ✗（同左；seedream / seedance 不再走内置引擎） |
 
-预置模型只登记核验时官方「模型列表」**在售**的 id（下线模型实测/文档均不可用，如方舟 seed-1.6 系、doubao 文本向量、seedream-3.0-t2i、seedance-1.0-lite-t2v）；datalist 仅供候选，可自由输入其他 id。
+预置模型只登记核验时官方「模型列表」**在售**的 id（下线模型实测/文档均不可用，如方舟 seed-1.6 系、doubao 文本向量）；DEV-133 起 qwen-image / wan 系与 seedream / seedance 系不再出现在内置预置里（图像 / 视频生成由插件条目承载）；datalist 仅供候选，可自由输入其他 id。
 
 ## 设置页结构（设置 - 模型）
 
@@ -32,11 +34,11 @@ v0.5.6 起为两栏布局（对齐 ZCode 的模型设置）：左栏顶部「**�
 
 | 位置 | 内容 |
 |---|---|
-| 模型配置 | 默认模型（主/轻量 + 组件审查模型）、并发上限、**能力槽位**（向量 → 重排 → 多模态 → 语音识别 → 语音生成 → 图片生成 → 视频生成，每个槽位一条「供应商实例 + 模型」默认选择，候选 = 实例里声明了该能力的模型 + 厂商预置 id）、向量来源（本地模型 / 上方向量槽位） |
+| 模型配置 | 默认模型（主/轻量 + 组件审查模型）、并发上限、**能力槽位**（向量 → 重排 → 多模态 → 语音识别 → 语音生成；DEV-133 起图片 / 视频槽位已删，这两个能力由插件条目承载、入口在扩展中心，每个槽位一条「供应商实例 + 模型」默认选择，候选 = 实例里声明了该能力的模型 + 厂商预置 id）、向量来源（本地模型 / 上方向量槽位） |
 | 供应商实例详情 | 连接区（baseUrl / Key / 测试连接 / 启停 / 删除）+ 模型列表（模型 ID、上下文、能力 badge、编辑弹框：能力多选 + 图片输入 + 上下文窗口） |
 | 添加供应商 | **替换右栏容器**（非弹框）：扁平模板网格（不分组），完整搬运 ZCode 内置目录的 34 张模板卡（同供应商不同端点是独立卡片，OpenAI 兼容根 / Anthropic 端点 / 预置模型 / 图标取自 ZCode 核验数据），合并 pi-ai 内置供应商目录 12 家（`builtinCatalog` 实例——模型清单直接来自 pi，注册表不覆盖同名 provider），共 46 张 + 创建自定义供应商卡。对话线协议按实例 `api` 字段路由（openai-completions / anthropic-messages / openai-responses，pi 三种都有实现）。 |
 
-模板与媒体能力的边界：dashscope / volcengine 模板带 `vendor`（向量/重排/图像等走原生适配器）；anthropic-messages 端点实例与 pi 目录实例不提供媒体能力（无 OpenAI 兼容媒体接口，能力槽位候选排除）；其余模板与自定义实例仅对话 + 向量（OpenAI 兼容 `/embeddings`）。
+模板与媒体能力的边界：dashscope / volcengine 模板带 `vendor`（向量/重排/语音等走原生适配器）；anthropic-messages 端点实例与 pi 目录实例不提供媒体能力（无 OpenAI 兼容媒体接口，能力槽位候选排除）；其余模板与自定义实例为 对话 + 向量 + 标准语音（DEV-133：通用适配器补齐 OpenAI 兼容 `/audio/speech` 与 `/audio/transcriptions`）。
 
 ### 向量来源的本地实现（DEV-007 已落实）
 
@@ -83,13 +85,13 @@ capabilityModelSchema = z.object({
   provider: z.string().min(1).max(80),           // 供应商实例 id
   model: z.string().min(1).max(200),
 });
-settingsSchema.capabilityModels = { embedding: …nullable, rerank: …, … }; // 值改 {provider, model}
+settingsSchema.capabilityModels = { embedding: …nullable, rerank: …, multimodal: …, asr: …, tts: … }; // 值改 {provider, model}；DEV-133：image / video 键已删（存量 JSON 残留键随 parse 静默剥离）
 ```
 
 - **兼容不变式**：内置厂商首个实例沿用厂商 id（`dashscope`），重复添加追加 `-2`/`-3`；自定义实例带 `custom:` 前缀。存量模型 ref（`defaultMainModel` 等 `provider/modelId`）与密钥名（`provider:{实例id}`）在迁移后全部原样有效。
 - 同一厂商可建多个实例（各自 baseUrl / Key），用于为不同能力的模型接不同端点；能力槽位与对话注册表都按实例 id 路由。
 - 对话注册表只收录实例里声明了 `chat` 能力的模型；其余能力由 media 网关按 `capabilityModels.{cap}.provider` 找实例路由适配器（内置厂商 → 原生适配器；`vendor=null` → OpenAI 兼容通用适配器，仅 `embed` 有跨厂商事实标准）。
-- 内置厂商能力矩阵（`VENDOR_DESCRIPTORS`）继续约束实例可声明的能力；自定义实例仅对话 + 向量。pi 内置厂商（openai 等）不进此列表，仍在模型下拉中按 Key 出现。
+- 内置厂商能力矩阵（`VENDOR_DESCRIPTORS`）继续约束实例可声明的能力；自定义实例为 对话 + 向量 + 标准语音（TTS / ASR）。pi 内置厂商（openai 等）不进此列表，仍在模型下拉中按 Key 出现。
 - **迁移**（`migrateLegacyModelProviders`，core 读路径执行并写回）：旧 `customProviders` / `vendorProviders` / `capabilityModels.{vendor,…}` 一次性搬进实例列表；能力引用改写为 `{provider, model}`，引用厂商无条目时补建空实例（对齐旧行为：能力模型可单独配置）。schema 不再包含 legacy 字段。
 
 `embedding.source`（`'' | 'local' | 'provider'`）与 `embedding.dim` 保留；`source='provider'` 即「使用向量槽位的配置」。
@@ -105,10 +107,10 @@ core 侧 `media/` 每家厂商一个适配器，实现厂商无关的 `VendorAda
 | `understandImage?(ctx, model, params)` | multimodal | 图片理解（视觉问答），返回文本 |
 | `transcribeSpeech?(ctx, model, params)` | asr | 语音转文本 |
 | `synthesizeSpeech?(ctx, model, params)` | tts | 文本转语音（base64） |
-| `generateImage(ctx, model, params)` | image | 文生图 / 图片编辑（带参考图即编辑） |
-| `submitVideo / videoStatus / cancelVideo?` | video | 异步任务提交 / 轮询 / 尽力取消 |
+| `generateImage?(ctx, model, params)` | image | 文生图 / 图片编辑（**仅执行型插件托管适配器实现**，DEV-133 内置厂商已移除） |
+| `submitVideo / videoStatus / cancelVideo?` | video | 异步任务提交 / 轮询 / 尽力取消（同上，仅插件托管适配器） |
 
-未挂方法的组合在 UI（能力矩阵）与运行时（`NOT_IMPLEMENTED`）都不开放。网关新增公开方法：`rerank`、`understandImage`、`embedTexts(provider, model, texts)`、`embeddingReady()`、`testCapability(capability, {provider, model})`（`provider` = 供应商实例 id）；RPC `media.generateImage / synthesizeSpeech / transcribeSpeech / generateVideo / videoStatus / rerank / understandImage`。`media.*` 入参的 `model` 是**裸模型 id**（省略时用能力配置），不再携带厂商前缀。
+`VendorAdapter` 契约冻结（`ModelCapability` 含 image/video——插件清单仍声明这两种能力；安装期校验「条目声明的能力 ∈ 引擎 capabilities」，内置引擎不再声明 image/video，绑引擎的生成条目拒装 `PLUGIN_INVALID`）。未挂方法的组合在 UI（能力矩阵）与运行时（`NOT_IMPLEMENTED`）都不开放。网关公开方法：`rerank`、`understandImage`、`embedTexts(provider, model, texts)`、`embeddingReady()`、`testCapability(capability, {provider, model})`（`provider` = 供应商实例 id）；RPC `media.synthesizeSpeech / transcribeSpeech / rerank / understandImage`（DEV-133：`media.generateImage / generateVideo / videoStatus` 已删——渲染层无生产调用方，Bot 工具走条目路径）。`media.*` 入参的 `model` 是**裸模型 id**（省略时用能力配置），不再携带厂商前缀。
 
 ## 逐能力 API 参考
 
@@ -169,27 +171,29 @@ core 侧 `media/` 每家厂商一个适配器，实现厂商无关的 `VendorAda
 
 预置：百炼 `qwen-audio-3.1-tts-next / qwen3-tts-flash / qwen3-tts-instruct-flash / cosyvoice-v3-flash / cosyvoice-v2`（`qwen-audio-3.1-tts-flash` 为实时专用、`cosyvoice-v3.5-flash` 不存在，均不可用于 HTTP 通道）。
 
-### 图片生成（image，含编辑）
+### 图片 / 视频生成（image / video，DEV-133 起插件条目唯一通道）
 
-| 厂商 | 端点 | 说明 |
-|---|---|---|
-| 百炼 | `POST {apiRoot}/api/v1/services/aigc/multimodal-generation/generation` | qwen-image 家族同步接口；编辑 = `input.messages[0].content` 带 `image` 项；尺寸分隔符原生为 `*`（适配层自动转换）；响应取 `output.choices[0].message.content[].image` |
-| 火山方舟 | `POST /images/generations` | seedream 系列；`image` 接受字符串或数组；n>1 用 `sequential_image_generation: 'auto'` + `max_images`；响应 `data[].url/b64_json` |
+应用内的图片生成与视频生成实现已**整体移除**：内置厂商适配器不再挂 `generateImage` /
+`submitVideo` / `videoStatus` / `cancelVideo`，`settings.capabilityModels` 没有 image / video
+槽位，`media.generateImage / generateVideo / videoStatus` RPC 已删除。这两类能力由
+**能力模型插件条目**承载：
 
-预置：百炼 `qwen-image / qwen-image-plus / qwen-image-edit / qwen-image-edit-plus`；方舟 `doubao-seedream-4-0-250828 / doubao-seedream-4-5-251128`。
+- **执行型插件**（61 号）：插件子进程内实现厂商协议（`media` 契约的
+  `generateImage` / `submitVideo` / `videoStatus` / `cancelVideo` 方法），宿主按条目调用。
+  图片试点 `plugins/dashscope-t2i`（qwen-image 异步任务协议，DEV-124~DEV-130 已跑通）；
+  视频后续补插件试点。
+- **条目解析与全局槽位的关系**：image / video 无「条目 > 全局槽位」回退链——`MediaService`
+  的解析是**条目路径 only**，Bot 未绑定可用条目即抛 `CAPABILITY_NOT_CONFIGURED`
+  （文案插件导向：引导安装 / 启用插件并在 Bot 的插件能力里勾选），不再回落全局设置。
+- **产物交付**：插件只返回引用（URL / 任务句柄），下载与落附件仍在 core 侧（工具
+  `generate_image` / `generate_video` 的产物落盘、确定性投递、`output_dir` 写域、插件私有
+  产物目录与 hostOwned 交付逻辑全部保留，DEV-131）。
+- 安装期校验：数据型条目（绑 `engine`）声明 image / video 即拒装（`PLUGIN_INVALID`）；
+  在装旧清单运行到这两类条目时由适配器能力检查给出 `NOT_IMPLEMENTED`，逐步收敛。
 
-Bot 侧消费入口：响应 loop 工具 `generate_image`（P15）——文生图，产物落盘（执行型插件条目默认落插件私有目录 `plugin-data/{ns}/{name}/artifacts/`（DEV-131），内置引擎落 workspace `.generated/`；`output_dir` 可显式指定 workspace / 工作目录内的目录）后由工具**立即作为消息附件发进对话**（确定性投递，不依赖模型再调 `send_message`；漏发会让「已生成」的报告无图可看）。能力未配置 / 厂商缺 Key 时网关抛 `CAPABILITY_NOT_CONFIGURED` / `PROVIDER_AUTH_FAILED`，工具转 `SETUP_REQUIRED`，orchestrator 中断执行并以结构化 setup 失败 settle，对话内呈现图像模型设置卡片（[18-inline-setup.md](18-inline-setup.md)）。
-
-### 视频生成（video，异步任务）
-
-| 厂商 | 提交 | 轮询 | 取消 |
-|---|---|---|---|
-| 百炼 | `POST {apiRoot}/api/v1/services/aigc/video-generation/video-synthesis`（头 `X-DashScope-Async: enable`；首帧 `input.media[0] = {type: 'first_frame'}`） | `GET {apiRoot}/api/v1/tasks/{id}`（`PENDING/RUNNING/SUCCEEDED/…`） | `POST {apiRoot}/api/v1/tasks/{id}/cancel` |
-| 火山方舟 | `POST {baseUrl}/contents/generations/tasks`（content 数组 text + `image_url` 带 `role: 'first_frame'`；`watermark: false`） | `GET {baseUrl}/contents/generations/tasks/{id}` | `DELETE` 同路径 |
-
-`media.generateVideo` 只提交并返回 `{provider, taskId}`，调用方用 `media.videoStatus` 轮询（core 内另有 `pollVideo` 长等待助手）。
-
-预置：百炼 `wan2.7-t2v / wan3.0-video / wan2.2-t2v-plus`；方舟 `doubao-seedance-1-0-pro-250528 / doubao-seedance-2-0-260128`。
+（历史参考：百炼 qwen-image 走 `{apiRoot}/api/v1/services/aigc/image-generation/generation`
+异步任务、方舟 seedream 走 `/images/generations`、方舟 seedance 走
+`/contents/generations/tasks`——端点细节现在住各自插件内，本篇不再维护厂商端点表。）
 
 ## 连通性测试（providers.test 带 capability）
 
@@ -201,10 +205,13 @@ Bot 侧消费入口：响应 loop 工具 `generate_image`（P15）——文生�
 | embedding | 一次单词 embed |
 | rerank | query + 2 条短文档 |
 | multimodal | 内置 32×32 纯色 PNG + 「图中是什么」，返回非空文本即通过 |
-| image / tts / asr | 一次最小生成（asr 用内置静音 WAV，返回 200 即通过；编辑专用模型 id 含 edit 时附带探针 PNG 走编辑路径） |
-| video | 提交任务后立即取消（提交即校验 Key、模型与参数，零成片计费） |
+| tts / asr | 一次最小生成（asr 用内置静音 WAV，返回 200 即通过） |
 
-厂商卡片不带 capability 的测试（如「更换 Key」）按对话探测；厂商未登记对话模型但能力配置引用了它时，按其能力配置探测（校验 Key 有效性）。
+设置页的能力槽位只剩上表五行（DEV-133：image / video 槽位已删）。`testCapability` /
+`#runProbe` 的 image / video 探针分支保留——`plugins.testCapabilityEntry`（条目级测试，
+执行型插件条目仍可声明这两种能力）走同一探针实现。厂商卡片不带 capability 的测试
+（如「更换 Key」）按对话探测；厂商未登记对话模型但能力配置引用了它时，按其能力配置
+探测（校验 Key 有效性）。
 
 ## 记忆检索的重排接入
 
@@ -213,7 +220,9 @@ Bot 侧消费入口：响应 loop 工具 `generate_image`（P15）——文生�
 ## 新增厂商适配指南
 
 1. `shared/domain/vendors.ts`：`vendorIdSchema` 增加厂商 id，登记 `VendorDescriptor`（名称、默认兼容根、apiRoot、**能力矩阵**、各能力预置模型、控制台地址）。
-2. `core/media/adapters/`：实现 `VendorAdapter`，只挂该厂商提供的能力方法；共享工具在 `media/embeddings.ts`（OpenAI 兼容向量）、`media/vision.ts`（OpenAI 兼容图片理解）、`media/rerank.ts`（重排响应解析）。
+2. `core/media/adapters/`：实现 `VendorAdapter`，只挂该厂商提供的能力方法（image / video
+   不在内置引擎承载范围，DEV-133）；共享工具在 `media/embeddings.ts`（OpenAI 兼容向量）、
+   `media/vision.ts`（OpenAI 兼容图片理解）、`media/rerank.ts`（重排响应解析）。
 3. `core/media/service.ts` 的 `ADAPTERS` 表登记一行。
 4. 单元测试：适配器端点/载荷/响应解析（`media-adapters.test.ts`）+ 网关路由（`media-service.test.ts`）。
 
@@ -232,5 +241,7 @@ Bot 侧消费入口：响应 loop 工具 `generate_image`（P15）——文生�
    即可绑定新引擎。
 2. **官方插件发条目（纯数据，不等发版）**：既有引擎覆盖的平台（如百炼 / 方舟）上新一个模型 =
    给 `plugins/` 对应数据包加一条 `capabilityModels` 条目并发插件版本，用户更新插件即用
-   （内置先例：`plugins/dashscope` 阿里云百炼 20 条 / `plugins/volcengine-ark` 火山方舟 7 条）；
+   （内置先例：`plugins/dashscope` 阿里云百炼 13 条 / `plugins/volcengine-ark` 火山方舟 3 条；
+   DEV-133 起两个数据包不再携带 image / video 条目——生成能力走执行型插件，如
+   `plugins/dashscope-t2i` 图片试点）；
    全新平台协议必须先走第 1 条路，插件永远只是数据（执行型插件形态见 61 号，另册）。

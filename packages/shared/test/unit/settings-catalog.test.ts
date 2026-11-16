@@ -235,14 +235,12 @@ describe('sensitive fields (§七)', () => {
   });
 
   it('flags unknown keys and passes clean values', () => {
-    const image = getSettingItem('capability.image')!;
-    expect(checkProposedValues(image, { provider: 'openai', model: 'openai/gpt-image-1' })).toEqual(
-      {
-        sensitive: [],
-        unknown: [],
-      },
-    );
-    expect(checkProposedValues(image, { apiKey: 'sk', bogus: 1 })).toEqual({
+    const tts = getSettingItem('capability.tts')!;
+    expect(checkProposedValues(tts, { provider: 'dashscope', model: 'qwen3-tts-flash' })).toEqual({
+      sensitive: [],
+      unknown: [],
+    });
+    expect(checkProposedValues(tts, { apiKey: 'sk', bogus: 1 })).toEqual({
       sensitive: ['apiKey'],
       unknown: ['bogus'],
     });
@@ -251,8 +249,8 @@ describe('sensitive fields (§七)', () => {
 
 describe('catalog queries', () => {
   it('finds items by need, keyword and title, capped at 10', () => {
-    expect(searchSettingItems('生成图片')[0]?.id).toBe('capability.image');
-    expect(searchSettingItems('我想让你帮我生成图片')[0]?.id).toBe('capability.image');
+    // DEV-133：image / video 条目已删除（生成能力走插件条目），检索不再命中。
+    expect(searchSettingItems('生成图片').map((entry) => entry.id)).toEqual([]);
     expect(searchSettingItems('读我的邮件')[0]?.id).toBe('mail.account');
     // 三类邮件设置各自可检索：新增邮箱 / 邮件插件配置 / 已有邮箱的绑定。
     expect(searchSettingItems('添加邮箱')[0]?.id).toBe('mail.account');
@@ -262,7 +260,7 @@ describe('catalog queries', () => {
     expect(searchSettingItems('换个默认模型').map((entry) => entry.id)).toEqual(
       expect.arrayContaining(['models.default-main', 'models.default-light']),
     );
-    expect(searchSettingItems('capability.video')[0]?.id).toBe('capability.video');
+    expect(searchSettingItems('把文字读出来')[0]?.id).toBe('capability.tts');
     expect(searchSettingItems('模型').length).toBeLessThanOrEqual(SETTINGS_SEARCH_MAX_RESULTS);
     expect(searchSettingItems('')).toEqual([]);
     expect(searchSettingItems('   ')).toEqual([]);
@@ -271,7 +269,7 @@ describe('catalog queries', () => {
 
   it('suggests the closest ids for an unknown id', () => {
     expect(closestSettingItemIds('models.default-mian')).toContain('models.default-main');
-    expect(closestSettingItemIds('capability.imag')).toContain('capability.image');
+    expect(closestSettingItemIds('capability.embeeding')).toContain('capability.embedding');
     expect(closestSettingItemIds('whatever').length).toBeLessThanOrEqual(3);
   });
 
@@ -289,7 +287,7 @@ describe('catalog queries', () => {
     expect(itemIdsForSettingsPaths(['capabilityModels']).sort()).toEqual(
       Object.values(CAPABILITY_SETTING_IDS).sort(),
     );
-    expect(itemIdsForSettingsPaths(['capabilityModels.image'])).toEqual(['capability.image']);
+    expect(itemIdsForSettingsPaths(['capabilityModels.tts'])).toEqual(['capability.tts']);
     expect(itemIdsForSettingsPaths(['defaultMainModel', 'defaultLightModel'])).toEqual([
       'models.default-main',
       'models.default-light',

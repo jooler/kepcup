@@ -134,7 +134,10 @@ export const MEDIA_ENGINES: Readonly<Record<string, MediaEngine>> = {
   'openai-compatible': {
     id: 'openai-compatible',
     displayName: 'OpenAI 兼容端点',
-    capabilities: ['embedding'],
+    // DEV-133：TTS / ASR 的 de-facto 标准接口（/audio/speech、
+    // /audio/transcriptions）已补进通用适配器——自定义兼容端点也能承载
+    // 语音槽位；图像 / 视频生成仍归插件条目，不在此列。
+    capabilities: ['embedding', 'tts', 'asr'],
     adapter: openAICompatibleAdapter,
     credentialFields: openAICompatibleCredentialFields(),
     vendor: 'custom',

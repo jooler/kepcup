@@ -330,8 +330,6 @@ export const enUS = {
   'settings.capabilityTitle.multimodal': 'Multimodal model (image understanding)',
   'settings.capabilityTitle.asr': 'Speech recognition model',
   'settings.capabilityTitle.tts': 'Speech generation model',
-  'settings.capabilityTitle.image': 'Image generation model',
-  'settings.capabilityTitle.video': 'Video generation model',
   'settings.capabilityHint.embedding':
     'Used for memory retrieval when Vector source is set to Vendor API. Changing the model rebuilds the vector index.',
   'settings.capabilityHint.rerank':
@@ -340,17 +338,14 @@ export const enUS = {
     'Separate image understanding calls (such as describing screenshots). Images in conversations are handled by the conversation model.',
   'settings.capabilityHint.asr': 'Converts voice messages to text.',
   'settings.capabilityHint.tts': 'Text to speech.',
-  'settings.capabilityHint.image':
-    'Text-to-image and image editing (adding a reference image makes it an edit).',
-  'settings.capabilityHint.video': 'Text-to-video is an async task: submit, then poll for results.',
   'settings.capability.chat': 'Chat',
   'settings.capability.embedding': 'Embedding',
   'settings.capability.rerank': 'Rerank',
   'settings.capability.multimodal': 'Multimodal',
   'settings.capability.image': 'Image generation/editing',
+  'settings.capability.video': 'Video generation',
   'settings.capability.tts': 'Speech synthesis',
   'settings.capability.asr': 'Speech recognition',
-  'settings.capability.video': 'Video generation',
   'settings.modelPlaceholder': 'Select a model (provider/model ID)',
   'settings.concurrency': 'Per-vendor concurrency limit',
   'settings.providersSection': 'Model vendors and endpoints',
@@ -2648,6 +2643,10 @@ export const enUS = {
     'No chat model available yet: add a provider and enter an API key, then choose a default model. The conversation continues automatically after you confirm.',
   'setupCard.capabilityHint':
     'This is the same data as Settings → Models, and you can change it anytime in Settings.',
+  'setupCard.pluginCapabilityTitle': 'A capability-model plugin is required',
+  'setupCard.pluginCapabilityHint':
+    'Image / video generation is provided by capability-model plugin entries: install and enable a matching plugin, fill in its instance credentials, and tick the entry in the Bot plugin capabilities.',
+  'setupCard.pluginCapabilityOpen': 'Open extension center',
   // D124: plugin model entry missing credentials (payload carries plugin / entry / instance).
   'setupCard.pluginCredentialTitle': 'Set up account credentials for "{plugin} · {entry}"',
   'setupCard.pluginCredentialReason':
@@ -3183,7 +3182,7 @@ export const enUS = {
   'agents.capabilities.web.description': 'Web search and fetching (requires a search provider)',
   'agents.capabilities.image_generation.name': 'Image generation',
   'agents.capabilities.image_generation.description':
-    'Generate images from a description (requires an image model)',
+    'Generate images from a description (provided by capability-model plugin entries)',
   'agents.capabilities.image_understanding.name': 'Image understanding',
   'agents.capabilities.image_understanding.description':
     'Answer questions about images (requires a multimodal model)',
@@ -3195,7 +3194,7 @@ export const enUS = {
     'Convert recordings to text (requires a speech recognition model)',
   'agents.capabilities.video.name': 'Video generation',
   'agents.capabilities.video.description':
-    'Generate videos from a description (requires a video model)',
+    'Generate videos from a description (provided by capability-model plugin entries)',
   'agents.capabilities.skills.name': 'Skills',
   'agents.capabilities.skills.description': 'Install and create skills',
   'agents.capabilities.host_ops.name': 'Host operations',
@@ -3840,14 +3839,6 @@ export const enUS = {
   'settingsItem.capability.tts.summary': 'Reads text aloud and generates speech',
   'settingsItem.capability.tts.field.provider': 'Provider',
   'settingsItem.capability.tts.field.model': 'Model',
-  'settingsItem.capability.image.title': 'Image generation model',
-  'settingsItem.capability.image.summary': 'Lets Bots generate images',
-  'settingsItem.capability.image.field.provider': 'Provider',
-  'settingsItem.capability.image.field.model': 'Model',
-  'settingsItem.capability.video.title': 'Video generation model',
-  'settingsItem.capability.video.summary': 'Lets Bots generate videos',
-  'settingsItem.capability.video.field.provider': 'Provider',
-  'settingsItem.capability.video.field.model': 'Model',
   'settingsItem.models.embedding-local.title': 'Local embedding model',
   'settingsItem.models.embedding-local.summary':
     'Download and use a local embedding model so memory search no longer depends on provider APIs',

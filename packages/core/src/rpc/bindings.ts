@@ -336,16 +336,10 @@ import {
   sidebarPinInputSchema,
   sidebarImportInputSchema,
   sidebarImportOutputSchema,
-  mediaGenerateImageInputSchema,
-  mediaGenerateImageOutputSchema,
   mediaSynthesizeSpeechInputSchema,
   mediaSynthesizeSpeechOutputSchema,
   mediaTranscribeSpeechInputSchema,
   mediaTranscribeSpeechOutputSchema,
-  mediaGenerateVideoInputSchema,
-  mediaGenerateVideoOutputSchema,
-  mediaVideoStatusInputSchema,
-  mediaVideoStatusOutputSchema,
   mediaRerankInputSchema,
   mediaRerankOutputSchema,
   mediaUnderstandImageInputSchema,
@@ -749,11 +743,9 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     ),
 
     // --- 统一媒体调用：网关按模型引用的厂商自动路由 -------------------------
-    'media.generateImage': method(
-      mediaGenerateImageInputSchema,
-      mediaGenerateImageOutputSchema,
-      async (input) => services.media!.generateImage(input),
-    ),
+    // DEV-133：media.generateImage / media.generateVideo / media.videoStatus
+    // 已删除——图像 / 视频生成统一由能力模型插件条目提供（Bot 工具域），
+    // 不再有全局槽位 RPC。
     'media.synthesizeSpeech': method(
       mediaSynthesizeSpeechInputSchema,
       mediaSynthesizeSpeechOutputSchema,
@@ -768,16 +760,6 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       async (input) =>
         // 语音输入（26）：用户前台行为，不属于任何 Bot / 对话。
         services.media!.transcribeSpeech(input, { loopType: 'voice_input' }),
-    ),
-    'media.generateVideo': method(
-      mediaGenerateVideoInputSchema,
-      mediaGenerateVideoOutputSchema,
-      async (input) => services.media!.generateVideo(input),
-    ),
-    'media.videoStatus': method(
-      mediaVideoStatusInputSchema,
-      mediaVideoStatusOutputSchema,
-      async (input) => services.media!.videoStatus(input.provider, input.taskId),
     ),
     'media.rerank': method(mediaRerankInputSchema, mediaRerankOutputSchema, async (input) =>
       services.media!.rerank(input),

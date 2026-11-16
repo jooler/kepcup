@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AppError } from '@kepcup/shared';
 import { dashscopeAdapter } from '../../src/media/adapters/dashscope.js';
+import { openAICompatibleAdapter } from '../../src/media/adapters/openai-compatible.js';
 import { volcengineAdapter } from '../../src/media/adapters/volcengine.js';
 import { VendorHttpError, vendorFetch } from '../../src/media/http.js';
 import type { VendorCallContext } from '../../src/media/types.js';
@@ -54,41 +55,7 @@ function readJson(req: RecordedRequest): Record<string, unknown> {
   return JSON.parse(req.body as string) as Record<string, unknown>;
 }
 
-describe('dashscope adapter（原生 multimodal-generation / SpeechSynthesizer / 异步任务）', () => {
-  it('图片生成：同步 multimodal-generation，尺寸 x→*，响应 content[].image', async () => {
-    const fetchImpl = scriptedFetch([
-      (req) => {
-        expect(req.url).toBe(
-          'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
-        );
-        const body = readJson(req);
-        expect(body.model).toBe('qwen-image');
-        expect((body.parameters as Record<string, unknown>).size).toBe('1024*1024');
-        const content = (
-          body.input as { messages: Array<{ content: Array<Record<string, string>> }> }
-        ).messages[0]!.content;
-        expect(content).toEqual([{ image: 'https://ref.example/a.png' }, { text: '画一只猫' }]);
-        return jsonResponse({
-          output: {
-            choices: [
-              { message: { content: [{ image: 'https://out.example/1.png' }, { text: 'done' }] } },
-            ],
-          },
-        });
-      },
-    ]);
-    const result = await dashscopeAdapter.generateImage(
-      ctx('https://dashscope.aliyuncs.com/compatible-mode/v1', fetchImpl),
-      'qwen-image',
-      {
-        prompt: '画一只猫',
-        images: ['https://ref.example/a.png'],
-        size: '1024x1024',
-      },
-    );
-    expect(result.images).toEqual([{ url: 'https://out.example/1.png' }]);
-  });
-
+describe('dashscope adapter（原生 multimodal-generation / SpeechSynthesizer）', () => {
   it('语音合成：默认音色按模型代际带后缀（parameters 下），audio.url 无鉴权下载并转 base64', async () => {
     const audioBytes = Buffer.from('fake-mp3-bytes');
     const fetchImpl = scriptedFetch([
@@ -200,33 +167,11 @@ describe('dashscope adapter（原生 multimodal-generation / SpeechSynthesizer /
     expect(result.text).toBe('识别文本');
   });
 
-  it('视频：提交带 X-DashScope-Async；轮询状态映射 PENDING/SUCCEEDED', async () => {
-    const fetchImpl = scriptedFetch([
-      (req) => {
-        expect(req.url).toBe(
-          'https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis',
-        );
-        expect(req.headers['X-DashScope-Async']).toBe('enable');
-        return jsonResponse({ output: { task_id: 'task-1', task_status: 'PENDING' } });
-      },
-      (req) => {
-        expect(req.url).toBe('https://dashscope.aliyuncs.com/api/v1/tasks/task-1');
-        return jsonResponse({ output: { task_status: 'PENDING' } });
-      },
-      (req) => {
-        expect(req.url).toBe('https://dashscope.aliyuncs.com/api/v1/tasks/task-1');
-        return jsonResponse({
-          output: { task_status: 'SUCCEEDED', video_url: 'https://oss.example/v.mp4' },
-        });
-      },
-    ]);
-    const c = ctx('https://dashscope.aliyuncs.com/compatible-mode/v1', fetchImpl);
-    const handle = await dashscopeAdapter.submitVideo(c, 'wan2.7-t2v', { prompt: '一段海浪' });
-    expect(handle.taskId).toBe('task-1');
-    expect((await dashscopeAdapter.videoStatus(c, 'task-1')).status).toBe('queued');
-    const done = await dashscopeAdapter.videoStatus(c, 'task-1');
-    expect(done.status).toBe('succeeded');
-    expect(done.videoUrl).toBe('https://oss.example/v.mp4');
+  it('DEV-133：generateImage / submitVideo / videoStatus / cancelVideo 不再挂载（图像/视频生成归插件条目）', () => {
+    expect(dashscopeAdapter.generateImage).toBeUndefined();
+    expect(dashscopeAdapter.submitVideo).toBeUndefined();
+    expect(dashscopeAdapter.videoStatus).toBeUndefined();
+    expect(dashscopeAdapter.cancelVideo).toBeUndefined();
   });
 });
 
@@ -412,7 +357,7 @@ describe('适配器 rerank / understandImage（新增能力）', () => {
   });
 });
 
-describe('volcengine adapter（images/generations + contents/generations/tasks）', () => {
+describe('volcengine adapter（embeddings/multimodal + chat 视觉）', () => {
   const C = {
     vendor: 'volcengine',
     baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
@@ -420,74 +365,11 @@ describe('volcengine adapter（images/generations + contents/generations/tasks�
     logger: LOGGER,
   } as VendorCallContext;
 
-  it('图片生成：单图编辑 image 为字符串；b64_json 响应回退', async () => {
-    const fetchImpl = scriptedFetch([
-      (req) => {
-        expect(req.url).toBe('https://ark.cn-beijing.volces.com/api/v3/images/generations');
-        const body = readJson(req);
-        expect(body.image).toBe('https://ref.example/a.png');
-        return jsonResponse({ data: [{ url: 'https://out.example/1.png' }] });
-      },
-      (req) => {
-        const body = readJson(req);
-        // 多参考图传数组。
-        expect(body.image).toEqual(['https://ref.example/a.png', 'data:image/png;base64,xxx']);
-        return jsonResponse({ data: [{ b64_json: 'aGVsbG8=' }] });
-      },
-    ]);
-    const first = await volcengineAdapter.generateImage(
-      { ...C, fetchImpl },
-      'doubao-seedream-4-0-250828',
-      {
-        prompt: '改成夜景',
-        images: ['https://ref.example/a.png'],
-      },
-    );
-    expect(first.images).toEqual([{ url: 'https://out.example/1.png' }]);
-    const second = await volcengineAdapter.generateImage(
-      { ...C, fetchImpl },
-      'doubao-seedream-4-0-250828',
-      {
-        prompt: '参考两图融合',
-        images: ['https://ref.example/a.png', 'data:image/png;base64,xxx'],
-      },
-    );
-    expect(second.images).toEqual([{ b64: 'aGVsbG8=', mimeType: 'image/png' }]);
-  });
-
-  it('视频：提交 content 数组 + 首帧 role；轮询 succeeded 取 video_url；取消走 DELETE', async () => {
-    const fetchImpl = scriptedFetch([
-      (req) => {
-        expect(req.url).toBe('https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks');
-        const body = readJson(req);
-        const content = body.content as Array<Record<string, unknown>>;
-        expect(content[0]).toEqual({ type: 'text', text: '日出延时' });
-        expect((content[1] as { role: string }).role).toBe('first_frame');
-        return jsonResponse({ id: 'task-ark' });
-      },
-      (req) => {
-        expect(req.url).toBe(
-          'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/task-ark',
-        );
-        return jsonResponse({
-          status: 'succeeded',
-          content: { video_url: 'https://v.example/x.mp4' },
-        });
-      },
-      (req) => {
-        expect(req.method).toBe('DELETE');
-        return jsonResponse({});
-      },
-    ]);
-    const c = { ...C, fetchImpl };
-    const handle = await volcengineAdapter.submitVideo(c, 'doubao-seedance-1-0-pro-250528', {
-      prompt: '日出延时',
-      images: ['https://ref.example/first.png'],
-    });
-    expect(handle.taskId).toBe('task-ark');
-    const status = await volcengineAdapter.videoStatus(c, 'task-ark');
-    expect(status).toEqual({ status: 'succeeded', videoUrl: 'https://v.example/x.mp4' });
-    await volcengineAdapter.cancelVideo?.(c, 'task-ark');
+  it('DEV-133：generateImage / submitVideo / videoStatus / cancelVideo 不再挂载（图像/视频生成归插件条目）', () => {
+    expect(volcengineAdapter.generateImage).toBeUndefined();
+    expect(volcengineAdapter.submitVideo).toBeUndefined();
+    expect(volcengineAdapter.videoStatus).toBeUndefined();
+    expect(volcengineAdapter.cancelVideo).toBeUndefined();
   });
 
   it('无 TTS / ASR 能力（适配器不挂方法）', () => {
@@ -526,19 +408,19 @@ describe('HTTP 错误映射', () => {
   it('401/403 → PROVIDER_AUTH_FAILED；429 → PROVIDER_RATE_LIMITED；网络失败 → PROVIDER_UNREACHABLE', async () => {
     const unauthorized = scriptedFetch([() => jsonResponse({ message: 'InvalidApiKey' }, 401)]);
     await expect(
-      dashscopeAdapter.generateImage(
+      dashscopeAdapter.synthesizeSpeech(
         ctx('https://dashscope.aliyuncs.com/compatible-mode/v1', unauthorized),
-        'qwen-image',
-        { prompt: 'x' },
+        'cosyvoice-v2',
+        { text: 'x' },
       ),
     ).rejects.toMatchObject({ code: 'PROVIDER_AUTH_FAILED' });
 
     const limited = scriptedFetch([() => jsonResponse({ message: 'rate limit' }, 429)]);
     await expect(
-      dashscopeAdapter.generateImage(
+      dashscopeAdapter.synthesizeSpeech(
         ctx('https://dashscope.aliyuncs.com/compatible-mode/v1', limited),
-        'qwen-image',
-        { prompt: 'x' },
+        'cosyvoice-v2',
+        { text: 'x' },
       ),
     ).rejects.toMatchObject({ code: 'PROVIDER_RATE_LIMITED' });
 
@@ -546,21 +428,21 @@ describe('HTTP 错误映射', () => {
       throw new Error('fetch failed');
     }) as unknown as typeof fetch;
     await expect(
-      dashscopeAdapter.generateImage(
+      dashscopeAdapter.synthesizeSpeech(
         ctx('https://dashscope.aliyuncs.com/compatible-mode/v1', dead),
-        'qwen-image',
-        { prompt: 'x' },
+        'cosyvoice-v2',
+        { text: 'x' },
       ),
     ).rejects.toMatchObject({ code: 'PROVIDER_UNREACHABLE' });
   });
 
-  it('空图片结果 → PROVIDER_UNAVAILABLE；VendorHttpError 携带厂商 message', async () => {
-    const empty = scriptedFetch([() => jsonResponse({ output: { choices: [] } })]);
+  it('空音频结果 → PROVIDER_UNAVAILABLE；VendorHttpError 携带厂商 message', async () => {
+    const empty = scriptedFetch([() => jsonResponse({ output: {} })]);
     await expect(
-      dashscopeAdapter.generateImage(
+      dashscopeAdapter.synthesizeSpeech(
         ctx('https://dashscope.aliyuncs.com/compatible-mode/v1', empty),
-        'qwen-image',
-        { prompt: 'x' },
+        'cosyvoice-v2',
+        { text: 'x' },
       ),
     ).rejects.toMatchObject({ code: 'PROVIDER_UNAVAILABLE' });
 
@@ -635,9 +517,9 @@ describe('vendorFetch 错误分类：配额 / 欠费与认证失败分家（PROV
     expect(await call(429, { message: 'Too many requests' })).toBe('PROVIDER_RATE_LIMITED');
   });
 
-  it('端到端：图片生成收到 403 免费额度用尽 → 工具拿到 PROVIDER_QUOTA（不进「未配置」引导）', async () => {
+  it('端到端：语音合成收到 403 免费额度用尽 → 调用方拿到 PROVIDER_QUOTA（不进「未配置」引导）', async () => {
     await expect(
-      dashscopeAdapter.generateImage(
+      dashscopeAdapter.synthesizeSpeech(
         ctx(
           'https://dashscope.aliyuncs.com/compatible-mode/v1',
           statusFetch(403, {
@@ -645,9 +527,137 @@ describe('vendorFetch 错误分类：配额 / 欠费与认证失败分家（PROV
             message: 'Free quota exhausted.',
           }),
         ),
-        'qwen-image',
-        { prompt: 'x' },
+        'cosyvoice-v2',
+        { text: 'x' },
       ),
     ).rejects.toMatchObject({ code: 'PROVIDER_QUOTA' });
+  });
+});
+
+describe('openai-compatible adapter（DEV-133：标准 TTS / ASR 端点）', () => {
+  const BASE = 'https://mine.example/v1';
+
+  it('synthesizeSpeech：POST /audio/speech（model/input/voice/response_format/speed），二进制响应转 base64', async () => {
+    const audioBytes = Buffer.from('fake-opus-bytes');
+    const fetchImpl = scriptedFetch([
+      (req) => {
+        expect(req.url).toBe(`${BASE}/audio/speech`);
+        expect(req.headers.authorization).toBe('Bearer sk-test');
+        const body = readJson(req);
+        expect(body).toEqual({
+          model: 'tts-1',
+          input: '你好，世界',
+          voice: 'alloy',
+          response_format: 'opus',
+          speed: 1.2,
+        });
+        return new Response(audioBytes);
+      },
+    ]);
+    const result = await openAICompatibleAdapter.synthesizeSpeech(
+      ctx(BASE, fetchImpl),
+      'tts-1',
+      { text: '你好，世界', format: 'opus', speed: 1.2 },
+    );
+    expect(result.audioBase64).toBe(audioBytes.toString('base64'));
+    expect(result.mimeType).toBe('audio/ogg');
+  });
+
+  it('synthesizeSpeech：voice 缺省 alloy、format 缺省 mp3；空响应报 PROVIDER_UNAVAILABLE', async () => {
+    const fetchImpl = scriptedFetch([
+      (req) => {
+        const body = readJson(req);
+        expect(body.voice).toBe('alloy');
+        expect(body.response_format).toBe('mp3');
+        return new Response(Buffer.alloc(0));
+      },
+    ]);
+    await expect(
+      openAICompatibleAdapter.synthesizeSpeech(ctx(BASE, fetchImpl), 'tts-1', { text: 'x' }),
+    ).rejects.toMatchObject({ code: 'PROVIDER_UNAVAILABLE' });
+  });
+
+  it('transcribeSpeech：multipart（file Blob + model + language），响应 {text}', async () => {
+    const audioBytes = Buffer.from('fake-wav-bytes');
+    const fetchImpl = scriptedFetch([
+      async (req) => {
+        expect(req.url).toBe(`${BASE}/audio/transcriptions`);
+        expect(req.method).toBe('POST');
+        expect(req.headers.authorization).toBe('Bearer sk-test');
+        const form = req.body as FormData;
+        expect(form).toBeInstanceOf(FormData);
+        const file = form.get('file');
+        expect(file).toBeInstanceOf(Blob);
+        expect((file as Blob).type).toBe('audio/wav');
+        expect((file as File).name).toBe('audio.wav');
+        expect(Buffer.from(await (file as Blob).arrayBuffer())).toEqual(audioBytes);
+        expect(form.get('model')).toBe('whisper-1');
+        expect(form.get('language')).toBe('zh');
+        return jsonResponse({ text: '识别结果' });
+      },
+    ]);
+    const result = await openAICompatibleAdapter.transcribeSpeech(
+      ctx(BASE, fetchImpl),
+      'whisper-1',
+      {
+        audioBase64: audioBytes.toString('base64'),
+        audioMime: 'audio/wav',
+        language: 'zh',
+      },
+    );
+    expect(result.text).toBe('识别结果');
+  });
+
+  it('transcribeSpeech：MIME → 文件扩展名归位（mp4 → m4a、x- 前缀去噪、未知 → bin）；缺省不带 language', async () => {
+    const seen: string[] = [];
+    const fetchImpl = scriptedFetch([
+      (req) => {
+        seen.push(String(((req.body as FormData).get('file') as File).name));
+        seen.push(String((req.body as FormData).get('language')));
+        return jsonResponse({ text: 'ok' });
+      },
+      (req) => {
+        seen.push(String(((req.body as FormData).get('file') as File).name));
+        return jsonResponse({ text: 'ok' });
+      },
+      (req) => {
+        seen.push(String(((req.body as FormData).get('file') as File).name));
+        return jsonResponse({ text: 'ok' });
+      },
+    ]);
+    const c = ctx(BASE, fetchImpl);
+    await openAICompatibleAdapter.transcribeSpeech(c, 'm', {
+      audioBase64: Buffer.from('a').toString('base64'),
+      audioMime: 'audio/mp4',
+    });
+    await openAICompatibleAdapter.transcribeSpeech(c, 'm', {
+      audioBase64: Buffer.from('b').toString('base64'),
+      audioMime: 'audio/x-flac',
+    });
+    await openAICompatibleAdapter.transcribeSpeech(c, 'm', {
+      audioBase64: Buffer.from('c').toString('base64'),
+      audioMime: 'audio/weird',
+    });
+    expect(seen).toEqual(['audio.m4a', 'null', 'audio.flac', 'audio.bin']);
+  });
+
+  it('transcribeSpeech：非 2xx 归一同族错误（401 → PROVIDER_AUTH_FAILED；网络失败 → PROVIDER_UNREACHABLE）', async () => {
+    const unauthorized = scriptedFetch([() => jsonResponse({ error: { message: 'bad key' } }, 401)]);
+    await expect(
+      openAICompatibleAdapter.transcribeSpeech(ctx(BASE, unauthorized), 'whisper-1', {
+        audioBase64: Buffer.from('a').toString('base64'),
+        audioMime: 'audio/wav',
+      }),
+    ).rejects.toMatchObject({ code: 'PROVIDER_AUTH_FAILED' });
+
+    const dead = (async () => {
+      throw new Error('fetch failed');
+    }) as unknown as typeof fetch;
+    await expect(
+      openAICompatibleAdapter.transcribeSpeech(ctx(BASE, dead), 'whisper-1', {
+        audioBase64: Buffer.from('a').toString('base64'),
+        audioMime: 'audio/wav',
+      }),
+    ).rejects.toMatchObject({ code: 'PROVIDER_UNREACHABLE' });
   });
 });

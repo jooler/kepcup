@@ -82,7 +82,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * `settings.update` 前后真正变化的点路径（对象字段下钻一层：`capabilityModels.image`、
+ * `settings.update` 前后真正变化的点路径（对象字段下钻一层：`capabilityModels.tts`、
  * `apps.taintGuard`），只看本次 patch 带的顶层键。
  */
 export function changedSettingsPaths(
