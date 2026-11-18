@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Bot, Message, Run } from '@kepcup/shared';
 import {
-  agentTurn,
   createTestStack,
   fakeAgentEntry,
   fakeAgentSpawner,
@@ -13,7 +12,6 @@ import {
   step,
   waitFor,
   type CoreHarness,
-  type FakeAcpAgentHandle,
   type MockChatRequest,
   type TestStack,
 } from '@kepcup/testkit';

@@ -6,9 +6,7 @@ import {
   AGENT_CATALOG,
   AGENT_DEFAULT_CONCURRENCY,
   agentModelRef,
-  settingsSchema,
   type AgentCatalogEntry,
-  type Settings,
 } from '@kepcup/shared';
 import {
   agentTurn,
@@ -25,7 +23,6 @@ import {
   PROVIDERS,
 } from '../../src/agent/external/providers/index.js';
 import { genericAcpProvider } from '../../src/agent/external/providers/generic-acp.js';
-import type { ProviderRegistry } from '../../src/agent/external/types.js';
 import type { RunOutcome, RunSpec } from '../../src/agent/types.js';
 import { Scheduler } from '../../src/scheduler/scheduler.js';
 
@@ -52,10 +49,6 @@ const EXPECTED: Readonly<Record<string, boolean>> = {
   kimi: false,
   devin: false,
 };
-
-function settings(patch: Partial<Settings> = {}): Settings {
-  return settingsSchema.parse(patch);
-}
 
 function catalogEntry(id: string): AgentCatalogEntry {
   return AGENT_CATALOG.find((entry) => entry.id === id)!;

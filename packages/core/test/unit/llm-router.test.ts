@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { settingsSchema, TRIAGE_TIMEOUT_MS, type Bot, type Settings } from '@kepcup/shared';
+import { settingsSchema, type Bot, type Settings } from '@kepcup/shared';
 import {
   builtinModelRef,
   LlmRouter,

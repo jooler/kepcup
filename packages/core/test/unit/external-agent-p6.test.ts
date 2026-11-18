@@ -1,24 +1,21 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Type } from 'typebox';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { AppError, agentModelRef, type AgentCatalogEntry } from '@kepcup/shared';
+import { agentModelRef } from '@kepcup/shared';
 import {
   agentTurn,
   fakeAgentEntry,
   fakeAgentSpawner,
   type FakeAcpAgentHandle,
-  type FakeAgentScript,
 } from '@kepcup/testkit';
 import { ExternalAgentEngine } from '../../src/agent/external/engine.js';
 import { AgentHost } from '../../src/agent/external/host.js';
 import type { AgentPermissionHandler } from '../../src/agent/external/permission-bridge.js';
-import { genericAcpProvider } from '../../src/agent/external/providers/generic-acp.js';
-import type { ProviderRegistry } from '../../src/agent/external/types.js';
 import { completeStructured } from '../../src/agent/structured.js';
-import type { CompletionRequest, RunSpec } from '../../src/agent/types.js';
+import type { CompletionRequest } from '../../src/agent/types.js';
 
 /**
  * D72：`completeStructured` 的「只输出 JSON」约定（外部 Agent 与内置引擎两条

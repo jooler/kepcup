@@ -17,7 +17,6 @@ import {
   type BotAvatarMask,
   type BotAccentColor,
   type BotProfile,
-  type AgentPermissionTier,
   type BotSystemRole,
   type CapabilityEntryRef,
 } from '@kepcup/shared';

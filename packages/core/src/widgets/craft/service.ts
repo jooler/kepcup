@@ -37,7 +37,6 @@ import type {
   ToolResult,
 } from '../../agent/types.js';
 import {
-  providerOfModelRef,
   routeFor,
   routeStillCurrent,
   type LlmRoute,

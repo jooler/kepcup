@@ -4,17 +4,12 @@ import {
   TASK_QUESTION_TTL_MS,
   TASK_REDELIVER_AFTER_MS,
   TASK_REDELIVER_MAX_ATTEMPTS,
-  type Bot,
   type Delegation,
   type Message,
   type Run,
-  type TaskEventContent,
 } from '@kepcup/shared';
 import {
-  agentTurn,
   createTestStack,
-  fakeAgentEntry,
-  fakeAgentSpawner,
   isTaskRequest,
   listMessages,
   makeBot,
@@ -25,7 +20,6 @@ import {
   step,
   waitFor,
   type CoreHarness,
-  type FakeAcpAgentHandle,
   type MockChatRequest,
   type TestStack,
 } from '@kepcup/testkit';

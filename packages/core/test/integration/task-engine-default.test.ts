@@ -6,7 +6,6 @@ import type { Bot, Run } from '@kepcup/shared';
 import {
   agentTurn,
   createTestStack,
-  fakeAgentSpawner,
   fakeAgentEntry,
   fakeAcpAgentLaunch,
   makeBot,
@@ -98,6 +97,7 @@ async function waitSettledTask(
   } catch (error) {
     throw new Error(
       `${error instanceof Error ? error.message : String(error)}\nSTATE: ${dump()}`,
+      { cause: error },
     );
   }
 }

@@ -1,4 +1,4 @@
-import { BUILTIN_ENGINE, type Bot, type Settings } from '@kepcup/shared';
+import { type Bot, type Settings } from '@kepcup/shared';
 import type { AgentEngine } from './types.js';
 
 /**
@@ -27,20 +27,6 @@ export type LlmPurpose =
   | 'subagent_compaction'
   /** D93 内置 pi 任务的自动上下文压缩（轻量模型摘要旧消息）。 */
   | 'task_compaction';
-
-/**
- * 整理类后台用途：走「后台任务模型」链（Bot / 全局后台任务模型优先，未设置时
- * 各自落回既有的轻量链或主模型链）。分诊、上下文压缩与微应用是高频轻量工作，
- * 不在此列（仍走轻量模型链）。
- */
-const BACKGROUND_PURPOSES: ReadonlySet<LlmPurpose> = new Set([
-  'summary',
-  'reflection',
-  'consolidation',
-  'profile_curation',
-  'wiki_maintenance',
-  'skill_authoring',
-]);
 
 /**
  * 模型选取的唯一入口（所有推理调用的 purpose）：后台用途 + `conversation`
