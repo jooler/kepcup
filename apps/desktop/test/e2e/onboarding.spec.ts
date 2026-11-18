@@ -7,10 +7,9 @@ import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
  * P13 任务 4 首次启动引导 e2e（docs/dev/phases/P13-release.md 任务 4）。
- * 全流程：新数据目录启动 → 走完引导（欢迎/数据位置 → 模型〔跳过〕→ 权限 →
+ * 全流程：新数据目录启动 → 走完引导（欢迎/数据位置 → 模型〔必配 Key〕→ 权限 →
  * 沙箱〔macOS 自动检测〕→ 第一个 Bot〔模板〕）→ 与第一个 Bot 对话成功
- * （mock LLM）；覆盖「返回上一步」「跳过模型配置后的持续提示」「重启后不再
- * 出现」（完成状态写 settings 的持久化）。
+ * （mock LLM）；覆盖「返回上一步」和完成状态写 settings 的持久化。
  *
  * 驱动方式如实说明：本 spec 不设置 KEPCUP_ONBOARDING（其余既有 spec 以
  * 该 e2e seam 关闭向导）；向导内容本身全部是生产代码路径。
@@ -82,7 +81,7 @@ async function waitReady(page: Page): Promise<void> {
   }
 }
 
-test('full first-run flow: welcome → skip model → permissions → sandbox → butler → chat; the skipped-model banner persists until a key is set', async () => {
+test('full first-run flow: welcome → model → permissions → sandbox → butler → chat; a configured key lets the first bot reply', async () => {
   test.setTimeout(240_000);
   const session = await startSession('kepcup-e2e-onb-full-');
   const { page, home, llm } = session;
@@ -98,12 +97,16 @@ test('full first-run flow: welcome → skip model → permissions → sandbox �
     );
     await page.locator('[data-testid="onboarding-start"]').click();
 
-    // ② 模型：mock LLM 种子的 custom:mock 厂商带 Key（providerReady），模型步
-    // 必配——直接保存默认主/轻量模型进入下一步（2026-11 修订：无跳过）。
+    // ② 模型：必配（2026-11 修订：无跳过）。mock 厂商只种子了目录与默认
+    // 模型，Key 仍要在这一步录入；保存后进入权限步。
     await expect(wizard).toHaveAttribute('data-step', 'model');
     await expect(page.locator('[data-testid="onboarding-model-skip"]')).toHaveCount(0);
-    await expect(page.locator('[data-testid="onboarding-provider-select"]')).toHaveCount(0);
-    await page.locator('[data-testid="onboarding-next"]').click();
+    await page.locator('[data-testid="onboarding-provider-select"]').selectOption('custom:mock');
+    await expect(page.locator('[data-testid="onboarding-default-model"]')).toHaveValue(
+      'custom:mock/mock-main',
+    );
+    await page.locator('[data-testid="onboarding-key-input"]').fill('sk-onboarding-e2e');
+    await page.locator('[data-testid="onboarding-model-save"]').click();
 
     // ③ 权限：自启开关（默认开）+ 系统通知说明与测试入口。
     await expect(wizard).toHaveAttribute('data-step', 'permissions');
@@ -111,9 +114,11 @@ test('full first-run flow: welcome → skip model → permissions → sandbox �
     const autostart = page.locator('[data-testid="onboarding-autostart"]');
     await expect(autostart).toHaveAttribute('aria-checked', /true|mixed/);
     await expect(page.locator('[data-testid="onboarding-notify-test"]')).toBeVisible();
-    // 「返回上一步」回到模型步，再保存回来——每步可返回（验收标准）。
+    // 「返回上一步」回到模型步：Key 已保存，改为「下一步」（providerReady）。
     await page.locator('[data-testid="onboarding-back"]').click();
     await expect(wizard).toHaveAttribute('data-step', 'model');
+    await expect(page.locator('[data-testid="onboarding-provider-select"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="onboarding-model-ready"]')).toBeVisible();
     await page.locator('[data-testid="onboarding-next"]').click();
     await expect(wizard).toHaveAttribute('data-step', 'permissions');
     await page.locator('[data-testid="onboarding-next"]').click();
@@ -138,31 +143,9 @@ test('full first-run flow: welcome → skip model → permissions → sandbox �
     await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('[data-testid="conversation-name"]').first()).toHaveText('管家');
 
-    // 跳过模型配置后的持续提示（不阻塞其余功能）。
-    const banner = page.locator('[data-testid="no-model-banner"]');
-    await expect(banner).toBeVisible({ timeout: 15_000 });
+    // 模型步已配置 Key，不应再出现「未配置模型」横幅；可以直接对话。
+    await expect(page.locator('[data-testid="no-model-banner"]')).toHaveCount(0);
 
-    // 与第一个 Bot 对话成功（mock LLM）。对话不因未配 key 而崩溃——用户消息
-    // 入队发送，Bot 回复失败时内联提示；这里先补上 key 再对话（任务书语义：
-    // 跳过后「无法与 Bot 对话」，配置 key 后应可用）。
-    await banner.locator('[data-testid="no-model-go-settings"]').click();
-    await expect(page.locator('[data-testid="settings-page-content"]')).toBeVisible();
-    // 两栏模型设置：左栏选中 custom:mock 实例，详情连接区补 Key（回车提交）。
-    // 保存后输入框清空（placeholder 仍是「粘贴新的 API Key」），已存 Key 以掩码列表回显。
-    await page.locator('[data-testid="models-nav-provider-custom:mock"]').click();
-    const mockKeyInput = page.locator('[data-testid="provider-key-custom:mock"]');
-    await mockKeyInput.fill('sk-onboarding-e2e');
-    await mockKeyInput.press('Enter');
-    await expect(
-      page.locator('[data-testid="provider-key-item-custom:mock-0"]'),
-    ).toContainText('sk-.......-e2e', { timeout: 15_000 });
-
-    // key 配好后横幅消失；关闭设置弹框回到对话发送消息。
-    await expect(banner).toBeHidden({ timeout: 15_000 });
-    await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
-    await page.locator('[data-testid^="conversation-item-"]').first().click();
-    await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
     const composer = page.locator('[data-testid="composer-input"]');
     await composer.fill('第一次对话');
     await composer.press('Meta+Enter');

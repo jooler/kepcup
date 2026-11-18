@@ -209,6 +209,7 @@ function dispatchAndRelay(agentText: string): MockLlmStep[] {
       .replyToolCall('start_task', {
         title: '处理请求',
         instruction: '按用户的消息完成这件事',
+        source_message_ids: [],
         writes: false,
       }),
     step().inTurn().replyText('ACK 我交给外援'),
@@ -304,27 +305,7 @@ test('in-chat agent setup card: a disabled agent holds the message; enabling in 
     await enableFakeAgent(page);
     await createBotAndOpenChat(page, '外援');
     await switchBotToAgent(page);
-    llm.script('mock-main', [
-      step()
-        .inTurn()
-        .replyToolCall('start_task', {
-          title: '处理请求',
-          instruction: '按用户的消息完成这件事',
-          writes: false,
-        }),
-      step().inTurn().replyText('ACK 我交给外援'),
-      step().inTurn().replyText('FAIL-1 外援还没启用'),
-      step()
-        .inTurn()
-        .replyToolCall('start_task', {
-          title: '处理请求',
-          instruction: '按用户的消息完成这件事',
-          writes: false,
-        }),
-      step().inTurn().replyText('ACK 再交给外援'),
-      step().inTask().replyText('设置好了，我来了。'),
-      step().inTurn().replyText('RELAY 设置好了，我来了。'),
-    ]);
+    llm.script('mock-main', dispatchAndRelay('设置好了，我来了。'));
 
     // 设置页停用（有 Bot 在用 → 确认框）。
     await openSettings(page, 'agents');
@@ -337,20 +318,21 @@ test('in-chat agent setup card: a disabled agent holds the message; enabling in 
     });
     await closeSettings(page);
 
-    // 发送门禁：内容留在输入框、出现 Agent 设置卡（原因：未启用）。
+    // 对话轮恒走内置引擎，消息会发出；任务开跑时被 agentRunGate 拦住，
+    // 对话里出现 Agent 设置卡（原因：未启用），完成后自动重试该任务。
     await send(page, '在吗');
+    await expect(page.locator('[data-testid="user-bubble"]').filter({ hasText: '在吗' })).toBeVisible(
+      { timeout: 30_000 },
+    );
     const setup = page.locator('[data-testid="setup-card"]');
-    await expect(setup).toBeVisible({ timeout: 30_000 });
+    await expect(setup).toBeVisible({ timeout: 60_000 });
     await expect(setup.locator('[data-testid="setup-card-agent-reason"]')).toBeVisible();
     await expect(page.locator('[data-testid="run-failed-banner"]')).toHaveCount(0);
 
-    // 卡片内启用 → 就绪 → 卡片收起 → 再按一次发送（Bot 回复）。
+    // 卡片内启用 → 就绪 → 卡片收起 → 失败的任务自动重试，唤醒轮转述。
     await setup.locator('[data-testid="agent-enable-fake"]').click();
     await page.locator('[data-testid="agent-install-confirm"]').click();
     await expect(page.locator('[data-testid="setup-card"]')).toHaveCount(0, { timeout: 30_000 });
-    const composer = page.locator('[data-testid="composer-input"]');
-    await expect(composer).toHaveText('在吗');
-    await composer.press('Enter');
     await expectAgentReport(page, '设置好了，我来了。');
   } finally {
     await session.close();
@@ -372,11 +354,13 @@ test('onboarding: no external-agent path; the butler interview runs on the built
     await page.locator('[data-testid="onboarding-start"]').click();
     await expect(wizard).toHaveAttribute('data-step', 'model');
 
-    // 2026-11 修订：向导没有「我有订阅」与跳过——模型步必配（mock 厂商带 Key，
-    // 直接保存默认主/轻量模型）。
+    // 2026-11 修订：向导没有「我有订阅」与跳过——模型步必配。mock 厂商只
+    // 种子了目录与默认模型，Key 仍要在这一步录入。
     await expect(page.locator('[data-testid="onboarding-subscription-open"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="onboarding-model-skip"]')).toHaveCount(0);
-    await page.locator('[data-testid="onboarding-next"]').click();
+    await page.locator('[data-testid="onboarding-provider-select"]').selectOption('custom:mock');
+    await page.locator('[data-testid="onboarding-key-input"]').fill('sk-onboarding-e2e');
+    await page.locator('[data-testid="onboarding-model-save"]').click();
 
     await expect(wizard).toHaveAttribute('data-step', 'permissions');
     await page.locator('[data-testid="onboarding-next"]').click();
