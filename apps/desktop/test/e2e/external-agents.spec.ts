@@ -176,11 +176,14 @@ async function switchBotToAgent(page: Page, agentId = 'fake'): Promise<void> {
   await page.waitForTimeout(1_500);
 }
 
-/** Enter sends the composer content directly (直发，无待发送队列). */
+/** 直发（无待发送队列）。先点进编辑器并确认文本已写入，再用快捷键发送，
+ * 避免从设置页返回后 Enter 打在空输入上。 */
 async function send(page: Page, text: string): Promise<void> {
   const composer = page.locator('[data-testid="composer-input"]');
+  await composer.click();
   await composer.fill(text);
-  await composer.press('Enter');
+  await expect(composer).toContainText(text);
+  await composer.press('ControlOrMeta+Enter');
 }
 
 const botBubble = (page: Page, text: string) =>
@@ -202,7 +205,7 @@ async function expectAgentReport(page: Page, agentText: string): Promise<void> {
  * mock 主模型的派发剧本：对话轮 start_task 派任务 → 任务把 agentText 写进执行
  * 报告 → 唤醒的对话轮转述（2026-11 修订：不再有无模型降级，任务必须由轮派出）。
  */
-function dispatchAndRelay(agentText: string): MockLlmStep[] {
+function dispatchAndRelay(agentText: string, writes = false): MockLlmStep[] {
   return [
     step()
       .inTurn()
@@ -210,7 +213,7 @@ function dispatchAndRelay(agentText: string): MockLlmStep[] {
         title: '处理请求',
         instruction: '按用户的消息完成这件事',
         source_message_ids: [],
-        writes: false,
+        writes,
       }),
     step().inTurn().replyText('ACK 我交给外援'),
     step().inTask().replyText(agentText),
@@ -278,7 +281,8 @@ test('agent_tool approval card: an out-of-workspace write asks the user; approva
     await enableFakeAgent(page);
     await createBotAndOpenChat(page, '外援');
     await switchBotToAgent(page);
-    llm.script('mock-main', dispatchAndRelay('写好了。'));
+    // 越出工作区的写入必须是写任务，否则只读 run 会在权限桥里自动拒绝，不出审批卡。
+    llm.script('mock-main', dispatchAndRelay('写好了。', true));
 
     await send(page, '帮我在外面写个文件');
     const card = page.locator('[data-testid^="approval-card-"]').first();
@@ -317,6 +321,8 @@ test('in-chat agent setup card: a disabled agent holds the message; enabling in 
       timeout: 15_000,
     });
     await closeSettings(page);
+    await expect(page.locator('[data-testid="chat-view"]')).toBeVisible();
+    await page.locator('[data-testid="composer-input"]').click();
 
     // 对话轮恒走内置引擎，消息会发出；任务开跑时被 agentRunGate 拦住，
     // 对话里出现 Agent 设置卡（原因：未启用），完成后自动重试该任务。
