@@ -148,7 +148,10 @@ export function settingsWithoutInstance(settings: Settings, id: string): Partial
   };
 }
 
-/** 拉取条目 → 模型登记：contextWindow 用远端提示缺省 128k；能力恒为 chat（向量等在模型行里再编辑）。 */
+/**
+ * 拉取条目 → 模型登记：contextWindow 取 core 已补全的值（远端提示 > pi-ai
+ * 目录），两者都缺省时落 128k；能力恒为 chat（向量等在模型行里再编辑）。
+ */
 export function fetchedToProviderModel(m: FetchedProviderModel): ProviderModel {
   return {
     id: m.id,

@@ -1,9 +1,12 @@
 import type { FetchedProviderModel, ProviderApi } from '@kepcup/shared';
+import { isModelType } from '@earendil-works/pi-ai';
+import { getAllBuiltinModels, getBuiltinProviders } from '@earendil-works/pi-ai/providers/all';
 import { mapProviderError } from '../agent/models.js';
 
 /**
  * 供应商「获取模型」的列表拉取（设置页）：按线协议适配列表端点与认证头，
- * 响应做宽容解析（各家 /models 的字段口径不一）。纯函数 + 可注入 fetch，
+ * 响应做宽容解析（各家 /models 的字段口径不一；缺上下文提示的条目按
+ * pi-ai 内置目录回填，见 catalogContextWindow）。纯函数 + 可注入 fetch，
  * HTTP 编排与错误归类都在这里，ProvidersService 只负责 Key 解析。
  */
 
@@ -38,15 +41,66 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** 上下文窗口夹到 schema 上限（shared `fetchedProviderModelSchema` 的
+ * 1..10_000_000 约束）：提示字段与目录回填共用，避免单条越界值让整个
+ * RPC 输出校验失败。 */
+function clampContextWindow(value: number): number {
+  return Math.min(10_000_000, Math.max(1, Math.round(value)));
+}
+
 /** 上下文提示字段（LM Studio / OpenRouter 等的口径），取第一个正数并夹到 schema 上限。 */
 function parseContextHint(row: Record<string, unknown>): number | null {
   for (const field of ['context_length', 'max_context_length', 'context_window']) {
     const value = row[field];
     if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-      return Math.min(10_000_000, Math.max(1, Math.round(value)));
+      return clampContextWindow(value);
     }
   }
   return null;
+}
+
+/** pi-ai 目录条目 → id 索引（同 id 多供应商冲突取最小值，见下）。纯函数，测试可注入 fixture。 */
+export function buildCatalogContextIndex(
+  entries: Iterable<{ id: string; contextWindow: number }>,
+): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const entry of entries) {
+    if (!Number.isFinite(entry.contextWindow) || entry.contextWindow <= 0) continue;
+    const value = clampContextWindow(entry.contextWindow);
+    const existing = map.get(entry.id);
+    // 冲突口径取最小：高估上下文会让请求超出上游真实窗口（直接 400），
+    // 低估只会更早压缩，属可降级方向（pi-ai 目录中 119 个 id 存在多供应商冲突）。
+    map.set(entry.id, existing === undefined ? value : Math.min(existing, value));
+  }
+  return map;
+}
+
+/**
+ * pi-ai 内置目录事实（models.dev 数据）按 id 的静态索引：响应行缺上下文提示
+ * 时按完整 id 精确匹配兜底，避免中转站登记的已知模型落成 128k 猜测值
+ * （fetchedToProviderModel 的缺省）。目录随 pi-ai 包版本静态，懒构建一次。
+ */
+let catalogContextById: Map<string, number> | null = null;
+
+function catalogContextWindow(id: string): number | null {
+  if (catalogContextById === null) {
+    try {
+      const entries: { id: string; contextWindow: number }[] = [];
+      for (const provider of getBuiltinProviders()) {
+        for (const model of getAllBuiltinModels(provider)) {
+          if (isModelType(model, 'chat')) {
+            entries.push({ id: model.id, contextWindow: model.contextWindow });
+          }
+        }
+      }
+      catalogContextById = buildCatalogContextIndex(entries);
+    } catch {
+      // 目录是可信静态数据，异常面很小；兜底为空表（回退既有 128k 缺省），
+      // 不让参数补充影响整次拉取
+      catalogContextById = new Map();
+    }
+  }
+  return catalogContextById.get(id) ?? null;
 }
 
 /**
@@ -77,7 +131,9 @@ export function parseModelsResponse(body: unknown): FetchedProviderModel[] {
           ? row.name
           : undefined;
     const name = rawName === undefined ? undefined : rawName.slice(0, MAX_NAME_LENGTH);
-    const contextWindow = parseContextHint(row);
+    // 上下文口径：远端提示优先，缺失时按 pi-ai 目录精确回填（响应里没有
+    // 提示字段的中转站也能给已知 id 真实值，而不是登记成 128k 猜测）
+    const contextWindow = parseContextHint(row) ?? catalogContextWindow(id);
     models.push({
       id,
       ...(name !== undefined ? { name } : {}),

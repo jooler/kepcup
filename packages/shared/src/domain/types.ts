@@ -390,7 +390,8 @@ export type ProviderModel = z.infer<typeof providerModelSchema>;
 
 /**
  * 从供应商拉取的可用模型条目（providers.fetchModels）：远端清单只保证有 id，
- * 展示名与上下文提示各家口径不一，缺省由 UI 落默认值（128k）。
+ * 展示名与上下文提示各家口径不一。contextWindow 口径：远端提示字段优先，
+ * 缺失时 core 按 pi-ai 内置目录精确回填，仍未命中的由 UI 落默认值（128k）。
  */
 export const fetchedProviderModelSchema = z.object({
   id: z.string().min(1).max(200),

@@ -1,10 +1,10 @@
 {
   "format_version": 1,
   "id": "io.kepcup/dashscope-t2i",
-  "name": "百炼文生图（执行型试点）",
+  "name": "Qwen-Image 3.0 文生图",
   "icon": "icon.svg",
-  "version": "1.2.0",
-  "description": "阿里云百炼 Qwen-Image 执行型官方插件试点：插件内自带异步提交 / 轮询 / 进度 / 错误映射实现（经宿主网络白名单访问 dashscope.aliyuncs.com），产物下载与落附件在应用侧完成。",
+  "version": "1.2.1",
+  "description": "阿里云百炼 Qwen-Image 3.0 执行型官方插件：插件内自带异步提交 / 轮询 / 进度 / 错误映射实现（经宿主网络白名单访问 dashscope.aliyuncs.com），产物下载与落附件在应用侧完成。",
   "usage": "安装后在插件详情「账号实例」添加百炼账号并填入 API Key（百炼控制台 bailian.console.aliyun.com 创建），再到 Bot 详情展开本插件卡片勾选「百炼 Qwen-Image 3.0」条目；勾选后该 Bot 的 generate_image 即可走本插件。未填 Key 时调用会提示补配。若条目报 url error，说明该 model 不在本端点支持列表里，可在插件清单的条目 params.model 覆盖为在售 qwen-image 模型。",
   "author": {
     "name": "KepCup",
