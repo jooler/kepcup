@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderApi } from '@kepcup/shared';
+import { isModelType } from '@earendil-works/pi-ai';
+import { getAllBuiltinModels, getBuiltinProviders } from '@earendil-works/pi-ai/providers/all';
 import {
+  buildCatalogContextIndex,
   buildModelsHeaders,
   buildModelsUrl,
   fetchProviderModels,
@@ -8,6 +11,19 @@ import {
 } from '../../src/domain/provider-model-fetch.js';
 import { ProvidersService } from '../../src/domain/providers.js';
 import type { SecretsService } from '../../src/domain/secrets.js';
+
+/** 目录首个 chat 模型（动态取真实目录条目，避免硬编码 id 随目录更新失效）。
+ * 只挑生产解析路径必然接受的 id（长度/空白），否则 helper 会让断言假失败。 */
+function firstCatalogChatModel(): { id: string; contextWindow: number } {
+  for (const provider of getBuiltinProviders()) {
+    for (const model of getAllBuiltinModels(provider)) {
+      if (!isModelType(model, 'chat')) continue;
+      if (model.id.length === 0 || model.id.length > 200 || model.id !== model.id.trim()) continue;
+      return { id: model.id, contextWindow: model.contextWindow };
+    }
+  }
+  throw new Error('pi-ai 目录为空');
+}
 
 function jsonResponse(status: number, body: string, contentType = 'application/json'): Response {
   return new Response(body, { status, headers: { 'content-type': contentType } });
@@ -124,6 +140,32 @@ describe('provider model fetch', () => {
       expect(parseModelsResponse({ data: [{ id: 'c', context_window: 1_000_000_000 }] })).toEqual([
         { id: 'c', contextWindow: 10_000_000 },
       ]);
+    });
+
+    it('响应缺提示字段时按 pi-ai 目录回填已知 id；未知 id 保持缺省', () => {
+      const known = firstCatalogChatModel();
+      expect(parseModelsResponse({ data: [{ id: known.id }] })).toEqual([
+        { id: known.id, contextWindow: known.contextWindow },
+      ]);
+      expect(parseModelsResponse({ data: [{ id: 'not-in-catalog' }] })).toEqual([
+        { id: 'not-in-catalog' },
+      ]);
+    });
+
+    it('远端提示优先于目录回填', () => {
+      const known = firstCatalogChatModel();
+      expect(parseModelsResponse({ data: [{ id: known.id, context_length: 4096 }] })).toEqual([
+        { id: known.id, contextWindow: 4096 },
+      ]);
+    });
+
+    it('无效提示（0 / 负数 / 字符串）回退目录回填', () => {
+      const known = firstCatalogChatModel();
+      for (const bad of [0, -1, '8192']) {
+        expect(
+          parseModelsResponse({ data: [{ id: known.id, context_length: bad }] })[0]?.contextWindow,
+        ).toBe(known.contextWindow);
+      }
     });
 
     it('缺 id 跳过、按 id 去重', () => {
@@ -245,6 +287,29 @@ describe('provider model fetch', () => {
       'https://x.example.com/models',
       'https://x.example.com/v1/models',
     ]);
+  });
+});
+
+describe('buildCatalogContextIndex', () => {
+  it('同 id 多供应商冲突取最小值（保守：高估上下文会导致上游 400）', () => {
+    const index = buildCatalogContextIndex([
+      { id: 'gpt-x', contextWindow: 1_050_000 },
+      { id: 'gpt-x', contextWindow: 272_000 },
+      { id: 'solo', contextWindow: 131_072 },
+    ]);
+    expect(index.get('gpt-x')).toBe(272_000);
+    expect(index.get('solo')).toBe(131_072);
+  });
+
+  it('越界值夹到 schema 上限；非法值跳过', () => {
+    const index = buildCatalogContextIndex([
+      { id: 'huge', contextWindow: 99_999_999 },
+      { id: 'zero', contextWindow: 0 },
+      { id: 'nan', contextWindow: Number.NaN },
+    ]);
+    expect(index.get('huge')).toBe(10_000_000);
+    expect(index.has('zero')).toBe(false);
+    expect(index.has('nan')).toBe(false);
   });
 });
 
