@@ -4,8 +4,8 @@ import type { SettingFieldSpec, SettingItem, SettingValues } from '@kepcup/share
  * 通用 `FieldEditorCard`（card: 'field-editor'）的纯逻辑（todo/settings-catalog-registry.md
  * §4.3.5 / 任务 5）：按目录字段的元数据（type / options / path / min / max）决定控件、
  * 种子值与提交值。四个有联动或 i18n 语义的条目（models.concurrency /
- * general.launch-at-login / models.widget-review / agents.default）在组件里保留专用分支，
- * 其余条目零改动出卡。
+ * general.launch-at-login / models.widget-review / models.task-engine）在组件里保留
+ * 专用分支，其余条目零改动出卡。
  */
 
 export type FieldControlKind =
@@ -114,7 +114,7 @@ export function supportsItem(item: SettingItem): boolean {
     'models.concurrency',
     'general.launch-at-login',
     'models.widget-review',
-    'agents.default',
+    'models.task-engine',
   ]);
   return (
     SPECIAL.has(item.id) ||

@@ -18,8 +18,8 @@ export interface EmbedContext {
   prefill: SettingValues | null;
   /** 外部智能体目录（未加载为 null）。 */
   agent(id: string): AgentView | null;
-  /** 当前默认智能体 id（`settings.defaultAgentId`）。 */
-  defaultAgentId: string | null;
+  /** 当前默认任务执行引擎的外部智能体 id（`settings.defaultTaskAgentId`，'' = 内置智能体）。 */
+  defaultTaskAgentId: string | null;
 }
 
 export interface SettingCardContribution {
@@ -32,7 +32,7 @@ export interface SettingCardContribution {
 
 /** agent 卡内嵌哪个智能体：预填 `agent` 优先，其次默认智能体；目录里没有返回 null。 */
 export function embeddedAgentId(context: EmbedContext): string | null {
-  const id = prefillString(context.prefill, 'agent') ?? context.defaultAgentId;
+  const id = prefillString(context.prefill, 'agent') ?? context.defaultTaskAgentId;
   if (id === null || id.length === 0) return null;
   return context.agent(id) !== null ? id : null;
 }

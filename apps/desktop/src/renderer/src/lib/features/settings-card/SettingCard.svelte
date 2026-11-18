@@ -116,7 +116,7 @@
       workdirId: content.target.workdirId ?? session.view?.conversation.workdirId ?? null,
       prefill,
       agent: (id: string) => agentsStore.get(id),
-      defaultAgentId: settingsStore.settings?.defaultAgentId ?? null,
+      defaultTaskAgentId: settingsStore.settings?.defaultTaskAgentId ?? null,
     };
     return embeddedCardKey(item, view, (entry) => cardEmbeddable(entry, context));
   });

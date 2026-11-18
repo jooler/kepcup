@@ -48,7 +48,7 @@ export interface LeadGateInput {
   leadBotId: string;
   /** The previous replier's verdict, if one was asked; null when there was none. */
   continuation: ContinuationDecision | null;
-  /** Test override of TRIAGE_TIMEOUT_MS / AGENT_TRIAGE_TIMEOUT_MS (default from constants). */
+  /** Test override of TRIAGE_TIMEOUT_MS (default from the constant). */
   timeoutMs?: number;
 }
 

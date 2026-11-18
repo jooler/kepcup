@@ -94,8 +94,11 @@ function profileForImport(
 ): BotProfile {
   const profile = sanitizeProfileForTemplate(template.profile);
   const { agent } = profile.runtime;
-  if (agent.id.length > 0 && !agentSelectable(agent.id)) {
-    profile.runtime.agent = { ...agent, id: '', model: '' };
+  // 目录里的外部智能体才参与可选性校验；'builtin'（显式内置任务引擎，可带
+  // 任务模型）与 ''（跟随应用默认）直通。不可用的外部智能体回退为显式内置
+  // （2026-11 修订：'' 已改为「跟随应用默认」，不保证是内置）。
+  if (agent.id.length > 0 && agent.id !== 'builtin' && !agentSelectable(agent.id)) {
+    profile.runtime.agent = { ...agent, id: 'builtin', model: '', effort: '' };
   }
   return profile;
 }
@@ -478,7 +481,6 @@ export class BotTemplateService {
     // 分类随模板走（顶层字段，不进 Profile）；旧模板没有这一项 → 未分类，
     // 由消费方回退画像关键词判断。
     const bot = this.deps.bots.create(profile, {
-      skipDefaultAgent: true,
       ...(template.kind !== undefined ? { kind: template.kind } : {}),
     });
 

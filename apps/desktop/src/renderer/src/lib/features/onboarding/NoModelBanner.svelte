@@ -1,5 +1,4 @@
 <script lang="ts">
-  import type { Settings } from '@kepcup/shared';
   import { t } from '$lib/i18n';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { onboarding } from '$lib/stores/onboarding.svelte';
@@ -9,27 +8,17 @@
   /**
    * P13 任务 4: 「跳过模型配置后持续提示」(BR-P13-004). Shows once onboarding
    * is COMPLETE and no provider holds a key — whichever path led there
-   * (「跳过引导」直达完成, the wizard's model-step skip, or a later key
-   * removal), the task book's "无法与 Bot 对话，界面持续提示" is about the
-   * no-key state itself, not about which flag recorded the skip. Configuring
-   * any key (settings page) removes it. Never blocks other features — it is
-   * a single banner row above the working app.
+   * (「跳过引导」直达完成 or a later key removal), the task book's "无法与
+   * Bot 对话，界面持续提示" is about the no-key state itself. Configuring any
+   * key (settings page) removes it. Never blocks other features — it is a
+   * single banner row above the working app. 外部智能体不替代模型（2026-11
+   * 修订）：对话恒走内置模型，没有可用厂商 Key 就提示。
    */
   const noKey = $derived(
     settingsStore.settings !== null &&
       settingsStore.settings.onboarding.completed &&
-      !settingsStore.providers.some((provider) => provider.hasKey) &&
-      !agentEngineReady(settingsStore.settings),
+      !settingsStore.providers.some((provider) => provider.hasKey),
   );
-
-  /**
-   * D72 P4：onboarding「我有订阅」选用了外部 Agent（已启用）时 Bot 可以回复，
-   * 不再提示「无模型」。
-   */
-  function agentEngineReady(settings: Settings): boolean {
-    const agentId = settings.defaultAgentId;
-    return agentId.length > 0 && settings.agents[agentId]?.enabled === true;
-  }
 </script>
 
 {#if noKey && !onboarding.open}

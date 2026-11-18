@@ -97,8 +97,30 @@
     }),
   );
   let connectionPrefillApplied = false;
+  /** 预填 engine='agent' 时 Agent id 取当前值（预填只带引擎不带 id 的形态）。 */
+  function agentIdOfEnginePrefill(wanted: unknown, currentId: string): string {
+    if (wanted === 'agent') return engineValueOf(currentId) === 'agent' ? currentId : '';
+    return '';
+  }
+
+  // 任务执行引擎三态（2026-11 修订，与目录 bot.agent 的 engine 字段同编码）：
+  // 'default' = 跟随应用默认；'builtin' = 显式内置；'agent' = 外部智能体
+  // （agentId 指明哪个）。`runtime.agent.id` 的 '' / 'builtin' / 目录 id 一一对应。
+  const engineValueOf = (id: string): 'default' | 'builtin' | 'agent' =>
+    id === '' ? 'default' : id === 'builtin' ? 'builtin' : 'agent';
+  const agentIdOf = (id: string): string => (engineValueOf(id) === 'agent' ? id : '');
   let agentId = $state(
-    untrack(() => (typeof seeded?.agent === 'string' ? seeded.agent : (runtime?.agent.id ?? ''))),
+    untrack(() => {
+      if (typeof seeded?.agent === 'string' && seeded.agent.length > 0) return seeded.agent;
+      return agentIdOf(runtime?.agent.id ?? '');
+    }),
+  );
+  let engine = $state<'default' | 'builtin' | 'agent'>(
+    untrack(() => {
+      const wanted = seeded?.engine;
+      if (wanted === 'default' || wanted === 'builtin' || wanted === 'agent') return wanted;
+      return engineValueOf(runtime?.agent.id ?? '');
+    }),
   );
   let agentModel = $state(
     untrack(() =>
@@ -128,7 +150,12 @@
     if (!Array.isArray(seeded?.allowlist)) allowlist = current.network_allowlist.join('\n');
     if (!Array.isArray(seeded?.servers)) servers = [...current.mcp_server_ids];
     if (!Array.isArray(seeded?.connections)) connections = [...current.app_connection_ids];
-    if (typeof seeded?.agent !== 'string') agentId = current.agent.id;
+    if (typeof seeded?.engine !== 'string') {
+      engine = engineValueOf(current.agent.id);
+      agentId = agentIdOf(current.agent.id);
+    } else {
+      agentId = agentIdOfEnginePrefill(seeded.engine, current.agent.id);
+    }
     if (typeof seeded?.model !== 'string') agentModel = current.agent.model;
     const wantedPermission = prefillString(seeded, 'permission');
     if (
@@ -163,9 +190,9 @@
   // 外部智能体的模型 / 推理强度来自它自己的会话选项，按需探测并缓存。
   $effect(() => {
     if (itemId !== 'bot.agent') return;
-    const id = agentId;
-    if (id.length === 0 || agentsStore.options[id] !== undefined) return;
-    void agentsStore.loadOptions(id).catch(() => undefined);
+    if (engine !== 'agent' || agentId.length === 0) return;
+    if (agentsStore.options[agentId] !== undefined) return;
+    void agentsStore.loadOptions(agentId).catch(() => undefined);
   });
 
   $effect(() => {
@@ -192,10 +219,25 @@
   const agentChoices = $derived(
     itemId === 'bot.agent' && agentId.length > 0 ? agentsStore.options[agentId] : undefined,
   );
+  /** 应用默认任务执行引擎的显示名（「跟随应用默认」选项的副标签）。 */
+  const defaultEngineLabel = $derived.by(() => {
+    const id = settingsStore.settings?.defaultTaskAgentId ?? '';
+    if (id.length === 0) return t('contacts.taskEngineBuiltin');
+    return agentsStore.get(id)?.name ?? id;
+  });
 
-  function changeAgent(id: string): void {
+  function changeEngine(value: 'default' | 'builtin' | 'agent'): void {
+    engine = value;
+    agentId = '';
+    // 设置页里给该智能体配的默认模型：切过来时直接带上（留空 = 智能体默认）；
+    // 跟随默认 / 内置引擎不携带模型。
+    agentModel = '';
+  }
+
+  /** 引擎下拉选中某个外部智能体。 */
+  function chooseAgent(id: string): void {
+    engine = 'agent';
     agentId = id;
-    // 设置页里给该智能体配的默认模型：切过来时直接带上（留空 = 智能体默认）。
     agentModel = agentsStore.get(id)?.defaultModel ?? '';
   }
 
@@ -222,8 +264,14 @@
         return { servers };
       case 'bot.apps':
         return { connections };
-      case 'bot.agent':
-        return { agent: agentId, model: agentModel, permission };
+      case 'bot.agent': {
+        // 没有可选外部智能体时 'agent' 状态不成立：按跟随应用默认提交。
+        if (engine === 'agent' && agentId.length > 0) {
+          return { engine, agent: agentId, model: agentModel, permission };
+        }
+        // builtin 不带 model：core 适配器保留该 Bot 已有的内置任务模型。
+        return engine === 'builtin' ? { engine } : { engine: 'default' };
+      }
       default:
         return {};
     }
@@ -338,20 +386,37 @@
       </div>
     {/if}
   {:else if itemId === 'bot.agent'}
-    <Label for={`${testid}-agent`}>{t('contacts.agentTaskEngineHint')}</Label>
+    <Label for={`${testid}-agent`}>{t('contacts.taskEngine')}</Label>
     <select
       id={`${testid}-agent`}
       class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
-      value={agentId}
-      onchange={(event) => changeAgent(event.currentTarget.value)}
+      value={engine === 'agent' ? `@agent:${agentId}` : engine}
+      onchange={(event) => {
+        const value = event.currentTarget.value;
+        if (value === 'default' || value === 'builtin') changeEngine(value);
+        else if (value.startsWith('@agent:')) chooseAgent(value.slice('@agent:'.length));
+      }}
       data-testid={`${testid}-agent`}
     >
-      <option value="">{t('settingCard.botConfig.builtinEngine')}</option>
+      <option value="default">
+        {t('contacts.taskEngineFollowDefault', {
+          engine: defaultEngineLabel,
+        })}
+      </option>
+      <option value="builtin">{t('contacts.taskEngineBuiltin')}</option>
       {#each agentOptions as option (option.id)}
-        <option value={option.id}>{option.name}</option>
+        <option value={`@agent:${option.id}`}>{option.name}</option>
       {/each}
+      {#if engine === 'agent' && agentId.length > 0 && !agentOptions.some((option) => option.id === agentId)}
+        <option value={`@agent:${agentId}`}>
+          {t('contacts.agentUnavailable', { id: agentsStore.get(agentId)?.name ?? agentId })}
+        </option>
+      {/if}
     </select>
-    {#if agentId.length > 0}
+    {#if engine === 'agent' && agentId.length === 0}
+      <p class="text-xs text-muted-foreground">{t('settingCard.botConfig.noAgents')}</p>
+    {/if}
+    {#if engine === 'agent' && agentId.length > 0}
       <Label for={`${testid}-permission`}>{t('contacts.agentPermission')}</Label>
       <select
         id={`${testid}-permission`}

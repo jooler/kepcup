@@ -98,10 +98,12 @@ test('full first-run flow: welcome → skip model → permissions → sandbox �
     );
     await page.locator('[data-testid="onboarding-start"]').click();
 
-    // ② 模型：mock LLM 种子的 custom:mock 厂商可选；跳过（可跳过但持续提示）。
+    // ② 模型：mock LLM 种子的 custom:mock 厂商带 Key（providerReady），模型步
+    // 必配——直接保存默认主/轻量模型进入下一步（2026-11 修订：无跳过）。
     await expect(wizard).toHaveAttribute('data-step', 'model');
-    await page.locator('[data-testid="onboarding-provider-select"]').selectOption('custom:mock');
-    await page.locator('[data-testid="onboarding-model-skip"]').click();
+    await expect(page.locator('[data-testid="onboarding-model-skip"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="onboarding-provider-select"]')).toHaveCount(0);
+    await page.locator('[data-testid="onboarding-next"]').click();
 
     // ③ 权限：自启开关（默认开）+ 系统通知说明与测试入口。
     await expect(wizard).toHaveAttribute('data-step', 'permissions');
@@ -109,10 +111,10 @@ test('full first-run flow: welcome → skip model → permissions → sandbox �
     const autostart = page.locator('[data-testid="onboarding-autostart"]');
     await expect(autostart).toHaveAttribute('aria-checked', /true|mixed/);
     await expect(page.locator('[data-testid="onboarding-notify-test"]')).toBeVisible();
-    // 「返回上一步」回到模型步，再跳过回来——每步可返回（验收标准）。
+    // 「返回上一步」回到模型步，再保存回来——每步可返回（验收标准）。
     await page.locator('[data-testid="onboarding-back"]').click();
     await expect(wizard).toHaveAttribute('data-step', 'model');
-    await page.locator('[data-testid="onboarding-model-skip"]').click();
+    await page.locator('[data-testid="onboarding-next"]').click();
     await expect(wizard).toHaveAttribute('data-step', 'permissions');
     await page.locator('[data-testid="onboarding-next"]').click();
 

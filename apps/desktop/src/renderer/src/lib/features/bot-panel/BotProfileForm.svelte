@@ -31,10 +31,9 @@
   import BotPluginsSection from './BotPluginsSection.svelte';
   import {
     capabilityRows,
-    engineValue,
+    taskEngineValue,
     estimatedTools,
     normalizeCapabilities,
-    parseEngineValue,
     toggleCapability,
     toggleCapabilityOptIn,
     AGENT_OPTION_PREFIX,
@@ -76,9 +75,12 @@
    */
   const modelOptions = $derived.by(() => {
     const options = settingsStore.availableModelOptions;
-    const stale = [profile.runtime.model, profile.runtime.light_model].filter(
-      (ref) => ref.length > 0 && !options.some((option) => option.ref === ref),
-    );
+    const stale = [
+      profile.runtime.model,
+      profile.runtime.light_model,
+      profile.runtime.background_model,
+      ...(profile.runtime.agent.id === 'builtin' ? [profile.runtime.agent.model] : []),
+    ].filter((ref) => ref !== undefined && ref.length > 0 && !options.some((option) => option.ref === ref));
     return [
       ...options,
       ...stale.map((ref) => ({ ref, label: t('contacts.modelUnavailable', { ref }) })),
@@ -200,7 +202,10 @@
     if (!agentsStore.loaded) void agentsStore.refresh().catch(() => undefined);
   });
 
-  const selectedAgentId = $derived(profile.runtime.agent.id);
+  const selectedAgentId = $derived.by(() => {
+    const id = profile.runtime.agent.id;
+    return id.length > 0 && id !== 'builtin' ? id : '';
+  });
   const selectedAgent = $derived(
     selectedAgentId.length > 0 ? agentsStore.get(selectedAgentId) : null,
   );
@@ -222,10 +227,16 @@
     }
     return options;
   });
-  /** 没有任何内置模型时隐藏「轻量模型」（后台任务另行处理，§3）。 */
+  /** 没有任何内置模型时隐藏「轻量模型」与「后台任务模型」（两者都只收内置模型）。 */
   const showLightModel = $derived(
     settingsStore.availableModelOptions.length > 0 || profile.runtime.light_model.length > 0,
   );
+  /** 应用默认任务执行引擎的显示名（「跟随应用默认」选项的副标签）。 */
+  const defaultEngineLabel = $derived.by(() => {
+    const id = settingsStore.settings?.defaultTaskAgentId ?? '';
+    if (id.length === 0) return t('contacts.taskEngineBuiltin');
+    return agentsStore.get(id)?.name ?? id;
+  });
 
   let pendingAgentId = $state<string | null>(null);
   let switchDialogOpen = $state(false);
@@ -259,22 +270,40 @@
     maybeShowAcpAppsNotice();
   }
 
-  function onEngineChange(value: string): void {
-    const parsed = parseEngineValue(value);
-    if ('model' in parsed) {
-      profile.runtime.agent = { ...profile.runtime.agent, id: '' };
-      profile.runtime.model = parsed.model;
+  /** 任务执行引擎三态切换：跟随应用默认 / 内置智能体 / 外部智能体。 */
+  function onTaskEngineChange(value: string): void {
+    if (value === 'default') {
+      profile.runtime.agent = {
+        id: '',
+        model: '',
+        effort: '',
+        permission: 'workspace',
+        capabilities: null,
+      };
+      customModel = false;
       return;
     }
-    if (parsed.agentId === profile.runtime.agent.id) return;
+    if (value === 'builtin') {
+      profile.runtime.agent = {
+        id: 'builtin',
+        model: '',
+        effort: '',
+        permission: 'workspace',
+        capabilities: null,
+      };
+      customModel = false;
+      return;
+    }
+    const agentId = value.slice(AGENT_OPTION_PREFIX.length);
+    if (agentId === profile.runtime.agent.id) return;
     if (!acknowledged()) {
-      pendingAgentId = parsed.agentId;
+      pendingAgentId = agentId;
       switchDialogOpen = true;
       // Keep showing the current engine until the notice is confirmed.
-      if (engineSelect !== undefined) engineSelect.value = engineValue(profile.runtime);
+      if (engineSelect !== undefined) engineSelect.value = taskEngineValue(profile.runtime.agent);
       return;
     }
-    applyAgent(parsed.agentId);
+    applyAgent(agentId);
   }
 
   function confirmSwitch(): void {
@@ -618,47 +647,23 @@
       {/if}
     </div>
   {/if}
-  <!-- 模型与智能体（含智能体下钻的模型 / 推理强度 / 权限 / 能力包） -->
+  <!-- 模型与智能体：主模型（对话）/ 轻量模型 / 任务执行引擎 / 后台任务模型；
+       外部智能体下钻的模型 / 推理强度 / 权限 / 能力包见下方明细块 -->
   {#if show('model')}
     <div class="grid gap-4" data-settings-anchor="bot-model">
       <div class="grid gap-1.5">
-        <Label for="bot-model"
-          >{agentOptions.length > 0
-            ? t('contacts.mainModelOrAgent')
-            : t('contacts.mainModel')}</Label
-        >
+        <Label for="bot-model">{t('contacts.mainModel')}</Label>
         <select
           id="bot-model"
           class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
-          bind:this={engineSelect}
-          value={engineValue(profile.runtime)}
-          onchange={(event) => onEngineChange(event.currentTarget.value)}
+          bind:value={profile.runtime.model}
           data-testid="bot-model-select"
         >
           <option value="">{t('contacts.modelDefault')}</option>
-          {#if agentOptions.length > 0}
-            <optgroup label={t('contacts.engineGroupModels')}>
-              {#each modelOptions as option (option.ref)}
-                <option value={option.ref}>{option.label}</option>
-              {/each}
-            </optgroup>
-            <optgroup label={t('contacts.engineGroupAgents')}>
-              {#each agentOptions as option (option.id)}
-                <option value={`${AGENT_OPTION_PREFIX}${option.id}`}>{option.label}</option>
-              {/each}
-            </optgroup>
-          {:else}
-            {#each modelOptions as option (option.ref)}
-              <option value={option.ref}>{option.label}</option>
-            {/each}
-          {/if}
+          {#each modelOptions as option (option.ref)}
+            <option value={option.ref}>{option.label}</option>
+          {/each}
         </select>
-        {#if profile.runtime.agent.id.length > 0}
-          <!-- D75 §8.1：runtime.agent 是 Bot 的任务引擎，对话轮固定内置模型 -->
-          <p class="text-xs text-muted-foreground" data-testid="bot-agent-task-engine-hint">
-            {t('contacts.agentTaskEngineHint')}
-          </p>
-        {/if}
       </div>
       {#if showLightModel}
         <div class="grid gap-1.5">
@@ -669,6 +674,63 @@
             bind:value={profile.runtime.light_model}
           >
             <option value="">{t('contacts.modelDefault')}</option>
+            {#each modelOptions as option (option.ref)}
+              <option value={option.ref}>{option.label}</option>
+            {/each}
+          </select>
+          <p class="text-xs text-muted-foreground">{t('contacts.lightModelHint')}</p>
+        </div>
+      {/if}
+      <div class="grid gap-1.5">
+        <Label for="bot-task-engine">{t('contacts.taskEngine')}</Label>
+        <select
+          id="bot-task-engine"
+          class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+          bind:this={engineSelect}
+          value={taskEngineValue(profile.runtime.agent)}
+          onchange={(event) => onTaskEngineChange(event.currentTarget.value)}
+          data-testid="bot-task-engine-select"
+        >
+          <option value="default">{t('contacts.taskEngineFollowDefault', { engine: defaultEngineLabel })}</option>
+          <option value="builtin">{t('contacts.taskEngineBuiltin')}</option>
+          {#if agentOptions.length > 0}
+            <optgroup label={t('contacts.engineGroupAgents')}>
+              {#each agentOptions as option (option.id)}
+                <option value={`${AGENT_OPTION_PREFIX}${option.id}`}>{option.label}</option>
+              {/each}
+            </optgroup>
+          {/if}
+        </select>
+        <p class="text-xs text-muted-foreground" data-testid="bot-agent-task-engine-hint">
+          {t('contacts.taskEngineHint')}
+        </p>
+      </div>
+      {#if profile.runtime.agent.id === 'builtin'}
+        <div class="grid gap-1.5">
+          <Label for="bot-task-model">{t('contacts.taskModel')}</Label>
+          <select
+            id="bot-task-model"
+            class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+            bind:value={profile.runtime.agent.model}
+            data-testid="bot-task-model-select"
+          >
+            <option value="">{t('contacts.taskModelFollowMain')}</option>
+            {#each modelOptions as option (option.ref)}
+              <option value={option.ref}>{option.label}</option>
+            {/each}
+          </select>
+        </div>
+      {/if}
+      {#if showLightModel}
+        <div class="grid gap-1.5">
+          <Label for="bot-background-model">{t('contacts.backgroundModel')}</Label>
+          <select
+            id="bot-background-model"
+            class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+            bind:value={profile.runtime.background_model}
+            data-testid="bot-background-model-select"
+          >
+            <option value="">{t('contacts.backgroundModelFollow')}</option>
             {#each modelOptions as option (option.ref)}
               <option value={option.ref}>{option.label}</option>
             {/each}

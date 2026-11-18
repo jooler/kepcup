@@ -21,6 +21,8 @@
 ## 1 可行性结论
 
 > **D75 修订**：拆分为「对话轮 + 任务」后，**对话轮固定走内置引擎，外部 Agent 只作任务引擎**（`runtime.agent` 的语义从「Bot 的引擎」变为「Bot 的**任务**引擎」）。下表随之变化：
+>
+> **2026-11 修订（模型场景三分类）**：模型调用收敛为**对话 / 任务 / 后台任务**三类——**对话与后台任务恒走内置引擎**，外部 Agent 只驱动任务；本节下文与 §8 中「无内置模型时后台 loop 回落 Agent」「§8.4 无模型确定性降级（DEV-011）」「onboarding 无默认主模型时新建 Bot 套用默认 Agent」的路径**全部移除**（应用必须配置默认主模型；向导不再提供外部智能体配置）。`runtime.agent.id` 改三态：`''` = 跟随应用默认（settings `defaultTaskAgentId`，全局「默认任务执行引擎」，模型用 `agents[id].model`）、`'builtin'` = 显式内置（可选内置任务模型）、目录 id = 外部；新增 Bot 级 `runtime.background_model` 与全局 `backgroundModel`（整理类后台任务的内置模型链）。后台任务设置（`backgroundTasks.*` / `backgroundAgentId`）与 `agentBackgroundBlocker` 删除。
 > - `delegate_task`（D66）不提供 → **该让渡消失**：并行由宿主任务层提供，不依赖 Agent 自身能力；
 > - 每次请求前刷新系统提示词「降级」→ **仅任务内降级**，对话轮（人设 / 画像 / 记忆 / Wiki 目录 / Skills）逐轮刷新；
 > - 人设 / 记忆 / 对话上下文 / 项目组沟通 / 委派 / 审批「保留」→ 不再依赖提示词注入的保真度，它们本就运行在内置的对话轮里；
@@ -254,6 +256,8 @@ interface AgentCatalogEntry {
 
 
 ## 8 模型、用量与后台 loop
+
+> **2026-11 修订**：本节原有的「后台 loop 走外部 Agent」整套机制已移除——后台整理（摘要 / 反思 / 记忆整理 / 画像整理 / Wiki 维护 / 技能生成）**恒走内置引擎**，模型链为 Bot `runtime.background_model` → 全局 `backgroundModel` → 轻量 → 主；分诊 / 上下文压缩 / 微应用仍走轻量模型链。`backgroundTasks`（`agentEnabled` / `builtinEnabled` / `agentSkillAuthoring` / `projectMentionOnly`）与 `settings.backgroundAgentId` 设置、`agentBackgroundBlocker`、`admit` 节流、外部引擎的 `complete()` 一次性精简会话与 `external.background` run 全部删除。任务引擎的并发（`agent:{id}` 调度键、`features.parallelSessions` 钳制）保留；下文保留为历史记录。
 
 - **并发**：调度器 provider 键 `agent:{id}`，并发沿用 `settings.providerConcurrency`，缺省 `AGENT_DEFAULT_CONCURRENCY`（2）——仅限 `features.parallelSessions` 的 Agent，其余恒为 1（§7「跨会话并发」）。
 - **用量**：`usage_ledger` 沿用现有列（`provider='agent:{id}'`、费用为空）；token 取 `PromptResponse.usage`（ACP 不稳定字段；口径由 Provider 声明——Claude / Codex 实为本 turn，其余按会话累计做差），缺失时每个模型轮记一条零 token 行（只记轮数）；连锁预算对零 token 行按 `AGENT_TURN_BUDGET_TOKENS` 折算；用量页单列「订阅 / 外部 Agent」。

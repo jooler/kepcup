@@ -144,26 +144,23 @@ describe('settings onboarding state (P13 任务 4)', () => {
     expect(initial.onboarding).toEqual({
       completed: false,
       modelConfigured: false,
-      modelSkipped: false,
     });
 
-    const afterSkip = (await rpc.call('settings.update', {
-      onboarding: { modelSkipped: true },
+    const afterConfigured = (await rpc.call('settings.update', {
+      onboarding: { modelConfigured: true },
     })) as Settings;
-    expect(afterSkip.onboarding).toEqual({
+    expect(afterConfigured.onboarding).toEqual({
       completed: false,
-      modelConfigured: false,
-      modelSkipped: true,
+      modelConfigured: true,
     });
 
-    // 第二个补丁只写 completed：modelSkipped 保留（部分补丁语义）。
+    // 第二个补丁只写 completed：modelConfigured 保留（部分补丁语义）。
     const afterComplete = (await rpc.call('settings.update', {
       onboarding: { completed: true },
     })) as Settings;
     expect(afterComplete.onboarding).toEqual({
       completed: true,
-      modelConfigured: false,
-      modelSkipped: true,
+      modelConfigured: true,
     });
 
     // 不带 onboarding 的更新不触碰引导状态。

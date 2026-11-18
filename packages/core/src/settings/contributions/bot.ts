@@ -12,14 +12,15 @@ import {
 import type { SettingAdapterContribution } from './types.js';
 
 /**
- * Bot 组：本 Bot 的模型 / 轻量模型 / 浏览器资料 / 网络 / MCP / 连接 / 技能 / 任务引擎，
- * 以及人设与目录授权两个 via-tool 条目的只读概要。
+ * Bot 组：本 Bot 的模型 / 轻量模型 / 后台任务模型 / 浏览器资料 / 网络 / MCP / 连接 /
+ * 技能 / 任务执行引擎，以及人设与目录授权两个 via-tool 条目的只读概要。
  */
 export const botContribution: SettingAdapterContribution = {
   name: 'bot',
   adapters: {
     'bot.model': (deps) => botModelAdapter(deps, 'model'),
     'bot.light-model': (deps) => botModelAdapter(deps, 'light_model'),
+    'bot.background-model': (deps) => botModelAdapter(deps, 'background_model'),
     'bot.browser-profile': browserProfileAdapter,
     'bot.network': networkAdapter,
     'bot.mcp-servers': botMcpAdapter,

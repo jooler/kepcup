@@ -2,11 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   capabilityRows,
   effectiveCapabilities,
-  engineValue,
+  taskEngineValue,
   estimatedTools,
   normalizeCapabilities,
-  parseEngineValue,
-  toggleCapability,
+    toggleCapability,
   toggleCapabilityOptIn,
   toolCountOf,
 } from './agent-capabilities';
@@ -57,11 +56,10 @@ describe('agent capability packs (Bot runtime form)', () => {
     );
   });
 
-  it('encodes the model / agent selector value', () => {
-    expect(engineValue({ model: 'deepseek/chat', agent: { id: '' } })).toBe('deepseek/chat');
-    expect(engineValue({ model: 'deepseek/chat', agent: { id: 'codex' } })).toBe('@agent:codex');
-    expect(parseEngineValue('@agent:codex')).toEqual({ agentId: 'codex' });
-    expect(parseEngineValue('')).toEqual({ model: '' });
+  it('encodes the task-engine selector value (three states)', () => {
+    expect(taskEngineValue({ id: '' })).toBe('default');
+    expect(taskEngineValue({ id: 'builtin' })).toBe('builtin');
+    expect(taskEngineValue({ id: 'codex' })).toBe('@agent:codex');
   });
 });
 

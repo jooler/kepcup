@@ -610,7 +610,7 @@ describe('plugins.* 能力模型条目 RPC（D124）', () => {
   it('plugins.setBotCapabilityEntries：未知 ref 整批拒绝并列出违规项；合法写入 capability_entries', async () => {
     const rig = makeRig();
     await installArk(rig);
-    const bot = rig.bots.create({ identity: { name: '测试 Bot' } }, { skipDefaultAgent: true });
+    const bot = rig.bots.create({ identity: { name: '测试 Bot' } });
     // 未知插件 + 已装插件的未知条目：一次性列出，且两种原因分开（未安装 ≠ 条目不存在）。
     const rejection = await rig.bindings['plugins.setBotCapabilityEntries']!.handle({
       botId: bot.id,
@@ -644,7 +644,7 @@ describe('plugins.* 能力模型条目 RPC（D124）', () => {
   it('条目解析链端到端：Bot 勾选条目后媒体调用走插件实例凭据（卸载后回退全局槽位）', async () => {
     const rig = makeRig();
     await installArk(rig);
-    const bot = rig.bots.create({ identity: { name: '测试 Bot' } }, { skipDefaultAgent: true });
+    const bot = rig.bots.create({ identity: { name: '测试 Bot' } });
     await rig.bindings['plugins.setBotCapabilityEntries']!.handle({
       botId: bot.id,
       entries: [{ plugin: 'io.test/ark', entry: 'seedream' }],
@@ -691,7 +691,7 @@ describe('plugins.* 能力模型条目 RPC（D124）', () => {
   it('entriesFor 有效集第三闸：全局停用插件 → 条目不消费；重新启用恢复（60 决策 5「已安装启用」）', async () => {
     const rig = makeRig();
     await installArk(rig);
-    const bot = rig.bots.create({ identity: { name: '测试 Bot' } }, { skipDefaultAgent: true });
+    const bot = rig.bots.create({ identity: { name: '测试 Bot' } });
     rig.bots.setPluginIds(bot.id, ['io.test/ark']);
     await rig.bindings['plugins.setBotCapabilityEntries']!.handle({
       botId: bot.id,
@@ -709,7 +709,7 @@ describe('plugins.* 能力模型条目 RPC（D124）', () => {
   it('entriesFor 输出序：插件内按条目声明序（勾选序不影响回退默认条目，60 §4 ① 内排序）', async () => {
     const rig = makeRig();
     await installPlugin(rig, TWO_MANIFEST);
-    const bot = rig.bots.create({ identity: { name: '测试 Bot' } }, { skipDefaultAgent: true });
+    const bot = rig.bots.create({ identity: { name: '测试 Bot' } });
     rig.bots.setPluginIds(bot.id, ['io.test/two']);
     await rig.bindings['plugins.setBotCapabilityEntries']!.handle({
       botId: bot.id,
@@ -746,7 +746,7 @@ describe('plugins.* 能力模型条目 RPC（D124）', () => {
   it('混合插件（runtime + 数据型条目）：执行体来源逐条判定，engine 条目不被送进插件进程', async () => {
     const rig = makeRig();
     await installPlugin(rig, MIXED_RUNTIME_MANIFEST, [{ name: 'main.mjs', data: 'export {};\n' }]);
-    const bot = rig.bots.create({ identity: { name: '测试 Bot' } }, { skipDefaultAgent: true });
+    const bot = rig.bots.create({ identity: { name: '测试 Bot' } });
     rig.bots.setPluginIds(bot.id, [MIXED_RUNTIME_ID]);
     await rig.bindings['plugins.setBotCapabilityEntries']!.handle({
       botId: bot.id,

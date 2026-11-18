@@ -457,7 +457,7 @@ export class JobsRunner {
     const router = this.#deps.router;
     if (purpose !== undefined && router !== undefined) {
       const route = router.resolveForBot(this.#routeBotId(job), purpose);
-      if (route !== null && route.agentId !== null) return route.provider;
+      if (route !== null) return route.provider;
     }
     const ref = builtinModelRef('summary', this.#deps.settings.get(), null);
     const index = ref.indexOf('/');

@@ -63,39 +63,42 @@ export function inheritedModelRuntime(
 
 /**
  * 新建目标「与 A 相同」时写进新 Bot 的模型配置值。A 的外部智能体现在不能选用时退回内置
- * 引擎（`refusal` 说明原因）；结果是「空模型 + 内置引擎」时 `skipDefaultAgent`：新 Bot 与
- * A 一样跟随设置默认，不套用 onboarding 的默认外部 Agent。
+ * 引擎（`refusal` 说明原因）；结果即「跟随设置默认」（对话与任务都按空值跟随）。
  */
 export function newTargetInheritedRuntime(
   from: Bot,
   agents: HandoverAgentPolicy,
-): { runtime: Partial<ModelRuntime>; refusal: string | null; skipDefaultAgent: boolean } {
+): { runtime: Partial<ModelRuntime>; refusal: string | null } {
   let runtime: Partial<ModelRuntime> = inheritedModelRuntime(from, null, (id) =>
     agents.defaultPermission(id),
   );
   const agentId = runtime.agent?.id ?? '';
-  const refused = agentId.length > 0 ? agents.selectable(agentId) : null;
+  const refused = agentId.length > 0 && agentId !== 'builtin' ? agents.selectable(agentId) : null;
   if (refused !== null)
-    runtime = { model: runtime.model ?? '', light_model: runtime.light_model ?? '' };
+    // 备注说「改用内置引擎」：显式写 'builtin'，不是跟随应用默认（那可能是
+    // 外部智能体）。
+    runtime = {
+      model: runtime.model ?? '',
+      light_model: runtime.light_model ?? '',
+      agent: { ...BUILTIN_AGENT_RUNTIME, id: 'builtin' },
+    };
   return {
     runtime,
     refusal: refused === null ? null : `${engineLabel(agentId)}现在不能用（${refused}）`,
-    skipDefaultAgent: (runtime.model ?? '') === '' && (runtime.agent?.id ?? '') === '',
   };
 }
 
-/** 驱动 Bot 的引擎（卡片提示用）。 */
+/** 驱动 Bot 任务的引擎（卡片提示用）。 */
 export function engineLabel(agentId: string): string {
-  return agentId.length > 0 ? `外部智能体 ${agentId}` : '内置引擎';
+  return agentId.length > 0 && agentId !== 'builtin' ? `外部智能体 ${agentId}` : '内置智能体';
 }
 
-/** 一个 Bot 当下模型的显示名。 */
+/** 一个 Bot 当下模型的显示名（对话恒走内置模型链）。 */
 export function botModelLabel(bot: Bot, options: readonly ChatModelOption[]): string {
   const runtime = bot.profile.runtime;
   if (runtime.model.length > 0) {
     return options.find((option) => option.ref === runtime.model)?.label ?? runtime.model;
   }
-  if (runtime.agent.id.length > 0) return engineLabel(runtime.agent.id);
   return '跟随设置默认';
 }
 
@@ -161,9 +164,11 @@ export class ModelAdapter implements HandoverAdapter {
     const value = keyId(key, 'model') ?? '';
     if (value === MODEL_DEFAULT) return null;
     if (value === MODEL_INHERIT) {
-      // 同 bots.update：换成另一个外部智能体时它必须可选（实验开关、在目录中）。
+      // 同 bots.update：换成另一个外部智能体时它必须可选（在目录中；'builtin'
+      // 与 '' 都不是外部智能体，不校验）。
       const agentId = ctx.fromBot.profile.runtime.agent.id;
       if (agentId === ctx.toBot.profile.runtime.agent.id) return null;
+      if (agentId.length === 0 || agentId === 'builtin') return null;
       const refusal = this.#deps.agents.selectable(agentId);
       return refusal === null ? null : `不能改用${engineLabel(agentId)}：${refusal}`;
     }
@@ -188,10 +193,11 @@ export class ModelAdapter implements HandoverAdapter {
         );
       } else {
         // 跟随设置默认 / 指定内置模型：都由内置引擎驱动（外部智能体不认这里的 ref，
-        // 「设置默认」指设置里的默认主模型）。卡片上对此有提示。
+        // 「设置默认」指设置里的默认主模型）。卡片上对此有提示；任务引擎显式
+        // 落为内置智能体（与告警口径一致，不随应用默认漂移）。
         runtime.model = value === MODEL_DEFAULT ? '' : value;
         if (value === MODEL_DEFAULT) runtime.light_model = '';
-        runtime.agent = { ...BUILTIN_AGENT_RUNTIME };
+        runtime.agent = { ...BUILTIN_AGENT_RUNTIME, id: 'builtin' };
       }
       return { ...profile, runtime };
     });

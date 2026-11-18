@@ -145,7 +145,6 @@ class SettingsState {
     const base = this.settings?.onboarding ?? {
       completed: false,
       modelConfigured: false,
-      modelSkipped: false,
     };
     return this.update({ onboarding: { ...base, ...patch } });
   }

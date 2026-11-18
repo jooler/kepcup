@@ -314,6 +314,21 @@ export const enUS = {
   'settings.modelsSection': 'Default models',
   'settings.defaultMainModel': 'Default main model',
   'settings.defaultLightModel': 'Default light model',
+  'settings.defaultLightModelHint':
+    "Fallback of the main model: triage (routing), context compaction, micro-app ai.chat and other lightweight jobs prefer it; empty follows the main model.",
+  'settings.taskEngine': 'Default task engine',
+  'settings.taskEngineHint':
+    "What runs a Bot's tasks when its task engine is not set explicitly: the built-in agent or an enabled external agent. Conversations and background tasks are unaffected.",
+  'settings.taskEngineBuiltin': 'Built-in agent',
+  'settings.taskEngineUnavailable': '(disabled; tasks fall back to the built-in agent)',
+  'settings.taskAgentModel': 'Default task model',
+  'settings.taskAgentModelHint':
+    'The model this agent uses for tasks by default; each Bot can also set its own.',
+  'settings.taskAgentModelDefault': "Agent's own default",
+  'settings.backgroundModel': 'Background task model',
+  'settings.backgroundModelHint':
+    'Built-in model for background upkeep (summary, reflection, memory, profile curation, wiki maintenance, skill authoring); empty follows the lightweight model. Triage and context compaction are not included.',
+  'settings.backgroundModelFollow': 'Follow the lightweight model',
   'settings.capabilityModelsSection': 'Capability models',
   'settings.capabilityModelsHint':
     "Configure one model per capability: choose a vendor → enter a model ID → enter that vendor's API key (keys are shared per vendor and with the vendor card). The vendor dropdown lists only domestic vendors adapted for that capability.",
@@ -366,7 +381,6 @@ export const enUS = {
   'settings.remove': 'Remove',
   // --- Models section two-pane rework (v0.5.6: "Model config" + provider instances)
   'settings.modelsNavConfig': 'Model Config',
-  'settings.agentsNavConfig': 'Global settings',
   'settings.modelsOverviewHint':
     'Manage model providers and defaults; a provider can be added multiple times (different baseUrls for different model capabilities).',
   'settings.templateHintVendor':
@@ -2243,7 +2257,7 @@ export const enUS = {
   'settingCard.botConfig.noMcp':
     'No MCP services enabled yet. You can install them in the Extension Center.',
   'settingCard.botConfig.noApps': 'No connected apps yet.',
-  'settingCard.botConfig.builtinEngine': 'Built-in engine',
+  'settingCard.botConfig.noAgents': 'No external agent is enabled yet; enable one in Settings - Agents first.',
   'settingCard.skills.empty': 'This Bot has no skills that can be toggled.',
   'settingCard.skills.pick': 'Skills',
   'settingCard.project.noBots': 'No Bots available',
@@ -2263,6 +2277,8 @@ export const enUS = {
   'settingCard.mcp.missing': 'This card is missing the MCP service to change.',
   'settingCard.mcp.notFound': 'No such installed MCP service.',
   'settingCard.botModel.followDefaultLight': 'Use the default lightweight model',
+  'settingCard.botModel.followDefaultBackground': 'Use the default background task model',
+  'settingCard.botModel.backgroundModel': 'Background task model',
   'settingCard.state.applied': 'Applied',
   'settingCard.state.receipt': 'Changed',
   'settingCard.state.dismissed': 'Not changed',
@@ -2431,19 +2447,8 @@ export const enUS = {
   'onboarding.modelKey': 'API key',
   'onboarding.modelKeyPlaceholder': 'Paste API key…',
   'onboarding.modelSave': 'Save and continue',
-  'onboarding.modelSkip': 'Skip and configure later',
   'onboarding.modelNoProvider':
     'No providers available yet. Add a custom provider in Settings, then configure it.',
-  'onboarding.subscriptionOpen': 'I have a subscription (Claude / ChatGPT / Copilot / GLM…)',
-  'onboarding.subscriptionBody':
-    "Use your existing subscription to power Bots: choose an agent as the Bot's task engine, enable (install) it, and sign in following the provider's official process. KepCup doesn't access or store your subscription credentials.",
-  'onboarding.subscriptionEmpty': 'This version has no agents that support subscription sign-in.',
-  'onboarding.subscriptionChoose': 'Let {name} run tasks for the butler and new Bots',
-  'onboarding.subscriptionEnableFirst':
-    'Enable and sign in to this agent in the card above, then continue.',
-  'onboarding.subscriptionBack': 'Use an API key instead',
-  'onboarding.butlerAgentNote':
-    "The butler's tasks will be run by {name}, and you can start chatting right away. Without a built-in model, the chat itself is simplified: your messages go directly to in-progress tasks or become new tasks, and the raw results are sent back. The interview for assembling a Bot team by scenario needs a built-in model; configure an API key in Settings to use it.",
   'onboarding.permissionsTitle': 'Permissions',
   'onboarding.permissionsBody':
     'These two settings control how the app behaves in your system. You can change them anytime in Settings.',
@@ -2999,40 +3004,10 @@ export const enUS = {
   'settings.navModelsAgents': 'Models & agents',
   'approvals.environmentLicense': 'License',
   'agents.available': 'Available',
-  'agents.defaultAgent': 'Agent used by default for new Bots',
-  'agents.defaultAgentNone': 'None (use built-in model)',
-  'agents.defaultAgentHint':
-    "Only applies when no default main model is set: new Bots (including the butler, except those created in conversation) that don't specify a model use this agent to run their tasks. When disabled, new Bots fall back to the built-in model.",
   'agents.defaultAgentAffected':
-    'It is also the default agent for new Bots: once disabled or uninstalled, new Bots will no longer use it by default.',
+    'It is the default task engine: once disabled or uninstalled, Bots that follow the app default run their tasks on the built-in agent again.',
   'agents.hint':
-    "Once enabled, you can pick an agent (such as Claude Agent or Codex) as a Bot's task engine in its run settings: it runs tasks dispatched by that Bot (the conversation itself still uses the built-in model). Sign-in goes through the vendor's official flow; KepCup never accesses or stores your subscription credentials.",
-  'agents.background.title': 'Background tasks',
-  'agents.background.hint':
-    "Background tasks such as summaries, reflection, memory cleanup, profile building, routing decisions, and Wiki maintenance use the built-in agent by default. Once an external agent is selected, these tasks send the relevant content to that agent's vendor (the Bot's memories, your profile, conversation content and summaries, and Wiki material) and consume your subscription quota. Background tasks run in a fresh private temporary directory, with none of the agent's own file, command, or network tools (only tools KepCup provides for that task); only agents that support this are selectable.",
-  'agents.background.builtinLightOnly':
-    'Only a built-in lightweight model is configured: summaries, reflection, memory cleanup, and routing decisions use it; profile building, Wiki maintenance, and skill generation (which require a main model) fall back to each Bot’s own agent.',
-  'agents.background.builtinLightOnlyNoAgent':
-    'Only a built-in lightweight model is configured and external agents are not allowed: summaries, reflection, memory cleanup, and routing decisions use it; purposes that need a main model are skipped.',
-  'agents.background.builtinUnavailable':
-    'No built-in model is configured: background tasks fall back to each Bot’s own agent; when a Bot has no agent, or it cannot run background tasks, they are skipped.',
-  'agents.background.builtinUnavailableNoAgent':
-    'No built-in model is configured and external agents are not allowed: background tasks are skipped.',
-  'agents.background.agent': 'Agent for background tasks',
-  'agents.background.builtin': 'Built-in agent',
-  'agents.background.off': 'Off (skip background tasks)',
-  'agents.background.unavailable': '(unavailable)',
-  'agents.background.notInCatalog': '(not in catalog; background tasks skipped)',
-  'agents.background.blocked': '"{name}" can\'t be used for background tasks: {reason}',
-  'agents.background.degraded':
-    'Using agents only reduces frequency: reflection and conversation summaries run once every {n} triggers, and continuation checks stay off; the selected agent handles background tasks for all Bots (including cross-Bot profile building).',
-  'agents.background.skillAuthoring': 'Allow the agent to generate skills in the background',
-  'agents.background.skillAuthoringHint':
-    'Drafting and verifying skills takes multiple calls and uses significant quota, so this is off by default.',
-  'agents.background.projectMentionOnly':
-    'In project groups, respond only when @mentioned or replied to',
-  'agents.background.projectMentionOnlyHint':
-    "On by default. When off, the agent decides whether to join in: one session per batch of project group messages (at most once every 2 minutes per project group); if the decision times out, it's treated as no response.",
+    "Once enabled, you can pick an agent (such as Claude Agent or Codex) as a Bot's task engine in its run settings: it runs tasks dispatched by that Bot (conversations and background upkeep still use the built-in model). Sign-in goes through the vendor's official flow; KepCup never accesses or stores your subscription credentials.",
   'agents.empty': 'No agents are available in this version',
   'agents.tier.supported': 'Supported',
   'agents.tier.preview': 'Preview',
@@ -3215,10 +3190,17 @@ export const enUS = {
   'agents.capabilities.settings.change.description':
     'When on, settings_change can modify settings or show settings cards in the conversation; still subject to host tier rules, off by default',
   'agents.suggestEnable': 'A Bot suggests enabling it',
-  'contacts.mainModelOrAgent': 'Main model / task agent (leave blank to use the default model)',
-  'contacts.agentTaskEngineHint':
-    'When an agent is selected, it runs tasks dispatched by this Bot (the conversation itself still uses the built-in model); without a built-in model, the conversation is degraded: new messages go straight to the running task or become a new task, and the chat points at the execution report on the task card.',
-  'contacts.engineGroupModels': 'Models',
+  'contacts.taskEngine': 'Task engine',
+  'contacts.taskEngineFollowDefault': 'Follow app default ({engine})',
+  'contacts.taskEngineBuiltin': 'Built-in agent',
+  'contacts.taskEngineHint':
+    'Tasks dispatched by this Bot run on the selected engine; conversations and background upkeep are unaffected (always the built-in model).',
+  'contacts.taskModel': 'Task model (built-in agent)',
+  'contacts.taskModelFollowMain': 'Follow the main model',
+  'contacts.backgroundModel': 'Background task model',
+  'contacts.backgroundModelFollow': 'Follow the default background task model',
+  'contacts.lightModelHint':
+    'Fallback of the main model: triage (routing), context compaction, micro-app ai.chat and other lightweight jobs prefer it.',
   'contacts.engineGroupAgents': 'Agents',
   'contacts.agentNeedsAuthTag': 'Sign-in required',
   'contacts.agentUnavailable': '{id} (unavailable)',
@@ -3903,10 +3885,6 @@ export const enUS = {
   'settingsItem.agents.external.field.enabled': 'Enabled',
   'settingsItem.agents.external.field.login': 'Sign in',
   'settingsItem.agents.external.field.model': 'Default model',
-  'settingsItem.agents.default.title': 'Default agent for new Bots',
-  'settingsItem.agents.default.summary':
-    'When there is no default main model, which external agent drives new Bots',
-  'settingsItem.agents.default.field.agent': 'Agent',
   'settingsItem.bot.model.title': 'Main model for this Bot',
   'settingsItem.bot.model.summary':
     'Set a main model for this Bot only; leave empty to follow the default main model',
@@ -3939,14 +3917,29 @@ export const enUS = {
   'settingsItem.bot.skills.field.enabled': 'Enabled',
   'settingsItem.bot.agent.title': 'Task engine for this Bot',
   'settingsItem.bot.agent.summary':
-    "Whether this Bot's tasks run on the built-in engine or an external agent, plus its permission level and capability packs",
+    "Whether this Bot's tasks run on the built-in agent or an external agent; 'follow app default' defers to the default task engine setting",
+  'settingsItem.bot.agent.field.engine': 'Task engine',
+  'settingsItem.bot.agent.option.engine.default': 'Follow app default',
+  'settingsItem.bot.agent.option.engine.builtin': 'Built-in agent',
+  'settingsItem.bot.agent.option.engine.agent': 'External agent',
   'settingsItem.bot.agent.field.agent': 'Agent',
-  'settingsItem.bot.agent.field.model': 'Agent model',
+  'settingsItem.bot.agent.field.model': 'Model',
   'settingsItem.bot.agent.field.permission': 'Permission level',
   'settingsItem.bot.agent.option.permission.read_only': 'Read-only',
   'settingsItem.bot.agent.option.permission.ask':
     'Confirm before edits (sandboxed commands run automatically)',
   'settingsItem.bot.agent.option.permission.workspace': 'Automatic within workspace',
+  'settingsItem.bot.background-model.title': 'Background task model for this Bot',
+  'settingsItem.bot.background-model.summary':
+    'Built-in model for this Bot\'s background upkeep (summary, reflection, memory); empty follows the default',
+  'settingsItem.models.task-engine.title': 'Default task engine',
+  'settingsItem.models.task-engine.summary':
+    'What runs a Bot\'s tasks when its task engine is not set explicitly: the built-in agent or an enabled external agent. Conversations and background tasks are unaffected',
+  'settingsItem.models.task-engine.field.agent': 'Agent',
+  'settingsItem.models.background-model.title': 'Background task model',
+  'settingsItem.models.background-model.summary':
+    'Built-in model for background upkeep (summary, reflection, memory, profile curation, wiki maintenance, skill authoring); empty follows the lightweight model',
+  'settingsItem.models.background-model.field.model': 'Background task model',
   'settingsItem.bot.identity.title': 'Identity and duties for this Bot',
   'settingsItem.bot.identity.summary': 'Persona, tone, expertise, duties, and boundaries',
   'settingsItem.bot.identity.field.personality': 'Personality',
@@ -4044,11 +4037,6 @@ export const enUS = {
   'settingsItem.general.task-loop.field.maxWallMinutes': 'Maximum run time (minutes)',
   'settingsItem.general.task-loop.field.maxWallMinutes.hint':
     '0 means unlimited; default is 240 minutes.',
-  'settingsItem.background.tasks.title': 'Background task agent',
-  'settingsItem.background.tasks.summary':
-    'Whether background upkeep (memory, profile, skill distillation) uses the built-in agent or an external agent',
-  'settingsItem.background.tasks.field.agentEnabled': 'Use external agent',
-  'settingsItem.background.tasks.field.agent': 'Agent',
   'settingsItem.unattended.enable.title': 'Turn on unattended mode',
   'settingsItem.unattended.enable.summary':
     'Put every conversation at the full-control level during a set period (you must confirm the risk yourself)',

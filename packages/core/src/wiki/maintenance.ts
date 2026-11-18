@@ -1,7 +1,13 @@
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { rmSync } from '../infra/fs-rm.js';
 import path from 'node:path';
-import { AppError, RUN_MAX_TURNS, WIKI_SOURCE_INLINE_MAX_CHARS, type WikiOwner } from '@kepcup/shared';
+import {
+  AppError,
+  BUILTIN_ENGINE,
+  RUN_MAX_TURNS,
+  WIKI_SOURCE_INLINE_MAX_CHARS,
+  type WikiOwner,
+} from '@kepcup/shared';
 
 import { wikiRoot, type AppPaths } from '../infra/paths.js';
 import type { AgentEngine, EngineEvent, RunHandle, EngineUsage } from '../agent/types.js';
@@ -21,20 +27,12 @@ import { pageTitleOf } from './topics.js';
 import type { WikiService } from './service.js';
 import { redactStepPayload } from '../infra/redact.js';
 import { neutralizeUntrusted } from '../infra/data-boundary.js';
-import {
-  backgroundRunSpec,
-  engineKeyOf,
-  routeFor,
-  routeStillCurrent,
-} from '../agent/llm-router.js';
+import { routeFor, routeStillCurrent } from '../agent/llm-router.js';
 import type { LlmRouter } from '../agent/llm-router.js';
 
 export interface WikiMaintenanceDeps {
   engine: AgentEngine;
-  /**
-   * D72 P6：无内置模型时维护 loop 改走外部 Agent（后台精简会话：只读、空临时
-   * cwd，Wiki 文件只经注入的维护工具读写）；缺省只用内置模型。
-   */
+  /** 后台整理路由（2026-11 修订：恒内置）；缺省只用内置模型。 */
   router?: LlmRouter | undefined;
   paths: AppPaths;
   bots: BotsService;
@@ -151,28 +149,26 @@ export async function runWikiMaintenance(
     status: 'running',
     provider: route.provider,
     model: modelRef,
-    engine: engineKeyOf(route),
+    engine: BUILTIN_ENGINE,
   });
 
   const logPath = path.join(root, 'log.md');
   const logBefore = existsSync(logPath) ? readFileSync(logPath, 'utf8') : '';
 
-  const handle: RunHandle = route.engine.startRun(
-    backgroundRunSpec(route, {
-      identity: {
-        runId: run.id,
-        botId,
-        conversationId: task.input.conversationId,
-        loopType: 'wiki_maintenance',
-      },
-      model: modelRef,
-      isRouteCurrent: () => routeStillCurrent(deps, 'wiki_maintenance', botId, modelRef),
-      buildSystemPrompt: async () => maintenancePrompt(owner),
-      messages: [{ role: 'user', timestamp: Date.now(), content: taskMessage(task) }],
-      tools: buildMaintenanceTools({ wikiRoot: root }),
-      limits: { maxTurns: RUN_MAX_TURNS },
-    }),
-  );
+  const handle: RunHandle = route.engine.startRun({
+    identity: {
+      runId: run.id,
+      botId,
+      conversationId: task.input.conversationId,
+      loopType: 'wiki_maintenance',
+    },
+    model: modelRef,
+    isRouteCurrent: () => routeStillCurrent(deps, 'wiki_maintenance', botId, modelRef),
+    buildSystemPrompt: async () => maintenancePrompt(owner),
+    messages: [{ role: 'user', timestamp: Date.now(), content: taskMessage(task) }],
+    tools: buildMaintenanceTools({ wikiRoot: root }),
+    limits: { maxTurns: RUN_MAX_TURNS },
+  });
   persistSteps(run.id, handle, deps.runs, deps.secrets);
 
   let outcome;

@@ -97,7 +97,7 @@
         workdirId: session.view?.conversation.workdirId ?? null,
         prefill,
         agent: (id) => agentsStore.get(id),
-        defaultAgentId: settingsStore.settings?.defaultAgentId ?? null,
+        defaultTaskAgentId: settingsStore.settings?.defaultTaskAgentId ?? null,
       }),
   );
 

@@ -26,7 +26,6 @@ import {
 } from '../../src/agent/external/providers/index.js';
 import { genericAcpProvider } from '../../src/agent/external/providers/generic-acp.js';
 import type { ProviderRegistry } from '../../src/agent/external/types.js';
-import { agentBackgroundBlocker } from '../../src/agent/llm-router.js';
 import type { RunOutcome, RunSpec } from '../../src/agent/types.js';
 import { Scheduler } from '../../src/scheduler/scheduler.js';
 
@@ -124,27 +123,6 @@ describe('agentConcurrency (scheduler / router / settings view)', () => {
     expect(new Scheduler(logger).concurrencyFor('agent:claude-acp')).toBe(1);
   });
 
-  it('agents without parallel sessions are not eligible for background work', () => {
-    const claude = fakeAgentEntry('claude-x', { provider: 'claude', releaseGate: 'claude' });
-    expect(agentBackgroundBlocker(settings(), claude)).toBeNull();
-    // Same provider, but declared without parallel sessions.
-    const serial: ProviderRegistry = {
-      ...PROVIDERS,
-      claude: {
-        ...PROVIDERS.claude!,
-        features: { ...PROVIDERS.claude!.features, parallelSessions: false },
-      },
-    };
-    expect(agentBackgroundBlocker(settings(), claude, serial)).toMatch(/该智能体未验证可并行会话/);
-    // An override cannot lift it.
-    expect(
-      agentBackgroundBlocker(
-        settings({ providerConcurrency: { default: 4, 'agent:claude-x': 4 } }),
-        claude,
-        serial,
-      ),
-    ).toMatch(/未验证可并行会话/);
-  });
 });
 
 describe('the clamp end to end (fake agent refusing concurrent prompts)', () => {

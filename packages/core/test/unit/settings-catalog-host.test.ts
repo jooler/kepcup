@@ -1802,7 +1802,7 @@ describe('settings catalog host: D89 review round 2', () => {
     await expect(
       rig.host.applyItem({
         itemId: 'bot.agent',
-        values: { agent: 'not-in-catalog', permission: 'ask' },
+        values: { engine: 'agent', agent: 'not-in-catalog', permission: 'ask' },
         expected: null,
         target: { botId: 'bot_a' },
       }),
@@ -1810,13 +1810,37 @@ describe('settings catalog host: D89 review round 2', () => {
     expect(rig.bots.get('bot_a')!.profile.runtime.agent.id).toBe('');
     await rig.host.applyItem({
       itemId: 'bot.agent',
-      values: { agent: 'agent-a', permission: 'ask' },
+      values: { engine: 'agent', agent: 'agent-a', permission: 'ask' },
       expected: null,
       target: { botId: 'bot_a' },
     });
     expect(rig.bots.get('bot_a')!.profile.runtime.agent).toMatchObject({
       id: 'agent-a',
       permission: 'ask',
+    });
+    // 显式内置：'builtin' 哨兵 + 可选任务模型。
+    await rig.host.applyItem({
+      itemId: 'bot.agent',
+      values: { engine: 'builtin' },
+      expected: null,
+      target: { botId: 'bot_a' },
+    });
+    expect(rig.bots.get('bot_a')!.profile.runtime.agent).toMatchObject({
+      id: 'builtin',
+      model: '',
+      permission: 'workspace',
+    });
+    // 跟随应用默认：清成三态空值。
+    await rig.host.applyItem({
+      itemId: 'bot.agent',
+      values: { engine: 'default' },
+      expected: null,
+      target: { botId: 'bot_a' },
+    });
+    expect(rig.bots.get('bot_a')!.profile.runtime.agent).toMatchObject({
+      id: '',
+      model: '',
+      permission: 'workspace',
     });
   });
 

@@ -201,8 +201,6 @@ export const CARD_KEYS = [
   'embedding',
   /** `AppearanceSection`（主题 / 语言，渲染层拥有）。 */
   'appearance',
-  /** `BackgroundTasksSection`。 */
-  'background-tasks',
   /** `UnattendedSection` 的开启 / 关闭。 */
   'unattended',
   /** 污点防护开关（`UnattendedSection` 的对应行）。 */

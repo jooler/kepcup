@@ -1,5 +1,7 @@
 # 04 Agent 运行时规范
 
+> **2026-11 修订（模型场景三分类）**：对话轮与后台整理**恒走内置引擎**，外部智能体只驱动任务。下文的「onboarding 订阅分支 / 默认 Agent（`settings.defaultAgentId`）」「后台 loop 的 Agent 路由（`backgroundAgentId` / `backgroundTasks` / `agentBackgroundBlocker` / `admit` / `backgroundRunSpec`）」「外部引擎 `complete()` 一次性会话（`AGENT_COMPLETE_*`）」「无内置模型的确定性降级（§8.4 / `#routeWithoutModel`，DEV-011）」**均已移除**；现状见 [design/28 §8 修订注](../design/28-external-agents-acp.md)。历史阶段的「落地要点」保留原貌，仅作记录。
+
 设计依据：[design/02-execution.md](../design/02-execution.md)、[design/30-supervisor-and-tasks.md](../design/30-supervisor-and-tasks.md)、[design/04-memory.md](../design/04-memory.md)、[design/09-tech-stack.md](../design/09-tech-stack.md#agent-looppi)、[design/14-models-and-browser.md](../design/14-models-and-browser.md)。
 
 ## pi 的封装
@@ -111,7 +113,7 @@ P4 B 落地要点（对话内设置 / onboarding / 后台兜底）：
 
 - **结构化 setup**：`setupRequirementSchema` 增 `{kind:'agent', agentId, reason, detail?}`（`reason` ∈ `experimental_off / not_enabled / not_installed / auth_required / incompatible / unavailable / sandbox_unavailable / config_unsafe`，shared `agent-status.ts`；`detail` 目前只用于 `config_unsafe`：失败说明里要改的文件与键）。两个触发点：① run 开工前门禁 `agentRunGate`（`agent/external/catalog.ts`）——实验开关、目录、AgentsService 状态视图（`agentSetupReasonOf`：未启用 / 安装中或损坏 / `needs_auth` / 不兼容）；条目已不在目录中仍是普通失败；② 引擎失败结算——`outcome.error.code` 经 `agentSetupReasonForError` 映射（`AGENT_AUTH_REQUIRED` → auth_required、`AGENT_INCOMPATIBLE` → incompatible、`AGENT_UNAVAILABLE` → 本机状态原因或 `unavailable`〔如宿主工具桥未启动〕），`AGENT_SANDBOX_UNAVAILABLE`（Claude 沙箱起不来，`failIfUnavailable` 不降级）→ sandbox_unavailable（卡片给出 bubblewrap / socat 安装提示），`AGENT_CONFIG_UNSAFE`（Provider `checkConfig` 拒绝：OpenCode 用户配置放行了需宿主确认的操作）→ config_unsafe（卡片列出文件与键，改配置后测试连接 / 继续，无需重装），其余失败（`AGENT_FAILED` / 进程退出）走普通失败横幅；run 已有模型 / 工具步骤或已发消息时一律普通失败（重试会整段重放）。失败先回写 `AgentsService.noteRunError`：需要登录的条目记为未登录（`needs_auth` 并推送 `agent.status`），下一次发消息即被门禁拦下、不再启动会话。`_auth/status_update` 的 `none` 经 `AgentHost.authStatus` 同样进入状态视图。
 - **设置卡**（desktop `chats/AgentSetupBody.svelte`，`SetupRequiredCard` 的 agent 分支）：内嵌设置页同一张 `settings/AgentCard.svelte`（`embedded`：启用 = 安装确认 / 登录 / API key / 测试连接）；实验开关关闭时先给「开启」按钮；Agent 状态首次加载后观察到的「不可用 → 可用」转变（`probing` 中的 ready 不算）或测试连接通过即 `chat.continueAfterSetup()`（同一失败 run 只自动重试一次，重试后被门禁扣下的草稿也发出）（失败路径 `runs.retry`，门禁路径冲草稿）。发送门禁 `chats/send-gate.ts` 与 core 共用 `agentSetupReasonOf`（Agent 视图未加载时只看启用开关；访谈期间恒按内置模型判定）。
-- **默认 Agent**：`settings.defaultAgentId`（onboarding「我有订阅」写入，设置 → 智能体可改）——没有默认主模型、实验开关打开且该 Agent 已启用时，`BotsService.create` 给未指定模型与 Agent 的新 Bot（含管家；对话式访谈除外）填 `runtime.agent.id`（预览档 `ask`，否则 `workspace`）。订阅分支下管家不进组队访谈（访谈只在内置引擎上跑）。
+- **默认 Agent**（已随 2026-11 修订移除）：曾用 `settings.defaultAgentId` 给无默认主模型的新建 Bot 套用外部智能体；现在新建 Bot 恒为空 `runtime.agent`（跟随应用默认任务引擎 `settings.defaultTaskAgentId`）。订阅分支下管家不进组队访谈（访谈只在内置引擎上跑）——该分支亦已从 onboarding 移除。
 - **后台 loop 最小兜底**（P6 前；P6 起由 `llm-router` 改走外部 Agent，只在无可用后台 Agent / 已关闭时仍按此跳过）：无内置模型时摘要、反思、记忆整理（仍做不经模型的过期失效）、画像整理、Wiki 巡检、技能生成在建 run 之前跳过并记 info 日志（job 记为 done、无失败 run、无错误事件）；路由判断跳过 = 仅 @ / 回复响应；续接 L2 仲裁视为不续接；SubAgent 结果压缩原本即在无轻量模型时跳过。Wiki 入库（用户显式触发）仍以「未配置主模型」报错。
 
 | AgentEngine 能力 | ACP 机制 |
@@ -553,7 +555,7 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 | 技能生成 | 主模型 | 完整 loop | 文件工具与 bash，限定在技能草稿目录 | 2 | P08 |
 | 组件制作 | Bot 主模型（`widget_authoring`）；审查用 `widget_review`（设置「组件审查模型」，缺省跟随 Bot 主模型） | 宿主状态机：每阶段一个完整 loop（SPEC 6 / BUILD 30 / FIX 15 / REVIEW 10 轮） | read / ls / write / edit / `widget_check` / `widget_template` / `stage_done`（REVIEW 只有 read / ls / `submit_review`），限定在本次制作的草稿目录 | 嵌套在发起的任务 run 下（不经调度器） | D87 |
 
-模型解析顺序：Bot Profile 中的设置 → 设置页默认值。轻量模型未配置时使用主模型。没有内置主模型、只配了外部智能体的 Bot，对话轮按设计 30 §8.4 第 2 级降级：不调模型、宿主确定性路由（`#routeWithoutModel`，DEV-011）。
+模型解析顺序：Bot Profile 中的设置 → 设置页默认值。轻量模型未配置时使用主模型。没有内置主模型的 Bot 无法对话（走主模型设置卡）；外部智能体不替代对话模型（2026-11 修订：无模型确定性降级已移除，见 design 30 §8.4）。
 
 另有仅 core 的伪 loop 类型 `'host'`：宿主代用户发起的动作（workdir 回退、系统安装、技能导入审批）的执行身份，不落 runs 行、可写（不在 shared 的 `loopTypeSchema` 里）。
 
@@ -632,7 +634,7 @@ D75 常量（`packages/shared/src/constants.ts`）：
 
 - `self` → 负责人完整对话轮（`lead_fallback`，必答）；`route` → 目标成员静默响应（首个 `routed` 必答、其余 `routed_also`）；`none` → 静默结束（仅纯致谢 / 寒暄 / 无需任何人回应）。
 - **宿主硬化**（`normalizeGateDecision`）：`targets` 过滤为在场的非负责人成员、去重、截到 `ROUTING_ROUTE_TARGETS_MAX`（3）；`route` 无有效目标降级 `self`；`self` / `none` 不带 targets。
-- 超时 `TRIAGE_TIMEOUT_MS`（经外部 Agent 时 `AGENT_TRIAGE_TIMEOUT_MS`）；任何失败按 `self`（兜底不变式：每条用户消息必有结局）。
+- 超时 `TRIAGE_TIMEOUT_MS`（分诊恒内置，2026-11 修订）；任何失败按 `self`（兜底不变式：每条用户消息必有结局）。
 
 ### 对话摘要
 

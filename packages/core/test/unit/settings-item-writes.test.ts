@@ -264,7 +264,7 @@ describe('P1 setting item writes', () => {
     const adapter = rig.adapters(itemSpec);
     adapter.write!(
       itemSpec,
-      { next: { agent: 'codex', model: '', permission: 'ask' }, secrets: {} },
+      { next: { engine: 'agent', agent: 'codex', model: '', permission: 'ask' }, secrets: {} },
       rig.target,
     );
     const modelField = itemSpec.fields.find((field) => field.name === 'model')!;
@@ -280,20 +280,20 @@ describe('P1 setting item writes', () => {
     expect(
       adapter.valuesWiden!(
         item('bot.agent'),
-        { agent: '', permission: 'workspace' },
-        { agent: 'codex' },
+        { engine: 'default', agent: '', permission: 'workspace' },
+        { engine: 'agent', agent: 'codex' },
       ),
     ).toBe(true);
     expect(
       adapter.valuesWiden!(
         item('bot.agent'),
-        { agent: 'codex', permission: 'workspace' },
+        { engine: 'agent', agent: 'codex', permission: 'workspace' },
         { permission: 'read_only' },
       ),
     ).toBe(false);
     adapter.write!(
       item('bot.agent'),
-      { next: { agent: 'codex', model: 'gpt', permission: 'ask' }, secrets: {} },
+      { next: { engine: 'agent', agent: 'codex', model: 'gpt', permission: 'ask' }, secrets: {} },
       rig.target,
     );
     expect(rig.bot.profile.runtime.agent).toMatchObject({
