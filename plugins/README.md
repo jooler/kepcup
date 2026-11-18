@@ -15,7 +15,7 @@ plugins/
   im-<id>/             即时通讯插件（D107）：instances: ['im'] + 一份 im 贡献
   dashscope/           阿里云百炼（D124）：instances: ['capability-model'] + 13 条模型条目
   volcengine-ark/      火山方舟（D124）：instances: ['capability-model'] + 3 条模型条目
-  dashscope-t2i/       百炼 Qwen-Image 文生图（D125 执行型试点）：runtime 段 + 自带代码 + 1 条 image 条目
+  dashscope-t2i/       Qwen-Image 3.0 文生图（D125 执行型，1.2.1 起去试点命名）：runtime 段 + 自带代码 + 1 条 image 条目
   reference-media/     执行型参考插件（D125）：media 契约假实现，开发者调试用
   README.md
 ```
@@ -239,3 +239,18 @@ cd infra/cloudflare/directory && npx wrangler deploy
   「提供 N 个模型；可添加多个厂商账号」随之可解析——不含该贡献的旧宿主在条目级
   校验单独跳过，整份索引不受影响）。发布动作（生产密钥签名 → R2 → `wrangler
   deploy`）走既有 release 流程，本批次未执行。
+
+### dashscope-t2i 去试点改名（1 个，2026-11-18 发布）
+
+- `dashscope-t2i` 1.2.1（`bfd13bcf…`，287931 B）、`engines.kepcup` 维持 `>=0.5.14` 不变：
+  插件名从「百炼文生图（执行型试点）」改为「**Qwen-Image 3.0 文生图**」（描述同步去掉
+  「试点」措辞），纯元数据改名——`dist/main.js` 与线上 1.2.0 打包产物逐字节一致
+  （esbuild 需在插件目录内执行，cwd 不同只会漂移注释路径），代码零改动。
+- 流程照旧：27 个已上线插件全部重打包（26 个未变的 sha256 与线上逐字节一致、R2 无需
+  重传），新对象仅 dashscope-t2i。签名索引
+  `generatedAt=2026-11-17T17:59:17.916Z`（严格递增、27 条），生产密钥
+  `kepcup-plugins-2026-1`；R2 上传 1 包后 `wrangler deploy` 上线（Worker version
+  `d01740c2-e99a-4c25-a371-46f5ec593208`）。线上索引拉回 `--verify` 通过、新包从
+  `pkg.kepcup.com` 下载回 sha256 复核一致（市场卡片名与安装后插件名同为
+  「Qwen-Image 3.0 文生图」）。索引 27 条：dashscope / volcengine-ark / mcp-feishu
+  仍属待发布批次，未纳入。
