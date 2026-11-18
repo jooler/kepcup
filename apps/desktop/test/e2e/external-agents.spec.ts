@@ -324,21 +324,24 @@ test('in-chat agent setup card: a disabled agent holds the message; enabling in 
     await expect(page.locator('[data-testid="chat-view"]')).toBeVisible();
     await page.locator('[data-testid="composer-input"]').click();
 
-    // 对话轮恒走内置引擎，消息会发出；任务开跑时被 agentRunGate 拦住，
-    // 对话里出现 Agent 设置卡（原因：未启用），完成后自动重试该任务。
+    // 发送门禁：任务引擎未启用时不发出——草稿留在输入框、无用户气泡、
+    // 无失败 run，对话里出现 Agent 设置卡（原因：未启用）。
+    await send(page, '在吗');
+    const setup = page.locator('[data-testid="setup-card"]');
+    await expect(setup).toBeVisible({ timeout: 15_000 });
+    await expect(setup.locator('[data-testid="setup-card-agent-reason"]')).toBeVisible();
+    await expect(page.locator('[data-testid="composer-input"]')).toContainText('在吗');
+    await expect(page.locator('[data-testid="user-bubble"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="run-failed-banner"]')).toHaveCount(0);
+
+    // 卡片内启用 → 就绪后自动收卡；门禁路径不会自动发出草稿，再发一次。
+    await setup.locator('[data-testid="agent-enable-fake"]').click();
+    await page.locator('[data-testid="agent-install-confirm"]').click();
+    await expect(page.locator('[data-testid="setup-card"]')).toHaveCount(0, { timeout: 30_000 });
     await send(page, '在吗');
     await expect(page.locator('[data-testid="user-bubble"]').filter({ hasText: '在吗' })).toBeVisible(
       { timeout: 30_000 },
     );
-    const setup = page.locator('[data-testid="setup-card"]');
-    await expect(setup).toBeVisible({ timeout: 60_000 });
-    await expect(setup.locator('[data-testid="setup-card-agent-reason"]')).toBeVisible();
-    await expect(page.locator('[data-testid="run-failed-banner"]')).toHaveCount(0);
-
-    // 卡片内启用 → 就绪 → 卡片收起 → 失败的任务自动重试，唤醒轮转述。
-    await setup.locator('[data-testid="agent-enable-fake"]').click();
-    await page.locator('[data-testid="agent-install-confirm"]').click();
-    await expect(page.locator('[data-testid="setup-card"]')).toHaveCount(0, { timeout: 30_000 });
     await expectAgentReport(page, '设置好了，我来了。');
   } finally {
     await session.close();
