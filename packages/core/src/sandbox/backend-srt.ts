@@ -39,11 +39,23 @@ interface SrtNetworkConfig {
 const LOOPBACK_ENTRIES = new Set(['localhost', '127.0.0.0/8', '0.0.0.0/8', '::1']);
 
 /**
+ * srt filesystem block as produced by this module. srt 0.0.83 widened its
+ * config to also accept `{ path, literal }` entries; this host only emits
+ * plain path strings, and the WSL/container wire protocol carries strings.
+ */
+export interface SrtFilesystemConfig {
+  denyRead: string[];
+  allowRead?: string[];
+  allowWrite: string[];
+  denyWrite: string[];
+}
+
+/**
  * Filesystem block for srt (deny-then-allow read model). Exported so the P12
  * enhanced backends reuse the exact same rule layer instead of copying it
  * (docs/dev/phases/P12-windows-and-enhanced-sandbox.md 任务 6).
  */
-export function srtFilesystemFor(policy: SandboxPolicy): SandboxRuntimeConfig['filesystem'] {
+export function srtFilesystemFor(policy: SandboxPolicy): SrtFilesystemConfig {
   return {
     denyRead: policy.denyRead,
     // srt read model: deny-then-allow. Workspace + caches must stay readable

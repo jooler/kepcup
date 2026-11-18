@@ -20,10 +20,10 @@
     "deploy:dry-run": "pnpm run build && wrangler deploy --dry-run"
   },
   "devDependencies": {
-    "@astrojs/check": "0.9.10",
-    "@astrojs/sitemap": "3.7.4",
-    "astro": "7.3.8",
+    "@astrojs/check": "0.9.12",
+    "@astrojs/sitemap": "3.7.5",
+    "astro": "7.4.12",
     "typescript": "5.8.3",
-    "wrangler": "4.151.1"
+    "wrangler": "4.164.0"
   }
 }

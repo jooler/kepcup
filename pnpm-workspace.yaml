@@ -7,6 +7,9 @@ packages:
 # （Phase A 审查 P1-1，todo/pi-1x-upgrade-mcp-subagent.md）。
 overrides:
   undici: 8.11.2
+  # astro2tsx pins @emnapi/core 1.11.3; pnpm's peer dedupe otherwise pairs it
+  # with the 2.0 beta runtime pulled in by rolldown, breaking `astro check`.
+  '@emnapi/runtime': 1.11.3
 
 allowBuilds:
   electron: true
@@ -22,18 +25,6 @@ allowBuilds:
   electron-winstaller: false
 
 minimumReleaseAgeExclude:
-  - '@typescript-eslint/eslint-plugin@8.71.0'
-  - '@typescript-eslint/parser@8.71.0'
-  - '@typescript-eslint/project-service@8.71.0'
-  - '@typescript-eslint/scope-manager@8.71.0'
-  - '@typescript-eslint/tsconfig-utils@8.71.0'
-  - '@typescript-eslint/type-utils@8.71.0'
-  - '@typescript-eslint/types@8.71.0'
-  - '@typescript-eslint/typescript-estree@8.71.0'
-  - '@typescript-eslint/utils@8.71.0'
-  - '@typescript-eslint/visitor-keys@8.71.0'
-  - typescript-eslint@8.71.0
-  - '@anthropic-ai/sandbox-runtime@0.0.78'
   - '@earendil-works/pi-agent-core@1.4.0'
   - '@earendil-works/pi-ai@1.4.0'
   - '@earendil-works/pi-codemode@1.4.0'
