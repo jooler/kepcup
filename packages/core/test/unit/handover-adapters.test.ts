@@ -177,17 +177,22 @@ describe('model adapter', () => {
     expect(adapter.validate(ctxOf(world, 'bot_b', 'bot_b'), 'model:inherit', 'copy')).toBeNull();
     const inherit = adapter.inventory('bot_a')[0]!;
     expect(adapter.warnings(ctxOf(world, 'bot_a', 'bot_b'), inherit)).toEqual([
-      'B 目前由「内置引擎」驱动，之后改由「外部智能体 claude」驱动',
+      'B 目前由「内置智能体」驱动，之后改由「外部智能体 claude」驱动',
     ]);
     // A ref or「default」on an external-agent bot switches it back to the built-in engine.
     const registry = new HandoverRegistry([adapter]);
     const byRef = registry.entry('bot_a', 'model:p/m1')!.entry;
     expect(adapter.warnings(ctxOf(world, 'bot_a', 'bot_x'), byRef)).toEqual([
-      'X 目前由「外部智能体 codex」驱动，之后改由「内置引擎」驱动',
+      'X 目前由「外部智能体 codex」驱动，之后改由「内置智能体」驱动',
     ]);
     expect(adapter.describe(byRef, 'copy', 'X')).toContain('内置引擎');
     await adapter.apply(ctxOf(world, 'bot_a', 'bot_x'), 'model:default');
-    expect(world.bot('bot_x').profile.runtime).toMatchObject({ model: '', agent: { id: '' } });
+    // 2026-11 修订：改「跟随设置默认」的模型时，任务引擎显式落为内置智能体
+    // （与告警口径一致，不随应用默认漂移）。
+    expect(world.bot('bot_x').profile.runtime).toMatchObject({
+      model: '',
+      agent: { id: 'builtin' },
+    });
   });
 });
 

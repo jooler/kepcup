@@ -117,7 +117,7 @@ export interface ContinuationInput {
   goal: string | null;
   timeZone: string;
   logger: CoreLogger;
-  /** Test override of TRIAGE_TIMEOUT_MS / AGENT_TRIAGE_TIMEOUT_MS (default from constants). */
+  /** Test override of TRIAGE_TIMEOUT_MS (default from the constant). */
   timeoutMs?: number;
 }
 

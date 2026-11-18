@@ -49,21 +49,10 @@ export function providerFor(
 }
 
 /**
- * Whether a background session (`SessionContext.oneShot`) of this entry runs
- * without any native tool (审查 S1): the provider declares it
- * (`backgroundNoNativeTools`), or the entry is the testkit fake agent
- * (`testkitExempt`).
- */
-export function backgroundToolFree(entry: AgentCatalogEntry, provider: AgentProvider): boolean {
-  if (provider.backgroundNoNativeTools === true) return true;
-  return testkitExempt(entry);
-}
-
-/**
  * Whether one process of this entry may have prompts in flight on several
  * sessions at once (`features.parallelSessions`, design 28 §7 / §9.2). The
  * testkit fake agent keeps all prompt state per session, so it is exempt in
- * test / dev builds exactly like `backgroundToolFree`.
+ * test / dev builds.
  */
 export function parallelSessionsFor(entry: AgentCatalogEntry, provider: AgentProvider): boolean {
   return provider.features.parallelSessions || testkitExempt(entry);

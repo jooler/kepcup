@@ -144,7 +144,7 @@ describe('valuesFromState / controlDefault / supportsItem', () => {
       'models.concurrency',
       'general.launch-at-login',
       'models.widget-review',
-      'agents.default',
+      'models.task-engine',
     ]) {
       expect(supportsItem(getSettingItem(id)!), id).toBe(true);
     }

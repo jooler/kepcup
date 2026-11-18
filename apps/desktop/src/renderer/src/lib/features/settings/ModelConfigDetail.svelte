@@ -6,6 +6,7 @@
   import { t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { settingsStore } from '$lib/stores/settings.svelte';
+  import { agentsStore } from '$lib/stores/agents.svelte';
   import { shell } from '$lib/stores/shell.svelte';
   import { capabilityEntries } from '$lib/features/plugins/capability-entries.svelte';
   import {
@@ -166,6 +167,59 @@
     }
   }
 
+  // --- 默认任务执行引擎 / 后台任务模型（2026-11 修订） -----------------------
+  // 任务引擎：'' = 内置智能体；外部智能体时 Bot 未显式设置就由它驱动任务。
+  // 对话轮恒内置、后台整理恒内置，都不受本设置影响。
+  $effect(() => {
+    agentsStore.start();
+    if (!agentsStore.loaded) void agentsStore.refresh().catch(() => undefined);
+  });
+  const taskAgentId = $derived(settingsStore.settings?.defaultTaskAgentId ?? '');
+  const taskAgentOptions = $derived(agentsStore.selectable);
+  const taskAgentKnown = $derived(taskAgentId.length > 0 ? agentsStore.get(taskAgentId) : null);
+  const taskAgentModelOptions = $derived(
+    taskAgentId.length > 0 ? (agentsStore.options[taskAgentId]?.models ?? []) : [],
+  );
+  let taskAgentModelBusy = $state(false);
+  $effect(() => {
+    if (taskAgentId.length === 0 || agentsStore.options[taskAgentId] !== undefined) return;
+    void agentsStore.loadOptions(taskAgentId).catch(() => undefined);
+  });
+  async function saveTaskAgent(id: string): Promise<void> {
+    try {
+      await settingsStore.update({ defaultTaskAgentId: id });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
+  }
+  async function saveTaskAgentModel(select: HTMLSelectElement): Promise<void> {
+    if (taskAgentId.length === 0) return;
+    taskAgentModelBusy = true;
+    try {
+      await agentsStore.configure(taskAgentId, { model: select.value });
+    } catch (error) {
+      select.value = taskAgentKnown?.defaultModel ?? '';
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      taskAgentModelBusy = false;
+    }
+  }
+
+  // 后台任务模型（选中即保存；失败回滚）：整理类后台 loop 的内置模型。
+  const backgroundModelValue = $derived(settingsStore.settings?.backgroundModel ?? '');
+  let backgroundModelSaving = $state(false);
+  async function saveBackgroundModel(select: HTMLSelectElement): Promise<void> {
+    backgroundModelSaving = true;
+    try {
+      await settingsStore.update({ backgroundModel: select.value });
+    } catch (error) {
+      select.value = backgroundModelValue;
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      backgroundModelSaving = false;
+    }
+  }
+
   // --- 能力槽位（每种专有能力一条默认选择） ---------------------------------
 
   const hasKeyById = $derived(
@@ -264,9 +318,82 @@
         </div>
       </div>
       <div class="flex items-center justify-between gap-4 py-3.5">
-        <span class="text-sm" id="default-light-label">{t('settings.defaultLightModel')}</span>
-        <div class="w-64 max-w-[60%]">
+        <div class="min-w-0">
+          <span class="text-sm" id="default-light-label">{t('settings.defaultLightModel')}</span>
+          <p class="text-xs text-muted-foreground">{t('settings.defaultLightModelHint')}</p>
+        </div>
+        <div class="w-64 max-w-[60%] shrink-0">
           <ModelSelectField bind:value={lightModel} testid="default-light-model" labelledBy="default-light-label" />
+        </div>
+      </div>
+      <div class="flex items-center justify-between gap-4 py-3.5">
+        <div class="min-w-0">
+          <span class="text-sm" id="task-engine-label">{t('settings.taskEngine')}</span>
+          <p class="text-xs text-muted-foreground">{t('settings.taskEngineHint')}</p>
+        </div>
+        <div class="w-64 max-w-[60%] shrink-0">
+          <select
+            class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+            aria-labelledby="task-engine-label"
+            value={taskAgentId}
+            onchange={(event) => void saveTaskAgent(event.currentTarget.value)}
+            data-testid="task-engine-select"
+          >
+            <option value="">{t('settings.taskEngineBuiltin')}</option>
+            {#each taskAgentOptions as agent (agent.id)}
+              <option value={agent.id}>{agent.name}</option>
+            {/each}
+            {#if taskAgentId !== '' && taskAgentKnown === null}
+              <option value={taskAgentId}>{taskAgentId}{t('settings.taskEngineUnavailable')}</option>
+            {/if}
+          </select>
+        </div>
+      </div>
+      {#if taskAgentId !== ''}
+        <div class="flex items-center justify-between gap-4 py-3.5">
+          <div class="min-w-0">
+            <span class="text-sm" id="task-agent-model-label">{t('settings.taskAgentModel')}</span>
+            <p class="text-xs text-muted-foreground">{t('settings.taskAgentModelHint')}</p>
+          </div>
+          <div class="w-64 max-w-[60%] shrink-0">
+            <select
+              class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+              aria-labelledby="task-agent-model-label"
+              value={taskAgentKnown?.defaultModel ?? ''}
+              disabled={taskAgentModelBusy}
+              onchange={(event) => void saveTaskAgentModel(event.currentTarget)}
+              data-testid="task-agent-model-select"
+            >
+              <option value="">{t('settings.taskAgentModelDefault')}</option>
+              {#each taskAgentModelOptions as model (model.value)}
+                <option value={model.value}>{model.name}</option>
+              {/each}
+            </select>
+          </div>
+        </div>
+      {/if}
+      <div class="flex items-center justify-between gap-4 py-3.5">
+        <div class="min-w-0">
+          <span class="text-sm" id="background-model-label">{t('settings.backgroundModel')}</span>
+          <p class="text-xs text-muted-foreground">{t('settings.backgroundModelHint')}</p>
+        </div>
+        <div class="w-64 max-w-[60%] shrink-0">
+          <select
+            class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+            aria-labelledby="background-model-label"
+            value={backgroundModelValue}
+            disabled={backgroundModelSaving}
+            onchange={(event) => void saveBackgroundModel(event.currentTarget)}
+            data-testid="background-model-select"
+          >
+            <option value="">{t('settings.backgroundModelFollow')}</option>
+            {#each settingsStore.availableModelOptions as option (option.ref)}
+              <option value={option.ref}>{option.label}</option>
+            {/each}
+            {#if backgroundModelValue !== '' && !settingsStore.availableModelOptions.some((option) => option.ref === backgroundModelValue)}
+              <option value={backgroundModelValue}>{backgroundModelValue}{t('settings.widgetReviewModelUnavailable')}</option>
+            {/if}
+          </select>
         </div>
       </div>
       <div class="flex items-center justify-between gap-4 py-3.5">

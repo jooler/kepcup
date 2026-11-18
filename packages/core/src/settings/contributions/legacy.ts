@@ -1,6 +1,4 @@
 import {
-  agentsDefaultAdapter,
-  backgroundTasksAdapter,
   botInkcopAgentsAdapter,
   browserSharedProfilesAdapter,
   developerCustomMcpAdapter,
@@ -36,7 +34,6 @@ export const legacyContribution: SettingAdapterContribution = {
     'connections.tool-policy': toolPolicyAdapter,
     'mcp.servers': mcpServersAdapter,
     'agents.external': externalAgentsAdapter,
-    'agents.default': agentsDefaultAdapter,
     'agents.inkcop-local-collab': inkcopLocalCollabAdapter,
     'bot.inkcop-agents': botInkcopAgentsAdapter,
     'browser.shared-profiles': browserSharedProfilesAdapter,
@@ -46,7 +43,6 @@ export const legacyContribution: SettingAdapterContribution = {
     'project.lead': projectLeadAdapter,
     'workdir.protect-rules': (deps) => workdirRulesAdapter(deps, 'rules'),
     'workdir.ports': (deps) => workdirRulesAdapter(deps, 'ports'),
-    'background.tasks': backgroundTasksAdapter,
     'unattended.enable': (deps) => unattendedAdapter(deps, 'enable'),
     'unattended.disable': (deps) => unattendedAdapter(deps, 'disable'),
     'developer.custom-mcp': developerCustomMcpAdapter,

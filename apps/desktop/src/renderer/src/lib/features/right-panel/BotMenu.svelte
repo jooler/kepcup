@@ -26,11 +26,9 @@
   import { chat } from '$lib/stores/chat.svelte';
   import { workdirs } from '$lib/stores/workdirs.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
-  import { agentsStore } from '$lib/stores/agents.svelte';
   import { memoryStore } from '$lib/stores/memory.svelte';
   import { skillsStore } from '$lib/stores/skills.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
-  import { engineValue, AGENT_OPTION_PREFIX } from '$lib/features/bot-panel/agent-capabilities';
   import { enabledPluginCount } from '$lib/features/bot-panel/bot-plugins';
   import { plugins } from '$lib/features/plugins/plugins.svelte';
   import { inkcopCollabEnabled } from '$lib/features/inkcop-collab';
@@ -76,10 +74,6 @@
 
   // 行摘要依赖的 store（与配置表单 / 各详情同一批；列表载入即可读计数）。
   $effect(() => {
-    agentsStore.start();
-    if (!agentsStore.loaded) void agentsStore.refresh().catch(() => undefined);
-  });
-  $effect(() => {
     plugins.start();
     void plugins.load().catch(() => undefined);
   });
@@ -114,12 +108,9 @@
   );
 
   const modelSummary = $derived.by(() => {
-    const value = engineValue(profile.runtime);
-    // 模型 / 智能体留空 = 跟随设置里的默认主模型，不是「没设置」。
+    const value = profile.runtime.model;
+    // 主模型留空 = 跟随设置里的默认主模型，不是「没设置」。
     if (value.length === 0) return t('rightPanel.configFollowDefault');
-    if (value.startsWith(AGENT_OPTION_PREFIX)) {
-      return agentsStore.get(value.slice(AGENT_OPTION_PREFIX.length))?.name ?? value;
-    }
     const option = settingsStore.availableModelOptions.find((entry) => entry.ref === value);
     return option?.label ?? value;
   });

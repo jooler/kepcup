@@ -121,12 +121,15 @@ export const botRuntimeSchema = z.object({
    */
   capability_entries: z.array(capabilityEntryRefSchema).max(16).default([]),
   /**
-   * 外部智能体引擎（D72，docs/design/28-external-agents-acp.md §3）：`id` 为
-   * 空 = 内置 pi 引擎（其余字段忽略）；非空 = 由目录中该 Agent 驱动。D75
-   * （docs/design/30-supervisor-and-tasks.md §8.1）起语义为「Bot 的**任务**
-   * 引擎」：任务在该 Agent 上执行（每任务一个会话），对话轮固定内置引擎。
-   * `model` / `effort` 为空 = Agent 默认；`capabilities` 为 null = 跟随能力包
-   * 默认值（host-capabilities.ts `defaultCapabilities`）。Profile JSON，无迁移。
+   * 任务执行引擎（D72 / D75，docs/design/28-external-agents-acp.md §3；2026-11
+   * 修订）：任务在该引擎上执行（每任务一个会话），对话轮固定内置引擎，后台
+   * 任务恒内置。
+   *
+   * `id` 三态：`''` = 跟随应用默认（settings `defaultTaskAgentId`，默认内置
+   * 智能体）；`'builtin'` = 显式内置引擎（`model` 可选内置任务模型，'' =
+   * 跟随主模型）；目录 agent id = 外部智能体（`model` / `effort` 为空 =
+   * Agent 默认；`capabilities` 为 null = 跟随能力包默认值
+   * host-capabilities.ts `defaultCapabilities`）。Profile JSON，无迁移。
    */
   // Stored profiles must never fail to parse over this block (rowToBot would
   // fall back to an empty profile): every field tolerates unknown values.
@@ -140,10 +143,17 @@ export const botRuntimeSchema = z.object({
     })
     .prefault({})
     .catch({ id: '', model: '', effort: '', permission: 'workspace', capabilities: null }),
+  /**
+   * 该 Bot 后台整理任务（摘要 / 反思 / 记忆整理 / 画像整理 / Wiki 维护 / 技能
+   * 生成）用的内置模型；'' = 跟随全局「后台任务模型」（settings
+   * `backgroundModel`，再空 = 轻量模型 → 主模型）。分诊 / 上下文压缩 / 微应用
+   * 不走本字段（仍走轻量模型链）。Profile JSON，无迁移。
+   */
+  background_model: z.string().default('').catch(''),
 });
 export type BotAgentRuntime = z.infer<typeof botRuntimeSchema>['agent'];
 
-/** `runtime.agent` 的默认值（内置引擎），供构造完整 Profile 的调用方复用。 */
+/** `runtime.agent` 的默认值（'' = 跟随应用默认任务引擎），供构造完整 Profile 的调用方复用。 */
 export const BUILTIN_AGENT_RUNTIME: BotAgentRuntime = {
   id: '',
   model: '',
@@ -1007,8 +1017,6 @@ export const onboardingStateSchema = z.object({
   completed: z.boolean().default(false),
   /** The model step ended with a saved key (persisted as a user decision). */
   modelConfigured: z.boolean().default(false),
-  /** The model step was skipped — the main window keeps prompting. */
-  modelSkipped: z.boolean().default(false),
 });
 export type OnboardingState = z.infer<typeof onboardingStateSchema>;
 
@@ -1016,7 +1024,6 @@ export type OnboardingState = z.infer<typeof onboardingStateSchema>;
 export const onboardingStatePatchSchema = z.object({
   completed: z.boolean().optional(),
   modelConfigured: z.boolean().optional(),
-  modelSkipped: z.boolean().optional(),
 });
 export type OnboardingStatePatch = z.infer<typeof onboardingStatePatchSchema>;
 
@@ -1062,36 +1069,6 @@ export const agentSettingInputSchema = z
     model: z.string().max(500).optional(),
   })
   .strict();
-
-/**
- * 后台任务（D72 P6，design 28 §8）：摘要 / 反思 / 记忆整理等后台 loop 由内置
- * 智能体还是外部 Agent 执行，以及外部 Agent 的降配项。
- *
- * 默认是内置智能体（`agentEnabled=true` + 未指定 Agent；没有内置模型时回落到
- * 各 Bot 自己的智能体）；明确指定 `backgroundAgentId` 时「选定即生效」，即使
- * 配置了内置模型也走该 Agent。`builtinEnabled=false` + `agentEnabled=false`
- * 才是整块跳过后台任务。
- */
-export const backgroundTasksSettingsSchema = z
-  .object({
-    /**
-     * 是否允许内置模型执行后台任务（缺省 true；false = 跳过内置路由）。
-     * 旧值只有 `agentEnabled=false`、没有本字段：仍视作内置智能体——升级前它在
-     * 有内置模型时本就跑内置，迁移成 false 会静默停掉后台任务。
-     */
-    builtinEnabled: z.boolean().optional().catch(undefined),
-    /** 是否允许改用外部 Agent（关 = 只用内置智能体）。 */
-    agentEnabled: z.boolean().default(true).catch(true),
-    /** 外部 Agent 也运行技能生成（最耗额度，默认关）。 */
-    agentSkillAuthoring: z.boolean().default(false).catch(false),
-    /**
-     * 外部 Agent 的项目组路由判断默认关：项目组只在被 @ / 回复时响应。默认开
-     * （审查 C2）：路由判断经 Agent 只在用户明确关掉此项后运行。
-     */
-    projectMentionOnly: z.boolean().default(true).catch(true),
-  })
-  .catch({ agentEnabled: true, agentSkillAuthoring: false, projectMentionOnly: true });
-export type BackgroundTasksSettings = z.infer<typeof backgroundTasksSettingsSchema>;
 
 /**
  * 任务 Loop（D93，design 43 §5.3）：内置 pi 长任务的空转保护与软预算。
@@ -1314,9 +1291,8 @@ export const settingsSchema = z.object({
   inkcopLocalCollab: inkcopLocalCollabSettingsSchema.prefault({}),
   /**
    * First-run onboarding state (P13 任务 4), stored in the existing settings
-   * row — no new migration. `modelSkipped` drives the persistent "no model
-   * configured" prompt on the main window (docs/dev/phases/P13-release.md
-   * 任务 4: 可跳过，但无法与 Bot 对话，界面持续提示).
+   * row — no new migration. 没有可用模型时主窗口的持续提示按「无厂商 Key」
+   * 判定（不再有 modelSkipped 标记：模型步必配，2026-11 修订）.
    */
   onboarding: onboardingStateSchema.prefault({}),
   /**
@@ -1337,21 +1313,21 @@ export const settingsSchema = z.object({
   // 逐条 safeParse），避免未来格式变化让 settings 整体解析失败。
   customAgents: z.array(z.unknown()).default([]).catch([]),
   /**
-   * 后台 loop 选用的 Agent（P6）；缺省 / '' = 内置智能体（没有内置模型时回落到
-   * 各 Bot 自己的 Agent，不换用别家，审查 S2）；明确指定时即使有内置模型也走它
-   * （选定即生效）；无所属 Bot 的任务（画像整理、项目组摘要）只在明确指定时运行。
+   * 默认任务执行引擎（2026-11 修订，design 28 §8）：Bot 的 `runtime.agent.id`
+   * 为空（跟随应用默认）时，任务由它驱动。'' = 内置 pi 引擎；目录 agent id =
+   * 外部智能体（模型用 `agents[id].model`，再空 = Agent 默认）。对话轮固定
+   * 内置引擎，不受本字段影响。
    */
-  backgroundAgentId: z.string().optional().catch(undefined),
-  /** 后台任务（P6）：改用外部 Agent 的开关与降配项。 */
-  backgroundTasks: backgroundTasksSettingsSchema.prefault({}),
+  defaultTaskAgentId: z.string().default('').catch(''),
+  /**
+   * 后台任务模型（2026-11 修订）：摘要 / 反思 / 记忆整理 / 画像整理 / Wiki
+   * 维护 / 技能生成等整理类后台 loop 用的内置模型；'' = 轻量模型 → 主模型。
+   * Bot 可用 `runtime.background_model` 覆盖。分诊 / 上下文压缩 / 微应用不走
+   * 本字段（仍走轻量模型链）。
+   */
+  backgroundModel: z.string().default('').catch(''),
   /** D93：内置任务 Loop 的空转检测与软预算（设置 → 通用 → 任务 Loop）。 */
   taskLoop: taskLoopSettingsSchema.prefault({}),
-  /**
-   * 新建 Bot 的默认外部 Agent（D72 P4，onboarding「我有订阅」分支写入）：没有
-   * 默认主模型时，新建的 Bot（含管家）若未指定模型 / Agent，即以它驱动；
-   * '' = 不设。
-   */
-  defaultAgentId: z.string().default('').catch(''),
   /** 连接应用（D73）的 core 自有状态，如工具锁定基线标记。 */
   apps: appsSettingsSchema.prefault({}),
   /**

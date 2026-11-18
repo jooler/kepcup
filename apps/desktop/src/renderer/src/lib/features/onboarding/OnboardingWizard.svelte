@@ -8,11 +8,9 @@
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { sandboxWizard } from '$lib/stores/sandbox-wizard.svelte';
   import { onboarding } from '$lib/stores/onboarding.svelte';
-  import { agentsStore } from '$lib/stores/agents.svelte';
   import { shell } from '$lib/stores/shell.svelte';
   import { plugins } from '$lib/features/plugins/plugins.svelte';
   import { ENDPOINT_KIND } from '$lib/features/web-shell/endpoint';
-  import AgentCard from '$lib/features/settings/AgentCard.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
@@ -22,20 +20,16 @@
 
   /**
    * P13 任务 4 首次启动引导（docs/dev/phases/P13-release.md 任务 4）：
-   * 欢迎/数据位置 → 模型厂商（可跳过，跳过后主界面持续提示；保存 key 时
-   * 一并选择默认主模型与默认轻量模型写入 settings——新建 Bot 的
-   * runtime.model/light_model 为空即分别回退到它们，主模型不选则首对话报
-   * 「未配置模型」）→ 权限（自启/系统通知）→ 沙箱（macOS 自动检测；
+   * 欢迎/数据位置 → 模型厂商（必须配置：保存 key 时一并选择默认主模型与默认
+   * 轻量模型写入 settings——新建 Bot 的 runtime.model/light_model 为空即分别
+   * 回退到它们）→ 权限（自启/系统通知）→ 沙箱（macOS 自动检测；
    * Windows 复用 P12-B 准备向导，可跳过）→ 认识管家（D70：建立唯一管家并
    * 进入组队访谈，由管家提议 3~5 个领域 Bot；快速单 Bot 仍走侧栏「新建」）。
    * 状态机双向：每一步都可「上一步」。完成状态写既有 settings 行
    * （onboarding.*），无新迁移。
    *
-   * 模型步骤的「我有订阅」分支（D72 P4，design 28 §3 / §9.1）：列出支持订阅
-   * 登录的目录 Agent（设置页同一张卡片：条款提示、启用 = 安装确认、登录、
-   * 测试连接）→ 选用后写 settings.defaultAgentId
-   * ——没有内置模型时，管家与之后新建的 Bot 默认由它驱动。管家的组队访谈
-   * 只在内置引擎上跑，订阅分支下管家直接以欢迎语开场（不访谈）。
+   * 外部智能体（D72）不在向导里配置：任务执行引擎由用户此后在设置页自己开
+   * 启（2026-11 修订，design 28 §3）。
    */
 
   type Step = 'welcome' | 'model' | 'permissions' | 'sandbox' | 'bot' | 'done';
@@ -51,24 +45,6 @@
   let lightTouched = $state(false);
   let savingKey = $state(false);
   const providers = $derived(settingsStore.providers);
-
-  // --- 订阅分支（外部智能体） ---
-  /** 首次切到外部 Agent 的告知（与 Bot 运行配置的切换弹框同一记录）。 */
-  const SWITCH_ACK_KEY = 'kepcup.agentSwitchAcknowledged';
-  let modelMode = $state<'key' | 'subscription'>('key');
-  let subscriptionLoading = $state(false);
-  let chosenAgentId = $state('');
-  let savingAgent = $state(false);
-  /** 支持订阅登录的目录 Agent（`auth.kinds` 含 subscription）。 */
-  const subscriptionAgents = $derived(
-    agentsStore.agents.filter((agent) => agent.authKinds.includes('subscription')),
-  );
-  const chosenAgent = $derived(chosenAgentId.length > 0 ? agentsStore.get(chosenAgentId) : null);
-  const agentPathName = $derived(
-    agentsStore.get(settingsStore.settings?.defaultAgentId ?? '')?.name ??
-      settingsStore.settings?.defaultAgentId ??
-      '',
-  );
 
   // --- 权限步骤 ---
   let launchAtLogin = $state(true);
@@ -128,13 +104,6 @@
   }
 
   const providerReady = $derived(providers.some((p) => p.hasKey));
-  /** 订阅分支已选用 Agent 且没有内置模型：管家不访谈，由 Agent 驱动。 */
-  // 与 core 的默认 Agent 解析同一判定（start.ts：defaultAgentId 非空且没有
-  // 默认主模型），审查 #8。
-  const agentPath = $derived(
-    (settingsStore.settings?.defaultAgentId ?? '').length > 0 &&
-      (settingsStore.settings?.defaultMainModel ?? '').length === 0,
-  );
 
   /**
    * 默认模型候选（主/轻量同一份）：已存 key 时列全部已配置 key 的厂商（与
@@ -183,10 +152,6 @@
       await settingsStore.update({
         defaultMainModel: defaultModel,
         defaultLightModel: lightModel,
-        // 走了 API key 路径：此前订阅分支选过的默认 Agent 清掉（审查 #8）。
-        ...((settingsStore.settings?.defaultAgentId ?? '').length > 0
-          ? { defaultAgentId: '' }
-          : {}),
       });
       await persist({ onboarding: { modelConfigured: true } });
       goto('permissions');
@@ -207,9 +172,7 @@
     const patch: {
       defaultMainModel?: string;
       defaultLightModel?: string;
-      defaultAgentId?: string;
     } = {};
-    if ((settings?.defaultAgentId ?? '').length > 0) patch.defaultAgentId = '';
     if (defaultModel.length > 0 && defaultModel !== (settings?.defaultMainModel ?? '')) {
       patch.defaultMainModel = defaultModel;
     }
@@ -220,63 +183,9 @@
     goto('permissions');
   }
 
-  /** 「我有订阅」：列出支持订阅登录的目录 Agent（设置页同一张卡片）。 */
-  function openSubscription(): void {
-    modelMode = 'subscription';
-    void loadSubscriptionAgents();
-  }
-
-  async function loadSubscriptionAgents(): Promise<void> {
-    subscriptionLoading = true;
-    try {
-      agentsStore.start();
-      await agentsStore.refresh();
-      const current = settingsStore.settings?.defaultAgentId ?? '';
-      if (chosenAgentId.length === 0 && current.length > 0) chosenAgentId = current;
-    } catch (error) {
-      toast.error(
-        t('agents.actionFailed', { error: error instanceof Error ? error.message : String(error) }),
-      );
-    } finally {
-      subscriptionLoading = false;
-    }
-  }
-
-  /** 回到 API key。 */
-  function leaveSubscription(): void {
-    modelMode = 'key';
-  }
-
-  /** 选用的 Agent 写为新建 Bot（含管家）的默认引擎，进入下一步。 */
-  async function saveAgentAndNext(): Promise<void> {
-    if (chosenAgent === null || !chosenAgent.enabled) return;
-    savingAgent = true;
-    try {
-      await settingsStore.update({ defaultAgentId: chosenAgent.id });
-      await persist({ onboarding: { modelConfigured: true, modelSkipped: false } });
-      try {
-        localStorage.setItem(SWITCH_ACK_KEY, '1');
-      } catch {
-        // per-device notice record only
-      }
-      goto('permissions');
-    } catch (error) {
-      toast.error(
-        t('agents.actionFailed', { error: error instanceof Error ? error.message : String(error) }),
-      );
-    } finally {
-      savingAgent = false;
-    }
-  }
-
-  async function skipModel(): Promise<void> {
-    await persist({ onboarding: { modelSkipped: true } });
-    goto('permissions');
-  }
-
   /** Writes the onboarding patch; steps stay navigable either way. */
   async function persist(patch: {
-    onboarding?: { completed?: boolean; modelConfigured?: boolean; modelSkipped?: boolean };
+    onboarding?: { completed?: boolean; modelConfigured?: boolean };
     launchAtLogin?: boolean;
   }): Promise<void> {
     const { onboarding: onboardingPatch, ...rest } = patch;
@@ -321,8 +230,8 @@
       await settingsStore.update({
         appLanguage: i18n.locale === 'en-US' ? 'en-US' : 'zh-CN',
       });
-      // 订阅分支：管家由外部 Agent 驱动，组队访谈（内置引擎）不开启。
-      const result = (await core.call('butler.ensure', { interview: !agentPath })) as {
+      // 组队访谈恒在内置引擎上跑（外部智能体只驱动任务，2026-11 修订）。
+      const result = (await core.call('butler.ensure', { interview: true })) as {
         bot: { id: string };
         conversationId: string;
       };
@@ -410,82 +319,8 @@
           {t('onboarding.start')}
         </Button>
       </footer>
-    {:else if step === 'model' && modelMode === 'subscription'}
-      <div data-testid="onboarding-subscription">
-        <p class="text-sm text-muted-foreground">{t('onboarding.subscriptionBody')}</p>
-        <div class="mt-3 max-h-[46vh] space-y-3 overflow-y-auto pr-1">
-          {#if subscriptionLoading}
-            <p class="text-xs text-muted-foreground">{t('setupCard.agentLoading')}</p>
-          {:else if subscriptionAgents.length === 0}
-            <p class="text-xs text-muted-foreground">{t('onboarding.subscriptionEmpty')}</p>
-          {/if}
-          {#each subscriptionAgents as agent (agent.id)}
-            <div class="space-y-1.5">
-              <AgentCard {agent} embedded />
-              <label class="flex items-center gap-2 pl-1 text-sm">
-                <input
-                  type="radio"
-                  name="onboarding-agent"
-                  value={agent.id}
-                  bind:group={chosenAgentId}
-                  data-testid={`onboarding-agent-choose-${agent.id}`}
-                />
-                {t('onboarding.subscriptionChoose', { name: agent.name })}
-              </label>
-            </div>
-          {/each}
-        </div>
-        {#if chosenAgent !== null}
-          <details class="mt-3 text-xs" data-testid="onboarding-agent-notice">
-            <summary class="cursor-pointer text-muted-foreground">
-              {t('contacts.agentSwitchTitle', { name: chosenAgent.name })}
-            </summary>
-            <ul class="mt-1.5 space-y-1 text-muted-foreground">
-              <li>· {t('contacts.agentSwitchTools')}</li>
-              <li>· {t('contacts.agentSwitchReads')}</li>
-              <li>· {t('contacts.agentSwitchPrompt')}</li>
-              <li>· {t('contacts.agentSwitchFeatures')}</li>
-              <li>· {t('contacts.agentSwitchHistory')}</li>
-            </ul>
-          </details>
-          {#if !chosenAgent.enabled}
-            <p class="mt-2 text-xs text-muted-foreground">
-              {t('onboarding.subscriptionEnableFirst')}
-            </p>
-          {/if}
-        {/if}
-      </div>
-      <footer class="mt-6 flex items-center justify-between">
-        <Button
-          size="sm"
-          variant="ghost"
-          onclick={() => void leaveSubscription()}
-          data-testid="onboarding-subscription-back"
-        >
-          {t('onboarding.subscriptionBack')}
-        </Button>
-        <Button
-          size="sm"
-          disabled={savingAgent || chosenAgent === null || !chosenAgent.enabled}
-          onclick={() => void saveAgentAndNext()}
-          data-testid="onboarding-subscription-save"
-        >
-          {t('onboarding.modelSave')}
-        </Button>
-      </footer>
     {:else if step === 'model'}
       <p class="text-sm text-muted-foreground">{t('onboarding.modelBody')}</p>
-      {#if !providerReady}
-        <Button
-          size="sm"
-          variant="outline"
-          class="mt-3 w-full"
-          onclick={openSubscription}
-          data-testid="onboarding-subscription-open"
-        >
-          {t('onboarding.subscriptionOpen')}
-        </Button>
-      {/if}
       {#if providers.length === 0}
         <p class="mt-3 text-sm text-amber-600">{t('onboarding.modelNoProvider')}</p>
       {:else}
@@ -571,14 +406,6 @@
               {t('onboarding.modelSave')}
             </Button>
           {:else}
-            <Button
-              size="sm"
-              variant="outline"
-              onclick={() => void skipModel()}
-              data-testid="onboarding-model-skip"
-            >
-              {t('onboarding.modelSkip')}
-            </Button>
             <Button
               size="sm"
               disabled={savingKey ||
@@ -688,17 +515,10 @@
     {:else if step === 'bot'}
       <p class="text-sm text-muted-foreground">{t('onboarding.botBody')}</p>
       <ul class="mt-4 grid gap-1.5 text-sm" data-testid="onboarding-butler-points">
-        {#if !agentPath}
-          <li>· {t('onboarding.butlerPoint.team')}</li>
-        {/if}
+        <li>· {t('onboarding.butlerPoint.team')}</li>
         <li>· {t('onboarding.butlerPoint.route')}</li>
         <li>· {t('onboarding.butlerPoint.quick')}</li>
       </ul>
-      {#if agentPath}
-        <p class="mt-3 text-xs text-muted-foreground" data-testid="onboarding-butler-agent-note">
-          {t('onboarding.butlerAgentNote', { name: agentPathName })}
-        </p>
-      {/if}
       <!-- P2 注入模型：推荐插件多选（默认全不选；无已装插件时给商店引导）。 -->
       <div class="mt-4 grid gap-1.5" data-testid="onboarding-plugins">
         <p class="text-sm font-medium">{t('onboarding.pluginsTitle')}</p>

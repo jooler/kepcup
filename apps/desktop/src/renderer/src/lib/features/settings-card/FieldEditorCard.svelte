@@ -47,12 +47,12 @@
   } = $props();
 
   /** 专用分支：并发上限（provider 联动 limit + 「默认」伪选项）、开机启动（i18n 标签与
-   * OS 级提示）、组件审查模型（i18n 提示）、默认智能体（「无」空选项）。 */
+   * OS 级提示）、组件审查模型（i18n 提示）、默认任务执行引擎（「内置智能体」空选项）。 */
   const SPECIAL_ITEM_IDS = new Set([
     'models.concurrency',
     'general.launch-at-login',
     'models.widget-review',
-    'agents.default',
+    'models.task-engine',
   ]);
   const special = $derived(SPECIAL_ITEM_IDS.has(item.id));
   /** 勾选即存（不渲染保存按钮）：单开关条目，改动立即生效（remote.enabled 是
@@ -374,18 +374,19 @@
         data-testid={`${testid}-limit`}
       />
     {:else if special && field.name === 'agent'}
-      <Label for={`${testid}-agent`}>{t('agents.defaultAgent')}</Label>
+      <Label for={`${testid}-agent`}>{t('settings.taskEngine')}</Label>
       <select
         id={`${testid}-agent`}
         class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
         bind:value={agent}
         data-testid={`${testid}-agent`}
       >
-        <option value="">{t('agents.defaultAgentNone')}</option>
+        <option value="">{t('settings.taskEngineBuiltin')}</option>
         {#each agentOptions as option (option.id)}
           <option value={option.id}>{option.name}</option>
         {/each}
       </select>
+      <p class="text-xs text-muted-foreground">{t('settings.taskEngineHint')}</p>
     {:else if special && field.name === 'enabled'}
       <label class="flex items-start gap-2 text-sm">
         <Checkbox bind:checked={enabled} data-testid={`${testid}-enabled`} />

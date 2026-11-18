@@ -560,10 +560,9 @@ describe('D75 supervisor turns (W2)', () => {
     taskHold.release();
   }, 30_000);
 
-  it('§8.4 downgrade: an agent-only bot without a built-in model routes messages to a task and points at its report', async () => {
+  it('an agent-only bot: the built-in turn dispatches the task and the waking turn relays the report', async () => {
     const started: FakeAcpAgentHandle[] = [];
     const stack = await createTestStack({
-      env: { KEPCUP_MOCK_LLM_URL: '' },
       agentLaunch: () => ({ command: 'in-process', args: [], env: {} }),
       agentSpawn: fakeAgentSpawner(
         { fake: { turns: [agentTurn().text('RESULT-AGENT 已经整理好了')] } },
@@ -571,10 +570,9 @@ describe('D75 supervisor turns (W2)', () => {
       ) as never,
     });
     stacks.push(stack);
-    const { core } = stack;
+    const { core, llm } = stack;
     await core.rpc.call('settings.update', {
       agents: { fake: { enabled: true } },
-      backgroundTasks: { agentEnabled: false },
     });
     const created = await makeBot(core, '外援');
     const bot = (
@@ -591,22 +589,43 @@ describe('D75 supervisor turns (W2)', () => {
     ).bot;
     const conv = await openDirect(core, bot.id);
 
+    // 对话轮（内置）派出任务；2026-11 修订起不再有无模型的确定性降级——消息
+    // 经 start_task 带给任务，任务报告由唤醒的对话轮转述（§6.1）。
+    llm.script('mock-main', [
+      step()
+        .inTurn()
+        .expect((req) => req.lastUserText().includes('帮我整理一下资料'))
+        .replyToolCall('start_task', () => ({
+          title: '整理资料',
+          instruction: 'ORGANIZE 整理用户给的资料',
+          source_message_ids: domain(stack)
+            .messages.listShared(conv.id, { limit: 10 })
+            .filter((m) => m.senderType === 'user')
+            .map((m) => m.id),
+          writes: false,
+        })),
+      step().inTurn().replyText('ACK 我交给外援'),
+      step()
+        .inTurn()
+        .expect((req) => req.lastUserText().includes('已经整理好了'))
+        .replyText('RELAY 外援说：已经整理好了'),
+    ]);
+
     const [source] = await sendBatch(core, conv.id, ['帮我整理一下资料']);
     const task = await waitFor(() => runsOf(stack, conv.id, 'task')[0] ?? null, {
-      label: 'task started by the downgraded turn',
+      label: 'task started by the turn',
     });
     expect(task.triggerMessageIds).toEqual([source!.id]);
-    const [turn1] = await waitTurns(stack, conv.id, 1, 'downgraded turn settled');
+    const [turn1] = await waitTurns(stack, conv.id, 1, 'starting turn settled');
     expect(turn1).toMatchObject({ status: 'completed', engine: 'builtin' });
     expect(task.originRunId).toBe(turn1!.id);
 
     const done = await waitRun(stack, task.id, ['completed'], 'agent task completed');
     expect(done.engine).toBe('agent:fake');
-    // No model to summarize: the notice points at the task card, and the report
-    // itself is not a chat message (§6.1 2026-11 修订).
-    const notice = await waitVisible(stack, conv.id, '点击任务卡查看执行报告');
-    expect(notice.senderBotId).toBe(bot.id);
-    expect((notice.content as { origin?: string }).origin).toBeUndefined();
+    // The waking turn relays; the report itself is not a chat message (§6.1).
+    const relay = await waitVisible(stack, conv.id, 'RELAY 外援说');
+    expect(relay.senderBotId).toBe(bot.id);
+    expect((relay.content as { origin?: string }).origin).toBeUndefined();
     await waitFor(
       () => (domain(stack).runs.getOrThrow(task.id).resultConsumedAt !== null ? true : null),
       { label: 'result consumed' },
@@ -624,7 +643,6 @@ describe('D75 supervisor turns (W2)', () => {
     const { core, llm } = stack;
     await core.rpc.call('settings.update', {
       agents: { fake: { enabled: true } },
-      backgroundTasks: { agentEnabled: false },
     });
     const created = await makeBot(core, '外援');
     const bot = (

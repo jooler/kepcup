@@ -1259,21 +1259,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // Test/e2e-only seam: absent from the packaged artifact (P13 产物剔除).
     if (__KEPCUP_TEST_HOOKS__) seedMockLlm(settings, env, logger);
 
-    // D72 P4：onboarding「我有订阅」写入的默认 Agent——仅在没有默认主模型且
-    // 该 Agent 已启用时用于新建 Bot（预览档默认 ask）。
-    const bots = new BotsService(mainDb, clock, () => {
-      const current = settings.get();
-      const agentId = current.defaultAgentId;
-      if (agentId.length === 0 || current.defaultMainModel.length > 0) return null;
-      if (current.agents[agentId]?.enabled !== true) return null;
-      const entry = findAgentEntry(effectiveAgentCatalog(extraAgentEntries), agentId);
-      if (entry === null) return null;
-      return {
-        id: agentId,
-        permission: entry.tier === 'preview' ? 'ask' : 'workspace',
-        model: current.agents[agentId]?.model ?? '',
-      };
-    });
+    // 新建 Bot 恒内置任务引擎（跟随应用默认 settings.defaultTaskAgentId，2026-11
+    // 修订）：没有「没有主模型时套用外部 Agent」的回退。
+    const bots = new BotsService(mainDb, clock);
     lookupDirectBot = (botId) => bots.get(botId);
     const avatars = new BotAvatarService({ paths, clock, bots });
     const userProfileAvatars = new UserProfileAvatarService({ paths, clock, settings });
@@ -2077,23 +2065,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         services.scheduler?.setConcurrency(settings.get().providerConcurrency),
     });
     services.agentsService = agentsService;
-    // D72 P6 后台调用路由：有内置模型照旧；没有时后台 loop 改走外部 Agent
-    // （设置「后台任务」；就绪状态取 AgentsService 的状态视图）。
-    const llmRouter = new LlmRouter({
-      settings,
-      bots,
-      builtin: engine,
-      external: externalEngine,
-      catalog: () => agentCatalog,
-      agentView: (agentId) => {
-        try {
-          return agentsService!.view(agentId);
-        } catch {
-          return null;
-        }
-      },
-      // 审查 C2: agent triage is opt-in via backgroundTasks.projectMentionOnly.
-    });
+    // 后台调用路由（2026-11 修订）：恒内置——外部智能体只驱动任务。
+    const llmRouter = new LlmRouter({ settings, bots, builtin: engine });
     services.llmRouter = llmRouter;
     // D72: `agent:{id}` limits follow features.parallelSessions (unverified
     // agents run one session at a time, overrides clamped — design 28 §7).
@@ -2874,15 +2847,14 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         // P2 注入模型：orchestrator 传入本次 run 的有效启用集，透传给技能装配。
         promptSection: (botId, extraPluginIds) => skills.promptSection(botId, extraPluginIds),
         readableDirs: (botId, extraPluginIds) => skills.readableDirs(botId, extraPluginIds),
-        // D72 P4 审查 #3 / P6：技能生成 loop 需要内置模型，或在设置「后台任务」
-        // 里允许外部 Agent 生成技能（默认关）；都没有时登记前直接告诉 Bot，而不是
-        // 回「已登记」后静默不做。
+        // 技能生成 loop 需要内置模型（2026-11 修订：后台整理恒内置）；没有时
+        // 登记前直接告诉 Bot，而不是回「已登记」后静默不做。
         requestAuthoring: (input) => {
           if (llmRouter.resolveForBot(input.botId, 'skill_authoring') === null) {
             return {
               ok: false,
               message:
-                '需要内置模型：技能生成在后台起草并验证，当前没有配置内置模型（也未在设置「后台任务」中允许外部智能体生成技能），未登记。可以把做法直接告诉用户，或请用户先在设置中配置模型。',
+                '需要内置模型：技能生成在后台起草并验证，当前没有配置内置模型，未登记。可以把做法直接告诉用户，或请用户先在设置中配置模型。',
             };
           }
           return skills.requestAuthoring(input);

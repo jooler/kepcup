@@ -280,25 +280,21 @@ describe('ScheduleService.transferTo — queued occurrence (审查 #8)', () => {
 });
 
 describe('new target「与来源相同」with an empty source runtime (审查 #3)', () => {
-  it('the new bot follows the settings default like its source, not the onboarding default agent', async () => {
+  it('the new bot follows the settings default like its source', async () => {
     const stack = await createTestStack({
       env: { KEPCUP_MOCK_LLM_URL: '' },
       agentCatalog: [fakeAgentEntry('fake-sub', { name: 'Fake Subscription', tier: 'supported' })],
     });
     stacks.push(stack);
     const { core } = stack;
-    await core.rpc.call('settings.update', {
-      agents: { 'fake-sub': { enabled: true } },
-      defaultAgentId: 'fake-sub',
-    });
     // 访谈中建的管家：模型与 Agent 都是空的（访谈只在内置引擎上跑）。
     const ensured = (await core.rpc.call('butler.ensure', { interview: true })) as {
       bot: Bot;
       conversationId: string;
     };
     expect(ensured.bot.profile.runtime).toMatchObject({ model: '', agent: { id: '' } });
-    // 对照：普通新建 Bot 会套用默认外部 Agent。
-    expect((await makeBot(core, '对照')).profile.runtime.agent.id).toBe('fake-sub');
+    // 对照：普通新建 Bot 也恒为空（跟随应用默认，2026-11 修订起没有默认外部 Agent）。
+    expect((await makeBot(core, '对照')).profile.runtime.agent.id).toBe('');
 
     const host = core.services.handover!;
     const identity = {

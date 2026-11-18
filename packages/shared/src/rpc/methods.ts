@@ -514,19 +514,13 @@ export const settingsUpdateInputSchema = z.object({
       taintGuard: z.boolean().optional(),
     })
     .optional(),
-  /** 后台 loop 选用的 Agent（P6）；'' = 自动。 */
-  backgroundAgentId: z.string().optional(),
-  /** 后台任务开关（P6）：部分 patch，与已存值合并。 */
-  backgroundTasks: z
-    .object({
-      builtinEnabled: z.boolean().optional(),
-      agentEnabled: z.boolean().optional(),
-      agentSkillAuthoring: z.boolean().optional(),
-      projectMentionOnly: z.boolean().optional(),
-    })
-    .optional(),
-  /** 新建 Bot 的默认外部 Agent（onboarding 订阅分支）；'' 清除。 */
-  defaultAgentId: z.string().optional(),
+  /**
+   * 默认任务执行引擎（'' = 内置智能体；目录 agent id = 外部智能体）。
+   * Bot `runtime.agent.id` 为空（跟随应用默认）时由它驱动任务。
+   */
+  defaultTaskAgentId: z.string().optional(),
+  /** 后台任务模型（整理类后台 loop 用）；'' = 轻量模型 → 主模型。 */
+  backgroundModel: z.string().optional(),
   /** D96 远程遥控：总开关与中转地址（部分 patch；条目 `remote.enabled` / `remote.relay`）。 */
   remoteEnabled: z.boolean().optional(),
   remoteRelayUrl: relayEndpointSchema.optional(),
@@ -1001,10 +995,6 @@ export const botsCreateInputSchema = z
      * profile，完成后自行结束（setup_state 清空）。默认 false 走原路径。
      */
     interview: z.boolean().default(false),
-    /**
-     * 不套用 onboarding 默认外部 Agent（InkCop 同机桥绑定等：消息不经 ACP）。
-     */
-    skipDefaultAgent: z.boolean().default(false),
   })
   .refine((input) => input.interview || input.profile.identity.name.trim().length > 0, {
     path: ['profile', 'identity', 'name'],

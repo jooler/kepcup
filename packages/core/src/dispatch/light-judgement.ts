@@ -1,7 +1,6 @@
 import type { TSchema } from 'typebox';
 import type { ZodType } from 'zod';
 import {
-  AGENT_TRIAGE_TIMEOUT_MS,
   TRIAGE_RECENT_MESSAGES,
   TRIAGE_TIMEOUT_MS,
   type Bot,
@@ -21,18 +20,15 @@ import type { CoreLogger } from '../infra/logger.js';
 /**
  * One lightweight structured judgement (D92 T1a routing): the shared skeleton
  * of the continuation check (the last replier P) and the lead gate — route
- * selection (built-in light model, else the external agent), scheduler
- * submission at priority 0, a run row (`loop_type='triage'`), the structured
- * call with usage recording, and the timeout counted from submission
- * (审查 M6). The skeleton the former per-bot broadcast triage used, now shared
- * by the continuation check and the lead gate (D92 T1a), parameterized.
+ * selection (built-in light model), scheduler submission at priority 0, a run
+ * row (`loop_type='triage'`), the structured call with usage recording, and
+ * the timeout counted from submission (审查 M6). The skeleton the former
+ * per-bot broadcast triage used, now shared by the continuation check and the
+ * lead gate (D92 T1a), parameterized.
  */
 export interface LightJudgementSpec<T> {
   engine: AgentEngine;
-  /**
-   * D72 P6 后台路由：无内置模型时改走外部 Agent（一次性精简会话；超时照旧取
-   * `fallback`）。缺省 = 只用内置模型。
-   */
+  /** 内置路由（分诊恒内置，2026-11 修订）；缺省 = 只用内置模型。 */
   router?: LlmRouter;
   scheduler: Scheduler;
   runs: RunsService;
@@ -61,9 +57,9 @@ export interface LightJudgementSpec<T> {
   parametersSchema: TSchema;
   /** zod schema, for parsing. */
   schema: ZodType<T>;
-  /** Returned on timeout, provider failure, unparsable output, no model, or throttled. */
+  /** Returned on timeout, provider failure, unparsable output, no model. */
   fallback: T;
-  /** Test override of TRIAGE_TIMEOUT_MS / AGENT_TRIAGE_TIMEOUT_MS (default from constants). */
+  /** Test override of TRIAGE_TIMEOUT_MS (default from the constant). */
   timeoutMs?: number;
 }
 
@@ -102,20 +98,9 @@ export function runLightJudgement<T>(spec: LightJudgementSpec<T>): Promise<T> {
       finish(spec.fallback);
       return;
     }
-    // Agent judgement (审查 C2): throttled per (bot, conversation) — in between
-    // the bot answers @ / replies only.
-    if (
-      spec.router !== undefined &&
-      !spec.router.admit(route, 'triage', `${spec.botId}:${spec.conversationId}`)
-    ) {
-      finish(spec.fallback);
-      return;
-    }
     const { modelRef, provider } = route;
     const bot = spec.bots.get(spec.botId);
-    // A one-shot agent session (cold start included) needs longer (审查 C2).
-    const timeoutMs =
-      spec.timeoutMs ?? (route.agentId !== null ? AGENT_TRIAGE_TIMEOUT_MS : TRIAGE_TIMEOUT_MS);
+    const timeoutMs = spec.timeoutMs ?? TRIAGE_TIMEOUT_MS;
 
     const key = `${spec.keyPrefix}:${spec.conversationId}:${spec.botId}:${spec.batchId}`;
     const controller = new AbortController();

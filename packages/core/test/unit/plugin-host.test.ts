@@ -516,7 +516,7 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     const rig = makeRig({ callTimeoutOverride: {} });
     await rig.installSource(referenceSource());
     const instance = await rig.pluginInstances.create(REFERENCE_ID, {}, 'capability-model');
-    const bot = rig.bots.create({ identity: { name: '参考插件 Bot' } }, { skipDefaultAgent: true });
+    const bot = rig.bots.create({ identity: { name: '参考插件 Bot' } });
     rig.bots.setPluginIds(bot.id, [REFERENCE_ID]);
     rig.bots.setCapabilityEntries(bot.id, [
       { plugin: REFERENCE_ID, entry: 'reference-image' },
@@ -668,7 +668,7 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
     );
 
     // Bot 绑定执行型条目 → MediaService 解析到托管适配器。
-    const bot = rig.bots.create({ identity: { name: '百炼试点 Bot' } }, { skipDefaultAgent: true });
+    const bot = rig.bots.create({ identity: { name: '百炼试点 Bot' } });
     rig.bots.setPluginIds(bot.id, [PILOT_ID]);
     rig.bots.setCapabilityEntries(bot.id, [{ plugin: PILOT_ID, entry: PILOT_ENTRY_ID }]);
     const phases: string[] = [];
@@ -1510,7 +1510,7 @@ describe('PluginHost 真实子进程（D125 P2）', () => {
       { plugin: PROBE_ID, entry: 'probe-image' },
     ],
   ): string => {
-    const bot = rig.bots.create({ identity: { name: '探针 Bot' } }, { skipDefaultAgent: true });
+    const bot = rig.bots.create({ identity: { name: '探针 Bot' } });
     rig.bots.setPluginIds(bot.id, [PROBE_ID]);
     rig.bots.setCapabilityEntries(bot.id, entries);
     return bot.id;

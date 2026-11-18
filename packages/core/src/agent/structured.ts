@@ -83,9 +83,9 @@ export async function completeStructured<T>(input: CompleteStructuredInput<T>): 
   let target = { complete: input.complete, model: input.model };
   /**
    * Follows the current route; keeps the last one when none resolves. Only
-   * built-in → built-in switches are followed: moving onto (or off) an
-   * external agent changes what the call costs and which budgets / throttles
-   * (`LlmRouter.admit`) apply, so that is left to the next scheduled run.
+   * built-in → built-in switches are followed (2026-11 revision: routes are
+   * always built-in now; the agent-ref guard stays as a defensive check for
+   * test-injected engines).
    */
   const refreshTarget = (): boolean => {
     const next = input.resolveRoute?.();

@@ -540,7 +540,8 @@ export class HandoverHost implements HandoverToolFacade {
     const options = this.modelOptions();
     if (model === MODEL_INHERIT) {
       const agentId = from.profile.runtime.agent.id;
-      const refusal = agentId.length > 0 ? this.#deps.agents.selectable(agentId) : null;
+      const refusal =
+        agentId.length > 0 && agentId !== 'builtin' ? this.#deps.agents.selectable(agentId) : null;
       return `与 ${from.name} 相同（${botModelLabel(from, options)}）${
         refusal !== null ? `；${engineLabel(agentId)}现在不能用，确认时会改用内置引擎` : ''
       }`;
@@ -1174,11 +1175,9 @@ export class HandoverHost implements HandoverToolFacade {
     const from = this.#deps.bots.getOrThrow(record.fromBotId);
     const notes: string[] = [];
     let runtime: Partial<Pick<BotProfile['runtime'], 'model' | 'light_model' | 'agent'>>;
-    let skipDefaultAgent = false;
     if (item.model === MODEL_INHERIT) {
       const inherited = newTargetInheritedRuntime(from, this.#deps.agents);
       runtime = inherited.runtime;
-      skipDefaultAgent = inherited.skipDefaultAgent;
       if (inherited.refusal !== null) {
         notes.push(`${inherited.refusal}，${item.name} 改用内置引擎`);
       }
@@ -1195,7 +1194,7 @@ export class HandoverHost implements HandoverToolFacade {
     const slot = this.#deps.bots.listActive().length;
     let created: CreatedBotRecord | null = null;
     this.#deps.db.transaction(() => {
-      created = createProposedBotRecord(this.#deps, item, slot, runtime, { skipDefaultAgent });
+      created = createProposedBotRecord(this.#deps, item, slot, runtime);
       this.#deps.store.setToBot(record.id, created.bot.id);
     })();
     const done = created as CreatedBotRecord | null;

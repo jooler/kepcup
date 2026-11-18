@@ -31,8 +31,6 @@ import { genericAcpProvider } from './generic-acp.js';
  *   `allowDangerouslySkipPermissions: allowBypass`（我方传 false 即 false）与
  *   `permissionMode` 覆盖（claude-agent-acp 0.86.0 `acp-agent.js` ~7110–7135）；
  *   我方自己的 options 里强制项也放在最后，日后合入用户自定义项不能覆盖；
- * - 后台精简会话（P6 `oneShot`）：`systemPrompt` 为替换式字符串、`tools: []`
- *   （无原生工具），`settingSources: []` 与沙箱照旧；
  * - 未登录：`session/new` 成功、`session/prompt` 才报 -32000（todo 附录 A.4）；
  * - MCP 工具的结构化名在 `_meta.claudeCode.toolName`（适配器不填 `name`）。
  */
@@ -166,38 +164,27 @@ export const claudeProvider: AgentProvider = {
   instructionMode: 'meta-append',
   // claude-agent-acp 0.86.0 resets its per-session accumulator on each turn.
   usageSemantics: 'turn',
-  // 后台精简会话：`tools: []` 关掉全部原生工具（宿主桥 MCP 工具不受影响），
-  // `settingSources: []` 不加载任何设置（会话级，与进程无关）。
-  backgroundNoNativeTools: true,
   sessionNew: ({
     sessionPrompt,
     maxTurns,
     loadUserConfig,
     permission,
     isolation,
-    oneShot,
     hostGatesSandboxedExec,
   }) => {
     const disallowedTools = claudeDisallowedTools(permission);
     const prompt = sessionPrompt !== null && sessionPrompt.trim().length > 0 ? sessionPrompt : null;
     return {
       _meta: {
-        // 后台精简会话（P6）：替换式字符串——不带 Claude Code 预设提示词；
-        // 否则只追加。
-        ...(prompt !== null
-          ? { systemPrompt: oneShot === true ? prompt : { append: prompt } }
-          : {}),
+        ...(prompt !== null ? { systemPrompt: { append: prompt } } : {}),
         claudeCode: {
           options: {
             // ≤ 0 = unlimited (task Agent loops); omit so Claude Code has no host step cap.
             ...(maxTurns > 0 ? { maxTurns } : {}),
-            // 后台精简会话不给任何原生工具（宿主 MCP 桥的工具不受影响）。
-            ...(oneShot === true ? { tools: [] } : {}),
             ...(disallowedTools.length > 0 ? { disallowedTools } : {}),
             // Host-enforced keys last: nothing merged above may override them.
             sandbox: claudeSandboxSettings(permission, isolation, hostGatesSandboxedExec === true),
-            // 后台精简会话一律不加载任何设置（含个人配置）。
-            settingSources: loadUserConfig && oneShot !== true ? ['user'] : [],
+            settingSources: loadUserConfig ? ['user'] : [],
             allowDangerouslySkipPermissions: false,
           },
         },

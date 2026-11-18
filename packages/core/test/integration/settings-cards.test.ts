@@ -441,7 +441,7 @@ describe('conversational app settings', () => {
     await expect(
       core.rpc.call('settings.items.apply', {
         itemId: 'bot.agent',
-        values: { agent: 'claude-code', permission: 'ask' },
+        values: { engine: 'agent', agent: 'claude-code', permission: 'ask' },
         expected: null,
         target: { botId: bot.id },
       }),

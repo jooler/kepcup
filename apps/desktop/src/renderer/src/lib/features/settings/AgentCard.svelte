@@ -120,7 +120,7 @@
     await run(() => agentsStore.enable(agent.id, source));
   }
 
-  const isDefaultAgent = $derived(settingsStore.settings?.defaultAgentId === agent.id);
+  const isDefaultAgent = $derived(settingsStore.settings?.defaultTaskAgentId === agent.id);
 
   function askDisable(action: 'disable' | 'uninstall'): void {
     if (action === 'disable' && agent.usedBy.length === 0 && !isDefaultAgent) {
