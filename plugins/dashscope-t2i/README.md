@@ -1,4 +1,4 @@
-# dashscope-t2i（D125 执行型试点插件）
+# dashscope-t2i（Qwen-Image 3.0 文生图，D125 执行型插件）
 
 首个**执行型官方插件**（形态 B，[61 号设计 §2](../../docs/design/61-plugin-runtime-platform.md)）：
 manifest 带 `runtime` 段、包内带打包后的 JS（`dist/main.js`），由宿主 PluginHost 以子进程
