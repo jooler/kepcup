@@ -4,17 +4,12 @@ import {
   TASK_QUESTION_TTL_MS,
   TASK_REDELIVER_AFTER_MS,
   TASK_REDELIVER_MAX_ATTEMPTS,
-  type Bot,
   type Delegation,
   type Message,
   type Run,
-  type TaskEventContent,
 } from '@kepcup/shared';
 import {
-  agentTurn,
   createTestStack,
-  fakeAgentEntry,
-  fakeAgentSpawner,
   isTaskRequest,
   listMessages,
   makeBot,
@@ -25,7 +20,6 @@ import {
   step,
   waitFor,
   type CoreHarness,
-  type FakeAcpAgentHandle,
   type MockChatRequest,
   type TestStack,
 } from '@kepcup/testkit';
@@ -38,7 +32,7 @@ import {
  * - M3 ask_user 等待时让出调度名额、不计入任务时限，提问超时后任务继续；
  * - M4 结果投递有上限；进行中的对话轮持有的结果不补投；
  * - M5 经 inject_task 转交的回答带原消息（附件）；
- * - L4 §8.4 降级的追加行不含内部事务；L5 任务视图不在运行中查改动；
+ * - L5 任务视图不在运行中查改动；
  *   L6 提问条目写失败时问题卡作废。
  */
 
@@ -613,83 +607,6 @@ describe('M5: a relayed answer carries the user originals', () => {
     // The card shows the relayed text only.
     const card = questionCard(await listMessages(core, conv.id), taskId)!;
     expect(card.content).toMatchObject({ answer: '用这份规格' });
-  }, 60_000);
-});
-
-describe('L4: the downgraded inject line holds only what the user can see', () => {
-  it("an internal event injected into the in-flight task is a source message, not the card's text", async () => {
-    const started: FakeAcpAgentHandle[] = [];
-    const entry = fakeAgentEntry('fake-l4', { provider: 'claude' });
-    const stack = await start({
-      env: { KEPCUP_MOCK_LLM_URL: '' },
-      agentCatalog: [entry],
-      agentLaunch: () => ({ command: 'in-process', args: [], env: {} }),
-      agentSpawn: fakeAgentSpawner(
-        {
-          'fake-l4': {
-            steering: true,
-            steeringOutcome: 'promptRequired',
-            modes: {
-              currentModeId: 'default',
-              availableModes: [
-                { id: 'default', name: 'Default' },
-                { id: 'acceptEdits', name: 'Accept Edits' },
-              ],
-            },
-            turns: [agentTurn().sleep(1_500), agentTurn().text('知道了')],
-          },
-        },
-        started,
-      ) as never,
-    });
-    await stack.core.rpc.call('settings.update', {
-      agents: { 'fake-l4': { enabled: true } },
-      backgroundTasks: { agentEnabled: false },
-    });
-    const created = await makeBot(stack.core, '外援');
-    const bot = (
-      (await stack.core.rpc.call('bots.update', {
-        id: created.id,
-        profile: {
-          ...created.profile,
-          runtime: {
-            ...created.profile.runtime,
-            agent: { ...created.profile.runtime.agent, id: 'fake-l4' },
-          },
-        },
-      })) as { bot: Bot }
-    ).bot;
-    const conv = await openDirect(stack.core, bot.id);
-    await sendBatch(stack.core, conv.id, ['先办第一件']);
-    await waitFor(
-      () =>
-        started.find((handle) =>
-          handle.observed.prompts.some((p) => p.text.includes('先办第一件')),
-        ) ?? null,
-      { label: 'first task prompted' },
-    );
-    orchestrator(stack).deliverEventToBot(
-      bot.id,
-      conv.id,
-      'wiki_ingested',
-      'SYS-INTERNAL 入库完成',
-    );
-    const [first] = runsOf(stack, conv.id, 'task');
-    const inject = await waitFor(
-      () =>
-        domain(stack)
-          .messages.taskEvents(first!.id)
-          .map((event) => event.content as TaskEventContent)
-          .find((content) => content.phase === 'inject') ?? null,
-      { label: 'inject entry', timeoutMs: 20_000 },
-    );
-    expect(inject.text).not.toContain('SYS-INTERNAL');
-    const event = domain(stack)
-      .messages.list(conv.id)
-      .find((m) => m.kind === 'system_event' && textOf(m).includes('SYS-INTERNAL'))!;
-    expect(inject.sourceMessageIds).toContain(event.id);
-    const view = orchestrator(stack).tasks.view(first!.id)!;
-    expect(view.injects.map((line) => line.text).join('\n')).not.toContain('SYS-INTERNAL');
   }, 60_000);
 });
 

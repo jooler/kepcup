@@ -17,7 +17,6 @@ import {
   type BotAvatarMask,
   type BotAccentColor,
   type BotProfile,
-  type AgentPermissionTier,
   type BotSystemRole,
   type CapabilityEntryRef,
 } from '@kepcup/shared';
@@ -80,6 +79,7 @@ function emptyProfile(): BotProfile {
       message_transport: '',
       inkcop_agent_keys: [],
       capability_entries: [],
+      background_model: '',
       agent: { ...BUILTIN_AGENT_RUNTIME },
     },
     behavior: { proactive: true, quiet_hours: null, max_proactive_per_day: null },
@@ -132,17 +132,6 @@ function rowToBot(row: BotRow): Bot {
   };
 }
 
-/**
- * 新建 Bot 的默认外部 Agent（D72 P4，onboarding「我有订阅」分支）：null = 不设
- * 或当前不适用（有默认主模型、实验开关关闭、Agent 未启用…，由装配方判定）。
- */
-export type DefaultAgentResolver = () => {
-  id: string;
-  permission: AgentPermissionTier;
-  /** 设置页里该智能体的默认模型（'' = 智能体自己的默认）。 */
-  model: string;
-} | null;
-
 /** `app_connection_ids` 校验所需的连接目录（`AppConnectionStore` 的子集）。 */
 export interface AppConnectionDirectory {
   get(connectionId: string): { id: string; connectorId: string } | null;
@@ -165,7 +154,6 @@ export class BotsService {
   constructor(
     private readonly db: SqliteDatabase,
     private readonly clock: Clock,
-    private readonly defaultAgent: DefaultAgentResolver = () => null,
   ) {}
 
   /** D73：接入连接目录，`create` / `update` / `grantConnection` 据此校验授权。 */
@@ -384,11 +372,6 @@ export class BotsService {
       interview?: boolean;
       systemRole?: BotSystemRole;
       /**
-       * D88：不套用 onboarding 的默认外部 Agent（移交「与来源相同」而来源本身就是空的
-       * 模型 / Agent 时，新 Bot 要与来源一样跟随设置默认，而不是被换成外部 Agent）。
-       */
-      skipDefaultAgent?: boolean;
-      /**
        * 显式指定的强调色（模板导入 / 调用方已知）。缺省时从预置头像的内嵌色推导：
        * 新建即落成独立列，之后上传头像 / 换图不再改色。
        */
@@ -403,24 +386,6 @@ export class BotsService {
   ): Bot {
     const profile = stripLegacyInkcopTransport(botProfileSchema.parse(profileInput));
     this.#assertAppConnections(profile.runtime.app_connection_ids);
-    // 未指定模型与 Agent 的新 Bot（对话式访谈除外：访谈只在内置引擎上跑）
-    // 默认由 onboarding 选定的外部 Agent 驱动。
-    if (
-      options.interview !== true &&
-      options.skipDefaultAgent !== true &&
-      profile.runtime.model.length === 0 &&
-      profile.runtime.agent.id.length === 0
-    ) {
-      const fallback = this.defaultAgent();
-      if (fallback !== null) {
-        profile.runtime.agent = {
-          ...profile.runtime.agent,
-          id: fallback.id,
-          model: fallback.model,
-          permission: fallback.permission,
-        };
-      }
-    }
     const now = this.clock.now();
     const id = newId('bot');
     const setupState = options.interview === true ? BOT_SETUP_INTERVIEWING : null;

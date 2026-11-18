@@ -19,12 +19,14 @@ import {
  *   core 直接走通用标量适配器，不必写自定义适配器（见 `contributions/` 覆盖测试）。
  */
 
-/** direct 白名单（§5.3，已定）：默认主 / 轻量模型、本 Bot 的模型 / 轻量模型。 */
+/** direct 白名单（§5.3，已定）：默认主 / 轻量 / 后台任务模型、本 Bot 的模型 / 轻量 / 后台任务模型。 */
 export const DIRECT_ITEM_IDS = [
   'models.default-main',
   'models.default-light',
+  'models.background-model',
   'bot.model',
   'bot.light-model',
+  'bot.background-model',
 ] as const;
 export type DirectItemId = (typeof DIRECT_ITEM_IDS)[number];
 
@@ -164,7 +166,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     id: 'models.default-light',
     group: 'models',
     title: '默认轻量模型',
-    summary: '分诊、摘要、记忆整理等轻量工作默认使用的模型',
+    summary: '主模型的后备：分诊（路由判断）、任务与子代理的上下文压缩、微应用 ai.chat 等轻量工作优先用它；留空跟随主模型',
     enables: ['后台整理', '对话摘要', '分诊'],
     keywords: ['轻量模型', '默认模型', '小模型', 'light model'],
     scope: 'global',
@@ -173,6 +175,36 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     card: 'default-models',
     deepLink: { surface: 'settings', section: 'models', anchor: 'default-models' },
     store: { kind: 'settings', paths: ['defaultLightModel'] },
+  }),
+  item({
+    id: 'models.task-engine',
+    group: 'models',
+    title: '默认任务执行引擎',
+    summary: 'Bot 的任务执行引擎未显式设置时跟随此默认：内置智能体，或某个已启用的外部智能体（默认模型在该智能体卡片配置）。对话与后台任务不受影响',
+    enables: ['用外部智能体执行任务', '设置默认任务执行引擎'],
+    keywords: ['任务引擎', '默认任务引擎', '执行引擎', 'Claude Code', 'Codex', '智能体'],
+    scope: 'global',
+    fields: [field('agent', '智能体', 'select', { options: 'agents', path: 'defaultTaskAgentId' })],
+    write: write('confirm'),
+    card: 'field-editor',
+    deepLink: { surface: 'settings', section: 'models', anchor: 'default-models' },
+    store: { kind: 'settings', paths: ['defaultTaskAgentId'] },
+  }),
+  item({
+    id: 'models.background-model',
+    group: 'models',
+    title: '后台任务模型',
+    summary: '摘要、反思、记忆整理、画像整理、Wiki 维护、技能生成等整理类后台任务用的内置模型；留空跟随轻量模型',
+    enables: ['设置后台任务模型', '后台整理'],
+    keywords: ['后台任务', '后台模型', '摘要', '反思', '记忆整理', 'Wiki 维护', '技能生成'],
+    scope: 'global',
+    fields: [
+      field('model', '后台任务模型', 'model', { options: 'chat-models', path: 'backgroundModel' }),
+    ],
+    write: write('direct'),
+    card: 'field-editor',
+    deepLink: { surface: 'settings', section: 'models', anchor: 'default-models' },
+    store: { kind: 'settings', paths: ['backgroundModel'] },
   }),
   item({
     id: 'models.provider',
@@ -551,20 +583,6 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     deepLink: { surface: 'extension-center', section: 'installed' },
     store: { kind: 'settings', paths: ['inkcopLocalCollab'] },
   }),
-  item({
-    id: 'agents.default',
-    group: 'agents',
-    title: '新建 Bot 的默认智能体',
-    summary: '没有默认主模型时，新建的 Bot 默认由哪个外部智能体驱动',
-    keywords: ['默认智能体', '新建 Bot'],
-    scope: 'global',
-    fields: [field('agent', '智能体', 'select', { options: 'agents', path: 'defaultAgentId' })],
-    write: write('confirm'),
-    card: 'field-editor',
-    deepLink: { surface: 'settings', section: 'agents', anchor: 'agents' },
-    store: { kind: 'settings', paths: ['defaultAgentId'] },
-  }),
-
   // --- Bot ----------------------------------------------------------------
   item({
     id: 'bot.model',
@@ -584,7 +602,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     id: 'bot.light-model',
     group: 'bot',
     title: '这个 Bot 的轻量模型',
-    summary: '只给这个 Bot 指定轻量模型；留空跟随默认轻量模型',
+    summary: '主模型的后备：分诊（路由判断）、任务与子代理的上下文压缩、微应用 ai.chat 等轻量工作优先用它；留空跟随默认轻量模型',
     keywords: ['轻量模型', 'Bot 模型'],
     scope: 'bot',
     fields: [field('model', '轻量模型', 'model', { options: 'chat-models' })],
@@ -680,14 +698,22 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
   item({
     id: 'bot.agent',
     group: 'bot',
-    title: '这个 Bot 的任务引擎',
-    summary: '这个 Bot 的任务由内置引擎还是某个外部智能体执行，以及它的权限与能力包',
+    title: '这个 Bot 的任务执行引擎',
+    summary: '这个 Bot 的任务由内置智能体还是某个外部智能体执行；跟随应用默认时由「默认任务执行引擎」决定。对话与后台任务不受影响',
     enables: ['用外部智能体执行这个 Bot 的任务'],
-    keywords: ['任务引擎', '智能体', '权限档位', '能力包'],
+    keywords: ['任务引擎', '任务执行引擎', '智能体', '权限档位', '能力包'],
     scope: 'bot',
     fields: [
+      field('engine', '任务执行引擎', 'select', {
+        options: 'static',
+        staticOptions: [
+          { value: 'default', label: '跟随应用默认' },
+          { value: 'builtin', label: '内置智能体' },
+          { value: 'agent', label: '外部智能体' },
+        ],
+      }),
       field('agent', '智能体', 'select', { options: 'agents' }),
-      field('model', '智能体模型', 'select', { options: 'agent-models' }),
+      field('model', '模型', 'select', { options: 'agent-models' }),
       field('permission', '权限档位', 'select', {
         options: 'static',
         staticOptions: [
@@ -701,6 +727,19 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     card: 'bot-config',
     deepLink: { surface: 'bot-panel', section: 'profile', anchor: 'bot-agent' },
     store: { kind: 'bot', paths: ['runtime.agent'] },
+  }),
+  item({
+    id: 'bot.background-model',
+    group: 'bot',
+    title: '这个 Bot 的后台任务模型',
+    summary: '这个 Bot 的摘要、反思、记忆整理等整理类后台任务用的内置模型；留空跟随「后台任务模型」默认',
+    keywords: ['后台任务', '后台模型', '摘要', '反思', '记忆整理'],
+    scope: 'bot',
+    fields: [field('model', '后台任务模型', 'model', { options: 'chat-models' })],
+    write: write('direct'),
+    card: 'bot-model',
+    deepLink: { surface: 'bot-panel', section: 'profile', anchor: 'bot-model' },
+    store: { kind: 'bot', paths: ['runtime.background_model'] },
   }),
   item({
     id: 'bot.inkcop-agents',
@@ -1078,24 +1117,6 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     card: 'field-editor',
     deepLink: { surface: 'settings', section: 'general', anchor: 'general-task-loop' },
     store: { kind: 'settings', paths: ['taskLoop'] },
-  }),
-
-  // --- 后台 ---------------------------------------------------------------
-  item({
-    id: 'background.tasks',
-    group: 'background',
-    title: '后台任务智能体',
-    summary: '后台整理（记忆、画像、技能沉淀）由内置智能体还是某个外部智能体执行',
-    keywords: ['后台任务', '后台智能体', '记忆整理'],
-    scope: 'global',
-    fields: [
-      field('agentEnabled', '改用外部智能体', 'toggle'),
-      field('agent', '智能体', 'select', { options: 'agents' }),
-    ],
-    write: write('confirm'),
-    card: 'background-tasks',
-    deepLink: { surface: 'settings', section: 'agents', anchor: 'background-tasks' },
-    store: { kind: 'settings', paths: ['backgroundTasks', 'backgroundAgentId'] },
   }),
 
   // --- 无人值守 -----------------------------------------------------------

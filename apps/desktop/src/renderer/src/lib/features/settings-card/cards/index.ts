@@ -93,7 +93,6 @@ export const SETTING_CARD_CONTRIBUTIONS: readonly SettingCardContribution[] = [
 
   // --- 通用 / 后台 / 无人值守 ----------------------------------------------
   { key: 'appearance', componentName: 'AppearanceSection', embeddable: always },
-  { key: 'background-tasks', componentName: 'BackgroundTasksSection', embeddable: always },
   { key: 'unattended', componentName: 'UnattendedSection', embeddable: always },
   { key: 'taint-guard', componentName: 'UnattendedSection', embeddable: always },
 

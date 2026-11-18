@@ -408,15 +408,43 @@ describe('Bot 模板导入', () => {
     const { sha256 } = target.templates.inspect(file);
     const result = await target.templates.importFrom(file, sha256);
     const created = target.bots.getOrThrow(result.botId);
-    expect(created.profile.runtime.agent.id).toBe('');
+    // 2026-11 修订三态：不可用的外部智能体回退**显式内置**（'' 已是「跟随应用
+    // 默认」，不保证内置），任务模型清空、档位与能力包保留（应用级语义）。
+    expect(created.profile.runtime.agent.id).toBe('builtin');
     expect(created.profile.runtime.agent.model).toBe('');
-    // 档位与能力包保留（应用级语义）。
     expect(created.profile.runtime.agent.permission).toBe('ask');
     expect(created.profile.runtime.agent.capabilities).toEqual(['web']);
     // 头像恢复为 upload: 引用且字节可读。
     expect(created.avatar?.startsWith('upload:')).toBe(true);
     const read = target.avatars.read(result.botId, created.avatar!.slice('upload:'.length));
     expect(Buffer.from(read.base64, 'base64')).toEqual(png);
+  });
+
+  it("模板携带 'builtin' 任务引擎直通（含任务模型），不受可选性校验影响", async () => {
+    const source = makeRig();
+    const bot = source.bots.create({
+      identity: { name: '内置任务', bio: '' },
+      runtime: {
+        agent: {
+          id: 'builtin',
+          model: 'custom:mock/mock-main',
+          effort: '',
+          permission: 'workspace',
+          capabilities: null,
+        },
+      },
+    });
+    const file = path.join(dir, `builtin-${Math.random().toString(36).slice(2, 8)}.json`);
+    source.templates.exportTo(bot.id, file);
+
+    const target = makeRig(() => false); // 本机没有任何可用外部智能体
+    const { sha256 } = target.templates.inspect(file);
+    const result = await target.templates.importFrom(file, sha256);
+    const created = target.bots.getOrThrow(result.botId);
+    expect(created.profile.runtime.agent).toMatchObject({
+      id: 'builtin',
+      model: 'custom:mock/mock-main',
+    });
   });
 
   it('sha256 不匹配拒绝（确认后文件被替换）', async () => {

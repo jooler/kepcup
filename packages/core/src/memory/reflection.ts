@@ -105,18 +105,13 @@ export async function runReflectionJob(deps: ReflectionJobDeps): Promise<void> {
   if (entries.length === 0) return;
   const primaryRunId = entries[0]!.runId;
 
-  // D72 P4 / P6：没有内置模型时改走后台 Agent；也没有（或已关闭）时跳过，
-  // 不产生失败 run。只有外部 Agent 时每 AGENT_BACKGROUND_EVERY_N_RUNS 次一跑。
+  // 后台整理恒内置（2026-11 修订）：没有可用模型时跳过，不产生失败 run。
   const route = routeFor(deps, 'reflection', botId);
   if (route === null) {
     deps.logger.info(
       { botId, conversationId },
       'reflection skipped: no model for background calls',
     );
-    return;
-  }
-  if (deps.router !== undefined && !deps.router.admit(route, 'reflection', botId)) {
-    deps.logger.info({ botId, conversationId }, 'reflection skipped: agent background throttle');
     return;
   }
 

@@ -659,37 +659,6 @@ export const AGENT_STDOUT_LINE_MAX_BYTES = 256 * 1024 * 1024;
  * permission request (waiting for the user) pauses the watchdog.
  */
 export const AGENT_TURN_STALL_MS = 5 * 60_000;
-/**
- * Upper bound of one background `complete()` on an external agent (P6: one-shot
- * minimal session — cold start of the agent process included). The callers'
- * own deadlines (triage, compaction …) still apply on top.
- */
-export const AGENT_COMPLETE_TIMEOUT_MS = 3 * 60_000;
-/** Model-turn cap of a one-shot `complete()` session (no tools: one turn suffices). */
-export const AGENT_COMPLETE_MAX_TURNS = 3;
-/**
- * Background loops running on an external agent only (no built-in model, P6):
- * reflection and conversation summary run once every this many triggers
- * (per bot / per conversation) — subscription quota is shared with the user.
- */
-export const AGENT_BACKGROUND_EVERY_N_RUNS = 5;
-/**
- * Upper bound of one background agent run (Wiki maintenance / skill authoring
- * on an external agent, 审查 C1): far below AGENT_RUN_TIMEOUT_MS — the run
- * holds one of the agent's scheduler slots.
- */
-export const AGENT_BACKGROUND_RUN_TIMEOUT_MS = 10 * 60_000;
-/**
- * Group-chat triage on an external agent (审查 C2): a one-shot session incl.
- * a possible cold start of the agent process needs longer than
- * TRIAGE_TIMEOUT_MS; still answered as `no_action` on expiry.
- */
-export const AGENT_TRIAGE_TIMEOUT_MS = 60_000;
-/**
- * Group-chat triage on an external agent runs at most once per this interval
- * per (bot, group) (审查 C2); in between the bot answers @ / replies only.
- */
-export const AGENT_TRIAGE_MIN_INTERVAL_MS = 2 * 60_000;
 
 // --- Supervisor turns & tasks (D75, docs/design/30-supervisor-and-tasks.md) -----
 

@@ -304,7 +304,7 @@ describe('plugins.listCapabilityEntries 投影 builtin 条目（P4 验收面）'
 
   it('条目可勾选：setBotCapabilityEntries 接受 builtin ref；未知 ref 拒绝；plugin_ids 可启用 builtin 插件', async () => {
     const rig = makeRig();
-    const bot = rig.bots.create({ identity: { name: '内置条目 Bot' } }, { skipDefaultAgent: true });
+    const bot = rig.bots.create({ identity: { name: '内置条目 Bot' } });
     // plugin_ids 校验（start.ts 同款：builtin 视为已安装）。
     rig.bots.setPluginIds(bot.id, [DASHSCOPE_ID]);
     await rig.bindings['plugins.setBotCapabilityEntries']!.handle({
@@ -324,7 +324,7 @@ describe('plugins.listCapabilityEntries 投影 builtin 条目（P4 验收面）'
 
   it('条目解析链：entriesFor 按 Bot 勾选返回 builtin 条目（零实例 = 无 instanceId，凭据走市场安装路径）', async () => {
     const rig = makeRig();
-    const bot = rig.bots.create({ identity: { name: '内置条目 Bot' } }, { skipDefaultAgent: true });
+    const bot = rig.bots.create({ identity: { name: '内置条目 Bot' } });
     rig.bots.setPluginIds(bot.id, [DASHSCOPE_ID, ARK_ID]);
     await rig.bindings['plugins.setBotCapabilityEntries']!.handle({
       botId: bot.id,

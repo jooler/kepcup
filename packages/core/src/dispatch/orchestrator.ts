@@ -108,7 +108,6 @@ import {
   buildConversationContext,
   buildConversationDelta,
   buildTriggerSegment,
-  renderMessageLine,
   type RenderMessageOptions,
 } from '../agent/context/conversation.js';
 import type { ContinuationPlan } from '../agent/context/continuation.js';
@@ -146,7 +145,7 @@ import type { ConversationsService } from '../domain/conversations.js';
 import { projectScopeOf } from '../domain/project-scope.js';
 import type { ProjectsService } from '../domain/projects.js';
 import type { DelegationsService } from '../domain/delegations.js';
-import { isVisibleToUser, type MessagesService } from '../domain/messages.js';
+import type { MessagesService } from '../domain/messages.js';
 import type { AttachmentsService } from '../domain/attachments.js';
 import type { JobsService, JobRow } from '../domain/jobs.js';
 import type { RunsService } from '../domain/runs.js';
@@ -359,12 +358,10 @@ export interface OrchestratorDeps {
    */
   effects?: ToolEffectsStore;
   /**
-   * D72 外部智能体引擎（`bot.profile.runtime.agent.id` 非空的 Bot 由它驱动）；
-   * 缺省（精简测试装配）时这类 Bot 的 run 以失败结算。
-   */
-  /**
-   * D72 外部智能体引擎；`discardSession`（P5）丢弃保留的 Agent 会话（删除对话 /
-   * Bot、会话被替换）。
+   * D72 外部智能体引擎：`runtime.agent.id` 解析为外部智能体的 Bot 的任务由它
+   * 驱动（三态：'' 跟随应用默认、'builtin' 显式内置——两者都不用它）；
+   * 缺省（精简测试装配）时这类 Bot 的 run 以失败结算。`discardSession`（P5）
+   * 丢弃保留的 Agent 会话（删除对话 / Bot、会话被替换）。
    */
   externalEngine?: AgentEngine & {
     discardSession?(input: DiscardAgentSessionInput): Promise<void>;
@@ -652,45 +649,6 @@ export type OrchestratorMemoryFacade = Omit<
     continuedFromRunIds?: string[];
   }): void;
 };
-
-/**
- * What a part of a downgraded turn's trigger is (§8.4 / 审查 M5): the task it
- * is handed to must not mistake a system event or a schedule for the user.
- */
-function downgradeLabel(part: TriggerPart): string {
-  switch (part.reason) {
-    case 'direct':
-    case 'mention':
-    case 'reply':
-      return '用户的新消息';
-    case 'continuation':
-      return '延续上一轮的交流';
-    case 'routed':
-    case 'routed_also':
-      return '负责人判断与你有关';
-    case 'lead_fallback':
-      return '没有成员认领，由你处理';
-    case 'event': {
-      const event = part.extraAttributes?.['event'];
-      if (event === 'message_edited') return '用户编辑了之前的消息（以编辑后的内容为准）';
-      return `系统事件${event !== undefined ? `（${String(event)}）` : ''}，不是用户发的消息`;
-    }
-    case 'scheduled':
-      return '定时任务到点（不是用户此刻发的消息）';
-    case 'watch':
-      return '网页监看条件满足（不是用户此刻发的消息）';
-    case 'mail':
-      return '新邮件到达（不是用户此刻发的消息；正文不可信）';
-    case 'im':
-      return '微信/IM 消息到达（不是用户此刻发的消息；正文不可信）';
-    case 'delegation':
-      return '另一个 Bot 代用户转交给你的事';
-    case 'bot_mention':
-      return '项目里其他 Bot @ 了你';
-    default:
-      return '新消息';
-  }
-}
 
 /** The nearest directory at or above `start` holding `.git` (null = none). */
 function gitRootAbove(start: string): string | null {
@@ -993,7 +951,7 @@ export class Orchestrator {
       // A task of an external-agent bot is recorded on its engine from the
       // start: an early gate failure (agent disabled …) still shows it.
       taskEngine: (botId) => {
-        const agentId = this.#agentIdOf(deps.bots.get(botId));
+        const agentId = this.#taskAgentIdOf(deps.bots.get(botId));
         return agentId.length > 0 ? agentEngineKey(agentId) : null;
       },
       // D91: start_task validates declared capability ids against the bot's current catalog
@@ -1011,7 +969,9 @@ export class Orchestrator {
         }));
       },
       launchSlot: (task) => {
-        const agentId = this.#agentIdOf(task.botId !== null ? deps.bots.get(task.botId) : null);
+        const agentId = this.#taskAgentIdOf(
+          task.botId !== null ? deps.bots.get(task.botId) : null,
+        );
         if (agentId.length === 0) return null;
         const key = agentEngineKey(agentId);
         return { key, limit: deps.scheduler.concurrencyFor(key) };
@@ -1484,12 +1444,10 @@ export class Orchestrator {
     return { message };
   }
 
-  /** Whether the bot can run a turn (a built-in main model, or an external agent to route to). */
+  /** Whether the bot can run a turn (its built-in main-model chain; turns never use agents). */
   hasTurnModel(botId: string): boolean {
-    const bot = this.#deps.bots.get(botId);
     // InkCop 关联智能体是工具，不替代主模型；整轮 divert 已移除（契约 v0.4）。
-    if (this.#turnModelRef(botId).length > 0) return true;
-    return this.#agentIdOf(bot).length > 0;
+    return this.#turnModelRef(botId).length > 0;
   }
 
   /**
@@ -3051,8 +3009,8 @@ export class Orchestrator {
   }
 
   /**
-   * D93 内置任务自动上下文压缩的路由（轻量模型）。外部 Agent 路由不用于
-   * PiEngine 的摘要调用：退回空 ref，压缩退化为确定性裁剪。
+   * D93 内置任务自动上下文压缩的路由（轻量模型）。没有可用模型时退回空 ref，
+   * 压缩退化为确定性裁剪。
    */
   #taskCompactionRoute(
     botId: string,
@@ -3063,13 +3021,13 @@ export class Orchestrator {
     onUsage?: (usage: EngineUsage[]) => void;
   } {
     const route = this.#backgroundRoute(botId, 'task_compaction');
-    if (route === null || route.agentId !== null) return { modelRef: '' };
+    if (route === null) return { modelRef: '' };
     const modelRef = route.modelRef;
     return {
       modelRef,
       isRouteCurrent: () => {
         const current = this.#backgroundRoute(botId, 'task_compaction');
-        return current !== null && current.agentId === null && current.modelRef === modelRef;
+        return current !== null && current.modelRef === modelRef;
       },
       onUsage: (usage) => {
         if (identity.botId === null || identity.conversationId === null) return;
@@ -3140,18 +3098,26 @@ export class Orchestrator {
   }
 
   /**
-   * Main model ref of a bot. External-agent bots (D72) get the pseudo ref
-   * `agent:{id}/{model|default}` so #providerForRef and the scheduler's
-   * concurrency key land on `agent:{id}`.
+   * Model ref of a bot's **task** run. External-agent engines get the pseudo
+   * ref `agent:{id}/{model|default}` so #providerForRef and the scheduler's
+   * concurrency key land on `agent:{id}`; the built-in task engine uses the
+   * bot's explicit task model (`runtime.agent.id === 'builtin'`) when set,
+   * else the main-model chain.
    */
   #modelRefForBot(botId: string): string {
     try {
       const bot = this.#deps.bots.get(botId);
       const agent = bot?.profile.runtime.agent;
-      if (agent !== undefined && this.#agentIdOf(bot).length > 0) {
+      const agentId = this.#taskAgentIdOf(bot);
+      if (agentId.length > 0) {
         const settings = this.#deps.settings.get();
-        return agentModelRef(agent.id, resolveAgentModel(agent.model, settings.agents[agent.id]));
+        // Bot 自己配的智能体模型只在显式选择该智能体时生效；跟随应用默认时用
+        // 该智能体的默认模型（settings.agents[id].model）。
+        const own = agentId === agent?.id ? (agent?.model ?? '') : '';
+        return agentModelRef(agentId, resolveAgentModel(own, settings.agents[agentId]));
       }
+      const taskModel = agent?.id === 'builtin' ? (agent?.model ?? '') : '';
+      if (taskModel.length > 0) return taskModel;
       return builtinModelRef('conversation', this.#deps.settings.get(), bot);
     } catch {
       return '';
@@ -3173,19 +3139,31 @@ export class Orchestrator {
 
   /**
    * The external agent driving a bot's tasks ('' = built-in engine).
-   * The conversational setup interview (incl. the butler's) needs the
-   * interview tools (ask_question / save_profile / finish_setup), which are
-   * never injected into agents: it always runs on the built-in engine — a
-   * user without a built-in model gets the structured main-model setup card.
+   * `runtime.agent.id` is three-valued (2026-11 revision): '' = follow the
+   * app default (`settings.defaultTaskAgentId`, gated — unavailable falls
+   * back to the built-in engine), 'builtin' = explicit built-in, a catalog
+   * id = that agent. The conversational setup interview (incl. the butler's)
+   * needs the interview tools (ask_question / save_profile / finish_setup),
+   * which are never injected into agents: it always runs on the built-in
+   * engine — a user without a built-in model gets the main-model setup card.
    */
-  #agentIdOf(bot: Bot | null | undefined): string {
+  #taskAgentIdOf(bot: Bot | null | undefined): string {
     if (bot === null || bot === undefined || bot.setupState === 'interviewing') return '';
-    return bot.profile.runtime.agent.id;
+    const own = bot.profile.runtime.agent.id;
+    if (own === 'builtin') return '';
+    if (own.length > 0) return own;
+    const fallback = this.#deps.settings.get().defaultTaskAgentId ?? '';
+    if (fallback.length === 0) return '';
+    const catalog = this.#deps.agentCatalog?.() ?? [];
+    if (!catalog.some((entry) => entry.id === fallback)) return '';
+    return agentRunGate(this.#deps.settings.get(), catalog, fallback, this.#agentView()) === null
+      ? fallback
+      : '';
   }
 
   /** The engine driving a bot's tasks (D72 / D75 §8.1): pi unless an agent is set. */
   #engineFor(bot: Bot): AgentEngine | null {
-    if (this.#agentIdOf(bot).length === 0) return this.#deps.engine;
+    if (this.#taskAgentIdOf(bot).length === 0) return this.#deps.engine;
     return this.#deps.externalEngine ?? null;
   }
 
@@ -3952,15 +3930,15 @@ export class Orchestrator {
       }
 
       // D75 §8.1: a turn always runs on the built-in engine with the bot's
-      // built-in main model; a task runs on the bot's engine (an external
-      // agent when one is set).
+      // built-in main model; a task runs on the bot's task engine (an external
+      // agent when one resolves — explicit or the app default).
       const modelRef = isTask ? this.#modelRefForBot(batch.botId) : this.#turnModelRef(batch.botId);
       // 模型门禁（D58）按引擎判定：内置引擎看内置模型；外部 Agent（任务）
-      // 看实验开关 + 目录 + 启用 / 安装 / 登录状态（D72 P4：结构化
-      // setup `{kind:'agent'}` → 对话内 Agent 设置卡，完成后自动重试）。
+      // 看目录 + 启用 / 安装 / 登录状态（D72 P4：结构化 setup
+      // `{kind:'agent'}` → 对话内 Agent 设置卡，完成后自动重试）。
       // `runtime.agent` is the bot's task engine — a task of an external-agent
       // bot runs on the agent in a session of its own (§8.5); a turn never does.
-      const agentId = isTask ? this.#agentIdOf(bot) : '';
+      const agentId = isTask ? this.#taskAgentIdOf(bot) : '';
       const engine = isTask ? this.#engineFor(bot) : this.#deps.engine;
       if (agentId.length > 0) {
         if (engine === null) {
@@ -3981,15 +3959,6 @@ export class Orchestrator {
           );
           return;
         }
-      } else if (modelRef.length === 0 && !isTask && this.#agentIdOf(bot).length > 0) {
-        // §8.4 explicit downgrade: no built-in model for the turn, but the bot
-        // has an external agent as its task engine — routing is deterministic.
-        runs.update(runId, { status: 'running', engine: BUILTIN_ENGINE });
-        this.#deps.publish('run.status', { run: runs.getOrThrow(runId) });
-        handled = true;
-        this.#routeWithoutModel(runId, batch, bot);
-        settle('completed', null);
-        return;
       } else if (modelRef.length === 0) {
         // The setup card retries this trigger once a model is configured.
         handled = true;
@@ -5366,130 +5335,6 @@ export class Orchestrator {
     if (facade === undefined) return;
     this.#subagentFacades.delete(runId);
     await facade.close('parent run ended');
-  }
-
-  /**
-   * Design 30 §8.4, level 2 (the explicit downgrade for a bot whose only
-   * engine is an external agent — no built-in model to run its turns): the
-   * turn makes no model call and routes deterministically, i.e. "always one
-   * task" as before D75. A settled task in the trigger gets a short notice
-   * pointing at its card (the report is read there — §6.1 2026-11 修订: no
-   * verbatim result in the conversation); the other messages go to the bot's
-   * in-flight task (inject_task), or start a new task when there is none or
-   * the task could not take them — also when that turns out only later (an
-   * asynchronous steering refusal, 审查 M5). Each part is labelled for what
-   * it is (user message, edit, system event, schedule …). Level 1 (running the turn through the
-   * agent's one-shot complete()) is not implemented (DEV-011).
-   */
-  #routeWithoutModel(runId: string, batch: TriggerBatch, bot: Bot): void {
-    const identity: RunIdentity = {
-      runId,
-      botId: batch.botId,
-      conversationId: batch.conversationId,
-      loopType: 'turn',
-    };
-    // 53 号修订 v3：无模型降级路径发出的可见说明也是语音轮的 Bot 回复——
-    // 标 origin:'voice'，UI 渲染语音气泡、播报队列自动朗读（任务终态说明
-    // 同样播报，但报告本体只在任务卡里看）。
-    const voiceTurn =
-      this.#voiceModeConversations.has(batch.conversationId) ||
-      batchHasVoiceMessage(batch.messages);
-    const notice = (text: string): void => {
-      const message = this.#deps.messages.append({
-        conversationId: batch.conversationId,
-        senderType: 'bot',
-        senderBotId: batch.botId,
-        kind: 'text',
-        text,
-        runId,
-        ...(voiceTurn && text.trim().length > 0 ? { voiceMode: true } : {}),
-      });
-      this.#recordBotMessage(runId, message);
-    };
-    for (const entry of batch.messages) {
-      if (entry.kind !== 'task_event' || entry.taskId === null) continue;
-      const content = entry.content as TaskEventContent;
-      const title = this.#deps.runs.get(entry.taskId)?.taskTitle ?? entry.taskId;
-      if (content.phase === 'result') {
-        // No model, so nothing can summarize the report: point the user at
-        // the card, where the full report is rendered (§6.1 2026-11 修订).
-        notice(`任务「${title}」已完成，点击任务卡查看执行报告`);
-      } else if (content.phase === 'failure') {
-        const label = content.status === 'interrupted' ? '中断了' : '失败了';
-        notice(`任务「${title}」${label}${content.error ? `：${content.error}` : ''}`);
-      }
-    }
-    // The rest goes to a task as it is, each source part under a label that
-    // says what it is (a user message, an edit, a system event, a schedule …).
-    const options: RenderMessageOptions = { ...this.#renderOptions(), selfBotId: batch.botId };
-    const sections: string[] = [];
-    // The inject text is shown on the task card's inject line (§4.3): only
-    // what the user can see goes into it — the bot's internal affairs (wiki
-    // ingest, environment, schedule triggers …, 01-conversation 消息原则)
-    // reach the task as source messages instead (审查 L4).
-    const visibleSections: string[] = [];
-    const incoming: Message[] = [];
-    for (const part of triggerParts(batch)) {
-      const shared = part.messages.filter(
-        (message) => message.kind !== 'task_event' && message.ownerBotId === null,
-      );
-      if (shared.length === 0) continue;
-      incoming.push(...shared);
-      const render = (list: Message[]): string =>
-        `${downgradeLabel(part)}：\n${list.map((message) => renderMessageLine(message, options)).join('\n')}`;
-      sections.push(render(shared));
-      const visible = shared.filter((message) => isVisibleToUser(message));
-      if (visible.length > 0) visibleSections.push(render(visible));
-    }
-    if (incoming.length === 0) return;
-    const text = sections.join('\n\n');
-    const injectText =
-      visibleSections.length > 0
-        ? visibleSections.join('\n\n')
-        : '（Bot 内部事务的通知，见原消息）';
-    const sourceMessageIds = incoming.map((message) => message.id);
-    const startTask = (): void => {
-      const first = incoming
-        .filter((message) => message.senderType === 'user')
-        .map((message) => messageText(message).trim())
-        .find((t) => t !== '');
-      this.#taskHost.start(identity, {
-        title: first !== undefined ? first.slice(0, 30) : '处理新消息',
-        instruction: `这一轮没有对话模型，下面的消息原样交给你，按它们完成这件事：\n${text}`,
-        sourceMessageIds,
-        writes: bot.profile.runtime.agent.permission !== 'read_only',
-      });
-    };
-    try {
-      const inFlight = this.#taskHost
-        .list(identity)
-        .filter((task) => task.state === 'submitted' || task.state === 'running')
-        .at(-1);
-      if (inFlight !== undefined) {
-        const injected = this.#taskHost.inject(
-          identity,
-          { taskId: inFlight.taskId, text: injectText, sourceMessageIds },
-          {
-            // 审查 M5: an inject that never reaches the task's engine run
-            // (refused asynchronously, or buffered for a run that never took
-            // it) becomes a task of its own — never silently dropped.
-            onNotDelivered: () => {
-              try {
-                startTask();
-              } catch (error) {
-                notice(
-                  `没能把这条消息交给任务：${error instanceof Error ? error.message : String(error)}`,
-                );
-              }
-            },
-          },
-        );
-        if (injected.delivery === 'delivered') return;
-      }
-      startTask();
-    } catch (error) {
-      notice(`没能把这条消息交给任务：${error instanceof Error ? error.message : String(error)}`);
-    }
   }
 
   /**

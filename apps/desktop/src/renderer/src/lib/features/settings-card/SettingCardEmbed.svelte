@@ -29,7 +29,6 @@
   import FieldEditorCard from './FieldEditorCard.svelte';
   import EmbeddingSection from '$lib/features/settings/EmbeddingSection.svelte';
   import AppearanceSection from '$lib/features/settings/AppearanceSection.svelte';
-  import BackgroundTasksSection from '$lib/features/settings/BackgroundTasksSection.svelte';
   import UnattendedSection from '$lib/features/settings/UnattendedSection.svelte';
   import ProjectTitleCard from './ProjectTitleCard.svelte';
   import ProjectGoalCard from './ProjectGoalCard.svelte';
@@ -86,7 +85,7 @@
       workdirId,
       prefill,
       agent: (id) => agentsStore.get(id),
-      defaultAgentId: settingsStore.settings?.defaultAgentId ?? null,
+      defaultTaskAgentId: settingsStore.settings?.defaultTaskAgentId ?? null,
     }),
   );
   const agent = $derived(agentId === null ? null : agentsStore.get(agentId));
@@ -164,8 +163,6 @@
     {messageId}
     onSaved={() => onSaved()}
   />
-{:else if item.card === 'background-tasks'}
-  <BackgroundTasksSection embedded {prefill} onSaved={() => onSaved()} />
 {:else if item.card === 'unattended' || item.card === 'taint-guard'}
   <UnattendedSection
     embedded

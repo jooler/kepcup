@@ -190,8 +190,9 @@ sensors.open('microphone') → startVoiceRecording(stream, onLevel)   // 传感�
   从别的会话进入时先释放旧归属；卸载清理用「进入时登记的会话 id + 当前 owner」核对，不再依赖
   view 派生（`session.clear()` 会先置空 view，CardChat / close / leaveCurrent 曾漏掉退出）；
   `exitVoiceMode` 同时停音频并作废在途取源。
-- **P2 降级路径**：`routeWithoutModel` 的可见说明（任务失败 / 中断）是语音轮的 Bot 文本，标
-  `origin:'voice'`（自动播报 + 可回放），任务结果转发仍保持 `origin:'task'`。
+- **P2 降级路径**（2026-11 修订：无模型确定性降级已移除，本条仅历史记录）：原
+  `routeWithoutModel` 的可见说明标 `origin:'voice'`（自动播报 + 可回放）。语音轮的 Bot 回复
+  现由内置对话轮产生，任务终态说明同样播报。
 - **P3 防护**：`messages.edit` 保留 content 里的语义字段（否则编辑语音消息会变成普通文本）；
   `conversations.setVoiceMode` 拒绝项目组（语音模式只存在于私聊 / 卡片对话）；语音规则补充
   「任务结果的长报告不要整段转发 / 复述」以消解与平台规则「转发长结果」的张力。

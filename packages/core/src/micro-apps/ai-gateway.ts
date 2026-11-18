@@ -289,7 +289,7 @@ export class MicroAppAiGateway {
       'micro_app',
       null,
     );
-    return route !== null && route.agentId === null;
+    return route !== null;
   }
 
   /** `micro_app_usage` 的媒体列累计（`microApps.media.*` 成功后由绑定调用）。 */
@@ -435,13 +435,6 @@ export class MicroAppAiGateway {
     );
     if (route === null) {
       throw new AppError('MICRO_APP_AI_UNAVAILABLE', '当前没有可用的模型（未配置内置模型）', {
-        hint: microAppErrorHintOf('MICRO_APP_AI_UNAVAILABLE'),
-      });
-    }
-    if (route.agentId !== null) {
-      // 外部 Agent 引擎不接微应用模型面（55 §8.2：模型由宿主策略裁决，且外部 Agent
-      // 会带回工具面）。如实报不可用而不是降级到别的路径。
-      throw new AppError('MICRO_APP_AI_UNAVAILABLE', '「微应用模型」当前解析到外部 Agent，不可用于微应用；请在设置里选择内置模型', {
         hint: microAppErrorHintOf('MICRO_APP_AI_UNAVAILABLE'),
       });
     }

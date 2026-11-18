@@ -143,9 +143,10 @@ export function applyBotProfileUpdate(
     base === undefined
       ? profile
       : (mergeThreeWay(base, profile, previous.profile) as Bot['profile']);
-  // D72：只拦「改成另一个外部 Agent」，已在用的 Bot 仍可编辑其余字段。
+  // D72：只拦「改成另一个外部 Agent」（'' = 跟随应用默认、'builtin' = 显式内置，
+  // 都不是外部智能体，不校验目录）；已在用的 Agent 仍可编辑其余字段。
   const nextAgentId = next.runtime.agent.id;
-  if (nextAgentId !== previousRuntime.agent.id) {
+  if (nextAgentId !== previousRuntime.agent.id && nextAgentId.length > 0 && nextAgentId !== 'builtin') {
     assertAgentSelectable(deps.agentCatalog(), nextAgentId);
   }
   // W8: the browser profile may only point at an existing shared profile.

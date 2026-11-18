@@ -63,23 +63,15 @@ export async function runConversationSummaryJob(deps: {
 
   const payload = JSON.parse(job.payload_json) as { targetSeq?: number };
   const targetSeq = payload.targetSeq ?? conv.lastSeq;
-  // D72 P4 / P6：没有内置模型时改走后台 Agent；也没有（或已关闭）时跳过，
-  // 不产生失败 run。只有外部 Agent 时每 AGENT_BACKGROUND_EVERY_N_RUNS 次触发
-  // 一跑（未摘要的消息留给下一次，摘要覆盖到届时的 targetSeq）。
-  // 直聊的摘要按该 Bot 选后台 Agent（自动模式下优先它自己的 Agent）。
+  // 后台整理恒内置（2026-11 修订）：没有可用模型时跳过，不产生失败 run
+  // （未摘要的消息留给下一次，摘要覆盖到届时的 targetSeq）。
+  // 直聊的摘要按该 Bot 的后台任务模型链解析。
   const ownerBotId = job.bot_id ?? conv.directBotId ?? null;
   const route = routeFor(deps, 'summary', ownerBotId);
   if (route === null) {
     deps.logger.info(
       { conversationId: job.conversation_id },
       'conversation summary skipped: no model for background calls',
-    );
-    return;
-  }
-  if (deps.router !== undefined && !deps.router.admit(route, 'summary', job.conversation_id)) {
-    deps.logger.info(
-      { conversationId: job.conversation_id },
-      'conversation summary skipped: agent background throttle',
     );
     return;
   }
@@ -124,9 +116,7 @@ export async function runConversationSummaryJob(deps: {
         if (!usage) return;
         deps.usage.record({
           runId: run.id,
-          // Agent rows are charged to the owning bot (审查 C5); built-in rows
-          // keep the pre-P6 attribution.
-          botId: route.agentId !== null ? ownerBotId : job.bot_id,
+          botId: job.bot_id,
           conversationId: job.conversation_id,
           loopType: 'conversation_summary',
           provider: route.provider,

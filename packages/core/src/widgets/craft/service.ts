@@ -1,4 +1,5 @@
 import {
+  BUILTIN_ENGINE,
   WIDGET_ACCEPTANCE_ITEMS_MAX,
   WIDGET_CRAFTS_PER_RUN_MAX,
   WIDGET_CRAFT_ACCEPTANCE_HINTS_MAX,
@@ -36,9 +37,6 @@ import type {
   ToolResult,
 } from '../../agent/types.js';
 import {
-  backgroundRunSpec,
-  engineKeyOf,
-  providerOfModelRef,
   routeFor,
   routeStillCurrent,
   type LlmRoute,
@@ -262,7 +260,6 @@ export class WidgetCraftService {
     const route = routeFor(this.#deps, 'widget_review', botId);
     if (route === null) return fallback;
     if (
-      route.agentId === null &&
       route.modelRef !== fallback.modelRef &&
       this.#deps.modelUsable !== undefined &&
       !this.#deps.modelUsable(route.modelRef)
@@ -960,7 +957,7 @@ export class WidgetCraftService {
       parentRunId: manifest.parentRunId,
       provider: route.provider,
       model: route.modelRef,
-      engine: engineKeyOf(route),
+      engine: BUILTIN_ENGINE,
     });
     this.#stageRuns.set(row.id, manifest.craftId);
     draft.updateManifest((m) => ({ ...m, stageRunIds: [...m.stageRunIds, row.id] }));
@@ -1032,33 +1029,31 @@ export class WidgetCraftService {
       conversationId: identity.conversationId,
       loopType: 'widget_authoring',
     };
-    const handle = route.engine.startRun(
-      backgroundRunSpec(route, {
-        identity: subIdentity,
-        model: route.modelRef,
-        isRouteCurrent: () => routeStillCurrent(deps, purpose, identity.botId, route.modelRef),
-        buildSystemPrompt: async () => {
-          const microAppStage = draft.readManifest().microApp === true || draft.hasAppManifest();
-          return stage === 'review'
-            ? reviewSystemPrompt({ microApp: microAppStage })
-            : craftSystemPrompt({ microApp: microAppStage });
-        },
-        messages: [{ role: 'user', content: userMessage, timestamp: deps.clock.now() }],
-        tools: buildCraftTools({
-          draftDir: draft.dir,
-          stage,
-          // 修改已有组件时不给模板工具：它会整份覆盖现有源码。
-          templates: draft.readManifest().widgetId === null,
-          ...(draft.readManifest().microApp === true || draft.hasAppManifest() ? { microApp: true } : {}),
-          selfCheck: (signal) => this.#selfCheck(session, signal),
-          onStageDone: callbacks.onStageDone,
-          ...(callbacks.onSubmitReview !== undefined
-            ? { onSubmitReview: callbacks.onSubmitReview }
-            : {}),
-        }),
-        limits: { maxTurns: WIDGET_CRAFT_PHASE_MAX_TURNS[stage] },
+    const handle = route.engine.startRun({
+      identity: subIdentity,
+      model: route.modelRef,
+      isRouteCurrent: () => routeStillCurrent(deps, purpose, identity.botId, route.modelRef),
+      buildSystemPrompt: async () => {
+        const microAppStage = draft.readManifest().microApp === true || draft.hasAppManifest();
+        return stage === 'review'
+          ? reviewSystemPrompt({ microApp: microAppStage })
+          : craftSystemPrompt({ microApp: microAppStage });
+      },
+      messages: [{ role: 'user', content: userMessage, timestamp: deps.clock.now() }],
+      tools: buildCraftTools({
+        draftDir: draft.dir,
+        stage,
+        // 修改已有组件时不给模板工具：它会整份覆盖现有源码。
+        templates: draft.readManifest().widgetId === null,
+        ...(draft.readManifest().microApp === true || draft.hasAppManifest() ? { microApp: true } : {}),
+        selfCheck: (signal) => this.#selfCheck(session, signal),
+        onStageDone: callbacks.onStageDone,
+        ...(callbacks.onSubmitReview !== undefined
+          ? { onSubmitReview: callbacks.onSubmitReview }
+          : {}),
       }),
-    );
+      limits: { maxTurns: WIDGET_CRAFT_PHASE_MAX_TURNS[stage] },
+    });
     const onAbort = () =>
       handle.abort(String(session.controller.signal.reason ?? 'widget craft aborted'));
     if (session.controller.signal.aborted) onAbort();
@@ -1088,7 +1083,7 @@ export class WidgetCraftService {
   }
 
   #recordUsage(session: CraftSession, route: LlmRoute, runId: string, usage: EngineUsage[]): void {
-    const provider = providerOfModelRef(route.modelRef);
+    const provider = route.provider;
     for (const entry of usage) {
       try {
         this.#deps.usage.record({
@@ -1096,9 +1091,8 @@ export class WidgetCraftService {
           botId: session.identity.botId,
           conversationId: session.identity.conversationId,
           loopType: 'widget_authoring',
-          provider: route.agentId === null ? provider : route.provider,
-          model:
-            route.agentId === null ? route.modelRef.slice(provider.length + 1) : route.modelRef,
+          provider,
+          model: route.modelRef.slice(provider.length + 1),
           inputTokens: entry.input,
           outputTokens: entry.output,
           cacheReadTokens: entry.cacheRead,

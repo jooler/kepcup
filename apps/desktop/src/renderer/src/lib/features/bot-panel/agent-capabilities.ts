@@ -170,15 +170,14 @@ export function estimatedTools(rows: readonly CapabilityRow[]): { count: number;
   return { count, mcp };
 }
 
-/** 主选择器的取值编码：内置模型 = 模型 ref；智能体 = `@agent:{id}`。 */
+/** 任务执行引擎选择器的取值编码：外部智能体 = `@agent:{id}`；其余是三态字面量。 */
 export const AGENT_OPTION_PREFIX = '@agent:';
 
-export function engineValue(runtime: { model: string; agent: { id: string } }): string {
-  return runtime.agent.id.length > 0 ? `${AGENT_OPTION_PREFIX}${runtime.agent.id}` : runtime.model;
-}
+/** 任务执行引擎选择器的取值：default = 跟随应用默认；builtin = 显式内置。 */
+export type TaskEngineOption = 'default' | 'builtin' | `@agent:${string}`;
 
-export function parseEngineValue(value: string): { agentId: string } | { model: string } {
-  return value.startsWith(AGENT_OPTION_PREFIX)
-    ? { agentId: value.slice(AGENT_OPTION_PREFIX.length) }
-    : { model: value };
+export function taskEngineValue(agent: { id: string }): TaskEngineOption {
+  if (agent.id.length === 0) return 'default';
+  if (agent.id === 'builtin') return 'builtin';
+  return `@agent:${agent.id}`;
 }

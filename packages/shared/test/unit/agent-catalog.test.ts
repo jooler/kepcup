@@ -304,7 +304,8 @@ describe('profile and settings defaults', () => {
     const settings = settingsSchema.parse({});
     expect(settings.agents).toEqual({});
     expect(settings.customAgents).toEqual([]);
-    expect(settings.backgroundAgentId).toBeUndefined();
+    expect(settings.defaultTaskAgentId).toBe('');
+    expect(settings.backgroundModel).toBe('');
     expect(settingsSchema.parse({ agents: { fake: { enabled: true } } }).agents.fake).toEqual({
       enabled: true,
       source: 'managed',
@@ -317,7 +318,8 @@ describe('profile and settings defaults', () => {
     const settings = settingsSchema.parse({
       agents: { a: { enabled: true, source: 'brew' }, b: 'garbage' },
       customAgents: [{ id: 42 }],
-      backgroundAgentId: 7,
+      defaultTaskAgentId: 7,
+      backgroundModel: 7,
     });
     expect(settings.agents.a).toEqual({
       enabled: true,
@@ -332,7 +334,9 @@ describe('profile and settings defaults', () => {
       model: '',
     });
     expect(settings.customAgents).toEqual([{ id: 42 }]);
-    expect(settings.backgroundAgentId).toBeUndefined();
+    // 损坏的标量按默认值收敛（'' = 内置智能体 / 跟随轻量模型）。
+    expect(settings.defaultTaskAgentId).toBe('');
+    expect(settings.backgroundModel).toBe('');
     expect(
       botRuntimeSchema.parse({ agent: { id: 'fake', permission: 'yolo', capabilities: 'all' } })
         .agent,
@@ -362,7 +366,7 @@ describe('agent setup requirement (P4-B, D58)', () => {
     expect(agentSetupReasonForError(undefined, null)).toBeNull();
   });
 
-  it('run.setup accepts the agent kind; settings.defaultAgentId defaults to empty', () => {
+  it('run.setup accepts the agent kind; settings.defaultTaskAgentId defaults to empty', () => {
     const base = runSchema.shape.setup;
     expect(base.parse({ kind: 'agent', agentId: 'codex-acp', reason: 'auth_required' })).toEqual({
       kind: 'agent',
@@ -370,6 +374,6 @@ describe('agent setup requirement (P4-B, D58)', () => {
       reason: 'auth_required',
     });
     expect(base.safeParse({ kind: 'agent', agentId: 'x', reason: 'nope' }).success).toBe(false);
-    expect(settingsSchema.parse({}).defaultAgentId).toBe('');
+    expect(settingsSchema.parse({}).defaultTaskAgentId).toBe('');
   });
 });

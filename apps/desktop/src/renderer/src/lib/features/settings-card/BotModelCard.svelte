@@ -40,7 +40,9 @@
     onConflict?: (current: SettingValues | null) => void;
   } = $props();
 
-  const light = $derived(itemId === 'bot.light-model');
+  const kind = $derived<'main' | 'light' | 'background'>(
+    itemId === 'bot.light-model' ? 'light' : itemId === 'bot.background-model' ? 'background' : 'main',
+  );
 
   /** 会话快照里的 Bot（项目组成员 / 单聊 Bot），兜底通讯录（core 推 bot.updated 后更新）。 */
   const session = getChatSession();
@@ -54,7 +56,11 @@
     );
   });
   const stored = $derived(
-    (light ? bot?.profile.runtime.light_model : bot?.profile.runtime.model) ?? '',
+    kind === 'light'
+      ? (bot?.profile.runtime.light_model ?? '')
+      : kind === 'background'
+        ? (bot?.profile.runtime.background_model ?? '')
+        : (bot?.profile.runtime.model ?? ''),
   );
   const hasPrefill = untrack(() => typeof prefill?.model === 'string');
   let value = $state(untrack(() => prefillString(prefill, 'model') ?? ''));
@@ -120,7 +126,11 @@
 
 <div class="grid gap-1.5" data-testid={testid}>
   <Label for={`${testid}-select`}>
-    {light ? t('contacts.lightModel') : t('contacts.mainModel')}{#if bot !== null}
+    {kind === 'light'
+      ? t('contacts.lightModel')
+      : kind === 'background'
+        ? t('settingCard.botModel.backgroundModel')
+        : t('contacts.mainModel')}{#if bot !== null}
       · {bot.name}{/if}
   </Label>
   <div class="flex min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap">
@@ -131,9 +141,11 @@
       data-testid={`${testid}-select`}
     >
       <option value="">
-        {light
+        {kind === 'light'
           ? t('settingCard.botModel.followDefaultLight')
-          : t('setupCard.botModelFollowDefault')}
+          : kind === 'background'
+            ? t('settingCard.botModel.followDefaultBackground')
+            : t('setupCard.botModelFollowDefault')}
       </option>
       {#each options as option (option.ref)}
         <option value={option.ref}>{option.label}</option>

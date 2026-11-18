@@ -35,7 +35,7 @@ const context = (patch: Partial<EmbedContext> = {}): EmbedContext => ({
   workdirId: 'proj_1',
   prefill: null,
   agent: (id) => (id === 'codex' ? ({ id: 'codex' } as AgentView) : null),
-  defaultAgentId: null,
+  defaultTaskAgentId: null,
   ...patch,
 });
 
@@ -134,7 +134,7 @@ describe('cardEmbeddable（缺上下文时退回跳转卡）', () => {
 
   it('外部智能体：预填优先，其次默认智能体；目录里没有就不能嵌', () => {
     expect(embeddedAgentId(context({ prefill: { agent: 'codex' } }))).toBe('codex');
-    expect(embeddedAgentId(context({ defaultAgentId: 'codex' }))).toBe('codex');
+    expect(embeddedAgentId(context({ defaultTaskAgentId: 'codex' }))).toBe('codex');
     expect(embeddedAgentId(context({ prefill: { agent: 'nope' } }))).toBeNull();
     expect(cardEmbeddable(item('agents.external'), context())).toBe(false);
   });

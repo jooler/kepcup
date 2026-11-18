@@ -7,22 +7,25 @@ import {
   agentTurn,
   FAKE_ACP_AGENT_BIN,
   readFakeAgentRecord,
+  startMockLlm,
+  step,
   writeFakeAgentScript,
   type FakeAgentObservation,
   type FakeAgentScript,
+  type MockLlmServer,
+  type MockLlmStep,
 } from '@kepcup/testkit';
 import { createBotAndOpenChat } from './helpers/create-bot';
 
 /**
  * 外部智能体（D72，todo/acp-external-agents.md §9.1 e2e）：testkit 的剧本化假
  * ACP 智能体经 core 的 e2e seam（KEPCUP_FAKE_ACP_AGENT_*，仅测试构建）挂在目录
- * 的 `fake` / `fake-sub` 条目上，子进程以 Electron 的 Node 运行。不配内置模型
- * （KEPCUP_MOCK_LLM_URL=''）——只有智能体的新用户。覆盖：设置页目录启用 +
- * 后台任务、Bot 切换到智能体与能力包、`agent_tool` 审批卡、对话内 Agent 设置
- * 卡、onboarding「我有订阅」分支。
+ * 的 `fake` 条目上，子进程以 Electron 的 Node 运行。覆盖：设置页目录启用、Bot
+ * 切换到智能体（任务执行引擎）与能力包、`agent_tool` 审批卡、对话内 Agent
+ * 设置卡、onboarding 无外部智能体路径且管家访谈在内置引擎上跑。
  *
- * 无内置模型走 DEV-011 第 2 级降级：消息派成任务，聊天里是「点击任务卡查看
- * 执行报告」，智能体原文在任务详情的执行报告里（不再原文转发进对话）。
+ * 任务由内置对话轮经 `start_task` 派出（2026-11 修订：对话与后台恒内置，没有
+ * 无模型降级路径），任务报告不再原文进对话——由唤醒的对话轮转述。
  */
 
 interface Session {
@@ -30,6 +33,7 @@ interface Session {
   page: Page;
   home: string;
   outside: string;
+  llm: MockLlmServer;
   record: () => FakeAgentObservation;
   close: () => Promise<void>;
 }
@@ -45,6 +49,7 @@ async function startSession(
   const scriptFile = path.join(home, 'fake-acp-agent.json');
   const recordFile = path.join(home, 'fake-acp-agent.jsonl');
   writeFakeAgentScript(scriptFile, typeof script === 'function' ? script(outside) : script);
+  const llm = await startMockLlm();
   const app = await _electron.launch({
     args: ['.'],
     env: {
@@ -55,8 +60,7 @@ async function startSession(
       KEPCUP_KEYSTORE: 'file',
       KEPCUP_FILE_KEYSTORE_PATH: path.join(home, '.test-master-key'),
       ...(options.onboarding === true ? {} : { KEPCUP_ONBOARDING: 'off' }),
-      // 无内置模型：seedMockLlm 跳过。
-      KEPCUP_MOCK_LLM_URL: '',
+      KEPCUP_MOCK_LLM_URL: llm.url,
       KEPCUP_FAKE_ACP_AGENT_BIN: FAKE_ACP_AGENT_BIN,
       KEPCUP_FAKE_ACP_AGENT_SCRIPT: scriptFile,
       KEPCUP_FAKE_ACP_AGENT_RECORD: recordFile,
@@ -68,9 +72,11 @@ async function startSession(
     page,
     home,
     outside,
+    llm,
     record: () => readFakeAgentRecord(recordFile),
     close: async () => {
       await app.close();
+      await llm.stop();
       await rmHomeTolerant(home);
       await rm(outside, { recursive: true, force: true });
     },
@@ -115,9 +121,8 @@ async function closeSettings(page: Page): Promise<void> {
 }
 
 /**
- * 设置页「智能体」：左栏选中该智能体 → 目录卡片启用（安装确认卡）→ 就绪；
- * 回「全局配置」把后台任务关闭（假 Agent 的剧本只给对话用，反思 / 摘要不
- * 消耗它的回合）。
+ * 设置页「智能体」：左栏选中该智能体 → 目录卡片启用（安装确认卡）→ 就绪。
+ * 「全局配置」条目已随 2026-11 修订移除（后台整理恒内置，无需在此关闭）。
  */
 async function enableFakeAgent(page: Page, agentId = 'fake'): Promise<void> {
   await openSettings(page, 'agents');
@@ -134,22 +139,6 @@ async function enableFakeAgent(page: Page, agentId = 'fake'): Promise<void> {
   });
   // 左栏「可用」绿点。
   await expect(page.locator(`[data-testid="agents-nav-available-${agentId}"]`)).toBeVisible();
-  // 后台任务（P6）在左栏第一条「全局配置」里：选「关闭」并确认已保存——降配项
-  // 只随保存成功后的设置消失；重新打开设置页仍为「关闭」（选择框取自已保存的
-  // 设置，保存失败会复原，审查 C9）。
-  await page.locator('[data-testid="agents-nav-config"]').click();
-  const background = page.locator('[data-testid="background-tasks-agent-select"]');
-  await expect(background).toBeVisible();
-  // 默认是内置智能体（即使没有内置模型，也先落在这个默认条目上）。
-  await expect(background).toHaveValue('builtin');
-  await background.selectOption('off');
-  await expect(page.locator('[data-testid="background-tasks-skill-authoring"]')).toHaveCount(0);
-  await expect(page.locator('[data-testid="background-tasks-project-mention-only"]')).toHaveCount(
-    0,
-  );
-  await closeSettings(page);
-  await openSettings(page, 'agents');
-  await expect(page.locator('[data-testid="background-tasks-agent-select"]')).toHaveValue('off');
   await closeSettings(page);
 }
 
@@ -160,19 +149,19 @@ async function openProfileTab(page: Page): Promise<void> {
   // 统一二级菜单：已在某个详情里先点返回回菜单。
   const back = page.locator('[data-testid="bot-detail-back"]');
   if (await back.isVisible()) await back.click();
-  // 模型 / 智能体下拉在菜单的「模型与智能体」行里：点行下钻。
+  // 任务执行引擎下拉在菜单的「模型与智能体」行里：点行下钻。
   await page.locator('[data-testid="bot-config-row-model"]').click();
   await expect(
-    page.locator('[data-testid="bot-detail-model"] [data-testid="bot-model-select"]'),
+    page.locator('[data-testid="bot-detail-model"] [data-testid="bot-task-engine-select"]'),
   ).toBeVisible();
 }
 
-/** Bot 运行配置：主模型下拉改选智能体（首次切换弹让渡说明；`apps` 包勾选时
- * 还有一张一次性 ACP 说明卡，遮罩会挡住后续一切点击——都要关掉）。 */
+/** Bot 运行配置：任务执行引擎下拉改选智能体（首次切换弹让渡说明；`apps` 包
+ * 勾选时还有一张一次性 ACP 说明卡，遮罩会挡住后续一切点击——都要关掉）。 */
 async function switchBotToAgent(page: Page, agentId = 'fake'): Promise<void> {
   await openProfileTab(page);
   const profile = page.locator('[data-testid="bot-detail-model"]');
-  await profile.locator('[data-testid="bot-model-select"]').selectOption(`@agent:${agentId}`);
+  await profile.locator('[data-testid="bot-task-engine-select"]').selectOption(`@agent:${agentId}`);
   const dialog = page.locator('[data-testid="bot-agent-switch-dialog"]');
   if (await dialog.isVisible({ timeout: 3_000 }).catch(() => false)) {
     await page.locator('[data-testid="bot-agent-switch-confirm"]').click();
@@ -187,25 +176,49 @@ async function switchBotToAgent(page: Page, agentId = 'fake'): Promise<void> {
   await page.waitForTimeout(1_500);
 }
 
-/** Enter sends the composer content directly (直发，无待发送队列). */
+/** 直发（无待发送队列）。先点进编辑器并确认文本已写入，再用快捷键发送，
+ * 避免从设置页返回后 Enter 打在空输入上。 */
 async function send(page: Page, text: string): Promise<void> {
   const composer = page.locator('[data-testid="composer-input"]');
+  await composer.click();
   await composer.fill(text);
-  await composer.press('Enter');
+  await expect(composer).toContainText(text);
+  await composer.press('ControlOrMeta+Enter');
 }
 
 const botBubble = (page: Page, text: string) =>
   page.locator('[data-testid="bot-bubble"]').filter({ hasText: text }).first();
 
 /**
- * 降级路径的可见结果：对话气泡是短提示，智能体原文在任务详情的执行报告里。
+ * 任务链路的可见结果：对话气泡是唤醒对话轮的转述（RELAY…），智能体原文在
+ * 任务详情的执行报告里（§6.1：报告不原文进对话）。
  */
 async function expectAgentReport(page: Page, agentText: string): Promise<void> {
-  await expect(botBubble(page, '点击任务卡查看执行报告')).toBeVisible({ timeout: 60_000 });
+  await expect(botBubble(page, 'RELAY')).toBeVisible({ timeout: 60_000 });
   await page.locator('[data-testid="task-open-run"]').first().click();
   await expect(page.locator('[data-testid="task-run-report"]')).toContainText(agentText, {
     timeout: 15_000,
   });
+}
+
+/**
+ * mock 主模型的派发剧本：对话轮 start_task 派任务 → 任务把 agentText 写进执行
+ * 报告 → 唤醒的对话轮转述（2026-11 修订：不再有无模型降级，任务必须由轮派出）。
+ */
+function dispatchAndRelay(agentText: string, writes = false): MockLlmStep[] {
+  return [
+    step()
+      .inTurn()
+      .replyToolCall('start_task', {
+        title: '处理请求',
+        instruction: '按用户的消息完成这件事',
+        source_message_ids: [],
+        writes,
+      }),
+    step().inTurn().replyText('ACK 我交给外援'),
+    step().inTask().replyText(agentText),
+    step().inTurn().replyText(`RELAY ${agentText}`),
+  ];
 }
 
 test('settings catalog: enable the agent, background tasks; bot switches to it with capability packs', async () => {
@@ -213,12 +226,13 @@ test('settings catalog: enable the agent, background tasks; bot switches to it w
   const session = await startSession('kepcup-e2e-agents-', {
     turns: [agentTurn().mcpList().text('你好，我是外援。')],
   });
-  const { page } = session;
+  const { page, llm } = session;
   try {
     await waitReady(page);
     await enableFakeAgent(page);
     await createBotAndOpenChat(page, '外援');
     await switchBotToAgent(page);
+    llm.script('mock-main', dispatchAndRelay('你好，我是外援。'));
 
     // 能力包：core 灰显必选；勾掉「图像生成」后工具数随之变化（自动保存）。
     const profile = page.locator('[data-testid="bot-detail-model"]');
@@ -234,7 +248,7 @@ test('settings catalog: enable the agent, background tasks; bot switches to it w
     await expect(imageGen).toHaveAttribute('aria-checked', 'false');
     await page.waitForTimeout(1_500);
 
-    // 没有内置模型：消息派成任务，假 Agent 的原文在执行报告里；宿主桥上看不到被取消的包。
+    // 内置对话轮派出任务，假 Agent 的原文在执行报告里；宿主桥上看不到被取消的包。
     await send(page, '在吗');
     await expectAgentReport(page, '你好，我是外援。');
     await expect
@@ -261,12 +275,14 @@ test('agent_tool approval card: an out-of-workspace write asks the user; approva
       ],
     };
   });
-  const { page } = session;
+  const { page, llm } = session;
   try {
     await waitReady(page);
     await enableFakeAgent(page);
     await createBotAndOpenChat(page, '外援');
     await switchBotToAgent(page);
+    // 越出工作区的写入必须是写任务，否则只读 run 会在权限桥里自动拒绝，不出审批卡。
+    llm.script('mock-main', dispatchAndRelay('写好了。', true));
 
     await send(page, '帮我在外面写个文件');
     const card = page.locator('[data-testid^="approval-card-"]').first();
@@ -287,12 +303,13 @@ test('in-chat agent setup card: a disabled agent holds the message; enabling in 
   const session = await startSession('kepcup-e2e-agent-setup-', {
     turns: [agentTurn().text('设置好了，我来了。')],
   });
-  const { page } = session;
+  const { page, llm } = session;
   try {
     await waitReady(page);
     await enableFakeAgent(page);
     await createBotAndOpenChat(page, '外援');
     await switchBotToAgent(page);
+    llm.script('mock-main', dispatchAndRelay('设置好了，我来了。'));
 
     // 设置页停用（有 Bot 在用 → 确认框）。
     await openSettings(page, 'agents');
@@ -304,32 +321,38 @@ test('in-chat agent setup card: a disabled agent holds the message; enabling in 
       timeout: 15_000,
     });
     await closeSettings(page);
+    await expect(page.locator('[data-testid="chat-view"]')).toBeVisible();
+    await page.locator('[data-testid="composer-input"]').click();
 
-    // 发送门禁：内容留在输入框、出现 Agent 设置卡（原因：未启用）。
+    // 发送门禁：任务引擎未启用时不发出——草稿留在输入框、无用户气泡、
+    // 无失败 run，对话里出现 Agent 设置卡（原因：未启用）。
     await send(page, '在吗');
     const setup = page.locator('[data-testid="setup-card"]');
-    await expect(setup).toBeVisible({ timeout: 30_000 });
+    await expect(setup).toBeVisible({ timeout: 15_000 });
     await expect(setup.locator('[data-testid="setup-card-agent-reason"]')).toBeVisible();
+    await expect(page.locator('[data-testid="composer-input"]')).toContainText('在吗');
+    await expect(page.locator('[data-testid="user-bubble"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="run-failed-banner"]')).toHaveCount(0);
 
-    // 卡片内启用 → 就绪 → 卡片收起 → 再按一次发送（Bot 回复）。
+    // 卡片内启用 → 就绪后自动收卡；门禁路径不会自动发出草稿，再发一次。
     await setup.locator('[data-testid="agent-enable-fake"]').click();
     await page.locator('[data-testid="agent-install-confirm"]').click();
     await expect(page.locator('[data-testid="setup-card"]')).toHaveCount(0, { timeout: 30_000 });
-    const composer = page.locator('[data-testid="composer-input"]');
-    await expect(composer).toHaveText('在吗');
-    await composer.press('Enter');
+    await send(page, '在吗');
+    await expect(page.locator('[data-testid="user-bubble"]').filter({ hasText: '在吗' })).toBeVisible(
+      { timeout: 30_000 },
+    );
     await expectAgentReport(page, '设置好了，我来了。');
   } finally {
     await session.close();
   }
 });
 
-test('onboarding subscription branch: enable an agent, the butler runs on it', async () => {
+test('onboarding: no external-agent path; the butler interview runs on the built-in engine', async () => {
   test.setTimeout(240_000);
   const session = await startSession(
     'kepcup-e2e-agent-onb-',
-    { turns: [agentTurn().text('管家在，有什么可以帮你？')] },
+    { turns: [agentTurn().text('这条不该被调用。')] },
     { onboarding: true },
   );
   const { page } = session;
@@ -340,35 +363,28 @@ test('onboarding subscription branch: enable an agent, the butler runs on it', a
     await page.locator('[data-testid="onboarding-start"]').click();
     await expect(wizard).toHaveAttribute('data-step', 'model');
 
-    // 「我有订阅」：目录里只列订阅登录的 Agent（设置页同一张卡片）。
-    await page.locator('[data-testid="onboarding-subscription-open"]').click();
-    await expect(page.locator('[data-testid="onboarding-subscription"]')).toBeVisible();
-    const subCard = page.locator('[data-testid="agent-card-fake-sub"]');
-    await expect(subCard).toBeVisible({ timeout: 15_000 });
-    await expect(page.locator('[data-testid="agent-card-fake"]')).toHaveCount(0);
-    await subCard.locator('[data-testid="agent-enable-fake-sub"]').click();
-    await page.locator('[data-testid="agent-install-confirm"]').click();
-    await page.locator('[data-testid="onboarding-agent-choose-fake-sub"]').check();
-    const save = page.locator('[data-testid="onboarding-subscription-save"]');
-    await expect(save).toBeEnabled({ timeout: 15_000 });
-    await save.click();
+    // 2026-11 修订：向导没有「我有订阅」与跳过——模型步必配。mock 厂商只
+    // 种子了目录与默认模型，Key 仍要在这一步录入。
+    await expect(page.locator('[data-testid="onboarding-subscription-open"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="onboarding-model-skip"]')).toHaveCount(0);
+    await page.locator('[data-testid="onboarding-provider-select"]').selectOption('custom:mock');
+    await page.locator('[data-testid="onboarding-key-input"]').fill('sk-onboarding-e2e');
+    await page.locator('[data-testid="onboarding-model-save"]').click();
 
     await expect(wizard).toHaveAttribute('data-step', 'permissions');
     await page.locator('[data-testid="onboarding-next"]').click();
     await expect(wizard).toHaveAttribute('data-step', 'sandbox');
     await page.locator('[data-testid="onboarding-next"]').click();
     await expect(wizard).toHaveAttribute('data-step', 'bot');
-    await expect(page.locator('[data-testid="onboarding-butler-agent-note"]')).toContainText(
-      'Fake Subscription',
-    );
+    await expect(page.locator('[data-testid="onboarding-butler-agent-note"]')).toHaveCount(0);
     await page.locator('[data-testid="onboarding-butler-start"]').click();
     await expect(wizard).toBeHidden({ timeout: 15_000 });
     await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
 
-    // 管家由智能体驱动（未进入内置引擎的组队访谈）：假 Agent 的回复在执行报告里。
-    await send(page, '你好');
-    await expectAgentReport(page, '管家在，有什么可以帮你？');
-    expect(session.record().prompts.some((prompt) => prompt.text.includes('你好'))).toBe(true);
+    // 组队访谈在内置引擎上跑：假智能体进程从未被拉起。
+    await page.waitForTimeout(3_000);
+    expect(session.record().prompts).toHaveLength(0);
+    expect(session.record().sessions).toHaveLength(0);
   } finally {
     await session.close();
   }

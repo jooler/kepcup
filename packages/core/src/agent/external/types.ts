@@ -71,14 +71,6 @@ export interface SessionContext {
    */
   isolation?: AgentIsolation;
   /**
-   * 后台精简会话（P6：`complete()` 与无内置模型时的后台 loop，design 28 §8）：
-   * `sessionPrompt` 是该任务的完整系统提示词（不是 Bot 的会话级提示词），
-   * 能替换 Agent 预设提示词、关掉原生工具的 Provider 在此照做（Claude：
-   * 替换式 `systemPrompt` 字符串 + `tools: []`）；其余 Provider 不变（宿主
-   * 已强制只读档、空临时目录、只放行桥工具）。
-   */
-  oneShot?: boolean;
-  /**
    * D73 × 沙箱内命令自动放行（review P0）：true = 沙箱内命令也要经宿主的
    * `session/request_permission`，由权限桥裁决（未污点时照样自动放行、污点期间
    * 弹外发卡）。Agent 自己的「沙箱内命令自动放行」（Claude
@@ -220,13 +212,6 @@ export interface AgentProvider {
    */
   bridgeToolFromCall?(toolCall: AcpToolCallLike, serverName: string): string | null;
   features: AgentProviderFeatures;
-  /**
-   * 后台精简会话（`SessionContext.oneShot`）能否**完全关闭原生工具**、只留
-   * 宿主桥工具（审查 S1）：只有经核对确实能做到的 Provider 才声明 true
-   * （Claude：`tools: []` + `settingSources: []`，会话级）。未声明的 Agent 不参与
-   * 后台路由（llm-router `agentBackgroundBlocker`），引擎也拒绝为它开后台会话。
-   */
-  backgroundNoNativeTools?: boolean;
   /**
    * 该 Agent 额外禁止的模式（叠加在全局 `FORBIDDEN_AGENT_MODES` 之上，P5）：
    * 宿主永不切入，Agent 自行切入则判为偏离（如 Antigravity 的 `auto_edit`

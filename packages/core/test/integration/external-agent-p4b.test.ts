@@ -28,8 +28,9 @@ import {
 /**
  * 外部智能体 P4 B 部分（todo/acp-external-agents.md §7.1，D72 + D58）：
  * 结构化 setup 失败 `{kind:'agent', agentId, reason}` → 完成设置 → runs.retry
- * 续跑；订阅登录（auth_required）回写状态、门禁在开跑前拦下；onboarding 的
- * 默认 Agent；无内置模型时后台 loop 优雅跳过。
+ * 续跑；订阅登录（auth_required）回写状态、门禁在开跑前拦下。任务由内置
+ * 对话轮经 `start_task` 派出（2026-11 修订：无内置模型的确定性降级、onboarding
+ * 默认 Agent 与后台 Agent loop 已随「对话与后台恒内置」移除）。
  */
 
 const stacks: TestStack[] = [];
@@ -198,32 +199,48 @@ describe('external agent in-chat setup (P4-B, D58)', () => {
     expect(stack.record().prompts.map((p) => p.text.includes('在吗'))).toEqual([true]);
   }, 30_000);
 
-  it('auth_required → agent setup + needs_auth on the task; the gate blocks until login, then retry completes (no built-in model)', async () => {
+  it('auth_required → agent setup + needs_auth on the task; the gate blocks until login, then retry completes', async () => {
     const authMethods = [{ id: 'fake-login', name: '登录 Fake', description: '订阅登录' }];
-    const stack = await start(
-      { requireAuth: true, authMethods, turns: [agentTurn().text('登录好了，继续。')] },
-      { KEPCUP_MOCK_LLM_URL: '' },
-    );
-    await stack.core.rpc.call('settings.update', {
-      agents: { 'fake-sub': { enabled: true } },
-      backgroundTasks: { agentEnabled: false },
+    const stack = await start({
+      requireAuth: true,
+      authMethods,
+      turns: [agentTurn().text('登录好了，继续。')],
     });
+    await stack.core.rpc.call('settings.update', { agents: { 'fake-sub': { enabled: true } } });
     const bot = await useAgent(stack, await makeBot(stack.core, '订阅外援'), 'fake-sub');
     const conv = await openDirect(stack.core, bot.id);
+    const sourceIds = () =>
+      stack.core.services
+        .domain!.messages.listShared(conv.id, { limit: 50 })
+        .filter((m) => m.senderType === 'user')
+        .map((m) => m.id);
+    // The built-in turn starts the task; every failure wakes a turn that tells the user.
+    stack.llm.script('mock-main', [
+      step()
+        .inTurn()
+        .expect((req) => triggerOf(req).includes('帮我看看'))
+        .replyToolCall('start_task', () => ({
+          title: '看看',
+          instruction: 'LOOK 处理用户的消息',
+          source_message_ids: sourceIds(),
+          writes: false,
+        })),
+      step()
+        .inTurn()
+        .expect((req) => triggerOf(req).includes('帮我看看'))
+        .replyText('ACK 我交给外援'),
+      step().inTurn().expect(wakeWith('（失败）')).replyText('FAIL-1 外援还没登录'),
+      step().inTurn().expect(wakeWith('（结果）')).replyText('RELAY 外援说：登录好了，继续。'),
+    ]);
 
-    // §8.4 level 2: the downgraded turn hands the message to a task.
     await sendBatch(stack.core, conv.id, ['帮我看看']);
     const failed = await waitForRun(stack.core, conv.id, 'failed', { loopType: 'task' });
     expect(failed.setup).toEqual({ kind: 'agent', agentId: 'fake-sub', reason: 'auth_required' });
     expect(failed.error ?? '').toContain('未登录');
     // 失败回写登录态：设置卡据此展示登录入口。
     expect((await agentView(stack, 'fake-sub'))?.status).toBe('needs_auth');
-    // The failure woke a (downgraded) turn that told the user.
-    await waitForMessage(
-      stack.core,
-      conv.id,
-      (m) => m.senderBotId === bot.id && textOf(m).includes('失败了'),
-    );
+    // The failure woke a turn that told the user.
+    await waitForMessage(stack.core, conv.id, (m) => textOf(m).includes('FAIL-1'));
 
     // 未登录时重试：门禁在开跑前拦下（不再尝试建会话）。
     const rejected = () =>
@@ -254,39 +271,59 @@ describe('external agent in-chat setup (P4-B, D58)', () => {
     await retry(stack, blocked.id);
     const done = await nextSettledTask(stack, conv.id, [failed.id, blocked.id]);
     expect(done.status).toBe('completed');
-    // No built-in model to summarize: the downgraded turn points at the card.
-    const notice = await waitForMessage(
+    // The waking turn summarizes; no verbatim task-origin message appears in the chat.
+    const summary = await waitForMessage(
       stack.core,
       conv.id,
-      (m) => m.senderBotId === bot.id && textOf(m).includes('点击任务卡查看执行报告'),
+      (m) => m.senderBotId === bot.id && textOf(m).includes('登录好了，继续。'),
     );
-    expect(textOf(notice)).toContain('已完成');
+    expect((summary.content as { origin?: string }).origin).toBeUndefined();
     expect((await listMessages(stack.core, conv.id)).filter(isTaskOrigin)).toEqual([]);
   }, 45_000);
 });
 
 describe('agent failures after visible work stay ordinary failures (review #4)', () => {
   it('auth_required before any output → setup; after interim text + a tool → plain failure (task level)', async () => {
-    const stack = await start(
-      {
-        turns: [
-          agentTurn().fail(-32000, 'Authentication required'),
-          agentTurn()
-            .text('我先看看文件。')
-            .toolCall('t1', 'Read a.md', { name: 'Read', kind: 'read', input: { path: 'a.md' } })
-            .toolResult('t1', 'ok')
-            .fail(-32000, 'Authentication required'),
-        ],
-      },
-      { KEPCUP_MOCK_LLM_URL: '' },
-    );
-    await stack.core.rpc.call('settings.update', {
-      agents: { fake: { enabled: true } },
-      backgroundTasks: { agentEnabled: false },
+    const stack = await start({
+      turns: [
+        agentTurn().fail(-32000, 'Authentication required'),
+        agentTurn()
+          .text('我先看看文件。')
+          .toolCall('t1', 'Read a.md', { name: 'Read', kind: 'read', input: { path: 'a.md' } })
+          .toolResult('t1', 'ok')
+          .fail(-32000, 'Authentication required'),
+      ],
     });
+    await stack.core.rpc.call('settings.update', { agents: { fake: { enabled: true } } });
     // 无需登录的条目：任务失败不回写 needs_auth，第二句照常开跑。
     const bot = await useAgent(stack, await makeBot(stack.core, '外援'), 'fake');
     const conv = await openDirect(stack.core, bot.id);
+    const sourceIds = () =>
+      stack.core.services
+        .domain!.messages.listShared(conv.id, { limit: 50 })
+        .filter((m) => m.senderType === 'user')
+        .map((m) => m.id);
+    const dispatch = (expectFragment: string) => [
+      step()
+        .inTurn()
+        .expect((req) => triggerOf(req).includes(expectFragment))
+        .replyToolCall('start_task', () => ({
+          title: '处理',
+          instruction: `DO ${expectFragment}`,
+          source_message_ids: sourceIds(),
+          writes: false,
+        })),
+      step()
+        .inTurn()
+        .expect((req) => triggerOf(req).includes(expectFragment))
+        .replyText('ACK 我交给外援'),
+    ];
+    stack.llm.script('mock-main', [
+      ...dispatch('第一句'),
+      ...dispatch('第二句'),
+      step().inTurn().expect(wakeWith('（失败）')).replyText('FAIL-1 外援中断了'),
+      step().inTurn().expect(wakeWith('（失败）')).replyText('FAIL-2 外援又中断了'),
+    ]);
 
     await sendBatch(stack.core, conv.id, ['第一句']);
     const first = await waitForRun(stack.core, conv.id, 'failed', { loopType: 'task' });
@@ -299,83 +336,5 @@ describe('agent failures after visible work stay ordinary failures (review #4)',
     expect(second.setup).toBeNull();
     // Incomplete stop keeps the last status overlay so user/Bot can see where it stopped.
     expect(second.lastProgress ?? '').toContain('我先看看文件');
-  }, 30_000);
-});
-
-describe('onboarding default agent (P4-B)', () => {
-  it('new bots and the butler default to settings.defaultAgentId while no built-in model exists', async () => {
-    const stack = await start({ turns: [] }, { KEPCUP_MOCK_LLM_URL: '' });
-    await expect(
-      stack.core.rpc.call('settings.update', { defaultAgentId: 'not-in-catalog' }),
-    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
-    await stack.core.rpc.call('settings.update', {
-      agents: { 'fake-sub': { enabled: true }, fake: { enabled: true } },
-      defaultAgentId: 'fake-sub',
-    });
-
-    const butler = (await stack.core.rpc.call('butler.ensure', {})) as { bot: Bot };
-    expect(butler.bot.profile.runtime.agent).toMatchObject({
-      id: 'fake-sub',
-      permission: 'workspace',
-    });
-    const plain = await makeBot(stack.core, '新 Bot');
-    expect(plain.profile.runtime.agent.id).toBe('fake-sub');
-
-    // 预览档 Agent 默认 ask（与 Bot 配置界面一致）。
-    await stack.core.rpc.call('settings.update', { defaultAgentId: 'fake' });
-    expect((await makeBot(stack.core, '预览')).profile.runtime.agent).toMatchObject({
-      id: 'fake',
-      permission: 'ask',
-    });
-
-    // 已有默认主模型 → 新 Bot 照旧用内置模型。
-    await stack.core.rpc.call('settings.update', { defaultMainModel: 'custom:mock/mock-main' });
-    expect((await makeBot(stack.core, '内置')).profile.runtime.agent.id).toBe('');
-    // No agent process and no wait loop: locally and on Ubuntu this is well
-    // under a second (previous Windows release: 398ms). The explicit 20s cap
-    // sits under the core project's win32 budget (30s) and tripped while this
-    // file ran beside other stacks on windows-latest. Same headroom as the
-    // auth sibling above, which does spawn the agent.
-  }, 45_000);
-});
-
-describe('background loops without a built-in model (P4-B minimal fallback)', () => {
-  it('reflection / summary jobs are skipped when background agents are off: no failed run, jobs done', async () => {
-    const stack = await start({ turns: [agentTurn().text('收到。')] }, { KEPCUP_MOCK_LLM_URL: '' });
-    await stack.core.rpc.call('settings.update', {
-      agents: { fake: { enabled: true } },
-      // P6：后台任务默认改走外部 Agent；关闭后回到 P4 的优雅跳过。
-      backgroundTasks: { agentEnabled: false },
-    });
-    const bot = await useAgent(stack, await makeBot(stack.core, '外援'), 'fake');
-    const conv = await openDirect(stack.core, bot.id);
-    // §8.4 (DEV-011): the downgraded turn hands the message to a task.
-    await sendBatch(stack.core, conv.id, ['记一下：我喜欢绿茶']);
-    await waitForRun(stack.core, conv.id, 'completed', { loopType: 'task' });
-
-    const db = stack.core.services.mainDb!;
-    stack.core.services.domain!.jobs.enqueue({
-      type: 'conversation_summary',
-      conversationId: conv.id,
-      payload: { targetSeq: 2 },
-      priority: 2,
-      dedupeKey: `conversation_summary:${conv.id}`,
-    });
-    const jobs = await waitFor(
-      () => {
-        const rows = db
-          .prepare(
-            "select type, status, last_error as lastError from jobs where type in ('reflection', 'conversation_summary')",
-          )
-          .all() as Array<{ type: string; status: string; lastError: string | null }>;
-        return rows.length === 2 && rows.every((row) => row.status === 'done') ? rows : null;
-      },
-      { label: 'background jobs done' },
-    );
-    expect(jobs.every((row) => row.lastError === null)).toBe(true);
-    const background = (await listRuns(stack.core, conv.id)).filter(
-      (run) => run.loopType !== 'turn' && run.loopType !== 'task',
-    );
-    expect(background).toEqual([]);
   }, 30_000);
 });

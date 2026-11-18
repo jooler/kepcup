@@ -32,13 +32,14 @@ export function effectiveAgentCatalog(
 
 /**
  * 把 Bot 设为外部 Agent 的 RPC 门禁：目录中不存在的 id 拒绝；`agentId` 为空
- * （内置引擎）恒放行。
+ * （跟随应用默认）与 `'builtin'`（显式内置任务引擎，2026-11 修订三态哨兵）
+ * 恒放行——它们不是外部智能体。
  */
 export function assertAgentSelectable(
   catalog: readonly AgentCatalogEntry[],
   agentId: string,
 ): void {
-  if (agentId.length === 0) return;
+  if (agentId.length === 0 || agentId === 'builtin') return;
   if (findAgentEntry(catalog, agentId) === null) {
     throw new AppError('INVALID_INPUT', `智能体「${agentId}」不在目录中`);
   }

@@ -15,7 +15,7 @@
 - **头像内边距**：`avatarPadding` 只在上传头像且边距 > 0 时写入（缺省 = 0，旧模板缺这一项照样能读，不升版本号）；导入时建完 Bot 再写 `bots.avatar_padding`。
 - **不包含**（与 D37 移交的「永不移交」清单同源）：对话（conversations / messages / attachments…）、记忆（`bots/{id}/memory.db`）、知识库（`bots/{id}/wiki/`）、任务（runs / todos / schedules / watches / delegations / jobs）、组件（widgets 四表）、密钥（secrets 表永不出现在导出路径上）、路径与应用写授权、审批与审计记录、浏览器登录态、workspace 目录。
 - **唯一需要字段级清洗的位置是 `profile.runtime` 的本机引用**：`mcp_server_ids` / `app_connection_ids`（指向本机全局配置的 id，别的设备无意义）、`browser_profile`（本机共享资料）、`inkcop_agent_keys`（同机协作）、`network_allowlist`（可能含内网域名）、`message_transport`（已废弃恒空）。保留：`model` / `light_model`（模型偏好，空 = 跟随设置默认）、`network_policy`、`agent` 的 effort / permission / **capabilities**（18 个宿主能力包是应用级语义，可移植）。**导出侧清洗一次，导入侧再强制清洗一次**（防御纵深：无论模板里残留什么都清空）。
-- **导入只新建 Bot**：`BotsService.create(profile, { skipDefaultAgent: true })`（模板带空模型 / Agent = 跟随设置默认，不被 onboarding 默认外部 Agent 覆盖，与 D88 同语义）。外部智能体引擎 id 在本机不可用（实验开关关闭或不在目录）时回退内置引擎（`id` / `model` 清空，permission / capabilities 保留）。
+- **导入只新建 Bot**：`BotsService.create(profile)`。模板带空模型 / Agent = 跟随设置默认。外部智能体引擎 id 在本机不可用（不在目录或未启用）时回退**显式内置任务引擎**（`agent.id='builtin'`，2026-11 修订三态；`''` 已是「跟随应用默认」，不保证内置）。
 - **技能**：自写技能走 staging → `parseSkillDir` 校验（SKILL.md frontmatter 的 name 必须与条目名一致）→ `promoteAuthored`（真实 git 提交到新 Bot 的自写技能仓库）→ 按 status `activateAuthored` / `parkAuthored`。单个技能失败**跳过并报告，不回滚 Bot**。已导入技能**不安装**（内容在本机 git 技能库里，凭 sourceUrl 重拉需要走 skill_import 审批流），导入结果里列清单由 UI 提示用户自行重新导入。
 - **限额（超限报错，不静默截断）**：自写技能 ≤ 20 个、每技能 ≤ 32 文件、单文件 ≤ 256KB、每技能 ≤ 1MB、模板序列化 ≤ 4MB、inspect 读取 ≤ 8MB。
 - **防篡改**：导入采用 MCPB 模式——`bots.templateInspect` 返回文件 sha256，确认后 `bots.templateImport` 必须回传同一 sha256，文件被替换则拒绝。技能内文件路径在 schema（拒绝绝对路径 / `..` / `.git` / `node_modules`）与写盘（resolve 后必须落在 staging 内）双层校验，防路径穿越。

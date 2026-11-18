@@ -39,7 +39,7 @@ import type { Bot } from '@kepcup/shared';
  * - 读永不返回密钥、本机路径、用户画像原文；敏感字段只回「已配置 / 未配置」；用户自填的名称一律
  *   过 `sanitizeDisplayText`。
  * - 写只改本条目的字段：settings 里的整对象（capabilityModels / webSearch / agents /
- *   backgroundTasks / apps / providerConcurrency）一律在**最新**设置上按字段合并后写回，不发整对象；
+ *   apps / providerConcurrency）一律在**最新**设置上按字段合并后写回，不发整对象；
  *   CAS（比对 `expected`）由 `SettingsCatalogHost` 在写锁里先做。
  * - 没有写入实现的条目（`write` 缺省）只能出卡 / 跳转，由用户在设置页完成。
  */
@@ -441,10 +441,15 @@ function chatModelOptionsOf(deps: AdapterDeps): SettingOption[] {
   }));
 }
 
-/** settings 里一个对话模型字段（defaultMainModel / defaultLightModel / widgetReviewModel）。 */
+/** settings 里一个对话模型字段（defaultMainModel / defaultLightModel / backgroundModel / widgetReviewModel）。 */
 export function settingsModelAdapter(
   deps: AdapterDeps,
-  key: 'defaultMainModel' | 'defaultLightModel' | 'widgetReviewModel' | 'microAppModel',
+  key:
+    | 'defaultMainModel'
+    | 'defaultLightModel'
+    | 'backgroundModel'
+    | 'widgetReviewModel'
+    | 'microAppModel',
   emptyMeaning: string | null,
 ): ItemAdapter {
   return {
@@ -475,8 +480,11 @@ export function settingsModelAdapter(
   };
 }
 
-/** 本 Bot 的主 / 轻量模型（runtime.model / runtime.light_model；'' = 跟随默认）。 */
-export function botModelAdapter(deps: AdapterDeps, key: 'model' | 'light_model'): ItemAdapter {
+/** 本 Bot 的主 / 轻量 / 后台任务模型（runtime.model / runtime.light_model / runtime.background_model；'' = 跟随默认）。 */
+export function botModelAdapter(
+  deps: AdapterDeps,
+  key: 'model' | 'light_model' | 'background_model',
+): ItemAdapter {
   return {
     read: (_item, target) => {
       const bot = target.botId !== null ? deps.bots.get(target.botId) : null;
@@ -487,7 +495,11 @@ export function botModelAdapter(deps: AdapterDeps, key: 'model' | 'light_model')
         return snapshot(
           'configured',
           { model: '' },
-          key === 'model' ? '跟随默认主模型' : '跟随默认轻量模型',
+          key === 'model'
+            ? '跟随默认主模型'
+            : key === 'light_model'
+              ? '跟随默认轻量模型'
+              : '跟随默认后台任务模型',
         );
       }
       const label = modelRefLabel(ref, providers);
@@ -873,64 +885,14 @@ export function taskLoopAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-export function backgroundTasksAdapter(deps: AdapterDeps): ItemAdapter {
+/** 默认任务执行引擎（settings.defaultTaskAgentId；'' = 内置智能体）。 */
+export function defaultTaskEngineAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: () => {
-      const settings = deps.settings.get();
-      const agentEnabled = settings.backgroundTasks.agentEnabled;
-      const builtinEnabled = settings.backgroundTasks.builtinEnabled !== false;
-      const agent = settings.backgroundAgentId ?? '';
-      return snapshot(
-        'configured',
-        { agentEnabled, agent },
-        !builtinEnabled && !agentEnabled
-          ? '关闭后台任务'
-          : agentEnabled && agent.length > 0
-            ? `后台任务改用外部智能体（${clean(agent, 30)}）`
-            : !builtinEnabled
-              ? '各 Bot 自己的智能体'
-              : '内置智能体',
-      );
-    },
-    options: (field) =>
-      field.options === 'agents'
-        ? (deps.agentCatalog?.() ?? []).map((entry) => ({
-            value: entry.id,
-            label: clean(entry.name),
-          }))
-        : staticOptions(field),
-    normalize: (_item, values) => {
-      const agent = str(values.agent);
-      if (agent === undefined || agent.length === 0) return { ok: true, values };
-      return (deps.agentCatalog?.() ?? []).some((entry) => entry.id === agent)
-        ? { ok: true, values: { ...values, agent } }
-        : { ok: false, message: `智能体「${clean(agent)}」不在目录中` };
-    },
-    write: (_item, { next }) => {
-      const latest = deps.settings.get();
-      const agentEnabled = bool(next.agentEnabled) ?? latest.backgroundTasks.agentEnabled;
-      deps.settings.update({
-        backgroundTasks: {
-          ...latest.backgroundTasks,
-          // 目录卡片没有「关闭」概念：打开「改用外部智能体」时必须同时打开内置
-          // 路由，否则会留下「内置智能体」显示与「只用各 Bot 自己的智能体」
-          // 路由不一致的状态。
-          builtinEnabled: agentEnabled ? true : latest.backgroundTasks.builtinEnabled,
-          agentEnabled,
-        },
-        backgroundAgentId: str(next.agent) ?? latest.backgroundAgentId ?? '',
-      });
-    },
-  };
-}
-
-export function agentsDefaultAdapter(deps: AdapterDeps): ItemAdapter {
-  return {
-    read: () => {
-      const agent = deps.settings.get().defaultAgentId;
+      const agent = deps.settings.get().defaultTaskAgentId;
       return agent.length > 0
-        ? snapshot('configured', { agent }, clean(agent, 40))
-        : snapshot('unconfigured', { agent: '' }, '未设置');
+        ? snapshot('configured', { agent }, `任务默认由外部智能体执行（${clean(agent, 40)}）`)
+        : snapshot('unconfigured', { agent: '' }, '内置智能体');
     },
     options: () =>
       (deps.agentCatalog?.() ?? []).map((entry) => ({ value: entry.id, label: clean(entry.name) })),
@@ -942,7 +904,7 @@ export function agentsDefaultAdapter(deps: AdapterDeps): ItemAdapter {
         : { ok: false, message: `智能体「${clean(agent)}」不在目录中` };
     },
     write: (_item, { next }) => {
-      deps.settings.update({ defaultAgentId: str(next.agent) ?? '' });
+      deps.settings.update({ defaultTaskAgentId: str(next.agent) ?? '' });
     },
   };
 }
@@ -1387,41 +1349,59 @@ export function botAppsAdapter(deps: AdapterDeps): ItemAdapter {
 }
 
 export function botAgentAdapter(deps: AdapterDeps): ItemAdapter {
+  /** runtime.agent.id → 卡片的三态 engine 值。 */
+  const engineOf = (id: string): 'default' | 'builtin' | 'agent' =>
+    id === 'builtin' ? 'builtin' : id.length > 0 ? 'agent' : 'default';
   return {
     read: (_item, target) => {
       const agent = botField(deps, target, (bot) => bot.profile.runtime.agent);
       if (agent === null) return snapshot('unknown', null, 'Bot 不存在');
-      const values = { agent: agent.id, model: agent.model, permission: agent.permission };
-      return agent.id.length === 0
-        ? snapshot('configured', values, '内置引擎')
-        : snapshot('configured', values, `外部智能体 ${clean(agent.id, 30)}`);
+      const engine = engineOf(agent.id);
+      const values = { engine, agent: engine === 'agent' ? agent.id : '', model: agent.model, permission: agent.permission };
+      return engine === 'default'
+        ? snapshot(
+            'configured',
+            values,
+            `跟随应用默认（${(deps.settings.get().defaultTaskAgentId ?? '').length > 0 ? '外部智能体' : '内置智能体'}）`,
+          )
+        : engine === 'builtin'
+          ? snapshot('configured', values, '内置智能体')
+          : snapshot('configured', values, `外部智能体 ${clean(agent.id, 30)}`);
     },
     options: (field, _item, target) => {
       if (field.name === 'agent') {
-        return [
-          { value: '', label: '内置引擎' },
-          ...(deps.agentCatalog?.() ?? []).map((entry) => ({
-            value: entry.id,
-            label: clean(entry.name),
-          })),
-        ];
-      }
-      if (field.name === 'model' && field.options === 'agent-models') {
-        const bot = target.botId !== null ? deps.bots.get(target.botId) : null;
-        const agentId = bot?.profile.runtime.agent.id ?? '';
-        const options = agentId.length > 0 ? (deps.agentOptions?.(agentId) ?? null) : null;
-        return (options?.models ?? []).map((model) => ({
-          value: model.value,
-          label:
-            model.description.length > 0
-              ? `${clean(model.name, 40)}（${clean(model.description, 60)}）`
-              : clean(model.name, 40),
+        return (deps.agentCatalog?.() ?? []).map((entry) => ({
+          value: entry.id,
+          label: clean(entry.name),
         }));
+      }
+      if (field.name === 'model') {
+        const bot = target.botId !== null ? deps.bots.get(target.botId) : null;
+        const id = bot?.profile.runtime.agent.id ?? '';
+        if (engineOf(id) === 'agent') {
+          const options = id.length > 0 ? (deps.agentOptions?.(id) ?? null) : null;
+          return (options?.models ?? []).map((model) => ({
+            value: model.value,
+            label:
+              model.description.length > 0
+                ? `${clean(model.name, 40)}（${clean(model.description, 60)}）`
+                : clean(model.name, 40),
+          }));
+        }
+        // 内置引擎的任务模型：内置对话模型列表。
+        return chatModelOptionsOf(deps);
       }
       return staticOptions(field);
     },
     normalize: (_item, values) => {
       const next = { ...values };
+      if ('engine' in next) {
+        const engine = str(next.engine);
+        if (engine !== 'default' && engine !== 'builtin' && engine !== 'agent') {
+          return { ok: false, message: 'engine 应为 default / builtin / agent' };
+        }
+        next.engine = engine;
+      }
       if ('permission' in next) {
         const permission = str(next.permission);
         if (permission !== 'read_only' && permission !== 'ask' && permission !== 'workspace') {
@@ -1436,26 +1416,43 @@ export function botAgentAdapter(deps: AdapterDeps): ItemAdapter {
     write: (_item, { next }, target) => {
       const bot = requireBot(deps, target);
       const current = bot.profile.runtime.agent;
+      const engine = str(next.engine) ?? engineOf(current.id);
       // 换成另一个外部智能体时的实验开关与目录校验在 `botProfiles.apply` 里（与 bots.update 同一处）。
-      const id = str(next.agent) ?? current.id;
+      if (engine === 'default') {
+        return writeRuntime(deps, target, (runtime) => ({
+          ...runtime,
+          agent: { id: '', model: '', effort: '', permission: 'workspace', capabilities: null },
+        }));
+      }
+      if (engine === 'builtin') {
+        const model = str(next.model) ?? (engineOf(current.id) === 'builtin' ? current.model : '');
+        return writeRuntime(deps, target, (runtime) => ({
+          ...runtime,
+          agent: { id: 'builtin', model, effort: '', permission: 'workspace', capabilities: null },
+        }));
+      }
+      const id = str(next.agent) ?? (engineOf(current.id) === 'agent' ? current.id : '');
       const permission = str(next.permission) ?? current.permission;
       if (permission !== 'read_only' && permission !== 'ask' && permission !== 'workspace') {
         throw new AppError('INVALID_INPUT', '权限档位无效');
       }
+      const sameAgent = id === current.id;
       return writeRuntime(deps, target, (runtime) => ({
         ...runtime,
         agent: {
           ...runtime.agent,
           id,
-          model: str(next.model) ?? current.model,
+          model: str(next.model) ?? (sameAgent ? current.model : ''),
+          effort: sameAgent ? current.effort : '',
           permission,
+          capabilities: sameAgent ? current.capabilities : null,
         },
       }));
     },
     valuesWiden: (_item, before, proposed) => {
-      const beforeId = str(before?.agent) ?? '';
-      const nextId = str(proposed.agent) ?? beforeId;
-      if (beforeId.length === 0 && nextId.length > 0) return true;
+      const beforeEngine = str(before?.engine) ?? 'default';
+      const nextEngine = str(proposed.engine) ?? beforeEngine;
+      if (beforeEngine !== 'agent' && nextEngine === 'agent') return true;
       const beforePermission = str(before?.permission) ?? 'read_only';
       const nextPermission = str(proposed.permission) ?? beforePermission;
       if ((PERMISSION_RANK[nextPermission] ?? 0) > (PERMISSION_RANK[beforePermission] ?? 0)) {

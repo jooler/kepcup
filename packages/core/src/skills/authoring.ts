@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { rmSync } from '../infra/fs-rm.js';
 import path from 'node:path';
-import { AppError, RUN_MAX_TURNS } from '@kepcup/shared';
+import { AppError, BUILTIN_ENGINE, RUN_MAX_TURNS } from '@kepcup/shared';
 import { botSkillDir, botSkillDraftDir, botSkillsRoot, type AppPaths } from '../infra/paths.js';
 import type { AgentEngine, EngineEvent, RunHandle, EngineUsage } from '../agent/types.js';
 import type { BotsService } from '../domain/bots.js';
@@ -20,20 +20,12 @@ import { parseSkillDir, sanitizeSkillName } from './parse.js';
 import { shQuote } from '../infra/shell.js';
 import { redactStepPayload } from '../infra/redact.js';
 import type { SkillsService } from './registry.js';
-import {
-  backgroundRunSpec,
-  engineKeyOf,
-  routeFor,
-  routeStillCurrent,
-} from '../agent/llm-router.js';
+import { routeFor, routeStillCurrent } from '../agent/llm-router.js';
 import type { LlmRouter } from '../agent/llm-router.js';
 
 export interface AuthoringJobDeps {
   engine: AgentEngine;
-  /**
-   * D72 P6：无内置模型时生成 loop 改走外部 Agent（后台精简会话；须在设置
-   * 「后台任务」里打开，默认关）；缺省只用内置模型。
-   */
+  /** 后台整理路由（2026-11 修订：恒内置）；缺省只用内置模型。 */
   router?: LlmRouter | undefined;
   sandbox: SandboxBackend;
   paths: AppPaths;
@@ -137,7 +129,7 @@ export async function runSkillAuthoringJob(deps: AuthoringJobDeps): Promise<void
     status: 'running',
     provider: route.provider,
     model: modelRef,
-    engine: engineKeyOf(route),
+    engine: BUILTIN_ENGINE,
   });
 
   const existingSkillPath = botSkillDir(deps.paths, job.bot_id, name);
@@ -151,8 +143,8 @@ export async function runSkillAuthoringJob(deps: AuthoringJobDeps): Promise<void
     sandbox: deps.sandbox,
     draftsDir,
   });
-  // P6：外部 Agent 路由时补上后台精简会话参数（backgroundRunSpec）。
-  const handle: RunHandle = route.engine.startRun(backgroundRunSpec(route, {
+  // 后台整理任务恒走内置引擎（2026-11 修订，design 28 §8）。
+  const handle: RunHandle = route.engine.startRun({
     identity: {
       runId: run.id,
       botId: job.bot_id,
@@ -191,7 +183,7 @@ export async function runSkillAuthoringJob(deps: AuthoringJobDeps): Promise<void
     ],
     tools,
     limits: { maxTurns: RUN_MAX_TURNS },
-  }));
+  });
   persistSteps(run.id, handle, deps.runs, deps.secrets);
 
   let outcome;

@@ -5,7 +5,7 @@ import {
   claudeProvider,
   isClaudeSandboxUnavailable,
 } from '../../src/agent/external/providers/claude.js';
-import { agentRunGate } from '../../src/agent/external/catalog.js';
+import { agentRunGate, assertAgentSelectable } from '../../src/agent/external/catalog.js';
 import { settingsSchema } from '@kepcup/shared';
 
 /**
@@ -96,6 +96,19 @@ describe('agentRunGate', () => {
     });
     expect(agentRunGate(enabled, [entry], 'fake', view('error'))?.reason).toBe('not_installed');
     expect(agentRunGate(enabled, [entry], 'fake', view('ready'))).toBeNull();
+  });
+});
+
+describe('assertAgentSelectable (three-state task engine sentinels)', () => {
+  const entry = findAgentEntry(AGENT_CATALOG, 'fake')!;
+
+  it("'' and 'builtin' pass; unknown agent ids reject", () => {
+    const catalog = [entry];
+    // '' = 跟随应用默认、'builtin' = 显式内置任务引擎——都不是外部智能体。
+    expect(() => assertAgentSelectable(catalog, '')).not.toThrow();
+    expect(() => assertAgentSelectable(catalog, 'builtin')).not.toThrow();
+    expect(() => assertAgentSelectable(catalog, 'fake')).not.toThrow();
+    expect(() => assertAgentSelectable(catalog, 'not-in-catalog')).toThrow(/不在目录中/);
   });
 });
 

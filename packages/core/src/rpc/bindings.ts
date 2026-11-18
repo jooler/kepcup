@@ -559,14 +559,12 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         const resolve = (latest: Settings): typeof patch =>
           mergePatchOnto(patch, base, latest as unknown as Record<string, unknown>);
         const input = resolve(previous);
-        for (const agentId of [input.defaultAgentId, input.backgroundAgentId]) {
-          if (
-            agentId !== undefined &&
-            agentId.length > 0 &&
-            !(services.agents?.catalog() ?? []).some((entry) => entry.id === agentId)
-          ) {
-            throw new AppError('INVALID_INPUT', `智能体「${agentId}」不在目录中`);
-          }
+        if (
+          input.defaultTaskAgentId !== undefined &&
+          input.defaultTaskAgentId.length > 0 &&
+          !(services.agents?.catalog() ?? []).some((entry) => entry.id === input.defaultTaskAgentId)
+        ) {
+          throw new AppError('INVALID_INPUT', `智能体「${input.defaultTaskAgentId}」不在目录中`);
         }
         if (input.mcpServers !== undefined) {
           // D73 P1: the `conn_` id prefix is reserved for catalog connections (McpService uses the
@@ -601,7 +599,6 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
             onboarding: onboardingPatch,
             apps: appsPatch,
             agents: agentsPatch,
-            backgroundTasks: backgroundTasksPatch,
             inkcopLocalCollab: inkcopLocalCollabPatch,
             taskLoop: taskLoopPatch,
             ...rest
@@ -645,10 +642,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
                   },
                 }
               : {}),
-            // P6 后台任务：部分 patch，与已存值合并。
-            ...(backgroundTasksPatch !== undefined
-              ? { backgroundTasks: { ...current.backgroundTasks, ...backgroundTasksPatch } }
-              : {}),
+            // D93 任务 Loop：部分 patch，与已存值合并。
             ...(taskLoopPatch !== undefined
               ? { taskLoop: { ...current.taskLoop, ...taskLoopPatch } }
               : {}),
@@ -938,7 +932,13 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       assertAgentSelectable(services.agents?.catalog() ?? [], input.profile.runtime.agent.id);
       // The setup interview drives save_profile / finish_setup host tools that
       // an external agent never receives (P1/P2) — it would stay interviewing.
-      if (input.interview && input.profile.runtime.agent.id.length > 0) {
+      // ''（跟随应用默认）与 'builtin' 都不是外部智能体，不受此限。
+      const createdAgentId = input.profile.runtime.agent.id;
+      if (
+        input.interview &&
+        createdAgentId.length > 0 &&
+        createdAgentId !== 'builtin'
+      ) {
         throw new AppError(
           'INVALID_INPUT',
           '对话式新建暂不支持外部智能体：请先用内置模型创建，再切换',
@@ -946,14 +946,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       }
       // W8: only an existing shared browser profile ('' = private).
       domain.browserProfiles.assertSelectable(input.profile.runtime.browser_profile);
-      const bot = domain.bots.create(input.profile, {
-        interview: input.interview,
-        // InkCop 同机桥 Bot 不走默认外部 Agent（契约：不暴露为外部智能体）。
-        skipDefaultAgent:
-          input.skipDefaultAgent === true ||
-          input.profile.runtime.message_transport === 'inkcop-local' ||
-          (input.profile.runtime.inkcop_agent_keys?.length ?? 0) > 0,
-      });
+      const bot = domain.bots.create(input.profile, { interview: input.interview });
       publish('bot.updated', { bot });
       return { bot };
     }),

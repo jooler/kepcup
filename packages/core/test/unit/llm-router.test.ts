@@ -1,34 +1,17 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { settingsSchema, type Bot, type Settings } from '@kepcup/shared';
 import {
-  AGENT_BACKGROUND_EVERY_N_RUNS,
-  AGENT_TRIAGE_MIN_INTERVAL_MS,
-  AGENT_TRIAGE_TIMEOUT_MS,
-  settingsSchema,
-  TRIAGE_TIMEOUT_MS,
-  type AgentView,
-  type Bot,
-  type Settings,
-} from '@kepcup/shared';
-import { fakeAgentEntry } from '@kepcup/testkit';
-import {
-  agentBackgroundBlocker,
-  backgroundRunSpec,
   builtinModelRef,
-  engineKeyOf,
   LlmRouter,
   routeFor,
   routeStillCurrent,
-  type LlmPurpose,
 } from '../../src/agent/llm-router.js';
 import { judgeContinuation } from '../../src/dispatch/dispatcher.js';
-import type { AgentEngine, RunSpec } from '../../src/agent/types.js';
+import type { AgentEngine } from '../../src/agent/types.js';
 
-/** D72 P6 `agent/llm-router.ts`：后台调用路由、降配与降频。 */
+/** `agent/llm-router.ts`（2026-11 修订）：后台调用恒内置，按用途解析内置模型链。 */
 
 const builtin = { startRun: vi.fn(), complete: vi.fn() } as unknown as AgentEngine;
-const external = { startRun: vi.fn(), complete: vi.fn() } as unknown as AgentEngine;
-const ALPHA = fakeAgentEntry('alpha');
-const BETA = fakeAgentEntry('beta');
 
 function bot(
   runtime: Partial<Bot['profile']['runtime']> = {},
@@ -40,6 +23,7 @@ function bot(
       runtime: {
         model: '',
         light_model: '',
+        background_model: '',
         ...runtime,
         agent: {
           id: '',
@@ -54,315 +38,81 @@ function bot(
   } as unknown as Bot;
 }
 
-function router(
-  patch: Partial<Settings> = {},
-  options: {
-    bot?: Bot;
-    ready?: string[];
-    withExternal?: boolean;
-    now?: () => number;
-  } = {},
-) {
-  const settings = settingsSchema.parse({
-    agents: { alpha: { enabled: true }, beta: { enabled: true } },
-    ...patch,
-  });
-  const ready = options.ready ?? ['alpha', 'beta'];
+function router(patch: Partial<Settings> = {}, options: { bot?: Bot } = {}) {
+  const settings = settingsSchema.parse(patch);
   return new LlmRouter({
     settings: { get: () => settings },
     bots: {
       get: (id) => (options.bot !== undefined && id === options.bot.id ? options.bot : null),
     },
     builtin,
-    ...(options.withExternal !== false ? { external } : {}),
-    catalog: () => [ALPHA, BETA],
-    agentView: (id) =>
-      ({
-        enabled: true,
-        status: ready.includes(id) ? 'ready' : 'needs_auth',
-        statusDetail: null,
-      }) as Pick<AgentView, 'enabled' | 'status' | 'statusDetail'>,
-    ...(options.now !== undefined ? { now: options.now } : {}),
   });
 }
 
-/** 后台任务改用外部 Agent（默认是内置智能体）。 */
-const AGENTS_ON = {
-  backgroundTasks: { agentEnabled: true, agentSkillAuthoring: false, projectMentionOnly: true },
-} satisfies Partial<Settings>;
-/** An explicitly chosen background agent (routes bot-less purposes too). */
-const CHOSEN = { ...AGENTS_ON, backgroundAgentId: 'alpha' } satisfies Partial<Settings>;
-/** 整块关闭后台任务（内置 + 外部）。 */
-const TASKS_OFF = {
-  backgroundTasks: {
-    builtinEnabled: false,
-    agentEnabled: false,
-    agentSkillAuthoring: false,
-    projectMentionOnly: true,
-  },
-} satisfies Partial<Settings>;
-/** Agent triage opted in (projectMentionOnly is on by default, 审查 C2). */
-const TRIAGE_ON = {
-  backgroundTasks: { agentEnabled: true, agentSkillAuthoring: false, projectMentionOnly: false },
-} satisfies Partial<Settings>;
-
 describe('LlmRouter', () => {
-  it('built-in models win unless a background agent is explicitly chosen', () => {
+  it('background upkeep follows the background-model chain; light purposes stay light', () => {
     const withModels = router({
       defaultMainModel: 'custom:m/main',
       defaultLightModel: 'custom:m/light',
+      backgroundModel: 'custom:m/bg',
     });
-    const b = bot({ model: 'custom:b/main', light_model: 'custom:b/light' });
-    const cases: Array<[LlmPurpose, string]> = [
-      ['triage', 'custom:b/light'],
-      ['subagent_compaction', 'custom:b/light'],
-      ['wiki_maintenance', 'custom:b/main'],
-      ['skill_authoring', 'custom:b/main'],
-      ['summary', 'custom:m/light'],
-      ['reflection', 'custom:m/light'],
-      ['consolidation', 'custom:m/light'],
-      ['profile_curation', 'custom:m/main'],
-    ];
-    for (const [purpose, ref] of cases) {
-      expect(withModels.resolveForBot(b, purpose), purpose).toEqual({
-        engine: builtin,
-        modelRef: ref,
-        provider: ref.slice(0, ref.indexOf('/')),
-        agentId: null,
-      });
+    const b = bot({
+      model: 'custom:b/main',
+      light_model: 'custom:b/light',
+      background_model: 'custom:b/bg',
+    });
+    // 整理类后台：Bot 后台任务模型 → 全局后台任务模型 → 轻量 → 主。
+    expect(withModels.resolveForBot(b, 'summary')?.modelRef).toBe('custom:b/bg');
+    expect(withModels.resolveForBot(b, 'reflection')?.modelRef).toBe('custom:b/bg');
+    expect(withModels.resolveForBot(b, 'consolidation')?.modelRef).toBe('custom:b/bg');
+    expect(withModels.resolveForBot(b, 'wiki_maintenance')?.modelRef).toBe('custom:b/bg');
+    expect(withModels.resolveForBot(b, 'skill_authoring')?.modelRef).toBe('custom:b/bg');
+    expect(
+      router({ backgroundModel: 'custom:m/bg' }).resolveForBot(
+        bot({ light_model: 'custom:b/light' }),
+        'summary',
+      )?.modelRef,
+    ).toBe('custom:m/bg');
+    expect(
+      router({ defaultLightModel: 'custom:m/light' }).resolveForBot(bot(), 'summary')?.modelRef,
+    ).toBe('custom:m/light');
+    expect(router({ defaultMainModel: 'custom:m/main' }).resolveDefault('summary')?.modelRef).toBe(
+      'custom:m/main',
+    );
+    // 摘要 / 反思 / 整理未设后台任务模型时落回轻量链；画像 / Wiki / 技能落回主模型链。
+    expect(
+      router({ defaultLightModel: 'custom:m/light' }).resolveForBot(bot(), 'wiki_maintenance'),
+    ).toBeNull();
+    expect(
+      router({ defaultMainModel: 'custom:m/main' }).resolveForBot(
+        bot({ model: 'custom:b/main' }),
+        'profile_curation',
+      )?.modelRef,
+    ).toBe('custom:b/main');
+    // 无所属 Bot 的整理任务（画像整理）：没有 Bot 级覆盖，直接走全局链。
+    expect(withModels.resolveDefault('profile_curation')?.modelRef).toBe('custom:m/bg');
+    // 分诊 / 压缩 / 微应用仍走轻量链，不走后台任务模型。
+    expect(withModels.resolveForBot(b, 'triage')?.modelRef).toBe('custom:b/light');
+    expect(withModels.resolveForBot(b, 'task_compaction')?.modelRef).toBe('custom:b/light');
+    expect(withModels.resolveForBot(b, 'subagent_compaction')?.modelRef).toBe('custom:b/light');
+    expect(withModels.resolveForBot(b, 'micro_app')?.modelRef).toBe('custom:b/light');
+    // 组件制作与审查走主模型链。
+    expect(withModels.resolveForBot(b, 'widget_authoring')?.modelRef).toBe('custom:b/main');
+    expect(withModels.resolveForBot(b, 'widget_review')?.modelRef).toBe('custom:b/main');
+  });
+
+  it('no usable model → null (callers skip); every route is builtin', () => {
+    expect(router({}).resolveDefault('reflection')).toBeNull();
+    expect(router({}).resolveForBot(bot(), 'triage')).toBeNull();
+    const r = router({ defaultMainModel: 'custom:m/main' });
+    for (const purpose of ['summary', 'triage', 'wiki_maintenance'] as const) {
+      const route = r.resolveDefault(purpose);
+      expect(route, purpose).toMatchObject({ engine: builtin });
+      expect(route?.provider).toBe('custom:m');
     }
-    // Main model only: light purposes fall back to it.
-    expect(
-      router({ defaultMainModel: 'custom:m/main' }).resolveDefault('reflection')?.modelRef,
-    ).toBe('custom:m/main');
-    // 明确指定的后台 Agent「选定即生效」：即使有内置模型也走它。
-    expect(
-      router({
-        ...CHOSEN,
-        defaultMainModel: 'custom:m/main',
-        defaultLightModel: 'custom:m/light',
-      }).resolveForBot(b, 'summary')?.agentId,
-    ).toBe('alpha');
-    // 后台任务设置只约束后台用途：关闭 / 指定 Agent 不改变微应用、组件制作与
-    // 上下文压缩的模型选择（审查 P1 回归）。
-    for (const purpose of [
-      'micro_app',
-      'widget_authoring',
-      'widget_review',
-      'task_compaction',
-    ] as const) {
-      for (const patch of [CHOSEN, TASKS_OFF]) {
-        expect(
-          router({
-            ...patch,
-            defaultMainModel: 'custom:m/main',
-            defaultLightModel: 'custom:m/light',
-          }).resolveForBot(b, purpose),
-          purpose,
-        ).toMatchObject({ engine: builtin, agentId: null });
-      }
-    }
-    // builtinEnabled=false + agentEnabled=false：内置与外部都关 = 整块跳过。
-    expect(
-      router({
-        ...TASKS_OFF,
-        defaultMainModel: 'custom:m/main',
-      }).resolveDefault('summary'),
-    ).toBeNull();
   });
 
-  it('no built-in model: auto = the bot’s own agent only, never another vendor (审查 S2)', () => {
-    // Auto without a bot: nothing (no cross-vendor fallback to the first agent).
-    expect(router(AGENTS_ON, { ready: ['beta'] }).resolveDefault('reflection')).toBeNull();
-    const own = bot({}, { id: 'beta', model: 'beta-pro' });
-    expect(router(AGENTS_ON, { bot: own }).resolveForBot(own, 'summary')).toEqual({
-      engine: external,
-      modelRef: 'agent:beta/beta-pro',
-      provider: 'agent:beta',
-      agentId: 'beta',
-    });
-    expect(router(AGENTS_ON, { bot: own }).resolveForBot('bot_1', 'summary')?.agentId).toBe('beta');
-    // Bot model empty → the agent's configured default; a Bot choice wins.
-    const agentDefaults = {
-      ...AGENTS_ON,
-      agents: {
-        alpha: { enabled: true, model: 'alpha-default' },
-        beta: { enabled: true, model: 'beta-default' },
-      },
-    } as unknown as Partial<Settings>;
-    const bare = bot({}, { id: 'beta' });
-    expect(router(agentDefaults, { bot: bare }).resolveForBot(bare, 'summary')?.modelRef).toBe(
-      'agent:beta/beta-default',
-    );
-    expect(router(agentDefaults, { bot: own }).resolveForBot(own, 'summary')?.modelRef).toBe(
-      'agent:beta/beta-pro',
-    );
-    expect(
-      router({ ...agentDefaults, backgroundAgentId: 'alpha' }).resolveDefault('profile_curation')
-        ?.modelRef,
-    ).toBe('agent:alpha/alpha-default');
-    // The bot's own agent unusable: skipped, alpha (ready) is NOT used instead.
-    expect(
-      router(AGENTS_ON, { bot: own, ready: ['alpha'] }).resolveForBot(own, 'summary'),
-    ).toBeNull();
-    // A bot without an agent of its own: skipped.
-    expect(router(AGENTS_ON).resolveForBot(bot(), 'reflection')).toBeNull();
-    // Global profile curation (cross-bot): only with an explicit choice.
-    expect(router(AGENTS_ON, { bot: own }).resolveForBot(own, 'profile_curation')).toBeNull();
-    expect(router(CHOSEN).resolveDefault('profile_curation')?.agentId).toBe('alpha');
-    // Explicit choice: used as is (bot or not); never swapped when unusable.
-    expect(router(CHOSEN, { bot: own }).resolveForBot(own, 'summary')).toMatchObject({
-      modelRef: 'agent:alpha/default',
-    });
-    expect(router(CHOSEN).resolveDefault('summary')?.agentId).toBe('alpha');
-    expect(router(CHOSEN, { ready: ['beta'] }).resolveDefault('summary')).toBeNull();
-    // Nothing usable / no external engine → skip (P4 fallback).
-    expect(router(CHOSEN, { ready: [] }).resolveDefault('summary')).toBeNull();
-    expect(router(CHOSEN, { withExternal: false }).resolveDefault('summary')).toBeNull();
-  });
-
-  it('background eligibility: no native tools, no personal config, concurrency ≥ 2 (审查 S1 / C1)', () => {
-      const settings = (patch: Partial<Settings> = {}) => settingsSchema.parse({ ...patch });
-    const claude = fakeAgentEntry('claude-x', { provider: 'claude', releaseGate: 'claude' });
-    const opencode = fakeAgentEntry('oc-x', { provider: 'opencode', releaseGate: 'opencode' });
-    const codex = fakeAgentEntry('codex-x', { provider: 'codex', releaseGate: 'codex' });
-    expect(agentBackgroundBlocker(settings(), claude)).toBeNull();
-    // testkit fake agent: scripted, no native tools.
-    expect(agentBackgroundBlocker(settings(), ALPHA)).toBeNull();
-    expect(agentBackgroundBlocker(settings(), opencode)).toMatch(/原生工具/);
-    expect(agentBackgroundBlocker(settings(), codex)).toMatch(/原生工具/);
-    expect(
-      agentBackgroundBlocker(
-        settings({
-          agents: {
-            'claude-x': {
-              enabled: true,
-              source: 'managed',
-              loadUserConfig: true,
-              model: '',
-            },
-          },
-        }),
-        claude,
-      ),
-    ).toMatch(/个人配置/);
-    expect(
-      agentBackgroundBlocker(
-        settings({ providerConcurrency: { default: 4, 'agent:claude-x': 1 } }),
-        claude,
-      ),
-    ).toMatch(/并发/);
-    // The router skips blocked agents (explicit or the bot's own).
-    const blocked = router({
-      ...CHOSEN,
-      agents: {
-        alpha: { enabled: true, source: 'managed', loadUserConfig: true, model: '' },
-      },
-    });
-    expect(blocked.resolveDefault('summary')).toBeNull();
-    const own = bot({}, { id: 'beta' });
-    expect(
-      router(
-        { ...AGENTS_ON, providerConcurrency: { default: 4, 'agent:beta': 1 } },
-        { bot: own },
-      ).resolveForBot(own, 'summary'),
-    ).toBeNull();
-  });
-
-  it('agent-only degradations: skill authoring opt-in, triage opt-in, off switch', () => {
-    const r = router(CHOSEN);
-    expect(r.resolveDefault('skill_authoring')).toBeNull();
-    // Agent triage is off by default (projectMentionOnly defaults to on).
-    expect(r.resolveDefault('triage')).toBeNull();
-    expect(router({ ...CHOSEN, ...TRIAGE_ON }).resolveDefault('triage')).not.toBeNull();
-    expect(
-      router({
-        ...CHOSEN,
-        backgroundTasks: { agentEnabled: true, agentSkillAuthoring: true, projectMentionOnly: true },
-      }).resolveDefault('skill_authoring'),
-    ).not.toBeNull();
-    expect(
-      router({
-        ...CHOSEN,
-        backgroundTasks: {
-          agentEnabled: false,
-          agentSkillAuthoring: true,
-          projectMentionOnly: false,
-        },
-      }).resolveDefault('reflection'),
-    ).toBeNull();
-  });
-
-  it('admit throttles agent triage per (bot, group) to one per AGENT_TRIAGE_MIN_INTERVAL_MS', () => {
-    let now = 1_000_000;
-    const r = router({ ...CHOSEN, ...TRIAGE_ON }, { now: () => now });
-    const route = r.resolveDefault('triage')!;
-    expect(r.admit(route, 'triage', 'bot_1:conv_1')).toBe(true);
-    expect(r.admit(route, 'triage', 'bot_1:conv_1')).toBe(false);
-    expect(r.admit(route, 'triage', 'bot_1:conv_2')).toBe(true);
-    now += AGENT_TRIAGE_MIN_INTERVAL_MS - 1;
-    expect(r.admit(route, 'triage', 'bot_1:conv_1')).toBe(false);
-    now += 1;
-    expect(r.admit(route, 'triage', 'bot_1:conv_1')).toBe(true);
-    // Built-in triage is never throttled.
-    const builtinRoute = router({ defaultMainModel: 'custom:m/main' }).resolveDefault('triage')!;
-    expect(r.admit(builtinRoute, 'triage', 'bot_1:conv_1')).toBe(true);
-    expect(r.admit(builtinRoute, 'triage', 'bot_1:conv_1')).toBe(true);
-  });
-
-  it('admit throttles reflection / summary on agents only (1 in AGENT_BACKGROUND_EVERY_N_RUNS)', () => {
-    const r = router(CHOSEN);
-    const agentRoute = r.resolveDefault('reflection')!;
-    const decisions = Array.from({ length: AGENT_BACKGROUND_EVERY_N_RUNS * 2 }, () =>
-      r.admit(agentRoute, 'reflection', 'bot_1'),
-    );
-    expect(decisions.filter(Boolean)).toHaveLength(2);
-    expect(decisions[0]).toBe(true);
-    expect(decisions[AGENT_BACKGROUND_EVERY_N_RUNS]).toBe(true);
-    // Keys are independent; other purposes and built-in routes always pass.
-    expect(r.admit(agentRoute, 'reflection', 'bot_2')).toBe(true);
-    expect(r.admit(agentRoute, 'consolidation', 'bot_1')).toBe(true);
-    const builtinRoute = router({ defaultMainModel: 'custom:m/main' }).resolveDefault(
-      'reflection',
-    )!;
-    for (let i = 0; i < 3; i += 1) expect(r.admit(builtinRoute, 'reflection', 'bot_1')).toBe(true);
-  });
-
-  it('backgroundRunSpec adds the background session only on agent routes', () => {
-    const spec = {
-      identity: {
-        runId: 'run_9',
-        botId: 'bot_1',
-        conversationId: null,
-        loopType: 'wiki_maintenance',
-      },
-      model: 'x',
-      buildSystemPrompt: async () => '',
-      messages: [],
-      tools: [],
-      limits: { maxTurns: 5 },
-    } satisfies RunSpec;
-    const agentRoute = router(CHOSEN).resolveDefault('wiki_maintenance')!;
-    expect(backgroundRunSpec(agentRoute, spec)).toMatchObject({
-      model: 'agent:alpha/default',
-      external: {
-        agentId: 'alpha',
-        permission: 'read_only',
-        capabilities: [],
-        sessionKey: 'bg:run_9',
-        background: true,
-      },
-    });
-    expect(backgroundRunSpec(agentRoute, spec).cwd).toBeUndefined();
-    expect(engineKeyOf(agentRoute)).toBe('agent:alpha');
-    const builtinRoute = router({ defaultMainModel: 'custom:m/main' }).resolveDefault(
-      'wiki_maintenance',
-    )!;
-    expect(backgroundRunSpec(builtinRoute, spec)).toBe(spec);
-    expect(engineKeyOf(builtinRoute)).toBe('builtin');
-  });
-
-  it('routeFor without a router keeps the pre-P6 built-in-only behaviour', () => {
+  it('routeFor without a router keeps the built-in-only behaviour', () => {
     const settings = settingsSchema.parse({});
     expect(
       routeFor({ engine: builtin, settings: { get: () => settings } }, 'reflection', null),
@@ -374,42 +124,30 @@ describe('LlmRouter', () => {
   });
 });
 
-describe('judgeContinuation through the router (P6 / D92 T1a routing)', () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  /** A router whose bot_1 runs on alpha, agent triage opted in. */
-  function agentRouter(agentEngine: AgentEngine) {
-    return new LlmRouter({
-      settings: {
-        get: () =>
-          settingsSchema.parse({
-            agents: { alpha: { enabled: true } },
-            ...TRIAGE_ON,
-          }),
-      },
-      bots: { get: () => bot({}, { id: 'alpha' }) },
-      builtin,
-      external: agentEngine,
-      catalog: () => [ALPHA],
-      agentView: () => ({ enabled: true, status: 'ready', statusDetail: null }) as never,
-    });
-  }
-
-  function triageDeps(r: LlmRouter, timeoutMs?: number) {
+describe('judgeContinuation through the router (D92 T1a routing)', () => {
+  function triageDeps(engine: AgentEngine, timeoutMs?: number) {
     const runs = { create: vi.fn(() => ({ id: 'run_t' })), update: vi.fn() };
     const usage = { record: vi.fn() };
     const scheduler = {
-      submit: vi.fn((task: { run: () => Promise<void>; provider: string }) => void task.run()),
+      submit: vi.fn((task: { run: () => Promise<void> }) => void task.run()),
     };
     return {
       runs,
       usage,
       scheduler,
       input: {
-        engine: builtin,
-        router: r,
+        engine,
+        router: new LlmRouter({
+          settings: {
+            get: () =>
+              settingsSchema.parse({
+                defaultMainModel: 'custom:m/main',
+                defaultLightModel: 'custom:m/light',
+              }),
+          },
+          bots: { get: () => null },
+          builtin: engine,
+        }),
         scheduler: scheduler as never,
         runs: runs as never,
         usage: usage as never,
@@ -442,16 +180,15 @@ describe('judgeContinuation through the router (P6 / D92 T1a routing)', () => {
     };
   }
 
-  it('runs on the background agent (JSON only, agent concurrency key, usage under agent:{id})', async () => {
+  it('runs on the built-in light model (JSON only, usage under the model provider)', async () => {
     const complete = vi.fn(async () => ({
       text: '{"decision":"respond","confidence":0.9,"reason":"被点名"}',
       toolCalls: [],
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: null },
       stopReason: 'stop',
     }));
-    const agentEngine = { startRun: vi.fn(), complete } as unknown as AgentEngine;
-    const r = agentRouter(agentEngine);
-    const { input, scheduler, usage } = triageDeps(r);
+    const engine = { startRun: vi.fn(), complete } as unknown as AgentEngine;
+    const { input, scheduler, usage } = triageDeps(engine);
     const decision = await judgeContinuation(input);
     expect(decision).toEqual({
       botId: 'bot_1',
@@ -459,74 +196,29 @@ describe('judgeContinuation through the router (P6 / D92 T1a routing)', () => {
       confidence: 0.9,
       reason: '被点名',
     });
-    expect(scheduler.submit.mock.calls[0]![0].provider).toBe('agent:alpha');
+    expect(scheduler.submit.mock.calls[0]![0].provider).toBe('custom:m');
     const [req] = complete.mock.calls[0]! as unknown as [
       { model: string; tools?: unknown; systemPrompt: string },
     ];
-    expect(req.model).toBe('agent:alpha/default');
-    expect(req.tools).toBeUndefined();
-    expect(req.systemPrompt).toContain('<output_format>');
+    expect(req.model).toBe('custom:m/light');
+    // 内置结构化调用带 submit 工具（外部 Agent 时代是 tools: [] 的文本 JSON 约定）。
+    expect(req.tools).toBeDefined();
+    expect(req.systemPrompt).toContain('Call the submit tool exactly once');
     expect(usage.record).toHaveBeenCalledWith(
-      expect.objectContaining({ provider: 'agent:alpha', model: 'default', loopType: 'triage' }),
+      expect.objectContaining({ provider: 'custom:m', model: 'light', loopType: 'triage' }),
     );
   });
 
-  it('the timeout counts from submission: a triage queued behind busy slots fails open and leaves the queue (审查 M6)', async () => {
-    vi.useFakeTimers();
-    const complete = vi.fn();
-    const r = agentRouter({ startRun: vi.fn(), complete } as unknown as AgentEngine);
-    const { input } = triageDeps(r);
-    // The agent's slots are all busy (long tasks): the job never starts.
-    const queued: Array<{ key: string }> = [];
-    const cancelQueued = vi.fn((key: string) => queued.some((job) => job.key === key));
-    const scheduler = {
-      submit: vi.fn((job: { key: string }) => void queued.push(job)),
-      cancelQueued,
-    };
-    const pending = judgeContinuation({ ...input, scheduler: scheduler as never });
-    await vi.advanceTimersByTimeAsync(AGENT_TRIAGE_TIMEOUT_MS + 1);
-    expect(await pending).toEqual({
-      botId: 'bot_1',
-      decision: 'no_action',
-      confidence: 0,
-      reason: 'judgement failed',
-    });
-    expect(cancelQueued).toHaveBeenCalledWith(queued[0]!.key);
-    expect(complete).not.toHaveBeenCalled();
-  });
-
-  it('a slow agent times out into no_action', async () => {
-    const agentEngine = {
-      startRun: vi.fn(),
-      complete: vi.fn(() => new Promise(() => {})),
-    } as unknown as AgentEngine;
-    const r = agentRouter(agentEngine);
-    const { input } = triageDeps(r, 30);
+  it('a slow judgement times out into no_action within the default window', async () => {
+    const complete = vi.fn(() => new Promise(() => {}));
+    const engine = { startRun: vi.fn(), complete } as unknown as AgentEngine;
+    const { input } = triageDeps(engine, 30);
     expect(await judgeContinuation(input)).toEqual({
       botId: 'bot_1',
       decision: 'no_action',
       confidence: 0,
       reason: 'judgement failed',
     });
-  });
-
-  it('agent triage: longer default timeout; a second batch within the interval is not triaged', async () => {
-    vi.useFakeTimers();
-    const complete = vi.fn(() => new Promise(() => {}));
-    const r = agentRouter({ startRun: vi.fn(), complete } as unknown as AgentEngine);
-    const { input } = triageDeps(r);
-    let decided = false;
-    const pending = judgeContinuation(input).then((decision) => {
-      decided = true;
-      return decision;
-    });
-    await vi.advanceTimersByTimeAsync(TRIAGE_TIMEOUT_MS + 1);
-    expect(decided).toBe(false);
-    await vi.advanceTimersByTimeAsync(AGENT_TRIAGE_TIMEOUT_MS - TRIAGE_TIMEOUT_MS);
-    expect(await pending).toMatchObject({ decision: 'no_action' });
-    // Same bot + group right after: throttled — no second agent call.
-    expect(await judgeContinuation(triageDeps(r).input)).toMatchObject({ decision: 'no_action' });
-    expect(complete).toHaveBeenCalledTimes(1);
   });
 });
 

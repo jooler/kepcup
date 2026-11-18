@@ -291,6 +291,21 @@ export const zhCN = {
   'settings.modelsSection': '默认模型',
   'settings.defaultMainModel': '默认主模型',
   'settings.defaultLightModel': '默认轻量模型',
+  'settings.defaultLightModelHint':
+    '主模型的后备：分诊（路由判断）、任务与子代理的上下文压缩、微应用 ai.chat 等轻量工作优先用它；留空跟随主模型。',
+  'settings.taskEngine': '默认任务执行引擎',
+  'settings.taskEngineHint':
+    'Bot 的任务执行引擎未显式设置时跟随此默认：内置智能体，或某个已启用的外部智能体。对话与后台任务不受影响。',
+  'settings.taskEngineBuiltin': '内置智能体',
+  'settings.taskEngineUnavailable': '（已停用，任务将改用内置智能体）',
+  'settings.taskAgentModel': '任务默认模型',
+  'settings.taskAgentModelHint':
+    '该智能体执行任务时用的默认模型；各 Bot 也可在自己的配置里单独指定。',
+  'settings.taskAgentModelDefault': '智能体自己的默认',
+  'settings.backgroundModel': '后台任务模型',
+  'settings.backgroundModelHint':
+    '摘要、反思、记忆整理、画像整理、Wiki 维护、技能生成等整理类后台任务用的内置模型；留空跟随轻量模型。分诊与上下文压缩不在此列。',
+  'settings.backgroundModelFollow': '跟随轻量模型',
   'settings.capabilityModelsSection': '能力模型',
   'settings.capabilityModelsHint':
     '每种能力配置一个模型：选厂商 → 填模型 id → 填该厂商的 API Key（Key 按厂商共享，与厂商卡片通用）。厂商下拉只列出已适配该能力的国内厂商。',
@@ -342,7 +357,6 @@ export const zhCN = {
   'settings.remove': '移除',
   // --- 模型分区两栏重构（v0.5.6：左栏「模型配置」+ 供应商实例）--------------
   'settings.modelsNavConfig': '模型配置',
-  'settings.agentsNavConfig': '全局配置',
   'settings.modelsOverviewHint':
     '管理模型供应商与默认模型；同一供应商可重复添加（不同 baseUrl 承载不同能力的模型），配置后可在对话时选择使用。',
   'settings.templateHintVendor': '内置厂商模板：预填常用对话模型，可重复添加',
@@ -2155,7 +2169,7 @@ export const zhCN = {
   'settingCard.concurrencyDefault': '默认（每家厂商）',
   'settingCard.botConfig.noMcp': '还没有已启用的 MCP 服务。可以先在扩展中心安装。',
   'settingCard.botConfig.noApps': '还没有已连接的应用。',
-  'settingCard.botConfig.builtinEngine': '内置引擎',
+  'settingCard.botConfig.noAgents': '当前没有已启用的外部智能体；可先到「设置 - 智能体」启用。',
   'settingCard.skills.empty': '这个 Bot 还没有可启停的技能。',
   'settingCard.skills.pick': '技能',
   'settingCard.project.noBots': '没有可选的 Bot',
@@ -2172,6 +2186,8 @@ export const zhCN = {
   'settingCard.mcp.missing': '这张卡没有带上要改的 MCP 服务。',
   'settingCard.mcp.notFound': '没有这个已安装的 MCP 服务。',
   'settingCard.botModel.followDefaultLight': '跟随默认轻量模型',
+  'settingCard.botModel.followDefaultBackground': '跟随默认后台任务模型',
+  'settingCard.botModel.backgroundModel': '后台任务模型',
   'settingCard.state.applied': '已应用',
   'settingCard.state.receipt': '已修改',
   'settingCard.state.dismissed': '没有修改',
@@ -2340,17 +2356,7 @@ export const zhCN = {
   'onboarding.modelKey': 'API key',
   'onboarding.modelKeyPlaceholder': '粘贴 API key…',
   'onboarding.modelSave': '保存并继续',
-  'onboarding.modelSkip': '跳过，稍后配置',
   'onboarding.modelNoProvider': '尚无可用厂商：可在设置页添加自定义厂商后再配置。',
-  'onboarding.subscriptionOpen': '我有订阅（Claude / ChatGPT / Copilot / GLM…）',
-  'onboarding.subscriptionBody':
-    '用你已有的订阅给 Bot 干活：选一个智能体作为 Bot 的任务引擎，启用（安装）并按厂商官方流程登录。KepCup 不接触、不保存你的订阅凭据。',
-  'onboarding.subscriptionEmpty': '当前版本没有支持订阅登录的智能体。',
-  'onboarding.subscriptionChoose': '由 {name} 执行管家和新建 Bot 的任务',
-  'onboarding.subscriptionEnableFirst': '先在上方卡片中启用并登录这个智能体，再继续。',
-  'onboarding.subscriptionBack': '改用 API key',
-  'onboarding.butlerAgentNote':
-    '管家的任务将由 {name} 执行，直接开始对话。没有内置模型时对话本身会简化：你的消息直接转给进行中的任务或派成新任务，结果原文发回。按场景组建 Bot 团队的访谈需要内置模型，之后在设置页配置 API key 即可使用。',
   'onboarding.permissionsTitle': '权限',
   'onboarding.permissionsBody': '以下两项决定应用在系统中的行为，之后可随时在设置中更改。',
   'onboarding.permissionsNotify': '系统通知',
@@ -2879,39 +2885,10 @@ export const zhCN = {
   'settings.navModelsAgents': '模型与智能体',
   'approvals.environmentLicense': '许可',
   'agents.available': '可用',
-  'agents.defaultAgent': '新建 Bot 默认使用的智能体',
-  'agents.defaultAgentNone': '不设（使用内置模型）',
-  'agents.defaultAgentHint':
-    '仅在没有设置默认主模型时生效：新建的 Bot（含管家，对话式新建除外）若未指定模型，即由这个智能体执行它的任务；停用后新 Bot 回到内置模型。',
   'agents.defaultAgentAffected':
-    '它也是新建 Bot 的默认智能体：停用 / 卸载后，新建的 Bot 不再默认使用它。',
+    '它是默认任务执行引擎：停用 / 卸载后，跟随应用默认的 Bot 回到内置智能体执行任务。',
   'agents.hint':
-    '启用后，可在 Bot 运行配置里选某个智能体（如 Claude Agent、Codex）作为该 Bot 的任务引擎：由它执行该 Bot 派出的任务（对话本身仍由内置模型进行）。登录走厂商官方流程，KepCup 不接触、不保存你的订阅凭据。',
-  // --- 后台任务（D72 P6，design 28 §8）----------------------------------------
-  'agents.background.title': '后台任务',
-  'agents.background.hint':
-    '摘要、反思、记忆整理、画像整理、路由判断、Wiki 维护等后台任务默认由内置智能体执行。选用外部智能体后，这些任务会把相应内容（Bot 的记忆、你的画像、对话内容与摘要、Wiki 资料）发给该智能体的厂商并消耗其额度；后台任务在全新的私有临时目录里运行，智能体自带的文件 / 命令 / 联网工具一律不给（只有 KepCup 为该任务提供的工具），只有能做到这一点的智能体可选。',
-  'agents.background.builtinLightOnly':
-    '当前只配置了内置轻量模型：摘要、反思、记忆整理与路由判断使用它；画像整理、Wiki 维护与技能生成（需主模型）会改用各 Bot 自己的智能体。',
-  'agents.background.builtinLightOnlyNoAgent':
-    '当前只配置了内置轻量模型，且未允许外部智能体：摘要、反思、记忆整理与路由判断使用它；需要主模型的用途会被跳过。',
-  'agents.background.builtinUnavailable':
-    '当前没有配置内置模型：后台任务会改用各 Bot 自己的智能体；没有智能体或它不能用于后台任务时，任务会被跳过。',
-  'agents.background.builtinUnavailableNoAgent':
-    '当前没有配置内置模型，且未允许外部智能体：后台任务会被跳过。',
-  'agents.background.agent': '用于后台任务的智能体',
-  'agents.background.builtin': '内置智能体',
-  'agents.background.off': '关闭（跳过后台任务）',
-  'agents.background.unavailable': '（暂不可用）',
-  'agents.background.notInCatalog': '（不在目录中，后台任务跳过）',
-  'agents.background.blocked': '「{name}」不能用于后台任务：{reason}',
-  'agents.background.degraded':
-    '只用智能体时会降频：反思与对话摘要每 {n} 次触发运行一次，续接判断保持关闭；指定的智能体会处理所有 Bot 的后台任务（含跨 Bot 的画像整理）。',
-  'agents.background.skillAuthoring': '允许智能体在后台生成技能',
-  'agents.background.skillAuthoringHint': '起草并验证技能需要多轮调用，较耗额度，默认关闭。',
-  'agents.background.projectMentionOnly': '项目组里只在被 @ 或回复时响应',
-  'agents.background.projectMentionOnlyHint':
-    '默认开启。关闭后由智能体判断是否接话：每条项目组消息批次一次会话（同一项目组每 2 分钟至多一次）；判断超时按不响应处理。',
+    '启用后，可在 Bot 运行配置里选某个智能体（如 Claude Agent、Codex）作为该 Bot 的任务执行引擎：由它执行该 Bot 派出的任务（对话与后台整理仍由内置模型进行）。登录走厂商官方流程，KepCup 不接触、不保存你的订阅凭据。',
   'agents.empty': '当前版本没有可用的智能体',
   'agents.tier.supported': '已适配',
   'agents.tier.preview': '预览',
@@ -3074,10 +3051,17 @@ export const zhCN = {
   'agents.capabilities.settings.change.description':
     '开启后可用 settings_change 修改设置或在对话里出设置卡；仍受宿主档位裁定约束，默认关闭',
   'agents.suggestEnable': 'Bot 建议启用它',
-  'contacts.mainModelOrAgent': '主模型 / 任务智能体（留空用默认模型）',
-  'contacts.agentTaskEngineHint':
-    '选智能体时，由它执行该 Bot 派出的任务（对话本身仍由内置模型进行）；没有内置模型时对话会降级：新消息直接转给进行中的任务或派成新任务，完成后在对话里提示打开任务卡查看执行报告。',
-  'contacts.engineGroupModels': '模型',
+  'contacts.taskEngine': '任务执行引擎',
+  'contacts.taskEngineFollowDefault': '跟随应用默认（{engine}）',
+  'contacts.taskEngineBuiltin': '内置智能体',
+  'contacts.taskEngineHint':
+    '由选定的引擎执行该 Bot 派出的任务；对话与后台整理不受影响（恒用内置模型）。',
+  'contacts.taskModel': '任务模型（内置智能体用）',
+  'contacts.taskModelFollowMain': '跟随主模型',
+  'contacts.backgroundModel': '后台任务模型',
+  'contacts.backgroundModelFollow': '跟随默认后台任务模型',
+  'contacts.lightModelHint':
+    '主模型的后备：分诊（路由判断）、上下文压缩、微应用 ai.chat 等轻量工作优先用它。',
   'contacts.engineGroupAgents': '智能体',
   'contacts.agentNeedsAuthTag': '需要登录',
   'contacts.agentUnavailable': '{id}（不可用）',
@@ -3705,9 +3689,6 @@ export const zhCN = {
   'settingsItem.agents.external.field.enabled': '启用',
   'settingsItem.agents.external.field.login': '登录',
   'settingsItem.agents.external.field.model': '默认模型',
-  'settingsItem.agents.default.title': '新建 Bot 的默认智能体',
-  'settingsItem.agents.default.summary': '没有默认主模型时，新建的 Bot 默认由哪个外部智能体驱动',
-  'settingsItem.agents.default.field.agent': '智能体',
   'settingsItem.bot.model.title': '这个 Bot 的主模型',
   'settingsItem.bot.model.summary': '只给这个 Bot 指定主模型；留空跟随默认主模型',
   'settingsItem.bot.model.field.model': '主模型',
@@ -3734,15 +3715,30 @@ export const zhCN = {
   'settingsItem.bot.skills.summary': '启用或停用这个 Bot 已安装的技能',
   'settingsItem.bot.skills.field.skill': '技能',
   'settingsItem.bot.skills.field.enabled': '启用',
-  'settingsItem.bot.agent.title': '这个 Bot 的任务引擎',
+  'settingsItem.bot.agent.title': '这个 Bot 的任务执行引擎',
   'settingsItem.bot.agent.summary':
-    '这个 Bot 的任务由内置引擎还是某个外部智能体执行，以及它的权限与能力包',
+    '这个 Bot 的任务由内置智能体还是某个外部智能体执行；跟随应用默认时由「默认任务执行引擎」决定',
+  'settingsItem.bot.agent.field.engine': '任务执行引擎',
+  'settingsItem.bot.agent.option.engine.default': '跟随应用默认',
+  'settingsItem.bot.agent.option.engine.builtin': '内置智能体',
+  'settingsItem.bot.agent.option.engine.agent': '外部智能体',
   'settingsItem.bot.agent.field.agent': '智能体',
-  'settingsItem.bot.agent.field.model': '智能体模型',
+  'settingsItem.bot.agent.field.model': '模型',
   'settingsItem.bot.agent.field.permission': '权限档位',
   'settingsItem.bot.agent.option.permission.read_only': '只读',
   'settingsItem.bot.agent.option.permission.ask': '编辑前确认（沙箱内命令自动）',
   'settingsItem.bot.agent.option.permission.workspace': '工作区内自动',
+  'settingsItem.bot.background-model.title': '这个 Bot 的后台任务模型',
+  'settingsItem.bot.background-model.summary':
+    '这个 Bot 的摘要、反思、记忆整理等整理类后台任务用的内置模型；留空跟随默认',
+  'settingsItem.models.task-engine.title': '默认任务执行引擎',
+  'settingsItem.models.task-engine.summary':
+    'Bot 的任务执行引擎未显式设置时跟随此默认：内置智能体，或某个已启用的外部智能体。对话与后台任务不受影响',
+  'settingsItem.models.task-engine.field.agent': '智能体',
+  'settingsItem.models.background-model.title': '后台任务模型',
+  'settingsItem.models.background-model.summary':
+    '摘要、反思、记忆整理、画像整理、Wiki 维护、技能生成等整理类后台任务用的内置模型；留空跟随轻量模型',
+  'settingsItem.models.background-model.field.model': '后台任务模型',
   'settingsItem.bot.identity.title': '这个 Bot 的身份与职责',
   'settingsItem.bot.identity.summary': '人设、语气、专长、职责与边界',
   'settingsItem.bot.identity.field.personality': '性格',
@@ -3828,11 +3824,6 @@ export const zhCN = {
     '0 = 关闭；开启时应大于单次工具上限（10 分钟），建议 20 分钟。',
   'settingsItem.general.task-loop.field.maxWallMinutes': '最长运行（分钟）',
   'settingsItem.general.task-loop.field.maxWallMinutes.hint': '0 = 不限制；默认 240 分钟。',
-  'settingsItem.background.tasks.title': '后台任务智能体',
-  'settingsItem.background.tasks.summary':
-    '后台整理（记忆、画像、技能沉淀）由内置智能体还是某个外部智能体执行',
-  'settingsItem.background.tasks.field.agentEnabled': '改用外部智能体',
-  'settingsItem.background.tasks.field.agent': '智能体',
   'settingsItem.unattended.enable.title': '开启无人值守',
   'settingsItem.unattended.enable.summary':
     '在设定时段内把全部对话置于完全控制级权限（需你亲手确认风险）',

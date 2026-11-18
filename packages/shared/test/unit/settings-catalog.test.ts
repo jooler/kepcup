@@ -61,6 +61,9 @@ describe('settings catalog integrity', () => {
       'agents.external',
       'bot.model',
       'bot.light-model',
+      'bot.background-model',
+      'models.task-engine',
+      'models.background-model',
       'bot.browser-profile',
       'bot.network',
       'bot.mcp-servers',
@@ -83,7 +86,6 @@ describe('settings catalog integrity', () => {
       'general.language',
       'general.launch-at-login',
       'general.task-loop',
-      'background.tasks',
       'unattended.enable',
       'unattended.disable',
       'environment.toolchains',
@@ -193,7 +195,14 @@ describe('direct whitelist (§4.3 测试三)', () => {
       .map((entry) => entry.id);
     expect(direct.sort()).toEqual([...DIRECT_ITEM_IDS].sort());
     expect([...DIRECT_ITEM_IDS].sort()).toEqual(
-      ['bot.light-model', 'bot.model', 'models.default-light', 'models.default-main'].sort(),
+      [
+        'bot.light-model',
+        'bot.model',
+        'bot.background-model',
+        'models.background-model',
+        'models.default-light',
+        'models.default-main',
+      ].sort(),
     );
   });
 
@@ -307,12 +316,8 @@ describe('catalog queries', () => {
       for (const path of entry.store.paths) {
         let node: unknown = defaults;
         for (const key of path.split('.')) {
-          // backgroundAgentId 是 optional（缺省 undefined），只检查键在 schema 形状里。
           expect(node !== null && typeof node === 'object', `${entry.id}:${path}`).toBe(true);
-          const shapeHas =
-            key in (node as Record<string, unknown>) ||
-            (path === 'backgroundAgentId' && key === 'backgroundAgentId');
-          expect(shapeHas, `${entry.id}:${path}`).toBe(true);
+          expect(key in (node as Record<string, unknown>), `${entry.id}:${path}`).toBe(true);
           node = (node as Record<string, unknown>)[key];
         }
       }

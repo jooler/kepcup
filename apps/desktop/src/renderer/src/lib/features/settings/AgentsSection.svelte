@@ -1,25 +1,19 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import { SlidersHorizontal } from '@lucide/svelte';
   import { agentSetupReasonOf, type AgentView } from '@kepcup/shared';
   import { t } from '$lib/i18n';
-  import { toast } from 'svelte-sonner';
   import { agentsStore } from '$lib/stores/agents.svelte';
-  import { settingsStore } from '$lib/stores/settings.svelte';
   import { shell } from '$lib/stores/shell.svelte';
-  import { Label } from '$lib/components/ui/label';
   import { revealSettingsAnchor } from './anchor-scroll';
   import AgentIcon from './AgentIcon.svelte';
   import AgentCard from './AgentCard.svelte';
-  import BackgroundTasksSection from './BackgroundTasksSection.svelte';
 
   /**
    * 设置页「智能体」（D72，docs/design/28-external-agents-acp.md §2.2），布局对齐
-   * 「模型」分区：两栏卡——左栏第一条「全局配置」（新建 Bot 的默认智能体 +
-   * 后台任务），其下是目录里的全部智能体（含未启用 / 未安装的），右栏是选中
-   * 条目的详情：全局配置或该智能体的 `AgentCard`（与对话内 Agent 设置卡、
-   * onboarding 订阅分支共用同一份卡片与保存 RPC）。已启用且就绪的条目在左栏
-   * 右侧带绿点。
+   * 「模型」分区：两栏卡——左栏是目录里的全部智能体（含未启用 / 未安装的），
+   * 右栏是选中条目的 `AgentCard`（与对话内 Agent 设置卡共用同一份卡片与保存
+   * RPC）。已启用且就绪的条目在左栏右侧带绿点。默认任务执行引擎的配置在
+   * 「模型」页（`models.task-engine`），这里不再有全局配置条目。
    *
    * 纵向空间与「模型」分区一致：外层设置页对「智能体」分区不滚，两栏卡撑满
    * 剩余高度（min-h-0 + flex-1），滚动归右栏详情自己；左栏条目多时在栏内滚。
@@ -28,53 +22,23 @@
   /**
    * 挂载时的深链预选：`agent-<id>` 直接打开该智能体。挂在脚本里（而不是只靠
    * $effect）是因为外层分区容器会在渲染后的下一 tick 清掉锚点，子组件的
-   * effect 可能已经读不到它；`agents` / `background-tasks` 都落在全局配置。
+   * effect 可能已经读不到它。
    */
   function initialSelection(anchor: string | null): string {
-    return anchor !== null && anchor.startsWith('agent-')
-      ? anchor.slice('agent-'.length)
-      : 'config';
+    return anchor !== null && anchor.startsWith('agent-') ? anchor.slice('agent-'.length) : '';
   }
 
-  /** 选中项：'config' = 全局配置；否则是 Agent id。 */
+  /** 选中项：Agent id（'' = 还没选，回落第一个）。 */
   let selected = $state<string>(initialSelection(shell.settingsAnchor));
   /** 右栏详情容器（宽屏时是分区内唯一滚动区，深链锚点滚在这里面）。 */
   let detailEl: HTMLElement | undefined = $state();
 
   const agents = $derived(agentsStore.agents);
-  const selectedAgent = $derived(
-    selected === 'config' ? null : (agents.find((agent) => agent.id === selected) ?? null),
-  );
+  const selectedAgent = $derived(agents.find((agent) => agent.id === selected) ?? null);
 
-  /**
-   * 新建 Bot 的默认智能体（`settings.defaultAgentId`，onboarding「我有订阅」
-   * 写入）：可选已启用的 Agent；当前值不在其中（已停用）时仍列出以便看见。
-   */
-  const defaultAgentId = $derived(settingsStore.settings?.defaultAgentId ?? '');
-  const defaultAgentOptions = $derived.by(() => {
-    const enabled = agents.filter((agent) => agent.enabled);
-    const current = agents.find((agent) => agent.id === defaultAgentId) ?? null;
-    return current !== null && !enabled.includes(current) ? [...enabled, current] : enabled;
-  });
-
-  let defaultBusy = $state(false);
-
-  /** 可用 = 已启用且就绪（与 Bot 选择器 / 后台任务同一份判定）。 */
+  /** 可用 = 已启用且就绪（与 Bot 选择器同一份判定）。 */
   function available(agent: AgentView): boolean {
     return agent.enabled && agentSetupReasonOf(agent) === null;
-  }
-
-  async function setDefaultAgent(id: string): Promise<void> {
-    defaultBusy = true;
-    try {
-      await settingsStore.update({ defaultAgentId: id });
-    } catch (error) {
-      toast.error(
-        t('agents.actionFailed', { error: error instanceof Error ? error.message : String(error) }),
-      );
-    } finally {
-      defaultBusy = false;
-    }
   }
 
   $effect(() => {
@@ -82,16 +46,16 @@
     void agentsStore.refresh().catch(() => undefined);
   });
 
-  // 深链预选：`agent-<id>` 选中该智能体，`agents` / `background-tasks` 落在
-  // 全局配置。清理由外层分区容器统一做（宽屏 SettingsPage / 窄屏 NarrowSettings）。
+  // 深链预选：`agent-<id>` 选中该智能体，`agents` 落在列表第一个。清理由外层
+  // 分区容器统一做（宽屏 SettingsPage / 窄屏 NarrowSettings）。
   $effect(() => {
     const anchor = shell.settingsAnchor;
     if (anchor === null) return;
     if (anchor.startsWith('agent-')) {
       const id = anchor.slice('agent-'.length);
       if (id.length > 0) selected = id;
-    } else if (anchor === 'agents' || anchor === 'background-tasks') {
-      selected = 'config';
+    } else if (anchor === 'agents' && selected === '') {
+      selected = agents[0]?.id ?? '';
     }
   });
 
@@ -99,7 +63,7 @@
   $effect(() => {
     const anchor = shell.settingsAnchor;
     if (anchor === null) return;
-    if (anchor !== 'background-tasks' && !anchor.startsWith('agent-')) return;
+    if (!anchor.startsWith('agent-')) return;
     void revealSettingsAnchor({
       anchor,
       container: () => detailEl,
@@ -109,9 +73,13 @@
     });
   });
 
-  // 选中的 Agent 不在目录里（快照没到不抢跑）→ 回落全局配置。
+  // 未预选（普通进入页签，无深链）或选中的 Agent 不在目录里（快照没到不抢跑 /
+  // 已被移除）→ 落到列表第一个。
   $effect(() => {
-    if (agentsStore.loaded && selected !== 'config' && selectedAgent === null) selected = 'config';
+    if (!agentsStore.loaded) return;
+    if (selected === '' || selectedAgent === null) {
+      selected = agents[0]?.id ?? '';
+    }
   });
 </script>
 
@@ -138,23 +106,6 @@
         class="flex gap-1 overflow-x-auto sm:min-h-0 sm:flex-1 sm:flex-col sm:overflow-y-auto"
         data-testid="agents-nav"
       >
-        <button
-          type="button"
-          class="relative flex shrink-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm font-medium transition-colors {selected ===
-          'config'
-            ? 'bg-accent text-accent-foreground'
-            : 'hover:bg-accent/50'}"
-          aria-current={selected === 'config' ? 'true' : undefined}
-          onclick={() => (selected = 'config')}
-          data-testid="agents-nav-config"
-        >
-          {#if selected === 'config'}
-            <span class="absolute top-1/2 left-0 h-4 w-0.5 -translate-y-1/2 rounded-full bg-primary"
-            ></span>
-          {/if}
-          <SlidersHorizontal class="size-4 shrink-0 text-muted-foreground" />
-          <span class="truncate">{t('settings.agentsNavConfig')}</span>
-        </button>
         {#each agents as agent (agent.id)}
           <button
             type="button"
@@ -194,31 +145,7 @@
       class="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 sm:p-5"
       bind:this={detailEl}
     >
-      {#if selected === 'config'}
-        <div class="space-y-6">
-          <div class="grid gap-1.5" data-testid="agents-default-agent">
-            <Label for="agents-default-agent">{t('agents.defaultAgent')}</Label>
-            <select
-              id="agents-default-agent"
-              class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
-              value={defaultAgentId}
-              disabled={defaultBusy}
-              onchange={(event) => void setDefaultAgent(event.currentTarget.value)}
-              data-testid="agents-default-agent-select"
-            >
-              <option value="">{t('agents.defaultAgentNone')}</option>
-              {#each defaultAgentOptions as agent (agent.id)}
-                <option value={agent.id}>{agent.name}</option>
-              {/each}
-            </select>
-            <p class="text-xs text-muted-foreground">{t('agents.defaultAgentHint')}</p>
-          </div>
-
-          <div data-settings-anchor="background-tasks">
-            <BackgroundTasksSection />
-          </div>
-        </div>
-      {:else if selectedAgent !== null}
+      {#if selectedAgent !== null}
         <AgentCard agent={selectedAgent} />
       {/if}
     </div>
