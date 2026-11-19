@@ -29,9 +29,15 @@ export interface WatchAdapterDeps {
   conversations: {
     get(conversationId: string): Conversation | null;
     memberBotIds(conversationId: string): string[];
-    /** The bot's direct chat id (opened when missing). */
-    directIdFor(botId: string): string;
+    /**
+     * The bot's direct chat id (opened when missing). `ownerPrincipalId`
+     * (62.11 C3) scopes the chat to a human principal — the handover's source
+     * conversation owner; omitted = the single-user (owner-less) chat.
+     */
+    directIdFor(botId: string, ownerPrincipalId?: string | null): string;
   };
+  /** 62.11 C3: the source conversation's owner of a handover (null = single-user). Absent in stripped setups = the owner-less chat. */
+  ownerPrincipalOfHandover?: ((handoverId: string) => string | null) | undefined;
 }
 
 /** 字面上就是本机的网址（localhost / 127.x / ::1 / 0.0.0.0 / *.localhost）。 */
@@ -135,7 +141,10 @@ export class WatchAdapter implements HandoverAdapter {
     const row = this.#deps.watches.get(watchId);
     if (row === null) throw new Error('这个监看已被删除');
     const conversationId = this.#isDirectOf(row.conversationId, row.botId)
-      ? this.#deps.conversations.directIdFor(ctx.toBot.id)
+      ? this.#deps.conversations.directIdFor(
+          ctx.toBot.id,
+          this.#deps.ownerPrincipalOfHandover?.(ctx.handoverId) ?? null,
+        )
       : row.conversationId;
     const moved = this.#deps.watches.transferTo(watchId, { botId: ctx.toBot.id, conversationId });
     return { result: { watchId: moved.id, conversationId } };
@@ -156,7 +165,12 @@ export class WatchAdapter implements HandoverAdapter {
     const there =
       ctx.toBot === null
         ? false
-        : this.#deps.watches.allowsLoopback(this.#deps.conversations.directIdFor(ctx.toBot.id));
+        : this.#deps.watches.allowsLoopback(
+            this.#deps.conversations.directIdFor(
+              ctx.toBot.id,
+              this.#deps.ownerPrincipalOfHandover?.(ctx.handoverId) ?? null,
+            ),
+          );
     return here !== there;
   }
 

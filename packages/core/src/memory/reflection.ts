@@ -176,6 +176,9 @@ export async function runReflectionJob(deps: ReflectionJobDeps): Promise<void> {
     loopType: 'reflection',
     triggerReason: 'background',
     triggerMessageIds: triggerMessages.map((m) => m.id),
+    // 62.11 C7: a debounced reflection merges several source runs — attribute
+    // it to the newest source run's principal (null when none carried one).
+    principalId: deps.runs.principalOf(resolved[resolved.length - 1]?.entry.runId ?? ''),
   });
   deps.runs.update(reflectionRun.id, { status: 'running' });
 

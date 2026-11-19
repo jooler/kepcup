@@ -101,6 +101,8 @@ export interface WorkbenchMessagePort {
     butlerDrafted: boolean;
     /** Project assignee's effective lead bot: the message @-mentions it (explicit target). */
     leadBotId: string | null;
+    /** 62.11 C4: the principal the dispatch acts for (the target chat's owner); absent = single-user. */
+    principal?: { id: string; name: string | null } | undefined;
     /** Runs after the message is stored + published, before it is routed to a bot. */
     onAppended?: ((message: Message) => void) | undefined;
   }): {
@@ -129,6 +131,8 @@ export interface WorkbenchMessagePort {
      * current assignee, which may have changed since (periodic todos).
      */
     dispatchMessageId: string | null;
+    /** 62.11 C4: the principal the update acts for (the conversation's owner); absent = single-user. */
+    principal?: { id: string; name: string | null } | undefined;
   }): { message: Message } | null;
   /** Whether the bot has a built-in main model to run a turn on. */
   hasTurnModel(botId: string): boolean;
@@ -711,6 +715,10 @@ export class TodoService implements WorkbenchDispatchPort {
         viaButler: pending.byButler,
         butlerDrafted: todo.source === 'butler',
         dispatchMessageId: run.messageId,
+        // 62.11 C4: same owner attribution as the dispatch itself.
+        ...(conversation.ownerPrincipalId != null
+          ? { principal: { id: conversation.ownerPrincipalId, name: null } }
+          : {}),
       });
       if (sent === null) {
         // Nobody to tell yet: try again later, for as long as the dispatch is in flight.
@@ -998,6 +1006,10 @@ export class TodoService implements WorkbenchDispatchPort {
     if (!periodic) this.#move(todo, 'in_progress', { blockedReason: null });
     let held: boolean;
     try {
+      // 62.11 C4: the dispatch acts for the target chat's owner (direct chats);
+      // project / board chats and owner-less chats have no principal to attach.
+      const targetOwner =
+        this.#deps.conversations.get(target.conversationId)?.ownerPrincipalId ?? null;
       held =
         this.#deps.dispatcher.dispatch({
           conversationId: target.conversationId,
@@ -1014,6 +1026,9 @@ export class TodoService implements WorkbenchDispatchPort {
             : assignee.kind === 'project'
               ? (assignee.leadBotId ?? target.leadBotId)
               : null,
+          ...(targetOwner !== null
+            ? { principal: { id: targetOwner, name: null } }
+            : {}),
           onAppended: (message) => {
             this.store.updateRun(run.id, { messageId: message.id });
           },
@@ -1426,7 +1441,19 @@ export class TodoService implements WorkbenchDispatchPort {
       };
     }
     if (assignee.kind === 'bot') {
-      const { conversation, created } = this.#deps.conversations.openDirect(assignee.botId);
+      // 62.11 C3 owner judgment: the dispatch lands in the owner's chat with
+      // the executor. The best source available at this seam (todos get their
+      // own owner column in T6) is the todo's last dispatch conversation.
+      // Never dispatched = the single-user (owner-less) chat, as before.
+      const previous = this.store.listRuns(todo.id)[0];
+      const ownerPrincipalId =
+        previous !== undefined
+          ? (this.#deps.conversations.get(previous.conversationId)?.ownerPrincipalId ?? null)
+          : null;
+      const { conversation, created } = this.#deps.conversations.openDirect(
+        assignee.botId,
+        ownerPrincipalId !== null ? { ownerPrincipalId } : undefined,
+      );
       if (created) this.#deps.publish?.('conversation.updated', { conversation });
       return {
         leadBotId: assignee.botId,

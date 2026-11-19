@@ -29,14 +29,18 @@ function openDb(): SqliteDatabase {
   });
   db.exec(`
     create table conversations (id text primary key);
+    -- Mirrors migration 0079 (composer_drafts rebuilt with the principal bucket
+    -- key; single-user rows keep principal_key = '').
     create table composer_drafts (
-      conversation_id  text primary key references conversations(id) on delete cascade,
+      conversation_id  text not null references conversations(id) on delete cascade,
+      principal_key    text not null default '',
       doc_json         text not null,
       mentions_json    text not null default '[]',
       reply_to         text,
       attachments_json text not null default '[]',
       version          integer not null default 0,
-      updated_at       integer not null
+      updated_at       integer not null,
+      primary key (conversation_id, principal_key)
     );
     insert into conversations (id) values ('conv-1');
   `);

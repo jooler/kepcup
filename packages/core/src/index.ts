@@ -19,6 +19,7 @@ export {
 export { sanitizeClientName } from './collab/client-name.js';
 export type { RelayClientOptions } from './remote/relay-client.js';
 export { withRemoteSource } from './remote/audit.js';
+export { withCaller, currentCaller, type RpcCaller } from './rpc/caller.js';
 export { FrameCodec, RelayProtocolError } from './remote/codec.js';
 export type { SessionKeys } from './remote/codec.js';
 export type { SkillsService } from './skills/registry.js';

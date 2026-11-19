@@ -658,6 +658,18 @@ export class HandoverHost implements HandoverToolFacade {
    * Test / recovery hook: resolves when the handover has settled — its in-process execution
    * finished and, when a background copy job is still due, once that job let it settle.
    */
+  /**
+   * 62.11 C3: the owner of the conversation a handover was initiated in (the
+   * initiator principal); null on single-user rows / unknown ids. The
+   * schedule / watch adapters use it so transferred assets land in the target
+   * bot's chat of the SAME owner instead of the owner-less bucket.
+   */
+  ownerPrincipalOfHandover(handoverId: string): string | null {
+    const record = this.#deps.store.get(handoverId);
+    if (record === null) return null;
+    return this.#deps.conversations.get(record.conversationId)?.ownerPrincipalId ?? null;
+  }
+
   async whenSettled(handoverId: string): Promise<void> {
     await this.#runs.get(handoverId);
     const record = this.#deps.store.get(handoverId);
@@ -1193,8 +1205,12 @@ export class HandoverHost implements HandoverToolFacade {
     }
     const slot = this.#deps.bots.listActive().length;
     let created: CreatedBotRecord | null = null;
+    // 62.11 C3 owner judgment: the handover was initiated in a conversation —
+    // the target bot's chat belongs to that conversation's owner.
+    const ownerPrincipalId =
+      this.#deps.conversations.get(record.conversationId)?.ownerPrincipalId ?? null;
     this.#deps.db.transaction(() => {
-      created = createProposedBotRecord(this.#deps, item, slot, runtime);
+      created = createProposedBotRecord(this.#deps, item, slot, runtime, ownerPrincipalId);
       this.#deps.store.setToBot(record.id, created.bot.id);
     })();
     const done = created as CreatedBotRecord | null;
@@ -1222,7 +1238,13 @@ export class HandoverHost implements HandoverToolFacade {
     const failures: string[] = [];
     try {
       const bot = this.#deps.bots.getOrThrow(botId);
-      const { conversation } = this.#deps.conversations.openDirect(botId);
+      // 62.11 C3 owner judgment: same conversation owner as the handover target chat.
+      const ownerPrincipalId =
+        this.#deps.conversations.get(record.conversationId)?.ownerPrincipalId ?? null;
+      const { conversation } = this.#deps.conversations.openDirect(
+        botId,
+        ownerPrincipalId !== null ? { ownerPrincipalId } : undefined,
+      );
       const existing = this.#deps.schedule?.listForBotInConversation(botId, conversation.id) ?? [];
       const present = (index: number): boolean =>
         existing.some(
@@ -1285,8 +1307,13 @@ export class HandoverHost implements HandoverToolFacade {
       kept,
     };
     // Idempotent: a crash between writing and recording must not write twice.
-    const toConversation = this.#deps.conversations.openDirect(to.id).conversation.id;
-    const fromConversation = this.#deps.conversations.openDirect(from.id).conversation.id;
+    // 62.11 C3 owner judgment: both notes land in the chats of the handover's
+    // conversation owner (the initiator); null owner = single-user shape.
+    const ownerPrincipalId =
+      this.#deps.conversations.get(record.conversationId)?.ownerPrincipalId ?? null;
+    const ownerOpts = ownerPrincipalId !== null ? { ownerPrincipalId } : undefined;
+    const toConversation = this.#deps.conversations.openDirect(to.id, ownerOpts).conversation.id;
+    const fromConversation = this.#deps.conversations.openDirect(from.id, ownerOpts).conversation.id;
     if (!this.#noteExists(toConversation, BOT_HANDOVER_EVENT, record.id)) {
       this.#appendNote(
         toConversation,

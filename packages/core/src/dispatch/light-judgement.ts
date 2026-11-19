@@ -66,6 +66,22 @@ export interface LightJudgementSpec<T> {
 /** Bots already logged as judgement-skipped for lack of a usable model. */
 const judgementSkipLogged = new Set<string>();
 
+/**
+ * 62.11 C7: the sender principal of the LAST user message of a trigger batch
+ * (null when the batch has none or the row predates the sender columns — the
+ * single-user shape). The same rule the turn attribution uses for project
+ * conversations.
+ */
+function lastUserPrincipalOf(messages: readonly Message[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.senderType !== 'user') continue;
+    const sender = message.senderPrincipalId;
+    return sender != null && sender.length > 0 ? sender : null;
+  }
+  return null;
+}
+
 /** Never rejects — every failure mode resolves with `spec.fallback`. */
 export function runLightJudgement<T>(spec: LightJudgementSpec<T>): Promise<T> {
   return new Promise<T>((resolve) => {
@@ -135,6 +151,10 @@ export function runLightJudgement<T>(spec: LightJudgementSpec<T>): Promise<T> {
           loopType: 'triage',
           triggerReason: spec.triggerReason,
           triggerMessageIds: spec.batchMessages.map((m) => m.id),
+          // 62.11 C7: triage judges the same batch the following turn will run
+          // on — the last user speaker is its principal (null when the batch
+          // has none, the single-user shape).
+          principalId: lastUserPrincipalOf(spec.batchMessages),
         });
         try {
           if (!bot) throw new Error('judgement target vanished');

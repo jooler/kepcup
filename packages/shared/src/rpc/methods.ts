@@ -1159,9 +1159,26 @@ export const projectsCreateInputSchema = z
     title: z.string().min(1).max(PROJECT_TITLE_MAX),
     goal: z.string().max(PROJECT_GOAL_MAX_CHARS).optional(),
     leadBotId: z.string().min(1),
-    memberBotIds: z.array(z.string().min(1)).min(2),
+    memberBotIds: z.array(z.string().min(1)),
+    /**
+     * Human principals joining the project (62.11 C3). A non-empty list relaxes
+     * the bot-member floor from 2 to 1 — the human participants keep the group
+     * collaborative on their own. The binding layer enrolls the caller as the
+     * project lead when a caller context is present; any further client-supplied
+     * ids are a team-layer concern (T4 enrolls members only via
+     * `team.projects.addMembers`).
+     */
+    principalIds: z.array(z.string().min(1)).optional(),
   })
   .superRefine((input, ctx) => {
+    const hasPrincipals = Array.isArray(input.principalIds) && input.principalIds.length > 0;
+    if (input.memberBotIds.length < (hasPrincipals ? 1 : 2)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['memberBotIds'],
+        message: '项目组成员 Bot 数量不足',
+      });
+    }
     if (!input.memberBotIds.includes(input.leadBotId)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -1218,13 +1235,47 @@ export const episodesStopOutputSchema = episodesGetOutputSchema;
 
 // --- messages -------------------------------------------------------------
 
-export const messagesListInputSchema = z.object({
-  conversationId: z.string().min(1),
-  /** Load messages with seq < beforeSeq (pagination); omitted = latest page. */
-  beforeSeq: z.number().int().optional(),
-  limit: z.number().int().min(1).max(200).default(60),
+export const messagesListInputSchema = z
+  .object({
+    conversationId: z.string().min(1),
+    /** Load messages with seq < beforeSeq (pagination); omitted = latest page. */
+    beforeSeq: z.number().int().optional(),
+    /**
+     * Load messages with seq > afterSeq (62.11 C6 incremental pull): ascending
+     * order, capped by `limit`.
+     */
+    afterSeq: z.number().int().optional(),
+    /**
+     * Incremental pull by content-change time (UTC ms, 62.11 C6): returns the
+     * visible messages with coalesce(updatedAt, createdAt) > changedSince —
+     * including edited / recalled rows — capped at the conversation's current
+     * lastSeq. Feed the previous page's output `cursor` back in here.
+     */
+    changedSince: z.number().int().optional(),
+    limit: z.number().int().min(1).max(200).default(60),
+  })
+  .superRefine((input, ctx) => {
+    // The pagination / incremental cursors are mutually exclusive.
+    const provided = (['beforeSeq', 'afterSeq', 'changedSince'] as const).filter(
+      (key) => input[key] !== undefined,
+    );
+    if (provided.length > 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [...provided.slice(1)],
+        message: 'beforeSeq / afterSeq / changedSince 不能同时使用',
+      });
+    }
+  });
+export const messagesListOutputSchema = z.object({
+  messages: z.array(messageSchema),
+  /**
+   * Present on `changedSince` pulls (62.11 C6): the batch's max
+   * coalesce(updatedAt, createdAt), the value to pass as the next pull's
+   * `changedSince`. Absent on ordinary pages.
+   */
+  cursor: z.number().optional(),
 });
-export const messagesListOutputSchema = z.object({ messages: z.array(messageSchema) });
 export const messagesEditInputSchema = z.object({
   id: z.string().min(1),
   text: z.string().min(1).max(100_000),
@@ -1252,6 +1303,14 @@ export const messagesSendInputSchema = z.object({
    * 上下文据此标注（不派 transcribe_audio，回复将由客户端自动转语音播报）。
    */
   voiceMode: z.boolean().optional(),
+  /**
+   * 62.06 / 62.04 §3（团队服务器 T1）：本端分身代用户发出的消息（senderType 仍是
+   * 'user'，经成员本人连接发出）。core 据此在 content 记 origin: 'avatar'；单一
+   * 运行端的强制由团队层负责（T10）。休眠：不传 = 现状。
+   */
+  origin: z.literal('avatar').optional(),
+  /** origin = 'avatar' 时：代回的本端 Bot 名（bot id 属本端，服务端只存名）。 */
+  avatar: z.object({ botName: z.string() }).optional(),
   /** D121：发这条消息的客户端（设备），UI 显示「来自 X」。 */
   client: collabClientRefSchema.optional(),
 });

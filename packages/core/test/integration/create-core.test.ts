@@ -147,8 +147,9 @@ describe('createCore (integration)', () => {
     // + 0013 task_cwd（D92 T0-1，D75 任务执行根目录改名）
     // + 0014 runs 的连锁绑定两列改名 episode_id/episode_hop（D92 T1a WP2）
     // + 0015 task_write_domains（D123 声明写域）
-    // + 0016 task_retry_attempts / task_retry_at（任务失败自动重试退避计划）。
-    expect(services.runsDb!.pragma('user_version', { simple: true })).toBe(16);
+    // + 0016 task_retry_attempts / task_retry_at（任务失败自动重试退避计划）
+    // + 0017 runs.principal_id（62.11 C7 运行归属主体，团队服务器 T1）。
+    expect(services.runsDb!.pragma('user_version', { simple: true })).toBe(17);
     const runsTables = services
       .runsDb!.prepare("select name from sqlite_master where type='table'")
       .all() as Array<{ name: string }>;

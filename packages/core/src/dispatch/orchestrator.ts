@@ -723,6 +723,16 @@ type RunExecution =
     };
 
 /**
+ * Sending human principal of a user message (62.11 C4): the caller context's
+ * principal id plus its display-name snapshot. `name` may be null (no host
+ * directory yet); core snapshots whatever the host provides.
+ */
+export interface MessagePrincipal {
+  id: string;
+  name: string | null;
+}
+
+/**
  * Drives conversations end to end: sent messages -> message rows -> mailbox ->
  * supervisor turn (scheduler -> engine -> persisted steps, bot messages, usage
  * entries and events; docs/dev/02-architecture.md "一条消息的完整链路") and
@@ -1179,6 +1189,11 @@ export class Orchestrator {
       voiceMode?: boolean;
       /** D121：发这条消息的客户端（设备），仅展示用。 */
       client?: CollabClientRef;
+      /** 62.11 C4：发送主体（调用者）；落库为 sender_principal_id / sender_name。 */
+      principal?: MessagePrincipal;
+      /** 62.06 / 62.04 §3：分身代回（content 记 origin:'avatar' + avatar.botName）。 */
+      origin?: 'avatar';
+      avatar?: { botName: string };
       /** 草稿发送：在消息落库事务内清理草稿（D120 原子性修复）。 */
       onPersisted?: () => void;
     },
@@ -1209,7 +1224,13 @@ export class Orchestrator {
    */
   sendShareMessage(
     conversationId: string,
-    input: { text: string; attachmentIds: string[]; shareIntakeId: string },
+    input: {
+      text: string;
+      attachmentIds: string[];
+      shareIntakeId: string;
+      /** 62.11 C4：发送主体（调用者）；落库为 sender_principal_id / sender_name。 */
+      principal?: MessagePrincipal;
+    },
   ): {
     message: Message;
     batchId: string;
@@ -1220,6 +1241,7 @@ export class Orchestrator {
       text: input.text,
       attachmentIds: input.attachmentIds,
       shareIntakeId: input.shareIntakeId,
+      ...(input.principal !== undefined ? { principal: input.principal } : {}),
     });
     return {
       message: prepared.message,
@@ -1233,6 +1255,22 @@ export class Orchestrator {
    * 消息落库（事务内）：写消息 + 认领附件 + 生成 batch id。返回值交给
    * {@link #publishAndRouteUserMessage} 在提交后发布事件与唤醒路由。
    */
+  /**
+   * 发送主体的清洗（62.11 C4）：对齐 {@link #prepareUserMessage} 对 client 字段
+   * 的处理——id 原样（不透明），name 过控制字符、trim、截断；null 保留为 null
+   * （宿主目录尚未就绪时绑定层传 null）。清洗后的空名不冒充有名字。
+   */
+  #cleanPrincipal(principal: MessagePrincipal | undefined): MessagePrincipal | undefined {
+    if (principal === undefined || principal.id.length === 0) return undefined;
+    return {
+      id: principal.id,
+      name:
+        principal.name === null || principal.name === undefined
+          ? null
+          : sanitizeClientName(principal.name),
+    };
+  }
+
   #prepareUserMessage(
     conversationId: string,
     input: {
@@ -1245,6 +1283,11 @@ export class Orchestrator {
       voiceMode?: boolean;
       /** D121：发这条消息的客户端（设备），仅展示用。 */
       client?: CollabClientRef;
+      /** 62.11 C4：发送主体（调用者）。 */
+      principal?: MessagePrincipal;
+      /** 62.06 / 62.04 §3：分身代回标记（origin:'avatar'，avatar 对象可缺省）。 */
+      origin?: 'avatar';
+      avatar?: { botName: string };
       /** 草稿发送：在消息落库事务内清理草稿。 */
       onPersisted?: () => void;
     },
@@ -1265,6 +1308,7 @@ export class Orchestrator {
       input.client === undefined
         ? undefined
         : { ...input.client, name: sanitizeClientName(input.client.name) };
+    const attributedPrincipal = this.#cleanPrincipal(input.principal);
     let message: Message;
     const tx = this.#deps.db.transaction(() => {
       message = this.#deps.messages.append({
@@ -1278,7 +1322,12 @@ export class Orchestrator {
         ...(input.widgetOrigin !== undefined ? { widgetOrigin: input.widgetOrigin } : {}),
         ...(input.shareIntakeId !== undefined ? { shareIntakeId: input.shareIntakeId } : {}),
         ...(input.voiceMode === true ? { voiceMode: true } : {}),
+        ...(input.origin !== undefined ? { origin: input.origin } : {}),
+        ...(input.avatar !== undefined ? { avatar: input.avatar } : {}),
         ...(attributedClient !== undefined ? { client: attributedClient } : {}),
+        ...(attributedPrincipal !== undefined
+          ? { senderPrincipalId: attributedPrincipal.id, senderName: attributedPrincipal.name }
+          : {}),
       });
       if ((input.attachmentIds?.length ?? 0) > 0) {
         this.#deps.attachments.claimForMessage(input.attachmentIds!, conversationId, message.id);
@@ -1339,12 +1388,15 @@ export class Orchestrator {
     viaButler: boolean;
     butlerDrafted?: boolean | undefined;
     leadBotId: string | null;
+    /** 62.11 C4：派发所代表主体的归属（宿主从来源会话解析）。 */
+    principal?: MessagePrincipal;
     onAppended?: ((message: Message) => void) | undefined;
   }): { message: Message; runId: string | null; held: boolean } {
     const conv = this.#deps.conversations.getOrThrow(input.conversationId);
     if (conv.readOnly) {
       throw new AppError('CONVERSATION_READ_ONLY', '该对话为只读');
     }
+    const principal = this.#cleanPrincipal(input.principal);
     const batchId = `batch_${this.#deps.clock.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const message = this.#deps.messages.append({
       conversationId: input.conversationId,
@@ -1359,6 +1411,9 @@ export class Orchestrator {
         ...(input.viaButler ? { viaButler: true } : {}),
         ...(input.butlerDrafted === true ? { butlerDrafted: true } : {}),
       },
+      ...(principal !== undefined
+        ? { senderPrincipalId: principal.id, senderName: principal.name }
+        : {}),
     });
     this.#deps.publish('message.created', { conversationId: input.conversationId, message });
     this.#publishConversation(input.conversationId);
@@ -1395,11 +1450,14 @@ export class Orchestrator {
     viaButler: boolean;
     butlerDrafted?: boolean | undefined;
     dispatchMessageId: string | null;
+    /** 62.11 C4：派发所代表主体的归属（宿主从来源会话解析）。 */
+    principal?: MessagePrincipal;
   }): { message: Message } | null {
     const conv = this.#deps.conversations.getOrThrow(input.conversationId);
     if (conv.readOnly) {
       throw new AppError('CONVERSATION_READ_ONLY', '该对话为只读');
     }
+    const principal = this.#cleanPrincipal(input.principal);
     let targets: string[] = [];
     if (conv.type === 'project') {
       const members = new Set(this.#deps.conversations.memberBotIds(conv.id));
@@ -1433,6 +1491,9 @@ export class Orchestrator {
         ...(input.viaButler ? { viaButler: true } : {}),
         ...(input.butlerDrafted === true ? { butlerDrafted: true } : {}),
       },
+      ...(principal !== undefined
+        ? { senderPrincipalId: principal.id, senderName: principal.name }
+        : {}),
     });
     this.#deps.publish('message.created', { conversationId: conv.id, message });
     this.#publishConversation(conv.id);
@@ -1458,7 +1519,11 @@ export class Orchestrator {
    * 卡、扣下投递，目录卡作答（answerSetupPath）后才连同缓冲消息一起开始
    * 首个响应 run。
    */
-  answerSetupQuestion(conversationId: string, text: string): Message {
+  answerSetupQuestion(
+    conversationId: string,
+    text: string,
+    principal?: MessagePrincipal,
+  ): Message {
     const conv = this.#deps.conversations.getOrThrow(conversationId);
     if (conv.readOnly) {
       throw new AppError('CONVERSATION_READ_ONLY', '该对话为只读');
@@ -1475,6 +1540,7 @@ export class Orchestrator {
     if (trimmed.length === 0) {
       throw new AppError('INVALID_INPUT', '回答不能为空');
     }
+    const attributedPrincipal = this.#cleanPrincipal(principal);
     const message = this.#deps.messages.append({
       conversationId,
       senderType: 'user',
@@ -1482,6 +1548,9 @@ export class Orchestrator {
       text: trimmed,
       setupAnswer: true,
       batchId: `batch_${this.#deps.clock.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      ...(attributedPrincipal !== undefined
+        ? { senderPrincipalId: attributedPrincipal.id, senderName: attributedPrincipal.name }
+        : {}),
     });
     this.#deps.publish('message.created', { conversationId, message });
     this.#publishConversation(conversationId);
@@ -1620,8 +1689,12 @@ export class Orchestrator {
   // --- message lifecycle ---------------------------------------------------
 
   /** Edit notification rules (docs/design/02-execution.md "编辑作为一次新触发"). */
-  editMessage(id: string, text: string): Message {
-    const message = this.#deps.messages.edit(id, text);
+  editMessage(id: string, text: string, principalId?: string | null): Message {
+    const message = this.#deps.messages.edit(
+      id,
+      text,
+      principalId != null ? { principalId } : undefined,
+    );
     this.#deps.publish('message.updated', { conversationId: message.conversationId, message });
     const notified = this.#notifyRunningLoops(message.conversationId, message);
     if (!notified) {
@@ -1650,8 +1723,11 @@ export class Orchestrator {
    * buffered when the recall lands re-reads the database at turn start and
    * drops the message (mailbox `refreshTriggerBatch`).
    */
-  recallMessage(id: string): Message {
-    const message = this.#deps.messages.recall(id);
+  recallMessage(id: string, principalId?: string | null): Message {
+    const message = this.#deps.messages.recall(
+      id,
+      principalId != null ? { principalId } : undefined,
+    );
     this.#deps.publish('message.updated', { conversationId: message.conversationId, message });
     return message;
   }
@@ -2959,6 +3035,7 @@ export class Orchestrator {
       ...(batch.episode !== undefined
         ? { episodeId: batch.episode.id, episodeHop: batch.episode.hop }
         : {}),
+      principalId: this.#turnPrincipalOf(batch),
     });
     // A retried turn must not lose its episode: the rebuilt batch carries no
     // binding, so inherit the failed run's (D92 T1a — a retry re-runs the very
@@ -2980,6 +3057,30 @@ export class Orchestrator {
       throw error;
     }
     return run.id;
+  }
+
+  /**
+   * 62.11 C7: the human principal a supervisor turn is attributed to. A
+   * direct chat's turn belongs to the chat's owner (any trigger, including
+   * schedules living in that chat); a project turn belongs to the sender of
+   * the LAST user message in the trigger batch (a merged batch may mix
+   * principals — the last speaker wins; principal-less rows yield null).
+   * dm conversations never produce turns (no Bot member, no dispatch), and
+   * every other conversation type yields null.
+   */
+  #turnPrincipalOf(batch: TriggerBatch): string | null {
+    const conversation = this.#deps.conversations.get(batch.conversationId);
+    if (conversation === null) return null;
+    if (conversation.type === 'direct') return conversation.ownerPrincipalId ?? null;
+    if (conversation.type === 'project') {
+      for (let index = batch.messages.length - 1; index >= 0; index -= 1) {
+        const message = batch.messages[index];
+        if (message?.senderType !== 'user') continue;
+        const sender = message.senderPrincipalId;
+        return sender != null && sender.length > 0 ? sender : null;
+      }
+    }
+    return null;
   }
 
   #submitTurn(runId: string, batch: TriggerBatch): void {
@@ -5276,21 +5377,26 @@ export class Orchestrator {
         // settle() already wrote the terminal state, and runs.update has no
         // terminal-state guard — a throw here would let the outer catch flip
         // the completed run to failed. Log and move on.
-        try {
-          this.#deps.memory?.registerReflection({
-            runId,
-            botId: batch.botId,
-            conversationId: batch.conversationId,
-            triggerMessageIds: batch.messages.map((m) => m.id),
-            batchId: batch.messages[0]?.batchId ?? null,
-            kind: isTask ? 'task' : 'turn',
-            continuedFromRunIds: continuation?.continuedFromRunIds ?? [],
-          });
-        } catch (error) {
-          this.#deps.logger.warn(
-            { runId, err: error },
-            'reflection registration failed (run stays completed)',
-          );
+        // dm conversations never produce runs (no Bot member, no dispatch);
+        // the explicit skip keeps reflection off them even if that ever
+        // changes (dm 不进任何 Bot 域副作用).
+        if (conv.type !== 'dm') {
+          try {
+            this.#deps.memory?.registerReflection({
+              runId,
+              botId: batch.botId,
+              conversationId: batch.conversationId,
+              triggerMessageIds: batch.messages.map((m) => m.id),
+              batchId: batch.messages[0]?.batchId ?? null,
+              kind: isTask ? 'task' : 'turn',
+              continuedFromRunIds: continuation?.continuedFromRunIds ?? [],
+            });
+          } catch (error) {
+            this.#deps.logger.warn(
+              { runId, err: error },
+              'reflection registration failed (run stays completed)',
+            );
+          }
         }
       }
       this.#maybeEnqueueSummary(batch.conversationId);
@@ -6190,6 +6296,9 @@ export class Orchestrator {
   #maybeEnqueueSummary(conversationId: string): void {
     const conv = this.#deps.conversations.get(conversationId);
     if (!conv) return;
+    // dm 会话没有 Bot 参与回合（不 dispatch，本方法只被 run 收尾路径调用），
+    // 显式排除兜底：Bot 域的滚动摘要对 dm 无意义。
+    if (conv.type === 'dm') return;
     const unsummarized = conv.lastSeq - conv.summaryUptoSeq;
     if (unsummarized <= SUMMARY_TRIGGER_UNSUMMARIZED) return;
     this.#deps.jobs.enqueue({

@@ -21,6 +21,12 @@ export interface UsageRecordInput {
    */
   capability?: string | null;
   modelEntryId?: string | null;
+  /**
+   * 62.11 C7: the principal the usage row is attributed to. Resolved inside
+   * `record` when omitted — via the injected runs-principal source (the run's
+   * `principal_id`); no run reference = NULL. Explicit null skips the lookup.
+   */
+  principalId?: string | null;
 }
 
 /** One local-day bucket aggregated by SQLite (`localtime`, same zone as the app). */
@@ -124,15 +130,37 @@ export interface RunUsageTotals {
 
 /** Append-only usage ledger (docs/design/14-models-and-browser.md). */
 export class UsageService {
+  /**
+   * Runs-principal source (62.11 C7): `RunsService.principalOf`, attached by
+   * the composition root once both services exist. Usage rows live in main.db
+   * and runs in runs.db, so attribution is resolved at write time instead of
+   * joining across databases. Absent (stripped test setups) = NULL.
+   */
+  #principalSource: ((runId: string) => string | null) | null = null;
+
   constructor(
     private readonly db: SqliteDatabase,
     private readonly clock: Clock,
-  ) {}
+    principalSource?: (runId: string) => string | null,
+  ) {
+    this.#principalSource = principalSource ?? null;
+  }
+
+  /** Late attachment for compositions that build the runs service after this one. */
+  attachPrincipalSource(source: (runId: string) => string | null): void {
+    this.#principalSource = source;
+  }
 
   record(input: UsageRecordInput): void {
+    // 62.11 C7: attribution defaults to the run's principal (explicit null
+    // skips the lookup; no source / no match = NULL, the single-user shape).
+    const principalId =
+      input.principalId !== undefined
+        ? input.principalId
+        : (this.#principalSource?.(input.runId) ?? null);
     this.db
       .prepare(
-        'insert into usage_ledger (id, run_id, bot_id, conversation_id, loop_type, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, capability, model_entry_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'insert into usage_ledger (id, run_id, bot_id, conversation_id, loop_type, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, capability, model_entry_id, principal_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         newId('use'),
@@ -149,6 +177,7 @@ export class UsageService {
         input.costUsd ?? null,
         input.capability ?? null,
         input.modelEntryId ?? null,
+        principalId,
         this.clock.now(),
       );
   }

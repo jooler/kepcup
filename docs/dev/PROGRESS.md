@@ -49,6 +49,7 @@
 | 插件启用说明 + 激活通报 + IM 分类（D104/D107 补全） | 已完成 | 2026-11-03 | — | 插件清单新增**必填** `usage`（启用说明：启用即用 / 需要连接账号 / 需要先添加账号再勾选绑定），`PluginSummary.usage`（清洗后）透出到 Bot 详情卡片与添加弹框；23 个官方插件全部补齐并升版 `1.1.0`，`engines.kepcup` 统一抬到 `>=0.5.7`（`usage` 是 strict schema 新字段，旧宿主必须被索引过滤而不是下载后解析失败），`kepcup-app init/validate` 与签名脚本同步强制。core 新增 `PluginBotNotice`：`bot.updated` 的 `plugin_ids` / `app_connection_ids` 变化、`plugins.changed`（安装 / 更新 / 全局启停 / 卸载 / 撤销）、`mail.accounts.setBots` / `mail.bots.setAccounts` / `im.accounts.setBots`、`plugins.instances.delete` / `im.accounts.delete` 都进入**按 Bot 合并的 30 秒**通报；比较整份状态签名（启用集 + 启停 + usage + 就绪状态），绑定 / 全局停用 / 删账号也能触发，净变化为空不唤醒；无直聊时 `openDirect` 创建落点；插件文案经 `sanitizeDisplayText` + `untrustedBlock` 防闭合。Bot 侧规则：全部就绪 `skip_reply` 静默，有遗漏主动提醒补步骤。扩展中心市场 / 已安装筛选与同意卡新增「即时通讯」分类（`im`），已安装卡片 IM 标签 / 管理入口按插件圈定。独立审查 P1/P2 全部修正（状态签名、injection、engines、同意卡 IM、纯技能 usage 展开、账号删除 / 全局停用触发、IM 权限文案、测试补强）。验证：shared / core / app-validator / desktop typecheck 0 error；23 个插件 validate 全绿；定向 449 例全绿。**已发布**：23 个包重新打包 → `kepcup-plugins-2026-1` 签名（`generatedAt=2026-11-03T09:28:38.920Z`，严格递增）→ R2 上传 → `wrangler deploy`（Worker version `1482ed01-0ec3-4990-8889-7f8145c20d43`）；线上索引 + 23 个包拉回 `--verify` 通过（sha256 / 大小逐一核对），索引 `engines.kepcup` 为 `>=0.5.7`。 |
 | 任务直注 + Bot 详情三栏（D115–D117） | 待验收 | 2026-11-06 | — | 补齐用户对任务的掌控感（设计 [56](../design/56-task-steering-and-bot-detail-tabs.md)，实施记录见 [todo/task-steering-and-bot-tabs.md](../../todo/task-steering-and-bot-tabs.md)）。**D115 任务直注**：任务详情页最底部注入坞（非终态渲染，Enter 发送 / awaiting 提示），`tasks.inject` RPC → `TaskHost.injectById`（从 run 行组装 identity 复用 `inject()`，等问即回答 / steer / 入简报 / queued 语义零改动，条目照写 Bot 私有时间线）。**D116 Bot 详情三栏**：右栏头部资料卡下手写三 tab（详情〔默认，原二级菜单〕/ 组件 / 任务）；`tasks.listByBot`（跨对话全集倒序 ≤200）+ 共享 `botTasks` store（`task.updated` 按 botId 原位续期）驱动任务 tab（进行中 / 已完成分组、行点击开详情页）与 tab 触发器进行中徽标（30 §6.3 两项未实现界面的任务部分落实）；深链归位详情 tab。**D117 组件直接运行**：组件 tab 卡片化（底部说明 section + 「…」下拉：发卡 / 详情与管理 / 删除对话框），点卡 `widgets.runCard`（publish 同款列投影、不落消息行）+ core 虚拟卡片登记表（合成 id，`cardOf()` 虚拟分支），`open / source / poster / storage / query / reply` 与新窗口打开沿虚拟 id 全链路可用，iframe 运行时零改动。手动创建任务本期不做。测试：core 定向（tasks 18 / widgets-service 53 / task-cards / external-agent / supervisor-turns / runs-tasks）全绿；desktop 定向（task-run-view 源码契约锁 / tasks store / botTasks store）+ i18n 全绿；e2e tasks 4 例 + schedules / bot-profile-autosave / narrow-layout 6 例全绿；settings-catalog 覆盖扫描随三 tab 扩展（`PANEL_TABS` 并入扫描 + detail/widgets/tasks 排除登记）；收口全量 `pnpm test` **7891 通过 / 0 失败 / 48 跳过**；shared / core / desktop typecheck 0 error、eslint 干净。**待真机验收**（真组件直运行含查询模板审查流、双 Bot 任务列表、真外部 Agent 任务的 queued 未送达提示）。 |
 | 团队服务器 T0 准备（D126–D138） | 进行中 | 2026-11-20 | — | 执行方案与 62 号设计已随 ee089e19 提交到 `team-server` 分支;本机(macOS arm64)直接在分支 checkout 工作(不建 worktree、不进容器)。基线:typecheck 0 error;lint 真实错误 27 处(core 9 文件,均为 40038969 重构遗留 unused-vars / preserve-caught-error,按 T0 约定记录不修;另有约 2.6 万条来自 gitignored 本地构建产物 `infra/cloudflare/relay/public/assets/` 与 `apps/mobile/release/` 的噪音);定向冒烟 10 文件 89 例全绿(collab-drafts / projects-rpc / apps/server/test)。详见文末「团队服务器 T0 准备」。 |
+| 团队服务器 T1 core 数据层缝（D126–D138 P0） | 待验收 | 2026-11-20 | — | 迁移 main 0077–0080 / runs 0017;C1 调用者上下文(ALS)、C3 会话主体(direct 归属 / dm / 名册 / 按主体读状态)、C4 消息发送主体、C5 草稿分桶、C6 afterSeq / changedSince 补拉、C7 运行与用量归属,全部默认休眠(apps/server 测试零改动全绿);shared 契约增量(conversationType 增 dm、message 增 senderPrincipalId / senderName / updatedAt、TextContent 增 avatar、messages.list 增 afterSeq / changedSince / cursor、projects.create 增 principalIds + 下限放宽、Conversation 增 ownerPrincipalId / peerPrincipalIds);新增 8 测试文件 + 迁移回归;openDirect 调用点判定表与 dm 类型分支审计表见文末 T1 节。详见文末「团队服务器 T1 · core 数据层缝」。 |
 
 
 ## 验收记录
@@ -2294,3 +2295,51 @@ botId + name 落到首字母占位。
 - **基线测试冒烟**：`node scripts/run-tests.mjs run packages/core/test/unit/collab-drafts.test.ts packages/core/test/integration/projects-rpc.test.ts apps/server/test` → 10 文件 / 89 例全绿。全量基线引用既有记录（约 28–33 个环境类失败：es-git / sandbox self-test / wiki URL 等），不重跑。
 - **工作方式**：T0 之后每阶段 = 开发子代理 → 独立审查子代理（含修正与定向测试 / typecheck / 改动文件 eslint）→ 调度方提交并回写本文件与 todo/team-server/STATUS.md；阶段内并行子代理按任务书文件归属分片（最多 3 个）。
 - **验证**：见上三条；本阶段无代码改动。
+
+## 团队服务器 T1 · core 数据层缝（2026-11-20，分支 team-server）
+
+C1 调用者上下文、C3 会话主体维度（direct 归属 / dm / 人类成员名册 / 按主体读状态）、C4 消息发送主体、C5 草稿分桶、C6 增量补拉、C7 运行与用量归属。core 全部休眠：不传主体 = 行为与现状一致（apps/server 测试零改动全绿）。本节由独立审查代理复核后收口（含 4 项移交问题修复：messages.send avatar 契约补齐、create-core runs user_version 17、messages-principal 关库时序、zod 消息语言对齐中文惯例）。
+
+- **迁移**：main `0077_principal_conversations`（conversations 按 0067 先例重建：19 列 + `owner_principal_id`，type CHECK 增 `'dm'`，唯一索引保留原名 `conversations_one_direct_per_bot` 键改 `(direct_bot_id, ifnull(owner_principal_id,''))`；新表 `conversation_principals`（role 'member'|'lead'、left_at 软移出）+ 索引 `(principal_id)`、`conversation_reads`）、`0078_principal_messages`（messages 加 `sender_principal_id` / `sender_name` / `updated_at` + 触发器 `messages_touch_updated_at`，DEV-134）、`0079_principal_drafts`（composer_drafts 重建为 `(conversation_id, principal_key)` 复合主键，旧行 `''`）、`0080_principal_usage`（usage_ledger 加 `principal_id`）；runs `0017_run_principal`（`runs.principal_id` + 索引 `(principal_id, created_at)`）。
+- **C1**：`core/src/rpc/caller.ts`（`RpcCaller {principalId, deviceId?}` / `withCaller` / `currentCaller`，ALS 与 `remote/audit.ts` 同构），`@kepcup/core` 导出；`bindings.ts` 顶部 `callerPrincipal()` 是唯一读取点（rg 全仓核实 domain / dispatch / memory / agent 无 ALS 读取）。测试：`rpc-caller.test.ts`（嵌套覆盖 / 并发隔离 / 无包装 null）。
+- **C3**：`ConversationsService.openDirect(botId, opts?)` 按 (Bot, owner) 取开；`openDm(principalIds)` 无序对 / 自我判重（按在册名册比对，type='dm' 才复用）；`principals` / `hasPrincipal`（left_at 为空）/ `listForPrincipal`（owner 或在册；card / bot_direct 不进名册，同 list 口径）/ `accessibleBy`（direct=owner、dm/project=在册、card=父项目、bot_direct=委派来源会话资格；无资格一律 NOT_FOUND 不泄露存在性）；`markRead(seq, principalId?)` 有主体只写 `conversation_reads`（upsert max）、`lastReadSeqOf` 缺行 = 0；绑定层 `conversations.list / all / get / openDirect / delete / archive / unarchive / markRead / setVoiceMode / members` 有调用者时资格校验或按主体过滤，`conversationView` 有主体时未读按 `conversation_reads`，dm 附 `peerPrincipalIds`；`projects.create` 增 `principalIds?`（有值时成员 Bot 下限 2→1，lead ∈ members 不变），绑定层有调用者时以 `role='lead'` 入册。
+- **C4**：`AppendMessageInput` 增 `senderPrincipalId` / `senderName` / `origin('avatar')` / `avatar`；`#prepareUserMessage` / `sendMessage` / `sendShareMessage` / `dispatchWorkbenchMessage` / `dispatchWorkbenchUpdate` / `answerSetupQuestion` 增 `principal?: {id, name}`（绑定层与宿主写路径传入，name 本阶段 null，T2 由 PrincipalDirectory 提供）；`messages.edit / recall` 有调用者时校验 `sender_principal_id`（不符 NOT_FOUND）；mentions `principal:` 令牌经既有 `explicitTargets` 忽略（现状即满足）。
+- **C5**：`DraftService` 全方法增 `principalKey`（缺省 ''）：内存键 `${conversationId}\u0000${principalKey}`，行 I/O 与清稿按桶，租约互不跨桶；草稿事件载荷增可选 `principalKey`（'' 桶不带 = 字节不变）；绑定层取调用者作 key。
+- **C6**：`messages.list` 增 `afterSeq?`（`seq > ?` 升序）/ `changedSince?`（`coalesce(updated_at, created_at) > ?` 且 `seq <= lastSeq`，含 recalled，沿用 `userVisibleFilter`）/ 出参可选 `cursor`（批内最大 change time），三者互斥（zod refine，中文文案）；绑定层有调用者先做会话资格校验。
+- **C7**：`RunsService.create` 增 `principalId`，省略时按 `originRunId` / `parentRunId` 继承父运行（task / 子代理 / 组件调用点零改动）；turn 规则 `#turnPrincipalOf`（直聊 = 会话 owner 任意触发；项目 = 批内最后一条用户消息 sender；dm 不产生 run）；`principalOf(runId)` 带 512 LRU；`UsageService.record` 省略 `principalId` 时经注入的 runs-principal 源（`start.ts` 构造时接 `runs.principalOf`）内部解析；轻判定 = 批内最后发言人（同项目规则）；反思 = 最近来源运行主体；整理 / 摘要 / wiki 维护 / 技能编写等无来源后台 job = NULL。
+- **openDirect 调用点判定表**（未列出的写路径均未改动）：
+
+  | 调用点 | 判定 |
+  |---|---|
+  | `bindings.ts conversations.openDirect`（RPC） | 有调用者 = owner，无 = NULL（现状） |
+  | `bindings.ts bots.interview.start` | 未接主体：setup 引导是 Bot 全局流程，T1 保持 NULL（T4 方法策略归类时收敛） |
+  | `bindings.ts skills.import`（缺省落点） | 同上，NULL |
+  | `orchestrator.ensureButler`（`butler.ensure` RPC + 启动补建） | 管家为全局单例语义，NULL（启动路径本就无调用者） |
+  | `start.ts` 插件提醒落点 `conversationFor` | 系统路径，NULL |
+  | `start.ts handoverConversations.directIdFor` | owner = 交接来源会话 owner（经 `ownerPrincipalOfHandover`） |
+  | `dispatch/bot-creation.ts createProposedBotRecord` | owner = 确认提议的会话 owner（管家 / 交接传入） |
+  | `dispatch/butler.ts #createBots / #createProject` | owner = 管家会话 owner；`#createProject` 以 `leadPrincipalId`（role='lead'）入册 |
+  | `dispatch/handover.ts` 目标 Bot 直聊 / schedule 落点 / 交接记录两行 | owner = 交接来源会话 owner |
+  | `dispatch/delegation.ts` 委派 home | owner = 委派来源会话 owner |
+  | `workbench/todo-service.ts` 指派会话解析 | owner = 该 todo 上次派发会话的 owner；从未派发 = NULL（T6 个人域归属列落地时收敛） |
+  | `workbench/todo-service.ts` dispatch / update 主体归属 | principal = 目标会话 owner（C4 派发归属） |
+  | `mail/service.ts` ×3、`im/service.ts` ×2、`wiki/ingest.ts` ×2、`apps/skills-offer.ts`、`share/service.ts` | 系统路径 / 本机设备语义，NULL（T4 / T5 收敛） |
+
+  按 `direct_bot_id` 查直聊而忽略 owner 的位置逐一审查：`listDirectByBot` 调用方（`memory/service.ts`〔Bot 域 id 集合〕、`domain/lifecycle.ts` ×2〔删 Bot 连锁只读 / 污点清理〕、`share/service.ts`〔只读判定〕、`todo-service.ts`〔「该 Bot 是否还有任何直聊」存在性〕、`bindings.ts`〔删 Bot 后逐会话推 updated〕）、`lifecycle.ts`（删 Bot 影响计数）、`usage.ts`（全局会话时长统计）、`workdirs.ts`（workdir 绑定全集）——全部是 Bot 维度级联或存在性 / 统计语义，多主体下不存在「把 A 的直聊当成 B 的」错配，零改动。
+- **dm 类型分支审计表**（CURRENT-STATE §3 全部按 type 分支位置逐一核对；仅列有结论变化的行，其余均为 project / direct / card / bot_direct 显式分支，dm 落入安全缺省）：
+
+  | 位置 | dm 行为 |
+  |---|---|
+  | `#publishAndRouteUserMessage` / `dispatchWorkbenchMessage` | 不路由（非 project 且 `direct_bot_id` 为 NULL）→ dm 不 dispatch、无 run、无触发批 |
+  | `#maybeEnqueueSummary` | **T1 改动**：显式 `type === 'dm'` 跳过（Bot 域滚动摘要对 dm 无意义） |
+  | run 收尾反思登记 | **T1 改动**：显式 `conv.type !== 'dm'` 才登记（dm 不进任何 Bot 域副作用） |
+  | `bindings.ts conversations.setVoiceMode` | **T1 改动**：dm 与 project 一并拒绝（无 Bot 回复可朗读） |
+  | `start.ts conversations.kind` 输出 schema | **T1 改动**：枚举加 `'dm'` |
+  | `agent/context/system-prompt.ts conversationInfoLines` | **T1 改动**：防御性标注「成员间私信（无 Bot 参与）」（dm 正常不进 Bot 上下文渲染） |
+  | `bindings.ts conversationView` | **T1 改动**：dm 附 `peerPrincipalIds`（domain `#hydrate` 同步附） |
+  | `workdir/service.ts boundWorkdir` | dm 无 workdir 列 → null（未改，安全缺省） |
+  | `memory/my-state.ts` 他处运行命名 | dm 不产生 run，分支不可达；缺省文案安全（未改） |
+  | `im/forwarder.ts`（仅 direct 镜像）、`dispatch/episodes.ts`（仅 project @）、`domain/project-scope.ts`、`board`、`schedule`、`share`、`handover/adapters`、`wiki/service`、`settings/adapters`、`dispatch/butler`、`dispatch/delegation`、`lifecycle`、`domain/projects` | dm 落入非 project / 非 direct 缺省（null / 跳过），语义正确（未改） |
+
+- **测试**：新增 8 文件 + remote-contracts 增 5 例（合计 43 例）全绿——`rpc-caller` 6、`principal-migration` 6〔main + runs、逐行保留 / 唯一性 / 外键 / dm CHECK / 触发器语义 / 复合主键〕、`conversations-principal` 6、`messages-principal` 8〔发送主体、资格、本人改撤、afterSeq、changedSince + cursor、互斥、avatar 契约、休眠〕、`collab-drafts-principal` 5、`usage-principal` 3、`projects-principal` 4、`remote-contracts` principal-seams 5；必跑既有全绿——collab-drafts 2 文件 15 例、`*-migration.test.ts` 全部 33 文件（含 5 个按表结构写死的既有测试更新：列清单 / 回退语句 / fixture 建表 / 期望行 NULL 列）、messages-* 4 文件、conversation-archive 2 文件、projects 2 文件、message-recall、project-chat 16 例、card-conversation、create-core（runs user_version 16→17 一处）、apps/server 8 文件 68 例（个人版零改动对照）。**既有测试第 6 处更新**：`media-delivery.test.ts` 夹具钉在迁移 0031 旧表型（`migrationsUpTo(31)`），`messages.append` 的 INSERT 扩列后按 0078 给夹具 messages 补三列（同为「按表结构写死」豁免类，测试意图零变化；全量唯一失败文件，修复后 15 例全绿复跑验证）。
+- **验证**：`pnpm --filter @kepcup/shared build` 通过；shared / core typecheck 0 error、desktop svelte-check 0 error；T1 改动 38 个 TS 文件（31 改 + 13 新中全部 .ts）eslint 0 error；**全量 `pnpm test` 一次（T1 收口）**：815 文件（811 过 / 1 失败 / 3 跳过）、8805 例（8757 过 / 4 失败 / 44 跳过）——唯一失败文件为上条 `media-delivery.test.ts`（夹具旧表型缺 0078 列，非环境基线；修复后单跑 15 例全绿，其余结果未受影响），无 unhandled rejection；本机全量未出现容器环境的 es-git / sandbox 基线失败。偏差：DEV-134、DEV-135。

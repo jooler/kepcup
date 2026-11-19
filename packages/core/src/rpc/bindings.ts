@@ -357,6 +357,7 @@ import type { WatchService } from '../watch/service.js';
 import type { MemoService } from '../workbench/memo-service.js';
 import type { TodoService } from '../workbench/todo-service.js';
 import type { BoardService } from '../board/board-service.js';
+import { currentCaller } from './caller.js';
 import type { RpcMethodSpec } from './server.js';
 import type { WslStatusReport } from '../sandbox/wsl/setup.js';
 import type { LimaStatusReport } from '../sandbox/lima/setup.js';
@@ -461,6 +462,22 @@ function method<I extends z.ZodType, O extends z.ZodType>(
 }
 
 /**
+ * Caller-context read (62.11 C1): who invoked the RPC. Read discipline
+ * (todo/team-server/README.md "固定契约"): `currentCaller()` may only be read
+ * at the RPC binding layer — every principalized binding below starts from
+ * this helper and passes the principal id down as an explicit parameter. The
+ * ALS context propagates into background runs and jobs triggered by an RPC, so
+ * domain / dispatch / memory code must never read it (it would wrongly
+ * attribute host-driven work to a caller).
+ *
+ * Dormant by default: null without a `withCaller` wrapper — every branch
+ * guarding on this keeps the pre-existing single-user behaviour.
+ */
+function callerPrincipal(): string | null {
+  return currentCaller()?.principalId ?? null;
+}
+
+/**
  * Binds the P01 RPC methods to the domain services and the orchestrator.
  * Handlers stay thin: validation happens in the server layer, business rules
  * live in the services.
@@ -509,27 +526,62 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
   // wizard reopening mid-import shares the running state-machine pass.
   let wslPrepareInflight: Promise<WslStatusReport> | null = null;
 
-  const conversationView = (conversation: Conversation): Conversation => ({
-    ...conversation,
-    // D75 §2.4.3: only user-visible rows count (private task entries and
-    // internal events advance last_seq but are never shown).
-    unreadCount:
-      conversation.lastSeq > conversation.lastReadSeq
-        ? domain.messages.countVisibleAfter(conversation.id, conversation.lastReadSeq)
-        : 0,
-    runningBotIds: orchestrator.runningBotIds(conversation.id),
-    bot:
-      conversation.directBotId !== null
-        ? (domain.bots.get(conversation.directBotId) ?? null)
-        : null,
-    ...(conversation.type === 'project'
-      ? {
-          memberPreviews: domain.projects.memberPreviews(conversation.id),
-          // P2 注入模型：项目详情输出叠加授权的插件（project_plugins 表）。
-          plugins: domain.projects.pluginsOf(conversation.id),
-        }
-      : {}),
-  });
+  /**
+   * Conversation view for RPC output. `principalId` (62.11 C3 / C5): when the
+   * caller has a principal, the unread count reads that principal's
+   * `conversation_reads` row (missing row = 0) instead of the conversation-wide
+   * `last_read_seq`; dm conversations carry their principal roster
+   * (`peerPrincipalIds`, for the renderer's member cards).
+   */
+  const conversationView = (
+    conversation: Conversation,
+    options?: { principalId?: string | null },
+  ): Conversation => {
+    const principalId = options?.principalId ?? null;
+    const lastReadSeq =
+      principalId !== null
+        ? domain.conversations.lastReadSeqOf(conversation.id, principalId)
+        : conversation.lastReadSeq;
+    return {
+      ...conversation,
+      // D75 §2.4.3: only user-visible rows count (private task entries and
+      // internal events advance last_seq but are never shown).
+      unreadCount:
+        conversation.lastSeq > lastReadSeq
+          ? domain.messages.countVisibleAfter(conversation.id, lastReadSeq)
+          : 0,
+      runningBotIds: orchestrator.runningBotIds(conversation.id),
+      bot:
+        conversation.directBotId !== null
+          ? (domain.bots.get(conversation.directBotId) ?? null)
+          : null,
+      ...(conversation.type === 'project'
+        ? {
+            memberPreviews: domain.projects.memberPreviews(conversation.id),
+            // P2 注入模型：项目详情输出叠加授权的插件（project_plugins 表）。
+            plugins: domain.projects.pluginsOf(conversation.id),
+          }
+        : {}),
+      ...(conversation.type === 'dm'
+        ? { peerPrincipalIds: domain.conversations.principals(conversation.id).map((p) => p.principalId) }
+        : {}),
+    };
+  };
+
+  /**
+   * Caller eligibility (62.04 §2 会话资格): a caller without access gets
+   * NOT_FOUND so the existence of other principals' conversations is not
+   * leaked. Only consulted when a caller context is present — the dormant
+   * path never reaches this.
+   */
+  const assertConversationAccessible = async (
+    conversationId: string,
+    principalId: string,
+  ): Promise<void> => {
+    if (!(await domain.conversations.accessibleBy(conversationId, principalId))) {
+      throw new AppError('NOT_FOUND', '会话不存在');
+    }
+  };
 
   /**
    * 对话内应用设置：设置页的整对象保存与目录适配器的条目级写入共用一把写锁（settings/write-lock.ts），
@@ -1135,30 +1187,46 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     ),
 
     'conversations.list': method(voidInput, conversationsListOutputSchema, async () => {
+      // 62.11 C3：有调用者时只返回其 owner / 参与的会话；无调用者 = 现状。
+      const principalId = callerPrincipal();
+      const visible = await (principalId !== null
+        ? domain.conversations.listForPrincipal(principalId, { visibleOnly: true })
+        : domain.conversations.listVisible());
       // 左栏预览（每个会话最后一条可预览消息：文本或卡片摘要）随列表一并
       // 下发：启动时不逐个打开会话也能看到「最后一条消息」。
       const previews = domain.messages.latestPreviewByConversation();
       return {
         // 已归档（已从对话列表移除）的会话不进列表，但仍留在通讯录里可恢复。
-        conversations: domain.conversations.listVisible().map((conversation) => {
-          const view = conversationView(conversation);
+        conversations: visible.map((conversation) => {
+          const view = conversationView(conversation, { principalId });
           const text = previews[conversation.id];
           return text === undefined ? view : { ...view, lastMessageText: text };
         }),
       };
     }),
     /** 通讯录名册：所有会话（含已从对话列表移除的归档会话）。 */
-    'conversations.all': method(voidInput, conversationsAllOutputSchema, async () => ({
-      conversations: domain.conversations
-        .list()
-        .map((conversation) => conversationView(conversation)),
-    })),
+    'conversations.all': method(voidInput, conversationsAllOutputSchema, async () => {
+      // 62.11 C3：有调用者时只返回其 owner / 参与的会话（归档含在内，语义对齐
+      // 无调用者的 list()）；无调用者 = 现状。
+      const principalId = callerPrincipal();
+      const conversations = await (principalId !== null
+        ? domain.conversations.listForPrincipal(principalId, { visibleOnly: false })
+        : domain.conversations.list());
+      return {
+        conversations: conversations.map((conversation) =>
+          conversationView(conversation, { principalId }),
+        ),
+      };
+    }),
     'conversations.get': method(
       conversationGetInputSchema,
       conversationGetOutputSchema,
       async (input) => {
+        // 62.11 C3：有调用者时先资格校验，无资格 NOT_FOUND（不泄露存在性）。
+        const principalId = callerPrincipal();
+        if (principalId !== null) await assertConversationAccessible(input.id, principalId);
         const conversation = domain.conversations.get(input.id);
-        return { conversation: conversation ? conversationView(conversation) : null };
+        return { conversation: conversation ? conversationView(conversation, { principalId }) : null };
       },
     ),
     'conversations.openDirect': method(
@@ -1166,7 +1234,13 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       conversationsOpenDirectOutputSchema,
       async (input) => {
         domain.bots.getOrThrow(input.botId);
-        const { conversation, created } = domain.conversations.openDirect(input.botId);
+        // 62.11 C3：有调用者时按 (Bot, 调用者) 取开直聊；Bot 可见性是团队层
+        // (T4) 的职责，core 不在这里拒绝。
+        const principalId = callerPrincipal();
+        const { conversation, created } = domain.conversations.openDirect(
+          input.botId,
+          principalId !== null ? { ownerPrincipalId: principalId } : undefined,
+        );
         // 用户从界面打开某个 Bot 的对话 = 恢复它（此前被从对话列表移除）：
         // 一个 Bot 仍只有一个对话，历史延续。
         const restored = isArchivedConversation(conversation)
@@ -1175,13 +1249,15 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         if (created || restored !== conversation) {
           publish('conversation.updated', { conversation: restored });
         }
-        return { conversation: conversationView(restored), created };
+        return { conversation: conversationView(restored, { principalId }), created };
       },
     ),
     'conversations.delete': method(
       conversationsDeleteInputSchema,
       conversationsDeleteOutputSchema,
       async (input) => {
+        const principalId = callerPrincipal();
+        if (principalId !== null) await assertConversationAccessible(input.id, principalId);
         await domain.lifecycle.deleteConversation(input.id);
         // 会话不存在了，语音模式即时态一并忘掉（渲染层可能来不及发关闭）。
         orchestrator.setVoiceMode(input.id, false);
@@ -1194,9 +1270,11 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       conversationsArchiveInputSchema,
       conversationsArchiveOutputSchema,
       async (input) => {
+        const principalId = callerPrincipal();
+        if (principalId !== null) await assertConversationAccessible(input.id, principalId);
         const conversation = domain.conversations.setArchived(input.id, true);
         publish('conversation.updated', { conversation });
-        return { conversation: conversationView(conversation) };
+        return { conversation: conversationView(conversation, { principalId }) };
       },
     ),
     /** 恢复已归档的会话：回到对话列表。 */
@@ -1204,18 +1282,29 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       conversationsArchiveInputSchema,
       conversationsArchiveOutputSchema,
       async (input) => {
+        const principalId = callerPrincipal();
+        if (principalId !== null) await assertConversationAccessible(input.id, principalId);
         const conversation = domain.conversations.setArchived(input.id, false);
         publish('conversation.updated', { conversation });
-        return { conversation: conversationView(conversation) };
+        return { conversation: conversationView(conversation, { principalId }) };
       },
     ),
     'conversations.markRead': method(
       conversationsMarkReadInputSchema,
       conversationsMarkReadOutputSchema,
       async (input) => {
-        domain.conversations.markRead(input.conversationId, input.seq);
+        // 62.11 C5：有调用者时读状态写 conversation_reads（按主体），否则旧列。
+        const principalId = callerPrincipal();
+        if (principalId !== null) {
+          await assertConversationAccessible(input.conversationId, principalId);
+          domain.conversations.markRead(input.conversationId, input.seq, principalId);
+        } else {
+          domain.conversations.markRead(input.conversationId, input.seq);
+        }
         const conversation = domain.conversations.get(input.conversationId);
-        if (conversation) publish('conversation.updated', { conversation });
+        if (conversation) {
+          publish('conversation.updated', { conversation });
+        }
         return { ok: true as const };
       },
     ),
@@ -1228,10 +1317,15 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       conversationsSetVoiceModeInputSchema,
       conversationsSetVoiceModeOutputSchema,
       async (input) => {
+        const principalId = callerPrincipal();
+        if (principalId !== null) {
+          await assertConversationAccessible(input.conversationId, principalId);
+        }
         const conversation = domain.conversations.getOrThrow(input.conversationId);
-        // 语音模式只存在于私聊 / 卡片对话（入口本身也只在非项目组会话显示）：
-        // 项目组会让每个成员都拿到语音规则并回语音气泡，直接拒绝。
-        if (conversation.type === 'project') {
+        // 语音对话模式只存在于私聊 / 卡片对话（入口本身也只在非项目组会话显示）：
+        // 项目组会让每个成员都拿到语音规则并回语音气泡，直接拒绝。dm（成员 ↔
+        // 成员，无 Bot 参与回合）同样没有可朗读的 Bot 回复，一并排除。
+        if (conversation.type === 'project' || conversation.type === 'dm') {
           throw new AppError('INVALID_INPUT', '语音对话模式仅用于私聊或卡片对话');
         }
         orchestrator.setVoiceMode(input.conversationId, input.active);
@@ -1241,13 +1335,30 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     'conversations.members': method(
       conversationIdInputSchema,
       conversationsMembersOutputSchema,
-      async (input) => ({ members: domain.projects.members(input.conversationId) }),
+      async (input) => {
+        // 62.11 C3：有调用者时先资格校验（成员名单不外泄给无关主体）。
+        const principalId = callerPrincipal();
+        if (principalId !== null) {
+          await assertConversationAccessible(input.conversationId, principalId);
+        }
+        return { members: domain.projects.members(input.conversationId) };
+      },
     ),
 
     'projects.create': method(
       projectsCreateInputSchema,
       projectsCreateOutputSchema,
-      async (input) => ({ conversation: domain.projects.create(input) }),
+      async (input) => {
+        // 62.11 C3：有调用者时调用者以 role='lead' 入册（项目负责人）；客户端
+        // 传入的其它 principalIds 原样透传（团队层 T4 起会忽略它们，加人只走
+        // team.projects.addMembers）。
+        const principalId = callerPrincipal();
+        const conversation = domain.projects.create(
+          input,
+          principalId !== null ? { leadPrincipalId: principalId } : undefined,
+        );
+        return { conversation };
+      },
     ),
     'projects.setLead': method(
       projectsSetLeadInputSchema,
@@ -1302,36 +1413,88 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       episode: orchestrator.episodes.stop(input.id),
     })),
 
-    'messages.list': method(messagesListInputSchema, messagesListOutputSchema, async (input) => ({
-      // 内部事务事件在 SQL 层（listVisible，isVisibleToUser 的存储层镜像）
-      // 就被排除：分页计数只含可见消息，短页不会截断历史
-      // （docs/design/01-conversation.md 消息原则）。
-      messages: domain.messages.listVisible(input.conversationId, {
-        beforeSeq: input.beforeSeq,
-        limit: input.limit,
-      }),
-    })),
-    'messages.edit': method(messagesEditInputSchema, messagesListOutputSchema, async (input) => ({
-      messages: [orchestrator.editMessage(input.id, input.text)],
-    })),
+    'messages.list': method(messagesListInputSchema, messagesListOutputSchema, async (input) => {
+      // 62.11 C4 / C6：有调用者时先做会话资格校验（无资格 NOT_FOUND）。
+      const principalId = callerPrincipal();
+      if (principalId !== null) {
+        await assertConversationAccessible(input.conversationId, principalId);
+      }
+      // 62.11 C6 增量补拉：afterSeq / changedSince 走 listIncremental（升序 /
+      // 变更时间序，含编辑与撤回的行），出参带可选 cursor；无调用者且无增量
+      // 参数 = 现状分页。
+      if (input.afterSeq !== undefined || input.changedSince !== undefined) {
+        const incremental = await domain.messages.listIncremental(
+          input.conversationId,
+          {
+            ...(input.afterSeq !== undefined ? { afterSeq: input.afterSeq } : {}),
+            ...(input.changedSince !== undefined ? { changedSince: input.changedSince } : {}),
+          },
+          input.limit,
+        );
+        return {
+          messages: incremental.messages,
+          ...(incremental.cursor !== undefined ? { cursor: incremental.cursor } : {}),
+        };
+      }
+      return {
+        // 内部事务事件在 SQL 层（listVisible，isVisibleToUser 的存储层镜像）
+        // 就被排除：分页计数只含可见消息，短页不会截断历史
+        // （docs/design/01-conversation.md 消息原则）。
+        messages: domain.messages.listVisible(input.conversationId, {
+          beforeSeq: input.beforeSeq,
+          limit: input.limit,
+        }),
+      };
+    }),
+    'messages.edit': method(messagesEditInputSchema, messagesListOutputSchema, async (input) => {
+      // 62.11 C4：有调用者时透传 principalId（领域层校验「本人才能改」）。
+      const principalId = callerPrincipal();
+      return {
+        messages: [
+          principalId !== null
+            ? await orchestrator.editMessage(input.id, input.text, principalId)
+            : await orchestrator.editMessage(input.id, input.text),
+        ],
+      };
+    }),
     'messages.recall': method(
       messagesRecallInputSchema,
       messagesListOutputSchema,
-      async (input) => ({
-        messages: [orchestrator.recallMessage(input.id)],
-      }),
+      async (input) => {
+        // 62.11 C4：有调用者时透传 principalId（领域层校验「本人才能撤回」）。
+        const principalId = callerPrincipal();
+        return {
+          messages: [
+            principalId !== null
+              ? await orchestrator.recallMessage(input.id, principalId)
+              : await orchestrator.recallMessage(input.id),
+          ],
+        };
+      },
     ),
 
-    'messages.send': method(messagesSendInputSchema, messagesSendOutputSchema, async (input) =>
-      orchestrator.sendMessage(input.conversationId, {
+    'messages.send': method(messagesSendInputSchema, messagesSendOutputSchema, async (input) => {
+      // 62.11 C4：有调用者时先校验资格（无资格 NOT_FOUND，不泄露存在性），
+      // 发送主体 = 调用者（name 快照本阶段恒 null，T2 由 PrincipalDirectory 提供）。
+      const principalId = callerPrincipal();
+      if (principalId !== null) {
+        await assertConversationAccessible(input.conversationId, principalId);
+      }
+      const payload = {
         text: input.text,
         ...(input.mentions !== undefined ? { mentions: input.mentions } : {}),
         ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}),
         ...(input.attachmentIds !== undefined ? { attachmentIds: input.attachmentIds } : {}),
         ...(input.voiceMode !== undefined ? { voiceMode: input.voiceMode } : {}),
+        // 62.06 / 62.04 §3：分身代回（schema 与透传，62.11 步骤 4.6；T10 强制单一
+        // 运行端）。不传 = 现状。
+        ...(input.origin !== undefined ? { origin: input.origin } : {}),
+        ...(input.avatar !== undefined ? { avatar: input.avatar } : {}),
         ...(input.client !== undefined ? { client: input.client } : {}),
-      }),
-    ),
+        ...(principalId !== null ? { principal: { id: principalId, name: null } } : {}),
+      };
+      return orchestrator.sendMessage(input.conversationId, payload);
+    }),
 
     'attachments.upload': method(
       attachmentsUploadInputSchema,
@@ -2521,29 +2684,55 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       async (input) => ({ entries: services.collabPresence.list(input.conversationId) }),
     ),
     // D120 共享草稿：单写者租约 + 版本化快照；发送原子清草稿。
+    // 62.11 C5：草稿按 (conversation, principal) 分桶——有调用者时 key = 调用者
+    // 主体 id，无调用者 = ''（单用户，行为不变）。
     'collab.draft.get': method(
       collabDraftGetInputSchema,
       collabDraftGetOutputSchema,
-      async (input) => requireCollabDrafts(services).get(input.conversationId),
+      async (input) => {
+        const principalKey = callerPrincipal();
+        return requireCollabDrafts(services).get(
+          input.conversationId,
+          principalKey !== null ? principalKey : undefined,
+        );
+      },
     ),
     'collab.draft.claim': method(
       collabDraftClaimInputSchema,
       collabDraftClaimOutputSchema,
-      async (input) => requireCollabDrafts(services).claim(input),
+      async (input) => {
+        const principalKey = callerPrincipal();
+        return requireCollabDrafts(services).claim(
+          principalKey !== null ? { ...input, principalKey } : input,
+        );
+      },
     ),
     'collab.draft.update': method(
       collabDraftUpdateInputSchema,
       collabDraftUpdateOutputSchema,
-      async (input) => requireCollabDrafts(services).update(input),
+      async (input) => {
+        const principalKey = callerPrincipal();
+        return requireCollabDrafts(services).update(
+          principalKey !== null ? { ...input, principalKey } : input,
+        );
+      },
     ),
     'collab.draft.release': method(collabDraftReleaseInputSchema, okOutputSchema, async (input) => {
-      requireCollabDrafts(services).release(input);
+      const principalKey = callerPrincipal();
+      requireCollabDrafts(services).release(
+        principalKey !== null ? { ...input, principalKey } : input,
+      );
       return { ok: true as const };
     }),
     'collab.draft.send': method(
       collabDraftSendInputSchema,
       messagesSendOutputSchema,
-      async (input) => requireCollabDrafts(services).send(input),
+      async (input) => {
+        const principalKey = callerPrincipal();
+        return requireCollabDrafts(services).send(
+          principalKey !== null ? { ...input, principalKey } : input,
+        );
+      },
     ),
     // 对话内应用设置：settings.items.apply 与设置卡动作。
     ...bindSettingsCatalogMethods(services),

@@ -639,10 +639,14 @@ function conversationInfoLines(
   }
   const leadCard = members?.find((member) => member.isLead === true);
   const leadName = leadCard?.name ?? null;
+  // dm 会话没有 Bot 成员、不产生回合，理论上进不了这里的渲染；显式标注是
+  // 防御性的（62.11 C3 dm 审计：dm 不进任何 Bot 上下文）。
   const convType =
     conversation.type === 'direct'
       ? '单聊（你与用户一对一）'
-      : `项目组${conversation.title ? `「${conversation.title}」` : ''}`;
+      : conversation.type === 'dm'
+        ? '成员间私信（无 Bot 参与）'
+        : `项目组${conversation.title ? `「${conversation.title}」` : ''}`;
   return [
     `对话类型：${convType}`,
     // 项目目标（D92 T1a）：成员理解「归不归我」与自身职责边界的共同依据。

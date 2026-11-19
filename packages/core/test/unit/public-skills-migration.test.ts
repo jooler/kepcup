@@ -35,6 +35,10 @@ describe('0013 public_skills 迁移', () => {
     //    的 conversations 新列，一并摘除才能原样重放）
     runMigrations(db, migrationsUrl('main'));
     db.exec('drop table public_skills;');
+    // 0077（团队服务器主体缝）的两张会话伴生表同样摘除（conversations 的子表，
+    // 先于下面的 conversations 回退重建摘掉；回放 0077 时随重建恢复）。
+    db.exec('drop table conversation_principals;');
+    db.exec('drop table conversation_reads;');
     // 0040 重建了 conversations（goal / lead_bot_id、删 description / setup_state）：
     // 回退到 0002 的原始形态（project_id 也在其中），FK 关闭下重建，回放时才能原样重放。
     db.pragma('foreign_keys = OFF');
@@ -154,6 +158,10 @@ describe('0013 public_skills 迁移', () => {
     // 的摘除整表回退，0075 本体重放时重建。
     db.exec('alter table usage_ledger drop column capability;');
     db.exec('alter table usage_ledger drop column model_entry_id;');
+    // 0080（团队服务器主体缝）给 usage_ledger 加的 principal_id 同为增量列。
+    // 0078 给 messages 加的三列与触发器无需摘除：0018 重放按显式列拷贝重建
+    // messages，触发器随旧表一并消失，0078 重放时再加。
+    db.exec('alter table usage_ledger drop column principal_id;');
     // main 0026（D73 P2 污点外发）的 app_taint 表同样摘除（approvals 重建可原样重放）。
     db.exec('drop table app_taint;');
     // main 0043（污点外发的对话级放行）同样摘除（纯新增，回放时重建）。

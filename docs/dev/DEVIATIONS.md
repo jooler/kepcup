@@ -2401,3 +2401,25 @@
   `docs/design/20-conversation-media.md`（工具能力来源、SETUP_REQUIRED 分流、新增 4.1
   语音标准接口小节）；`plugins/dashscope` 与 `plugins/volcengine-ark` 的 plugin.json
   描述与 README 条目口径随数据更新。
+
+### DEV-134 消息变更时间 `messages.updated_at` 由 SQLite 触发器维护
+
+- 状态：已决定
+- 阶段：团队服务器 T1（分支 team-server，2026-11-20）
+- 是否阻塞：否
+- 问题：62.11 C6 的 `messages.changedSince` 增量补拉需要消息级「内容变更时间」。仓库约定时间由 infra/clock 注入维护（不依赖数据库时钟），但消息内容被原地改写的位置有十余处（`settings/host.ts`、`schedule/service.ts` ×4、`dispatch/tasks.ts` ×3、`updateStreamingText`、`edit` / `recall` 等），逐一在应用层维护 `updated_at` 既侵入面大也容易漏改。
+- 影响范围：`packages/core/migrations/main/`（触发器 DDL）、`domain/messages.ts`（映射与补拉比较）。
+- 可选方案：a) 逐改写点维护 `updated_at`；b) SQLite `AFTER UPDATE OF content_json, status, edited_at` 触发器写 `CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)`。
+- 推荐 / 决定：b。触发器只在内容 / 状态真正变更时触达，补拉比较用 `coalesce(updated_at, created_at)`；该列仅用于增量补拉排序，不参与业务语义，数据库时钟精度足够。
+- 已更新的文档：本条；PROGRESS.md T1 节。
+
+### DEV-135 62.11 C6「删除以墓碑体现」的 core 侧口径
+
+- 状态：已决定
+- 阶段：团队服务器 T1（分支 team-server，2026-11-20）
+- 是否阻塞：否
+- 问题：62.11 C6 写「删除以墓碑体现」，但 core 的消息模型没有消息级软删除——物理删除只有会话删除级联与 `purgeTaskInterim`（用户不可见的中间气泡），没有可承载墓碑的消息行。
+- 影响范围：`messages.list` 的 `changedSince` 语义（T1）；客户端缓存同步策略（T8）。
+- 可选方案：a) core 新增消息级软删除列（扩大休眠面）；b) `changedSince` 覆盖编辑 / 撤回 / 状态变化（含 recalled），会话级删除 / 归档 / 移出（ Bot 视角）不在消息流里体现，由团队层 `team.bootstrap` 全量对比收敛。
+- 推荐 / 决定：b。单用户语义零新增；T8 桌面缓存以 `team.bootstrap` 会话全集对账 + `changedSince` 消息级补拉两层实现同步。
+- 已更新的文档：本条；PROGRESS.md T1 节。

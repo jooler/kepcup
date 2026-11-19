@@ -1329,7 +1329,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // W2 外部副作用台账（runs.db tool_effects）：store 供恢复 / RPC，recorder
     // 注入两个工具执行入口（PiEngine、宿主 MCP 桥）。
     const effects = new ToolEffectsStore(runsDb, clock);
-    const usage = new UsageService(mainDb, clock);
+    const usage = new UsageService(mainDb, clock, (runId) => runs.principalOf(runId));
     // 国内厂商媒体网关先建（providers 按能力测试要路由到这里）。
     const media = new MediaService({ settings, secrets, logger, usage });
     // 联网检索网关（docs/design/21-web-search.md）：web_search/web_fetch 工具与
@@ -3328,9 +3328,18 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     const handoverConversations = {
       get: (conversationId: string) => conversations.get(conversationId),
       memberBotIds: (conversationId: string) => conversations.memberBotIds(conversationId),
-      directIdFor: (botId: string) => conversations.openDirect(botId).conversation.id,
+      // 62.11 C3: the owner scopes the opened chat per principal (the handover's
+      // source conversation owner); omitted = the single-user chat.
+      directIdFor: (botId: string, ownerPrincipalId?: string | null) =>
+        conversations.openDirect(
+          botId,
+          ownerPrincipalId != null && ownerPrincipalId.length > 0 ? { ownerPrincipalId } : undefined,
+        ).conversation.id,
     };
-    const handover = new HandoverHost({
+    // Explicit annotation: the adapters' `ownerPrincipalOfHandover` closures
+    // capture `handover` (the host owns the answer), which would otherwise make
+    // the initializer self-referential for type inference.
+    const handover: HandoverHost = new HandoverHost({
       db: mainDb,
       logger,
       bots,
@@ -3382,6 +3391,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           },
           conversations: handoverConversations,
           memory: handoverMemory,
+          // 62.11 C3: transferred assets land in the target bot's chat of the
+          // handover's source conversation owner.
+          ownerPrincipalOfHandover: (handoverId) =>
+            handover.ownerPrincipalOfHandover(handoverId),
         }),
         new WatchAdapter({
           watches: {
@@ -3393,6 +3406,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
             allowsLoopback: (conversationId) => watches.allowsLoopback(conversationId),
           },
           conversations: handoverConversations,
+          ownerPrincipalOfHandover: (handoverId) =>
+            handover.ownerPrincipalOfHandover(handoverId),
         }),
         new SkillAdapter({
           skills: {
@@ -3890,6 +3905,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           ...(input.attachmentIds !== undefined ? { attachmentIds: input.attachmentIds } : {}),
           ...(input.voiceMode !== undefined ? { voiceMode: input.voiceMode } : {}),
           ...(input.client !== undefined ? { client: input.client } : {}),
+          // 62.11 C4：草稿桶即发送主体（绑定层以 callerPrincipal 作 key）——
+          // 草稿发出的消息同样归属该主体；单用户桶（''）不带。
+          ...(input.principalKey !== undefined && input.principalKey.length > 0
+            ? { principal: { id: input.principalKey, name: null } }
+            : {}),
           onPersisted,
         }),
     });
@@ -4467,7 +4487,7 @@ function createPlatformMethods(services: CoreServices): Record<string, RpcMethod
     'conversations.kind': {
       input: z.object({ id: z.string().min(1) }),
       output: z.object({
-        type: z.enum(['direct', 'project', 'card']).nullable(),
+        type: z.enum(['direct', 'dm', 'project', 'card']).nullable(),
       }),
       handle: async (input) => {
         const id = (input as { id: string }).id;
