@@ -532,6 +532,26 @@ jobs:
             *" 8."*) ;;
             *) echo "需要 snapcraft 8.x（canonical/snapcraft#6519），实际: $ver"; exit 1 ;;
           esac
+      # Ubuntu 分阶段更新（Phased-Update-Percentage）会让部分 runner 仍解析到
+      # 已被移出 pool 的旧修订（2026-11-19：libgbm1 25.2.8-0ubuntu0.24.04.4
+      # 404），snapcraft 因此失败并卡住 Publish。构建前强制纳入分阶段更新、
+      # 刷新索引并清掉 snapcraft 下载缓存；先用 apt 试拉 libgbm1，失败则
+      # 提前退出。不要把新修订伪装成旧文件名。
+      - name: Refresh apt for phased updates
+        run: |
+          printf '%s\n' \
+            'APT::Get::Always-Include-Phased-Updates "true";' \
+            'Update-Manager::Always-Include-Phased-Updates "true";' \
+            | sudo tee /etc/apt/apt.conf.d/99-always-include-phased-updates >/dev/null
+          sudo apt-get update
+          rm -rf "${HOME}/.cache/snapcraft/download"
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          if ! (cd "$tmp" && apt-get download libgbm1); then
+            echo "apt 无法下载 libgbm1（可能仍解析到已下架修订）" >&2
+            exit 1
+          fi
+          echo "resolved $(ls -1 "$tmp"/libgbm1_*.deb)"
       - name: Build snap
         working-directory: apps/desktop
         env:
