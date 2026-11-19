@@ -46,6 +46,12 @@ export const collabPresenceEntrySchema = z.object({
   selection: collabSelectionSchema.nullable(),
   /** 服务端时钟。 */
   updatedAt: z.number(),
+  /**
+   * 团队宿主注入的权威主体身份（62.07 §1，README 固定契约「presence 条目增可选
+   * principalId」）：成员连接上由宿主逐连接绑定，自报 clientName 只作展示。
+   * 单用户宿主从不写该键——缺省休眠，条目形状与现状一致。
+   */
+  principalId: z.string().min(1).optional(),
 });
 export type CollabPresenceEntry = z.infer<typeof collabPresenceEntrySchema>;
 

@@ -35,7 +35,23 @@ interface PresenceEntry {
   updatedAt: number;
   /** 该客户端当前存活的连接 id（多标签页）。 */
   connections: Set<string>;
+  /**
+   * 62.07 §1 团队层的主体身份（T4）：宿主（team-server hub）在 presence 更新
+   * 到达时注入的权威身份（成员 id）。单用户宿主从不传 → 缺省 null，条目形状
+   * 与现状一致（休眠）。shared 的条目 schema 增加可选字段后才会出现在
+   * `collab.presence.list` 的解析输出里（事件载荷不过解析，原样透传）。
+   */
+  principalId: string | null;
 }
+
+/**
+ * Wire shape of a presence entry: the shared schema plus the team layer's
+ * optional principal identity (T4, additive — absent on single-user hosts).
+ */
+export type PresenceEntryWire = CollabPresenceEntry & { principalId?: string };
+
+/** Update input extended with the host-injected principal identity (T4). */
+export type PresenceUpdateInput = CollabPresenceUpdateInput & { principalId?: string };
 
 export interface PresenceServiceDeps {
   clock: Clock;
@@ -80,7 +96,7 @@ export class PresenceService {
     this.#sweepTimer.unref?.();
   }
 
-  update(input: CollabPresenceUpdateInput): void {
+  update(input: PresenceUpdateInput): void {
     if (this.#closed) return;
     // 超限直接丢这一帧（设计 §8：丢帧而不是断开）；客户端下一次心跳会重报。
     if (!this.#updates.take(input.clientId)) return;
@@ -96,6 +112,9 @@ export class PresenceService {
       selection: input.selection !== undefined ? input.selection : (existing?.selection ?? null),
       updatedAt: now,
       connections: existing?.connections ?? new Set<string>(),
+      // T4：宿主注入的权威主体身份；未传保持 null（单用户休眠）。同一 clientId
+      // 的身份不会变（宿主逐连接绑定），沿用既有值即可。
+      principalId: input.principalId ?? existing?.principalId ?? null,
     };
     next.connections.add(input.connectionId);
     this.#entries.set(input.clientId, next);
@@ -125,7 +144,7 @@ export class PresenceService {
     this.#scheduleFlush();
   }
 
-  list(conversationId?: string): CollabPresenceEntry[] {
+  list(conversationId?: string): PresenceEntryWire[] {
     const values = [...this.#entries.values()]
       .filter((entry) => conversationId === undefined || entry.conversationId === conversationId)
       .sort((a, b) => a.updatedAt - b.updatedAt);
@@ -159,7 +178,7 @@ export class PresenceService {
       this.#deps.publish('collab.presenceChanged', {
         conversationId,
         entries: this.list(conversationId ?? undefined),
-      });
+      } as CollabPresenceChangedPayload);
     }
   }
 
@@ -187,7 +206,7 @@ export class PresenceService {
     this.#flushTimer.unref?.();
   }
 
-  #toWire(entry: PresenceEntry): CollabPresenceEntry {
+  #toWire(entry: PresenceEntry): PresenceEntryWire {
     return {
       clientId: entry.clientId,
       clientName: entry.clientName,
@@ -197,6 +216,8 @@ export class PresenceService {
       state: entry.state,
       selection: entry.selection,
       updatedAt: entry.updatedAt,
+      // T4：宿主注入过主体身份才输出（单用户缺省不带该键，载荷逐字节不变）。
+      ...(entry.principalId !== null ? { principalId: entry.principalId } : {}),
     };
   }
 }
