@@ -114,6 +114,16 @@ describe('0073 tool_usage_ledger migration', () => {
   updated_at       INTEGER NOT NULL
 );`);
       db.exec('alter table usage_ledger drop column principal_id;');
+      // 0081（画像主体分桶）同样摘除：两个增量列直接 drop；profile_card 重建
+      // 回 0008 的单行形状（本夹具无画像行，回放 0081 时再重建）。
+      db.exec('alter table profile_items drop column principal_key;');
+      db.exec('alter table profile_proposals drop column principal_key;');
+      db.exec('drop table profile_card;');
+      db.exec(`create table profile_card (
+  id          INTEGER PRIMARY KEY CHECK (id = 1),
+  content     TEXT NOT NULL,
+  compiled_at INTEGER NOT NULL
+);`);
       db.pragma('user_version = 72');
       db.prepare(
         `insert into usage_ledger (id, run_id, bot_id, conversation_id, loop_type, provider, model,

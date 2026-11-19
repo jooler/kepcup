@@ -347,8 +347,10 @@ import {
   mergePatchOnto,
   isArchivedConversation,
   type Conversation,
+  type MemoryItem,
   type Settings,
 } from '@kepcup/shared';
+import { visibleToCaller } from '../memory/retrieve.js';
 import type { CoreServices } from '../start.js';
 import type { RemoteHub } from '../remote/hub.js';
 import type { DraftService } from '../collab/drafts.js';
@@ -475,6 +477,60 @@ function method<I extends z.ZodType, O extends z.ZodType>(
  */
 function callerPrincipal(): string | null {
   return currentCaller()?.principalId ?? null;
+}
+
+/**
+ * C12 Bot-detail memory list judgment (62.05 §3 — 检索与展示同一判定): the
+ * caller's enrolled projects (conversation_principals rosters) + the
+ * {@link visibleToCaller} predicate over one bot's items.
+ */
+function memoryItemsVisibleToCaller(
+  services: CoreServices,
+  botId: string,
+  callerPrincipalId: string,
+): MemoryItem[] {
+  const domain = services.domain!;
+  const callerProjectIds = new Set(
+    domain.conversations
+      .listForPrincipal(callerPrincipalId)
+      .filter((conversation) => conversation.type === 'project')
+      .map((conversation) => conversation.id),
+  );
+  const resolveScope = (conversationId: string): string | null => {
+    const conversation = domain.conversations.get(conversationId);
+    if (conversation === null) return null;
+    if (conversation.type === 'project') return conversation.id;
+    return conversation.type === 'card' ? conversation.parentProjectId : null;
+  };
+  return services
+    .memory!.listMemory(botId)
+    .filter((item) => visibleToCaller(item, callerPrincipalId, callerProjectIds, resolveScope));
+}
+
+/** The unfiltered list when there is no caller, the visible slice otherwise. */
+function memoryItemsForList(
+  services: CoreServices,
+  botId: string,
+  callerPrincipalId: string | null,
+): MemoryItem[] {
+  return callerPrincipalId === null
+    ? services.memory!.listMemory(botId)
+    : memoryItemsVisibleToCaller(services, botId, callerPrincipalId);
+}
+
+/** memory.update / memory.retract: an invisible entry reports NOT_FOUND (no leak). */
+function assertMemoryVisibleToCaller(
+  services: CoreServices,
+  botId: string,
+  itemId: string,
+  callerPrincipalId: string,
+): void {
+  const item = services.memory!.getItemFor(botId, itemId);
+  if (item === null) return; // the service throws its own NOT_FOUND below
+  const visible = memoryItemsVisibleToCaller(services, botId, callerPrincipalId).some(
+    (entry) => entry.id === itemId,
+  );
+  if (!visible) throw new AppError('NOT_FOUND', `记忆条目 ${itemId} 不存在`);
 }
 
 /**
@@ -1822,6 +1878,8 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     'unattended.get': method(voidInput, unattendedGetOutputSchema, async () =>
       domain.unattended.effective(),
     ),
+    // C14 (62.11): the FORBIDDEN gate for a principalized runtime lives in
+    // UnattendedService (principalsActive dep) — the bindings stay thin.
     'unattended.enable': method(
       unattendedEnableInputSchema,
       unattendedGetOutputSchema,
@@ -1949,37 +2007,55 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     ...bindAppsSkillsMethods(services),
 
     // --- memory & profile (P07) ------------------------------------------
-    'memory.list': method(memoryListInputSchema, memoryListOutputSchema, async (input) => ({
-      items: services.memory!.listMemory(input.botId),
-    })),
+    // C12 (62.05 §3): with a caller principal the Bot-detail memory list shows
+    // the caller's visible slice (shared ∨ own-sourced ∨ enrolled projects);
+    // updates / retractions of invisible entries report NOT_FOUND. Without a
+    // caller the full list is returned (single-user status quo).
+    'memory.list': method(memoryListInputSchema, memoryListOutputSchema, async (input) => {
+      const caller = callerPrincipal();
+      if (caller === null) return { items: services.memory!.listMemory(input.botId) };
+      return {
+        items: memoryItemsVisibleToCaller(services, input.botId, caller),
+      };
+    }),
     'memory.update': method(memoryUpdateInputSchema, memoryListOutputSchema, async (input) => {
       if (input.content === undefined) {
         throw new AppError('INVALID_INPUT', 'memory.update 需要提供 content');
       }
+      const caller = callerPrincipal();
+      if (caller !== null) assertMemoryVisibleToCaller(services, input.botId, input.id, caller);
       services.memory!.updateMemory(input.botId, input.id, { content: input.content });
-      return { items: services.memory!.listMemory(input.botId) };
+      return { items: memoryItemsForList(services, input.botId, caller) };
     }),
     'memory.retract': method(memoryRetractInputSchema, memoryListOutputSchema, async (input) => {
+      const caller = callerPrincipal();
+      if (caller !== null) assertMemoryVisibleToCaller(services, input.botId, input.id, caller);
       services.memory!.retractMemory(input.botId, input.id);
-      return { items: services.memory!.listMemory(input.botId) };
+      return { items: memoryItemsForList(services, input.botId, caller) };
     }),
 
+    // C11 (62.05 §2): with a caller principal these act on the caller's own
+    // profile domain; without one, the single-user bucket (status quo).
     'profile.list': method(voidInput, profileListOutputSchema, async () => ({
-      items: services.memory!.listProfile(),
+      items: services.memory!.listProfile(callerPrincipal() ?? ''),
     })),
     'profile.update': method(profileUpdateInputSchema, profileListOutputSchema, async (input) => {
-      services.memory!.updateProfile(input.id, {
-        ...(input.content !== undefined ? { content: input.content } : {}),
-        ...(input.category !== undefined ? { category: input.category } : {}),
-      });
-      return { items: services.memory!.listProfile() };
+      services.memory!.updateProfile(
+        input.id,
+        {
+          ...(input.content !== undefined ? { content: input.content } : {}),
+          ...(input.category !== undefined ? { category: input.category } : {}),
+        },
+        callerPrincipal() ?? '',
+      );
+      return { items: services.memory!.listProfile(callerPrincipal() ?? '') };
     }),
     'profile.retract': method(profileRetractInputSchema, profileListOutputSchema, async (input) => {
-      services.memory!.retractProfile(input.id);
-      return { items: services.memory!.listProfile() };
+      services.memory!.retractProfile(input.id, callerPrincipal() ?? '');
+      return { items: services.memory!.listProfile(callerPrincipal() ?? '') };
     }),
     'profile.card': method(voidInput, profileCardOutputSchema, async () => ({
-      card: services.memory!.profileCard(),
+      card: services.memory!.profileCard(callerPrincipal() ?? ''),
     })),
 
     'usage.summary': method(usageSummaryInputSchema, usageSummaryOutputSchema, async (input) => {

@@ -3,7 +3,13 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createCore, type CoreHarness, type Keystore } from '@kepcup/core';
-import type { TimerScheduler } from '@kepcup/core';
+import type {
+  HostToolsProvider,
+  PrincipalDirectory,
+  TimerScheduler,
+  ToolPolicy,
+} from '@kepcup/core';
+import type { PermissionMode } from '@kepcup/shared';
 
 export interface TestHome {
   home: string;
@@ -134,6 +140,15 @@ export interface CreateTestCoreOptions {
     intervalMs?: number;
     initialDelayMs?: number;
   };
+  /**
+   * D138 principal seams (62.11; see CoreServicesOptions.principals and
+   * siblings). All optional — omitting every one keeps single-user behaviour.
+   */
+  principals?: PrincipalDirectory;
+  toolPolicy?: ToolPolicy;
+  hostTools?: HostToolsProvider;
+  workdirRoots?: string[];
+  permissionCeiling?: PermissionMode;
 }
 
 /**
@@ -206,6 +221,13 @@ export async function createTestCore(options: CreateTestCoreOptions = {}): Promi
       : {}),
     ...(options.projectorWrap !== undefined
       ? { projectorWrap: options.projectorWrap as never }
+      : {}),
+    ...(options.principals !== undefined ? { principals: options.principals } : {}),
+    ...(options.toolPolicy !== undefined ? { toolPolicy: options.toolPolicy } : {}),
+    ...(options.hostTools !== undefined ? { hostTools: options.hostTools } : {}),
+    ...(options.workdirRoots !== undefined ? { workdirRoots: options.workdirRoots } : {}),
+    ...(options.permissionCeiling !== undefined
+      ? { permissionCeiling: options.permissionCeiling }
       : {}),
     toolLockTrustFirstList: options.toolLockTrustFirstList ?? true,
     // 任务失败自动重试：测试宿主默认关闭（见 CreateTestCoreOptions 注释）。

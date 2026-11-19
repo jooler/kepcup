@@ -16,6 +16,16 @@ import { WikiIndexStore } from '../wiki/index-store.js';
 const require = createRequire(import.meta.url);
 
 /**
+ * Best-first window of the dedupe KNN scan (#bestCosine): the principal filter
+ * (memory_items column) cannot be pushed into the vec0 scan, so a window keeps
+ * a same-principal near-duplicate findable behind a few closer cross-principal
+ * rows. Near-duplicates (cosine > 0.92) rank at the very top in practice; 16
+ * bounds the scan cost. Dormant installs match every row, so the first hit is
+ * the global nearest — the old k = 1 behaviour.
+ */
+const VEC_DEDUPE_K = 16;
+
+/**
  * sqlite-vec loads lazily, per connection, and degrades to full-text search
  * when it cannot (P13). The module is a devDependency, so packaged builds may
  * not contain it, and win32-arm64 has no upstream extension — a static import
@@ -57,6 +67,7 @@ interface MemoryItemRow {
   evidence_json: string;
   origin: 'private' | 'project';
   origin_conversation_id: string | null;
+  source_principal_id: string | null;
   confidence: number;
   sensitivity: MemorySensitivity;
   due_at: number | null;
@@ -69,7 +80,16 @@ interface MemoryItemRow {
   updated_at: number;
 }
 
-function rowToItem(botId: string, row: MemoryItemRow): MemoryItem {
+/**
+ * A memory item with its source principal (62.11 C12, docs/design/
+ * 62-team-server/05-profile-and-memory.md §3): the principal whose run produced
+ * the entry (`null` = shared / single-user status quo). The shared `MemoryItem`
+ * type stays untouched (packages/shared is a fixed RPC contract); the field
+ * travels as a core-local extension for the audience rules in retrieve.ts.
+ */
+export type ScopedMemoryItem = MemoryItem & { sourcePrincipalId: string | null };
+
+function rowToItem(botId: string, row: MemoryItemRow): ScopedMemoryItem {
   return {
     id: row.id,
     botId,
@@ -80,6 +100,7 @@ function rowToItem(botId: string, row: MemoryItemRow): MemoryItem {
     evidence: JSON.parse(row.evidence_json) as MemoryEvidence[],
     origin: row.origin,
     originConversationId: row.origin_conversation_id,
+    sourcePrincipalId: row.source_principal_id,
     confidence: row.confidence,
     sensitivity: row.sensitivity,
     dueAt: row.due_at,
@@ -101,6 +122,8 @@ export interface NewMemoryItem {
   evidence: MemoryEvidence[];
   origin: 'private' | 'project';
   originConversationId?: string | null;
+  /** C12: the principal whose conversation produced this entry (null = shared). */
+  sourcePrincipalId?: string | null;
   confidence: number;
   sensitivity: MemorySensitivity;
   dueAt?: number | null;
@@ -155,7 +178,7 @@ export class MemoryStore {
 
   // --- basic CRUD -----------------------------------------------------------
 
-  getItem(id: string): MemoryItem | null {
+  getItem(id: string): ScopedMemoryItem | null {
     const row = this.#db.prepare('select * from memory_items where id = ?').get(id) as
       MemoryItemRow | undefined;
     return row ? rowToItem(this.#id, row) : null;
@@ -163,7 +186,7 @@ export class MemoryStore {
 
   list(
     options: { status?: MemoryStatus | undefined; kind?: MemoryKind | undefined } = {},
-  ): MemoryItem[] {
+  ): ScopedMemoryItem[] {
     const clauses: string[] = [];
     const params: Array<string> = [];
     if (options.status !== undefined) {
@@ -181,7 +204,7 @@ export class MemoryStore {
     return rows.map((row) => rowToItem(this.#id, row));
   }
 
-  activeItems(): MemoryItem[] {
+  activeItems(): ScopedMemoryItem[] {
     return this.list({ status: 'active' });
   }
 
@@ -189,33 +212,53 @@ export class MemoryStore {
    * Similarity dedupe (docs/dev/phases/P07-memory.md 写入校验 rule 6): with
    * vectors, cosine > 0.92 against active items; without, exact full-text
    * match. Returns the similar active item so the caller refreshes it instead
-   * of inserting.
+   * of inserting. Dedupe never crosses the source-principal boundary (62.11
+   * C12): `sourcePrincipalId` groups the comparison — NULL matches NULL (the
+   * shared / single-user bucket), so two principals writing the same sentence
+   * keep two entries.
    */
-  findSimilar(content: string, embedding: Float32Array | null): MemoryItem | null {
+  findSimilar(
+    content: string,
+    embedding: Float32Array | null,
+    sourcePrincipalId?: string | null,
+  ): ScopedMemoryItem | null {
     // Cosine only when THIS connection has vec0 loaded. Otherwise exact text:
     // querying a leftover memory_vec throws "no such module: vec0".
     if (embedding !== null && this.#vecQueryable()) {
-      const best = this.#bestCosine(embedding);
+      const best = this.#bestCosine(embedding, sourcePrincipalId ?? null);
       if (best !== null) return this.getItem(best);
       return null;
     }
-    return this.#exactActive(content);
+    return this.#exactActive(content, sourcePrincipalId ?? null);
   }
 
-  #exactActive(content: string): MemoryItem | null {
+  #exactActive(content: string, sourcePrincipalId: string | null): ScopedMemoryItem | null {
     const row = this.#db
       .prepare(
-        "select id from memory_items where status = 'active' and trim(content) = trim(?) order by rowid limit 1",
+        "select id from memory_items where status = 'active' and trim(content) = trim(?) and ifnull(source_principal_id, '') = ? order by rowid limit 1",
       )
-      .get(content) as { id: string } | undefined;
+      .get(content, sourcePrincipalId ?? '') as { id: string } | undefined;
     return row ? this.getItem(row.id) : null;
   }
 
-  #bestCosine(embedding: Float32Array): string | null {
+  #bestCosine(embedding: Float32Array, sourcePrincipalId: string | null): string | null {
     if (!this.#vecLoaded || !this.#vecTableExists()) return null;
+    // The principal filter lives on memory_items, so sqlite-vec cannot apply it
+    // during the KNN scan (only constraints on the virtual table's own columns
+    // are pushed down): with k = 1 the globally nearest vector of ANOTHER
+    // principal would shadow a same-principal near-duplicate behind it. Fetch a
+    // small best-first window instead and keep the nearest same-principal row
+    // (dormant installs: the filter matches every row, so this is rows[0] of
+    // the plain k = 1 query — identical behaviour).
     const rows = this.#db
-      .prepare('select item_rowid, distance from memory_vec where embedding match ? and k = 1')
-      .all(this.#toBlob(embedding)) as Array<{ item_rowid: number; distance: number }>;
+      .prepare(
+        `select v.item_rowid, v.distance from memory_vec v join memory_items m on m.rowid = v.item_rowid
+         where v.embedding match ? and k = ${String(VEC_DEDUPE_K)} and ifnull(m.source_principal_id, '') = ?`,
+      )
+      .all(this.#toBlob(embedding), sourcePrincipalId ?? '') as Array<{
+      item_rowid: number;
+      distance: number;
+    }>;
     const best = rows[0];
     if (!best) return null;
     // vec0 default distance is L2; cosine > 0.92 ⇔ L2² < 2 - 2·0.92 = 0.16
@@ -230,12 +273,12 @@ export class MemoryStore {
   }
 
   /** Inserts an item; FTS via text-segment. Returns the created row. */
-  insert(input: NewMemoryItem): MemoryItem {
+  insert(input: NewMemoryItem): ScopedMemoryItem {
     const now = this.#clock();
     const id = newId('mem');
     this.#db
       .prepare(
-        'insert into memory_items (id, kind, content, subject, source, evidence_json, origin, origin_conversation_id, confidence, sensitivity, due_at, valid_until, status, supersedes, use_count, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)',
+        'insert into memory_items (id, kind, content, subject, source, evidence_json, origin, origin_conversation_id, source_principal_id, confidence, sensitivity, due_at, valid_until, status, supersedes, use_count, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)',
       )
       .run(
         id,
@@ -246,6 +289,7 @@ export class MemoryStore {
         JSON.stringify(input.evidence),
         input.origin,
         input.originConversationId ?? null,
+        input.sourcePrincipalId ?? null,
         input.confidence,
         input.sensitivity,
         input.dueAt ?? null,
@@ -260,7 +304,7 @@ export class MemoryStore {
   }
 
   /** User edit / curation content update: rewrites FTS, marks updated. */
-  updateContent(id: string, content: string): MemoryItem {
+  updateContent(id: string, content: string): ScopedMemoryItem {
     this.#db
       .prepare('update memory_items set content = ?, updated_at = ? where id = ?')
       .run(content, this.#clock(), id);
@@ -332,7 +376,7 @@ export class MemoryStore {
    * 状态，active 的优先、其次最新的；没有 = null）。来源记录在 `evidence_json` 的
    * `{handoverId, fromBotId, fromItemId}`。
    */
-  findHandoverCopy(handoverId: string, fromItemId: string): MemoryItem | null {
+  findHandoverCopy(handoverId: string, fromItemId: string): ScopedMemoryItem | null {
     const row = this.#db
       .prepare(
         `select m.* from memory_items m
@@ -348,8 +392,8 @@ export class MemoryStore {
   }
 
   /** Active, unexpired entry with exactly this content (trimmed), or null. */
-  activeWithContent(content: string): MemoryItem | null {
-    return this.#exactActive(content);
+  activeWithContent(content: string): ScopedMemoryItem | null {
+    return this.#exactActive(content, null);
   }
 
   /** Injected entries get their usage counters bumped (P07 任务 3). */
@@ -361,7 +405,7 @@ export class MemoryStore {
     for (const id of ids) stmt.run(now, id);
   }
 
-  commitments(): MemoryItem[] {
+  commitments(): ScopedMemoryItem[] {
     const rows = this.#db
       .prepare(
         "select * from memory_items where kind = 'commitment' and status = 'active' order by due_at is null, due_at",
@@ -371,7 +415,7 @@ export class MemoryStore {
   }
 
   /** Batches of one kind for consolidation (docs 任务 9, ≤50 per batch). */
-  activeByKind(kind: MemoryKind, limit: number): MemoryItem[] {
+  activeByKind(kind: MemoryKind, limit: number): ScopedMemoryItem[] {
     const rows = this.#db
       .prepare(
         "select * from memory_items where status = 'active' and kind = ? order by created_at limit ?",
@@ -392,7 +436,7 @@ export class MemoryStore {
   // --- retrieval -------------------------------------------------------------
 
   /** FTS candidates (bm25-ranked, OR composition), active & unexpired only. */
-  searchFts(queryText: string, limit: number): MemoryItem[] {
+  searchFts(queryText: string, limit: number): ScopedMemoryItem[] {
     const query = buildFtsOrQuery(queryText);
     if (query === null) return [];
     const rows = this.#db
@@ -478,7 +522,7 @@ export class MemoryStore {
   }
 
   /** KNN over memory_vec; returns item ids ordered by distance. */
-  knn(query: Float32Array, k: number): MemoryItem[] {
+  knn(query: Float32Array, k: number): ScopedMemoryItem[] {
     if (!this.#vecQueryable()) return [];
     const rows = this.#db
       .prepare(
@@ -498,7 +542,7 @@ export class MemoryStore {
     return row?.rowid ?? null;
   }
 
-  allActiveWithRowids(): Array<{ item: MemoryItem; rowid: number }> {
+  allActiveWithRowids(): Array<{ item: ScopedMemoryItem; rowid: number }> {
     const rows = this.#db
       .prepare("select *, rowid as _rowid from memory_items where status = 'active'")
       .all() as Array<MemoryItemRow & { _rowid: number }>;

@@ -22,7 +22,7 @@ import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
 import type { AppPaths } from '../infra/paths.js';
-import { truncateToBudget } from '../agent/tokens.js';
+import { estimateTokens, truncateToBudget } from '../agent/tokens.js';
 import type { MediaService, MediaUsageContext } from '../media/service.js';
 import type { BotsService } from '../domain/bots.js';
 import type { ConversationsService } from '../domain/conversations.js';
@@ -42,7 +42,7 @@ import { ProfileStore } from './profile-store.js';
 import { EMBEDDING_MODEL_ID, GatewayEmbedder, LocalEmbedder, type Embedder } from './embedder.js';
 import { EMBEDDING_MODEL_VERSION } from '../env/catalog.js';
 import { executionProvidersFor } from '../env/gpu.js';
-import { retrieveRelevant, type RetrievedMemories } from './retrieve.js';
+import { retrieveRelevant, type RetrievedMemories, type RetrievalAudience } from './retrieve.js';
 import { collectHardConstraints } from './constraints.js';
 import { buildMyState, formatMyState } from './my-state.js';
 import { checkMemoryCandidate, checkProfileCandidate, type WriteCheckContext } from './validate.js';
@@ -117,6 +117,11 @@ export interface RememberInput {
   kind: MemoryKind;
   dueAt?: string | undefined;
   validUntil?: string | undefined;
+  /**
+   * C12 source principal (62.05 §3): the principal the writing run speaks for
+   * (null / absent = single-user status quo, the shared bucket).
+   */
+  sourcePrincipalId?: string | null;
   /** Evidence = the messages that triggered this run. */
   triggerMessages: Message[];
 }
@@ -397,6 +402,7 @@ export class MemoryService {
   ): Promise<RememberResult> {
     const conversation =
       conversationId !== null ? (this.#deps.conversations.get(conversationId) ?? null) : null;
+    const sourcePrincipalId = input.sourcePrincipalId ?? null;
     const candidate = {
       kind: input.kind,
       content: input.content,
@@ -406,7 +412,7 @@ export class MemoryService {
       confidence: 1,
       sensitivity: 'normal' as const,
     };
-    const verdict = checkMemoryCandidate(candidate, botId, this.#checkContext());
+    const verdict = checkMemoryCandidate(candidate, botId, this.#checkContext(sourcePrincipalId));
     if (verdict.verdict === 'drop') {
       return { ok: false, item: null, deduped: false, reason: verdict.reason };
     }
@@ -418,6 +424,7 @@ export class MemoryService {
       evidence: this.#evidenceFrom(input.triggerMessages, null),
       origin: projectScopeOf(conversation) !== null ? 'project' : 'private',
       originConversationId: conversationId,
+      sourcePrincipalId,
       confidence: 1,
       sensitivity: 'normal',
       dueAt: input.dueAt !== undefined ? parseIsoOrThrow(input.dueAt) : null,
@@ -427,16 +434,21 @@ export class MemoryService {
     // 关于用户本人的事实同时生成画像提案（任务书工具表）。敏感类别即使用户
     // 明确要求记住，提案也会被降级为该 Bot 私有记忆（design/04：默认不进共
     // 享层；BR-P07-011 的词面初筛 + checkProfileCandidate 的既有强制）。
+    // C11: the proposal lands in the writing principal's own profile domain.
     if (input.kind === 'fact' || input.kind === 'preference') {
-      this.submitProfileProposal(botId, {
-        category: input.kind === 'preference' ? 'communication' : 'basic',
-        content: input.content,
-        source: 'explicit',
-        evidence: input.triggerMessages.map((m) => m.id),
-        confidence: 1,
-        sensitivity: mentionsSensitiveTopic(input.content) ? 'sensitive' : 'normal',
-        immediate: false,
-      });
+      this.submitProfileProposal(
+        botId,
+        {
+          category: input.kind === 'preference' ? 'communication' : 'basic',
+          content: input.content,
+          source: 'explicit',
+          evidence: input.triggerMessages.map((m) => m.id),
+          confidence: 1,
+          sensitivity: mentionsSensitiveTopic(input.content) ? 'sensitive' : 'normal',
+          immediate: false,
+        },
+        sourcePrincipalId,
+      );
     }
     return { ok: true, item, deduped: false, reason: '' };
   }
@@ -459,8 +471,14 @@ export class MemoryService {
       dueAtMs?: number | null;
       validUntilMs?: number | null;
       evidenceRunId: string | null;
+      /**
+       * C12 source principal: the principal of the run the entry was distilled
+       * from (reflection resolves it per entry; null = shared bucket).
+       */
+      sourcePrincipalId?: string | null;
     },
   ): Promise<{ ok: boolean; item: MemoryItem | null; reason: string }> {
+    const sourcePrincipalId = candidate.sourcePrincipalId ?? null;
     const verdict = checkMemoryCandidate(
       {
         kind: candidate.kind,
@@ -471,7 +489,7 @@ export class MemoryService {
         sensitivity: candidate.sensitivity,
       },
       botId,
-      this.#checkContext(),
+      this.#checkContext(sourcePrincipalId),
     );
     if (verdict.verdict === 'drop') {
       return { ok: false, item: null, reason: verdict.reason };
@@ -489,6 +507,7 @@ export class MemoryService {
       evidence: this.#evidenceFrom(messages, candidate.evidenceRunId),
       origin: projectScopeOf(conversation) !== null ? 'project' : 'private',
       originConversationId: conversationId,
+      sourcePrincipalId,
       confidence: candidate.confidence,
       sensitivity: candidate.sensitivity,
       dueAt: candidate.dueAtMs ?? null,
@@ -526,7 +545,9 @@ export class MemoryService {
     // Re-acquire AFTER the await: the db pool may have evicted (closed) the
     // connection while the embed request was in flight (BR-P07-005).
     const store = this.storeFor(botId);
-    const similar = store.findSimilar(item.content, embedding);
+    // C12: dedupe stays inside the source principal's group (NULL groups with
+    // NULL) so two principals' equivalent entries both survive.
+    const similar = store.findSimilar(item.content, embedding, item.sourcePrincipalId);
     if (similar !== null) {
       store.touch(similar.id);
       return { item: store.getItem(similar.id), fresh: false };
@@ -569,6 +590,8 @@ export class MemoryService {
   /**
    * Submits a profile proposal (validated) and schedules the curation job.
    * The ONLY door into the shared profile besides the user's direct edits.
+   * C11 (62.05 §2): the proposal belongs to `principalKey`'s profile domain —
+   * the speaking principal of the producing run (null = single-user bucket).
    */
   submitProfileProposal(
     botId: string | null,
@@ -582,8 +605,10 @@ export class MemoryService {
       validUntilMs?: number | null;
       immediate?: boolean | undefined;
     },
+    principalKey?: string | null,
   ): { ok: boolean; reason: string } {
     if (botId === null) return { ok: false, reason: 'global loops cannot propose' };
+    const key = principalKey ?? '';
     const verdict = checkProfileCandidate(
       {
         content: candidate.content,
@@ -593,11 +618,12 @@ export class MemoryService {
         sensitivity: candidate.sensitivity,
       },
       botId,
-      this.#checkContext(),
+      this.#checkContext(key),
     );
     if (verdict.verdict === 'drop') return { ok: false, reason: verdict.reason };
     if (verdict.verdict === 'private-only') {
-      // 敏感：留在该 Bot 的私有记忆，不进入共享层。
+      // 敏感：留在该 Bot 的私有记忆，不进入共享层；C12 之下受众仍是提议主体
+      // 自己的会话（降级不改变来源归属）。
       void this.writeReflectionMemory(botId, null, {
         kind: 'fact',
         content: candidate.content,
@@ -608,55 +634,74 @@ export class MemoryService {
         sensitivity: candidate.sensitivity,
         validUntilMs: candidate.validUntilMs ?? null,
         evidenceRunId: null,
+        sourcePrincipalId: key.length > 0 ? key : null,
       });
       return { ok: true, reason: 'kept as bot-private memory' };
     }
-    this.#profileStore.insertProposal({
-      botId,
-      op: 'add',
-      payload: {
-        category: candidate.category,
-        content: candidate.content,
-        source: candidate.source,
-        evidenceMessageIds: candidate.evidence,
-        confidence: candidate.confidence,
-        ...(candidate.validUntilMs !== undefined && candidate.validUntilMs !== null
-          ? { validUntil: candidate.validUntilMs }
-          : {}),
+    this.#profileStore.insertProposal(
+      {
+        botId,
+        op: 'add',
+        payload: {
+          category: candidate.category,
+          content: candidate.content,
+          source: candidate.source,
+          evidenceMessageIds: candidate.evidence,
+          confidence: candidate.confidence,
+          ...(candidate.validUntilMs !== undefined && candidate.validUntilMs !== null
+            ? { validUntil: candidate.validUntilMs }
+            : {}),
+        },
       },
-    });
-    this.scheduleCuration(candidate.immediate === true);
+      key,
+    );
+    this.scheduleCuration(candidate.immediate === true, key);
     return { ok: true, reason: '' };
   }
 
-  /** Retract proposal for one profile item (memory_feedback / forget / recall). */
+  /**
+   * Retract proposal for one profile item (memory_feedback / forget / recall).
+   * The proposal is filed into the TARGET ITEM's own principal bucket, so the
+   * right curation domain processes it (the curation job handles one key).
+   */
   submitRetractProposal(botId: string | null, targetItemId: string, immediate: boolean): void {
-    this.#profileStore.insertProposal({
-      botId,
-      op: 'retract',
-      targetItemId,
-      payload: { targetItemId },
-    });
-    this.scheduleCuration(immediate);
+    const item = this.#profileStore.getItem(targetItemId);
+    const key = item?.principalKey ?? '';
+    this.#profileStore.insertProposal(
+      {
+        botId,
+        op: 'retract',
+        targetItemId,
+        payload: { targetItemId },
+      },
+      key,
+    );
+    this.scheduleCuration(immediate, key);
   }
 
-  /** profile_curation job registration: 60s delay merges proposals (任务 8). */
-  scheduleCuration(immediate: boolean): void {
+  /**
+   * profile_curation job registration: 60s delay merges proposals (任务 8).
+   * C11: one job per principal bucket — `profile_curation:<key>` (the
+   * single-user bucket keeps the legacy bare key so pending jobs from before
+   * the upgrade dedupe into the same slot).
+   */
+  scheduleCuration(immediate: boolean, principalKey = ''): void {
     const delay = this.#deps.curationDelayMs ?? PROFILE_CURATION_DELAY_MS;
+    const dedupeKey = principalKey.length > 0 ? `profile_curation:${principalKey}` : 'profile_curation';
     this.#deps.jobs.enqueue({
       type: 'profile_curation',
-      payload: {},
+      payload: { principalKey },
       priority: 2,
-      dedupeKey: 'profile_curation',
+      dedupeKey,
       ...(immediate ? {} : { runAfter: this.#deps.clock.now() + delay }),
     });
     // Dedupe keeps one pending job per key: an immediate request must pull the
     // already-scheduled job forward, not be dropped (forget 立即整理, 任务 8;
     // BR-P07-003).
     if (immediate) {
-      const hastened = this.#deps.jobs.hasten('profile_curation', this.#deps.clock.now());
+      const hastened = this.#deps.jobs.hasten(dedupeKey, this.#deps.clock.now());
       if (hastened > 0) {
-        this.#deps.logger.debug({ hastened }, 'pending curation pulled forward (immediate)');
+        this.#deps.logger.debug({ hastened, principalKey }, 'pending curation pulled forward (immediate)');
       }
     }
   }
@@ -668,8 +713,10 @@ export class MemoryService {
     conversationId: string,
     query: string,
     kind?: MemoryKind | undefined,
+    principalId?: string | null,
   ): Promise<RetrievedMemories> {
     const conversation = this.#deps.conversations.get(conversationId);
+    const audience = this.#audienceFor(conversationId, principalId);
     const result = await retrieveRelevant({
       store: this.storeFor(botId),
       refreshStore: () => this.storeFor(botId),
@@ -679,6 +726,9 @@ export class MemoryService {
         isProject: projectScopeOf(conversation) !== null,
         now: this.#deps.clock.now(),
         timeZone: this.#deps.timeZone,
+        ...(audience !== undefined
+          ? { audience, projectScopeResolver: this.#projectScopeResolver() }
+          : {}),
       },
       ...(kind !== undefined ? {} : {}),
       rerank: this.#retrievalReranker() ?? undefined,
@@ -692,8 +742,16 @@ export class MemoryService {
     return result;
   }
 
-  getUserProfile(category?: ProfileCategory | undefined): ProfileItem[] {
-    return this.#profileStore.list('active', category);
+  /**
+   * Profile entries of ONE principal domain (C11). `principalKey` omitted =
+   * the single-user bucket (status quo); the get_user_profile tool passes the
+   * speaking run's principal.
+   */
+  getUserProfile(opts?: {
+    principalKey?: string | null;
+    category?: ProfileCategory | undefined;
+  }): ProfileItem[] {
+    return this.#profileStore.list('active', opts?.category, opts?.principalKey ?? '');
   }
 
   listCommitments(botId: string): MemoryItem[] {
@@ -723,16 +781,20 @@ export class MemoryService {
 
   /**
    * memory_feedback: wrong → retracted, outdated → superseded; profile items
-   * produce a retract proposal for the curation loop instead.
+   * produce a retract proposal for the curation loop instead. C11: with a
+   * run principal, another principal's profile entries are out of reach.
    */
   feedback(
     botId: string,
     itemId: string,
     reason: 'outdated' | 'wrong',
+    principalKey?: string | null,
   ): { ok: boolean; message: string } {
     if (itemId.startsWith('prf_')) {
       const item = this.#profileStore.getItem(itemId);
-      if (!item) return { ok: false, message: '画像条目不存在' };
+      if (!item || !this.#ownsProfileItem(item.principalKey, principalKey)) {
+        return { ok: false, message: '画像条目不存在' };
+      }
       this.submitRetractProposal(botId, itemId, false);
       return { ok: true, message: '已提交画像撤回提案，将由画像整理任务处理' };
     }
@@ -747,12 +809,17 @@ export class MemoryService {
   }
 
   /** forget: bot memory retracts immediately; profile items go via curation. */
-  forget(botId: string, itemIds: string[]): { retracted: string[]; proposed: string[] } {
+  forget(
+    botId: string,
+    itemIds: string[],
+    principalKey?: string | null,
+  ): { retracted: string[]; proposed: string[] } {
     const retracted: string[] = [];
     const proposed: string[] = [];
     for (const id of itemIds) {
       if (id.startsWith('prf_')) {
-        if (this.#profileStore.getItem(id) !== null) {
+        const item = this.#profileStore.getItem(id);
+        if (item !== null && this.#ownsProfileItem(item.principalKey, principalKey)) {
           this.submitRetractProposal(botId, id, true);
           proposed.push(id);
         }
@@ -768,6 +835,15 @@ export class MemoryService {
       }
     }
     return { retracted, proposed };
+  }
+
+  /**
+   * Profile-domain ownership (C11): the acting principal must match the item's
+   * bucket; without a principal in play the single-user bucket applies.
+   */
+  #ownsProfileItem(itemPrincipalKey: string, actingPrincipalKey?: string | null): boolean {
+    const acting = actingPrincipalKey ?? '';
+    return acting.length === 0 || itemPrincipalKey === acting;
   }
 
   /**
@@ -855,27 +931,55 @@ export class MemoryService {
 
   // --- prompt sections --------------------------------------------------------
 
-  /** <user_profile> body: the compiled card, truncated to its budget. */
-  profileCardSection(): string {
-    const card = this.#profileStore.getCard();
+  /**
+   * <user_profile> body: the compiled card of ONE principal domain (C11),
+   * truncated to its budget. `principalKey` omitted = the single-user bucket.
+   */
+  profileCardSection(principalKey?: string | null): string {
+    const card = this.#profileStore.getCard(principalKey ?? '');
     if (card.content === null || card.content.length === 0) return '';
     return truncateToBudget(card.content, PROFILE_CARD_TOKEN_BUDGET).text;
   }
 
   /**
+   * One-line speaker card for project groups (62.05 §4): the name plus a
+   * ~40-token excerpt of the principal's compiled card; null without a card.
+   * The host renders it into <user_profile> instead of a full card.
+   */
+  speakerProfileLine(principalKey: string, speakerName: string): string | null {
+    const card = this.#profileStore.getCard(principalKey);
+    if (card.content === null || card.content.length === 0) return null;
+    const firstLine =
+      card.content
+        .split('\n')
+        .map((line) => line.trim())
+        .find((line) => line.length > 0) ?? '';
+    if (firstLine.length === 0) return null;
+    return `${speakerName}：${firstSentenceWithinTokens(firstLine, SPEAKER_PROFILE_LINE_TOKEN_BUDGET)}`;
+  }
+
+  /**
    * <hard_constraints> body: active entries that must always be obeyed, read
    * straight from the entries (never from the compiled card or retrieval).
+   * C11: `principalKey` scopes the profile side to one principal domain; in a
+   * project group (`opts.speakerName`) each line is annotated with its owner.
    */
-  hardConstraintsSection(botId: string, conversationId: string): string {
+  hardConstraintsSection(
+    botId: string,
+    conversationId: string,
+    principalKey?: string | null,
+    opts?: { speakerName?: string },
+  ): string {
     if (this.#deps.bots.get(botId) === null) return '';
     const conversation = this.#deps.conversations.get(conversationId);
     const privateItems = this.#manager.exists(botId) ? this.storeFor(botId).activeItems() : [];
     const constraints = collectHardConstraints({
-      profileItems: this.#profileStore.list('active'),
+      profileItems: this.#profileStore.list('active', undefined, principalKey ?? ''),
       privateItems,
       isProject: projectScopeOf(conversation) !== null,
       now: this.#deps.clock.now(),
     });
+    const speakerName = opts?.speakerName;
     const lines = constraints.map((constraint) => {
       // 1:1 私聊（direct）里只有双方，泄露提示没有对象；项目口径（项目组、
       // 卡片对话）以及会话已查不到的兜底场景才需要提醒不要外泄私聊内容。
@@ -884,7 +988,9 @@ export class MemoryService {
         warnPrivateOrigin && constraint.origin === 'private'
           ? '（来自私聊，不要在群聊中透露）'
           : '';
-      return `- [${constraint.id}] ${constraint.content}${suffix}`;
+      // C11 项目口径：约束属于发言人本人，行内标注归属。
+      const owner = speakerName !== undefined && speakerName.length > 0 ? `（${speakerName} 的约束）` : '';
+      return `- [${constraint.id}] ${constraint.content}${owner}${suffix}`;
     });
     const header =
       '以下为用户明确的硬性约束；每次都必须遵守，不依赖本轮检索；与本轮请求冲突时先向用户确认。' +
@@ -903,8 +1009,16 @@ export class MemoryService {
   }
 
   /** <my_state> body: due commitments + other-conversation activity titles. */
-  myStateSection(botId: string, currentConversationId: string | null): string {
+  myStateSection(
+    botId: string,
+    currentConversationId: string | null,
+    principalId?: string | null,
+  ): string {
     if (!this.#manager.exists(botId)) return '';
+    const audience =
+      currentConversationId !== null
+        ? this.#audienceFor(currentConversationId, principalId)
+        : undefined;
     const activeRuns = this.#runsActive(botId);
     const lines = buildMyState({
       botId,
@@ -914,6 +1028,9 @@ export class MemoryService {
       activeRuns,
       getConversation: (id) => this.#deps.conversations.get(id),
       getMessage: (id) => this.#deps.messages.getById(id),
+      ...(audience !== undefined
+        ? { audience, resolveProjectScope: this.#projectScopeResolver() }
+        : {}),
     });
     return formatMyState(lines);
   }
@@ -923,9 +1040,14 @@ export class MemoryService {
     botId: string;
     conversationId: string;
     queryText: string;
+    /** C12: the speaking run's principal (audience derived when present). */
+    principalId?: string | null;
+    /** Optional precomputed audience override (host-provided). */
+    audience?: RetrievalAudience;
   }): Promise<string> {
     if (!this.#manager.exists(input.botId)) return '';
     const conversation = this.#deps.conversations.get(input.conversationId);
+    const audience = input.audience ?? this.#audienceFor(input.conversationId, input.principalId);
     const result = await retrieveRelevant({
       store: this.storeFor(input.botId),
       refreshStore: () => this.storeFor(input.botId),
@@ -935,6 +1057,9 @@ export class MemoryService {
         isProject: projectScopeOf(conversation) !== null,
         now: this.#deps.clock.now(),
         timeZone: this.#deps.timeZone,
+        ...(audience !== undefined
+          ? { audience, projectScopeResolver: this.#projectScopeResolver() }
+          : {}),
       },
       rerank: this.#retrievalReranker() ?? undefined,
     });
@@ -1006,11 +1131,20 @@ export class MemoryService {
     kind: 'turn' | 'task';
     /** Loop 续接 (D56): runs whose process records were replayed into this run. */
     continuedFromRunIds?: string[];
+    /**
+     * C7 / C11: the principal the run speaks for, carried PER ENTRY so a
+     * debounced merge of several runs keeps each run's attribution (the
+     * reflection resolves the producing principal per extracted item).
+     */
+    principalId?: string | null;
   }): void {
     const entry = {
       runId: input.runId,
       triggerMessageIds: input.triggerMessageIds,
       batchId: input.batchId,
+      ...(input.principalId !== undefined && input.principalId !== null
+        ? { principalId: input.principalId }
+        : {}),
       ...(input.continuedFromRunIds !== undefined && input.continuedFromRunIds.length > 0
         ? { continuedFromRunIds: input.continuedFromRunIds }
         : {}),
@@ -1181,48 +1315,60 @@ export class MemoryService {
     return true;
   }
 
-  listProfile(): ProfileItem[] {
-    return this.#profileStore.list('active');
+  /** Active entries of one principal domain (C11); '' = the single-user bucket. */
+  listProfile(principalKey = ''): ProfileItem[] {
+    return this.#profileStore.list('active', undefined, principalKey);
   }
 
-  /** profile.update RPC: direct user edit (writer path #2, same store API). */
-  updateProfile(id: string, patch: { content?: string; category?: ProfileCategory }): ProfileItem {
+  /**
+   * profile.update RPC: direct user edit (writer path #2, same store API).
+   * C11: with a caller principal the edit only touches that caller's domain —
+   * another principal's entry reports NOT_FOUND (no existence leak).
+   */
+  updateProfile(
+    id: string,
+    patch: { content?: string; category?: ProfileCategory },
+    principalKey = '',
+  ): ProfileItem {
     const item = this.#profileStore.getItem(id);
-    if (!item) throw new AppError('NOT_FOUND', `画像条目 ${id} 不存在`);
+    if (!item || item.principalKey !== principalKey) {
+      throw new AppError('NOT_FOUND', `画像条目 ${id} 不存在`);
+    }
     let changed = false;
     if (patch.content !== undefined) {
       if (containsCredential(patch.content)) {
         throw new AppError('INVALID_INPUT', '内容包含疑似凭据，不会被存储');
       }
       if (patch.content !== item.content) {
-        this.#profileStore.updateContent(id, patch.content);
+        this.#profileStore.updateContent(id, patch.content, principalKey);
         changed = true;
       }
     }
     if (patch.category !== undefined && patch.category !== item.category) {
-      this.#profileStore.updateCategory(id, patch.category);
+      this.#profileStore.updateCategory(id, patch.category, principalKey);
       changed = true;
     }
     // A direct edit bypasses the proposal queue, so the card must be
     // recompiled now — otherwise it keeps the retracted / old constraint
     // (docs/design/04-memory.md 画像整理).
-    if (changed) this.scheduleCuration(true);
+    if (changed) this.scheduleCuration(true, principalKey);
     return this.#profileStore.getItem(id)!;
   }
 
-  retractProfile(id: string): void {
+  retractProfile(id: string, principalKey = ''): void {
     const item = this.#profileStore.getItem(id);
-    if (item === null) {
+    if (item === null || item.principalKey !== principalKey) {
       throw new AppError('NOT_FOUND', `画像条目 ${id} 不存在`);
     }
     if (item.status === 'active') {
-      this.#profileStore.retract(id);
-      this.scheduleCuration(true);
+      this.#profileStore.retract(id, principalKey);
+      this.scheduleCuration(true, principalKey);
     }
   }
 
-  profileCard(): { content: string | null; compiledAt: number | null } {
-    return this.#profileStore.getCard();
+  /** Compiled card of one principal domain (C11). */
+  profileCard(principalKey = ''): { content: string | null; compiledAt: number | null } {
+    return this.#profileStore.getCard(principalKey);
   }
 
   async #syncVector(botId: string, id: string, content: string): Promise<void> {
@@ -1300,7 +1446,15 @@ export class MemoryService {
     }
   }
 
-  #checkContext(): WriteCheckContext {
+  /**
+   * Write-check context, optionally scoped to one principal (C11 证据主体校验,
+   * 62.05 §2): a user message counts as USER evidence only when its
+   * `sender_principal_id` matches the proposing principal — both empty is the
+   * single-user status quo (always a match). Mismatched evidence falls back to
+   * 'bot' so fact/preference/profile candidates lose their user-evidence base.
+   */
+  #checkContext(principalKey?: string | null): WriteCheckContext {
+    const expected = principalKey !== null && principalKey !== undefined ? principalKey : null;
     return {
       getMessage: (id) => {
         const message = this.#deps.messages.getById(id);
@@ -1312,7 +1466,9 @@ export class MemoryService {
               // D71：委派代发消息虽是 user 发送者，文本却是另一个 Bot 写的——
               // 不能作为「关于用户」的证据，按 Bot 内容对待。D87 P4 L3 组件回传同理
               // （文字由组件代码生成，用户只是确认发送）。
-              senderType: isProxiedUserText(message) ? 'bot' : message.senderType,
+              senderType: isProxiedUserText(message)
+                ? 'bot'
+                : this.#userEvidenceSenderType(message, expected),
               status: message.status,
             };
       },
@@ -1332,6 +1488,41 @@ export class MemoryService {
       },
     };
   }
+
+  /** User-evidence gate: the sender principal must match the proposing one. */
+  #userEvidenceSenderType(
+    message: Message,
+    expectedPrincipalKey: string | null,
+  ): Message['senderType'] {
+    if (message.senderType !== 'user') return message.senderType;
+    if (expectedPrincipalKey === null || expectedPrincipalKey.length === 0) {
+      return message.senderType; // dormant / single-user: no principal gate
+    }
+    return (message.senderPrincipalId ?? '') === expectedPrincipalKey ? 'user' : 'bot';
+  }
+
+  /**
+   * C12 audience of one conversation (62.05 §3): the run's principal, falling
+   * back to the conversation owner (direct chats are owner-scoped since the
+   * principal conversation seam). Undefined without a principal in play =
+   * single-user status quo (no audience filtering at all).
+   */
+  #audienceFor(conversationId: string | null, principalId?: string | null): RetrievalAudience | undefined {
+    const conversation =
+      conversationId !== null ? (this.#deps.conversations.get(conversationId) ?? null) : null;
+    const resolved = principalId ?? conversation?.ownerPrincipalId ?? null;
+    if (resolved === null || resolved.length === 0) return undefined;
+    return {
+      principalId: resolved,
+      conversationId: conversationId ?? '',
+      projectConversationId: projectScopeOf(conversation),
+    };
+  }
+
+  /** Card → parent-project mapping for the audience rules (never throws). */
+  #projectScopeResolver(): (conversationId: string) => string | null {
+    return (conversationId: string) => projectScopeOf(this.#deps.conversations.get(conversationId));
+  }
 }
 
 function parseIsoOrThrow(iso: string): number {
@@ -1340,6 +1531,22 @@ function parseIsoOrThrow(iso: string): number {
     throw new AppError('INVALID_INPUT', `时间格式无效：${iso}（需要 ISO 8601）`);
   }
   return parsed;
+}
+
+/** Token budget of the project-group speaker card line (62.05 §4, ~40 tokens). */
+const SPEAKER_PROFILE_LINE_TOKEN_BUDGET = 40;
+
+/**
+ * First sentence of the compiled card, capped at the token budget with an
+ * ellipsis (no full-text truncation marker — the line must stay one line).
+ */
+function firstSentenceWithinTokens(text: string, budget: number): string {
+  const match = text.match(/^[^。！？!?.;；]+[。！？!?.;；]?/);
+  let sentence = (match?.[0] ?? text).trim();
+  if (sentence.length === 0) sentence = text.trim();
+  let end = sentence.length;
+  while (end > 1 && estimateTokens(sentence.slice(0, end)) > budget) end -= 1;
+  return end === sentence.length ? sentence : `${sentence.slice(0, Math.max(1, end))}…`;
 }
 
 /** Whitelisted Profile dot-paths a bot may change (design/03-bot.md). */

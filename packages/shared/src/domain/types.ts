@@ -1797,6 +1797,17 @@ export const cardContentSchema = z.object({
    * 不是代码；渲染端再按 kind 校验一次）。
    */
   present: presentCardSchema.optional(),
+  /**
+   * 62.11 C15 宿主卡片（principalOps.appendCard / updateCard）：宿主自定义的
+   * 卡片载荷（如 T9 的决议卡）。宿主渲染端按 cardType 自行解释；缺省 = 不是
+   * 宿主卡片（updateCard 只认带这个字段的行）。
+   */
+  hostCard: z
+    .object({
+      text: z.string().optional(),
+      data: z.record(z.string(), z.unknown()),
+    })
+    .optional(),
 });
 export type CardContent = z.infer<typeof cardContentSchema>;
 

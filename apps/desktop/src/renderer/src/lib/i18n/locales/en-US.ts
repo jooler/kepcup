@@ -3189,6 +3189,9 @@ export const enUS = {
   'agents.capabilities.settings.change.name': 'Allow changing settings',
   'agents.capabilities.settings.change.description':
     'When on, settings_change can modify settings or show settings cards in the conversation; still subject to host tier rules, off by default',
+  'agents.capabilities.host.name': 'Host-contributed tools',
+  'agents.capabilities.host.description':
+    'Tools the host application injects at runtime (absent in local installs)',
   'agents.suggestEnable': 'A Bot suggests enabling it',
   'contacts.taskEngine': 'Task engine',
   'contacts.taskEngineFollowDefault': 'Follow app default ({engine})',
@@ -3422,6 +3425,9 @@ export const enUS = {
   'chats.errorCode.MAIL_CONNECT_FAILED': "Couldn't connect to the mail server",
   'chats.errorCode.MAIL_PROVIDER_UNAVAILABLE':
     "This mail service can't sign in with an authorization code yet",
+  'chats.errorCode.PERMISSION_CEILING':
+    'That permission level is above the allowed ceiling; pick a lower one',
+  'chats.errorCode.FORBIDDEN': "You don't have permission to do that",
   'mail.intro':
     'Mailboxes come from mail plugins: add accounts on a mail plugin card; one plugin can hold several accounts.',
   'mail.add': 'Add mailbox',

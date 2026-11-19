@@ -162,6 +162,16 @@ describe('0013 public_skills 迁移', () => {
     // 0078 给 messages 加的三列与触发器无需摘除：0018 重放按显式列拷贝重建
     // messages，触发器随旧表一并消失，0078 重放时再加。
     db.exec('alter table usage_ledger drop column principal_id;');
+    // 0081（画像主体分桶）同样摘除：两个增量列直接 drop；profile_card 重建回
+    // 0008 的单行形状（本夹具无画像行，回放 0081 时再重建）。
+    db.exec('alter table profile_items drop column principal_key;');
+    db.exec('alter table profile_proposals drop column principal_key;');
+    db.exec('drop table profile_card;');
+    db.exec(`create table profile_card (
+  id          INTEGER PRIMARY KEY CHECK (id = 1),
+  content     TEXT NOT NULL,
+  compiled_at INTEGER NOT NULL
+);`);
     // main 0026（D73 P2 污点外发）的 app_taint 表同样摘除（approvals 重建可原样重放）。
     db.exec('drop table app_taint;');
     // main 0043（污点外发的对话级放行）同样摘除（纯新增，回放时重建）。

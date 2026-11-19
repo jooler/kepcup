@@ -23,6 +23,11 @@ interface ReflectionEntry {
   runId: string | null;
   triggerMessageIds: string[];
   batchId: string | null;
+  /**
+   * C7 / C11: the principal the entry's run speaks for (62.11). Absent for
+   * legacy entries — resolved from the run row at job time when possible.
+   */
+  principalId?: string | null;
   /** Loop 续接 (D56): runs whose process records were replayed into this run. */
   continuedFromRunIds?: string[];
 }
@@ -32,6 +37,7 @@ interface ReflectionPayload {
   runId?: string;
   triggerMessageIds?: string[];
   batchId?: string | null;
+  principalId?: string | null;
   continuedFromRunIds?: string[];
   entries?: Array<Record<string, unknown>>;
 }
@@ -46,6 +52,7 @@ function parseReflectionEntries(payload: ReflectionPayload): ReflectionEntry[] {
         ? raw['triggerMessageIds'].filter((id): id is string => typeof id === 'string')
         : [];
       const batchId = typeof raw['batchId'] === 'string' ? raw['batchId'] : null;
+      const principalId = typeof raw['principalId'] === 'string' ? raw['principalId'] : null;
       const continued = Array.isArray(raw['continuedFromRunIds'])
         ? raw['continuedFromRunIds'].filter((id): id is string => typeof id === 'string')
         : [];
@@ -54,6 +61,7 @@ function parseReflectionEntries(payload: ReflectionPayload): ReflectionEntry[] {
           runId,
           triggerMessageIds,
           batchId,
+          ...(principalId !== null ? { principalId } : {}),
           ...(continued.length > 0 ? { continuedFromRunIds: continued } : {}),
         },
       ];
@@ -65,6 +73,9 @@ function parseReflectionEntries(payload: ReflectionPayload): ReflectionEntry[] {
       runId: typeof payload.runId === 'string' ? payload.runId : null,
       triggerMessageIds: payload.triggerMessageIds ?? [],
       batchId: payload.batchId ?? null,
+      ...(payload.principalId !== undefined && payload.principalId !== null
+        ? { principalId: payload.principalId }
+        : {}),
       ...(payload.continuedFromRunIds !== undefined && payload.continuedFromRunIds.length > 0
         ? { continuedFromRunIds: payload.continuedFromRunIds }
         : {}),
@@ -130,6 +141,22 @@ export async function runReflectionJob(deps: ReflectionJobDeps): Promise<void> {
   }
   if (resolved.length === 0) return;
 
+  // C11 / C12 (62.05 §2–§3): each entry keeps the principal of ITS run, so a
+  // debounced merge across speakers attributes every extracted item to the
+  // run whose trigger produced it (fallback: the primary entry's principal).
+  const entryPrincipalOf = (resolvedEntry: { entry: ReflectionEntry }): string | null =>
+    resolvedEntry.entry.principalId ??
+    (resolvedEntry.entry.runId !== null ? deps.runs.principalOf(resolvedEntry.entry.runId) : null);
+  const primaryPrincipalId = entryPrincipalOf(resolved[0]!);
+  const principalFor = (evidenceMessageIds: string[]): string | null => {
+    for (const resolvedEntry of resolved) {
+      if (resolvedEntry.entry.triggerMessageIds.some((id) => evidenceMessageIds.includes(id))) {
+        return entryPrincipalOf(resolvedEntry);
+      }
+    }
+    return primaryPrincipalId;
+  };
+
   // D75 §7.2 / §2.4.3: private rows feed reflection only for their owner
   // bot — another member's task entries never reach this bot's memory.
   const ownView = (m: Message | null): m is Message =>
@@ -177,8 +204,8 @@ export async function runReflectionJob(deps: ReflectionJobDeps): Promise<void> {
     triggerReason: 'background',
     triggerMessageIds: triggerMessages.map((m) => m.id),
     // 62.11 C7: a debounced reflection merges several source runs — attribute
-    // it to the newest source run's principal (null when none carried one).
-    principalId: deps.runs.principalOf(resolved[resolved.length - 1]?.entry.runId ?? ''),
+    // it to the newest source entry's principal (null when none carried one).
+    principalId: entryPrincipalOf(resolved[resolved.length - 1]!),
   });
   deps.runs.update(reflectionRun.id, { status: 'running' });
 
@@ -224,7 +251,10 @@ export async function runReflectionJob(deps: ReflectionJobDeps): Promise<void> {
       );
       return;
     }
-    await applyReflectionOutput(deps, botId, conversationId, primaryRunId, triggerMessages, output);
+    await applyReflectionOutput(deps, botId, conversationId, primaryRunId, triggerMessages, output, {
+      principalFor,
+      primaryPrincipalId,
+    });
     if (primaryRunId !== null) {
       // 合并反思的 runSummary 描述整批轮次，只记在 primary 轮（第一条
       // entry）上；其余轮 summary 留空是有意为之——runs.summary 是单值，
@@ -241,6 +271,18 @@ export async function runReflectionJob(deps: ReflectionJobDeps): Promise<void> {
   }
 }
 
+/**
+ * Optional source attribution (C11 / C12, 62.05 §2): maps each extracted item
+ * to the principal of the run whose trigger produced its evidence. Absent
+ * (legacy callers) = the shared single-user bucket.
+ */
+export interface ReflectionSources {
+  /** Principal for one extracted item's evidence ids (fallback: primary). */
+  principalFor(evidenceMessageIds: string[]): string | null;
+  /** Principal of the primary run. */
+  primaryPrincipalId: string | null;
+}
+
 /** Applies the validated output: memories, proposals, suggestions, warnings. */
 export async function applyReflectionOutput(
   deps: ReflectionJobDeps,
@@ -249,6 +291,7 @@ export async function applyReflectionOutput(
   primaryRunId: string | null,
   triggerMessages: Array<{ id: string; batchId: string | null }>,
   output: ReflectionOutput,
+  sources?: ReflectionSources,
 ): Promise<void> {
   for (const memory of output.memories) {
     if (memory.confidence === undefined || memory.confidence === null) {
@@ -276,6 +319,7 @@ export async function applyReflectionOutput(
       dueAtMs: parseIso(memory.dueAt),
       validUntilMs: parseIso(memory.validUntil),
       evidenceRunId: primaryRunId,
+      sourcePrincipalId: sources?.principalFor(memory.evidenceMessageIds) ?? null,
     });
     if (!result.ok) {
       deps.logger.info({ botId, reason: result.reason }, 'reflection memory dropped by validation');
@@ -287,16 +331,20 @@ export async function applyReflectionOutput(
       deps.logger.info({ botId }, 'profile proposal dropped: model omitted confidence');
       continue;
     }
-    const result = deps.memory.submitProfileProposal(botId, {
-      category: proposal.category,
-      content: proposal.content,
-      source: proposal.source,
-      evidence: proposal.evidenceMessageIds,
-      confidence: proposal.confidence,
-      sensitivity: 'normal',
-      validUntilMs: parseIso(proposal.validUntil),
-      immediate: false,
-    });
+    const result = deps.memory.submitProfileProposal(
+      botId,
+      {
+        category: proposal.category,
+        content: proposal.content,
+        source: proposal.source,
+        evidence: proposal.evidenceMessageIds,
+        confidence: proposal.confidence,
+        sensitivity: 'normal',
+        validUntilMs: parseIso(proposal.validUntil),
+        immediate: false,
+      },
+      sources?.principalFor(proposal.evidenceMessageIds) ?? null,
+    );
     if (!result.ok) {
       deps.logger.info({ botId, reason: result.reason }, 'profile proposal dropped by validation');
     }

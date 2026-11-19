@@ -2423,3 +2423,12 @@
 - 可选方案：a) core 新增消息级软删除列（扩大休眠面）；b) `changedSince` 覆盖编辑 / 撤回 / 状态变化（含 recalled），会话级删除 / 归档 / 移出（ Bot 视角）不在消息流里体现，由团队层 `team.bootstrap` 全量对比收敛。
 - 推荐 / 决定：b。单用户语义零新增；T8 桌面缓存以 `team.bootstrap` 会话全集对账 + `changedSince` 消息级补拉两层实现同步。
 - 已更新的文档：本条；PROGRESS.md T1 节。
+
+### DEV-136 C15 `provisionWorkdir` 入参改为 `(conversationId, name)`
+
+- 状态：已决定
+- 阶段：团队服务器 T2（分支 team-server，2026-11-20）
+- 是否阻塞：否
+- 问题：62.11 C15 设计签名为 `provisionWorkdir(root, name)`；core 缝 `workdirRoots` 已提供根列表，宿主侧再传根既冗余也扩大了 core 暴露面。同时按 README 固定契约把宿主写入口的成员查询命名为 `hasPrincipal`（core 不出现 member 语义）。
+- 决定：`provisionWorkdir(conversationId, name)`——在 `workdirRoots[0]` 下建目录并绑定到会话；根由 `CoreServicesOptions.workdirRoots` 提供。
+- 已更新的文档：本条；README 固定契约（已按此写）；PROGRESS.md T2 节。

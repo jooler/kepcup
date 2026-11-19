@@ -39,6 +39,7 @@ import {
   type AppNoticePayload,
   type Bot,
   type CoreStatus,
+  type PermissionMode,
   type ProviderModel,
   type ShareConsumeInput,
   type ShareConsumeOutput,
@@ -50,6 +51,12 @@ import type {
   DiagnosticsToolRow,
   PreregisteredClientTable,
 } from '@kepcup/shared';
+import { PrincipalOps } from './principal/ops.js';
+import type {
+  HostToolsProvider,
+  PrincipalDirectory,
+  ToolPolicy,
+} from './principal/types.js';
 import { readdirSync } from 'node:fs';
 import { directoryUsage, fileSizeOrNull } from './infra/disk-usage.js';
 import {
@@ -546,6 +553,25 @@ export interface CoreServicesOptions {
    * RemoteHub 走既有路径。
    */
   remote?: RemoteHostOptions;
+  /**
+   * 62.11 主体缝（D138，docs/design/62-team-server/11-core-seams.md）。全部
+   * 可选：不传任何一项 = 单用户运行时行为不变（工具面、提示词、workdir、
+   * 权限、画像 / 记忆注入逐字节现状）。
+   *
+   * - `principals`（C2 主体目录）：发言人标签、`<user_identity>`、项目组人类
+   *   成员行、按主体的画像 / 记忆注入；提供后全局无人值守失效（C14）。
+   * - `toolPolicy`（C8 工具策略）：deny 的工具从最终工具面（内置 / ACP / 子代理 /
+   *   MCP 懒解析）移除，提示词同步。
+   * - `hostTools`（C10 宿主贡献工具）：按 (Bot, 会话, loop) 追加进工具面。
+   * - `workdirRoots`（C9）：workdir 绑定与任务 cwd 只允许在这些根之下；
+   *   `principalOps.provisionWorkdir` 在 roots[0] 建目录。
+   * - `permissionCeiling`（C14）：授权级别上限（超过拒绝设置，如禁 bypass）。
+   */
+  principals?: PrincipalDirectory;
+  toolPolicy?: ToolPolicy;
+  hostTools?: HostToolsProvider;
+  workdirRoots?: string[];
+  permissionCeiling?: PermissionMode;
 }
 
 export interface CoreDomainServices {
@@ -622,6 +648,12 @@ export interface CoreServices {
   /** Null while locked / errored (no business services are constructed). */
   domain: CoreDomainServices | null;
   orchestrator: Orchestrator | null;
+  /**
+   * 62.11 C15 宿主写入口（`principal/ops.ts`）：加人 / 系统消息 / 卡片 / 唤醒
+   * Bot / 建工作目录的进程内 domain API（不注册 RPC）。locked / errored 时为
+   * null（与其它业务服务同口径）。
+   */
+  principalOps: PrincipalOps | null;
   /** D94 分享接收（Share Extension）：null while locked / errored. */
   share: ShareIntakeService | null;
   /** Workdir runtime (P04): binding, leases, checkpoints, git remote. */
@@ -978,6 +1010,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     keystoreKind: 'unavailable',
     domain: null,
     orchestrator: null,
+    principalOps: null,
     share: null,
     workdirRuntime: null,
     environment: null,
@@ -1532,6 +1565,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       settings,
       clock,
       logger,
+      // 62.11 C14：宿主注入主体目录 = 全局无人值守失效（effective 恒关、写入
+      // FORBIDDEN）。缺省（不传 principals）= 现状。
+      ...(options.principals !== undefined ? { principalsActive: true } : {}),
       publish: (state) => {
         events.emit('unattended.changed', { state });
         events.emit('platform.unattended', { active: state.enabled, until: state.until });
@@ -1541,6 +1577,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       clock,
       logger,
       unattended,
+      // 62.11 C14：授权级别上限（如禁用会脱离沙箱的 bypass）。缺省 = 无上限。
+      ...(options.permissionCeiling !== undefined
+        ? { ceiling: options.permissionCeiling }
+        : {}),
       // Delegated work and board-card chats inherit the level of the
       // conversation they started from (docs/design/13-permissions.md).
       resolveScope: (conversationId) => {
@@ -1610,6 +1650,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       bots,
       grants,
       leases,
+      // 62.11 C9：workdir 根约束（绑定与任务 cwd 只允许根之下）；roots[0] 也是
+      // principalOps.provisionWorkdir 的建目录位置。缺省 = 不限制（现状）。
+      ...(options.workdirRoots !== undefined ? { roots: options.workdirRoots } : {}),
       checkpoints: new CheckpointService({ paths, logger }),
       publish: (event, payload) => events.emit(event, payload as never),
       // P11: binding changes retarget the network rules of open pages at once
@@ -2899,6 +2942,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         requestApproval: (identity, kind, payload, options) =>
           approvals.request(identity, kind, payload, options),
       },
+      // 62.11 主体缝（全部缺省 = 现状）：C2 目录（发言人标签 / <user_identity> /
+      // 人类成员行 / 按主体注入）、C8 工具策略、C10 宿主贡献工具。
+      ...(options.principals !== undefined ? { principals: options.principals } : {}),
+      ...(options.toolPolicy !== undefined ? { toolPolicy: options.toolPolicy } : {}),
+      ...(options.hostTools !== undefined ? { hostTools: options.hostTools } : {}),
     });
     // W3（D78）: a user revocation interrupts the affected running tasks (turns are not).
     revocations.on((event) => orchestrator.tasks.interruptForRevocation(event));
@@ -3892,6 +3940,19 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       browserProfiles,
     };
     services.orchestrator = orchestrator;
+    // 62.11 C15 宿主写入口（进程内 domain API，不注册 RPC）：加人 / 系统消息 /
+    // 卡片 / 唤醒 Bot / 建并绑定工作目录。
+    services.principalOps = new PrincipalOps({
+      db: mainDb,
+      clock,
+      logger,
+      conversations,
+      messages,
+      publish: (event, payload) => events.emit(event, payload as never),
+      ...(options.principals !== undefined ? { principals: options.principals } : {}),
+      orchestrator,
+      workdirRuntime,
+    });
     // D120 共享草稿：正文进 main.db，租约纯内存；发送复用 orchestrator 的落库 / 路由。
     const collabDrafts = new DraftService({
       db: mainDb,

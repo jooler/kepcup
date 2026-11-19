@@ -3050,6 +3050,9 @@ export const zhCN = {
   'agents.capabilities.settings.change.name': '允许修改设置',
   'agents.capabilities.settings.change.description':
     '开启后可用 settings_change 修改设置或在对话里出设置卡；仍受宿主档位裁定约束，默认关闭',
+  'agents.capabilities.host.name': '宿主扩展工具',
+  'agents.capabilities.host.description':
+    '由宿主应用在运行时注入的扩展工具（本机安装通常没有）',
   'agents.suggestEnable': 'Bot 建议启用它',
   'contacts.taskEngine': '任务执行引擎',
   'contacts.taskEngineFollowDefault': '跟随应用默认（{engine}）',
@@ -3259,6 +3262,8 @@ export const zhCN = {
   'chats.errorCode.MAIL_AUTH_FAILED': '邮箱登录失败。请使用授权码或应用专用密码，不要填写登录密码',
   'chats.errorCode.MAIL_CONNECT_FAILED': '邮箱服务器连接失败',
   'chats.errorCode.MAIL_PROVIDER_UNAVAILABLE': '这个邮箱服务还不能用授权码登录',
+  'chats.errorCode.PERMISSION_CEILING': '授权级别超出允许的上限，请选择更低的级别',
+  'chats.errorCode.FORBIDDEN': '没有权限执行这个操作',
   'mail.intro': '邮箱账号由邮件插件提供：在邮件插件卡上添加账号，一个插件可以添加多个。',
   'mail.add': '添加邮箱',
   'mail.empty': '添加邮箱后，Bot 就能代你收发并处理新邮件。',

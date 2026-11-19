@@ -69,7 +69,8 @@ describe('memory 0003 origin project (WP4 §3.E)', () => {
     ).run();
 
     const applied = runMigrations(db, memoryMigrationsUrl());
-    expect(applied.map((m) => m.version)).toEqual([3, 4]);
+    // 0005 (source_principal) rides along: the run from version 2 covers it too.
+    expect(applied.map((m) => m.version)).toEqual([3, 4, 5]);
 
     const rows = db
       .prepare('select id, origin, content from memory_items order by id')
@@ -103,7 +104,7 @@ describe('memory 0003 origin project (WP4 §3.E)', () => {
   it('全新库直接跑全量迁移：origin 取值只有 private / project，private_to_bot 已删除', () => {
     const db = openMemoryDb();
     const applied = runMigrations(db, memoryMigrationsUrl());
-    expect(applied.map((m) => m.version)).toEqual([1, 2, 3, 4]);
+    expect(applied.map((m) => m.version)).toEqual([1, 2, 3, 4, 5]);
     const check = (
       db
         .prepare(

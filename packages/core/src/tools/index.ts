@@ -4,8 +4,10 @@ import {
   GET_RUN_STEPS_DEFAULT_LIMIT,
   GET_RUN_STEPS_MAX_LIMIT,
   TOOL_OUTPUT_MAX_CHARS,
+  registerHostToolNames,
   type Message,
 } from '@kepcup/shared';
+import type { HostToolsProvider, ToolPolicy } from '../principal/types.js';
 import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { truncateToBudget } from '../agent/tokens.js';
@@ -315,6 +317,27 @@ export interface ResponseToolDeps {
    * 关联智能体以工具移交，不切换整轮 message_transport。
    */
   inkcop?: InkcopToolFacade | undefined;
+  /**
+   * 62.11 C7 / C11 / C12：当前运行主体（runs.principal_id）。缺省 / null =
+   * 单用户桶（记忆与画像工具按主体分桶时的现状）。
+   */
+  principalId?: string | null | undefined;
+  /**
+   * 62.11 C11：在册主体判定（conversation_principals）。提供时 get_user_profile
+   * 的 `member_id` 只能查当前会话在册主体（且只返回编译卡）；缺省 = 拒绝
+   * member_id 查询。
+   */
+  hasConversationPrincipal?: ((conversationId: string, principalId: string) => boolean) | undefined;
+  /**
+   * 62.11 C8 宿主工具策略：deny 的工具从 finalize 结果移除（含宿主贡献工具）。
+   * 缺省 = 不过滤（现状）。
+   */
+  toolPolicy?: ToolPolicy | undefined;
+  /**
+   * 62.11 C10 宿主贡献工具：每次 run 追加到内置工具面之后（再统一过策略）。
+   * 缺省 = 无追加（现状）。
+   */
+  hostTools?: HostToolsProvider | undefined;
 }
 
 /**
@@ -1061,6 +1084,15 @@ export function buildResponseTools(input: {
             ...deps.memory,
             triggerMessages: () => deps.batchMessages ?? [],
           },
+          // 62.11 C11 / C12：当前运行主体（get_user_profile / recall / remember /
+          // feedback / forget 按主体分桶）与在册主体判定（member_id 查询门禁）。
+          // 缺省（单用户）= 旧行为。
+          ...(deps.principalId !== undefined && deps.principalId !== null
+            ? { principalId: deps.principalId }
+            : {}),
+          ...(deps.hasConversationPrincipal !== undefined
+            ? { hasConversationPrincipal: deps.hasConversationPrincipal }
+            : {}),
         })
       : [];
 
@@ -1325,11 +1357,51 @@ export function buildResponseTools(input: {
         })
       : [];
 
+  // 62.11 C10 / C8（CoreServicesOptions.hostTools / toolPolicy）：宿主贡献工具先
+  // 拼到内置工具面之后，再对拼接结果统一过策略（先拼接再过滤——宿主工具同样受
+  // 策略约束）。最终名单同时是提示词 has* 标志的推导源（orchestrator），被拒
+  // 工具不会出现在提示词里。宿主工具名登记进 shared 的 `host` 能力包，外部
+  // 智能体（ACP）路径据此保留。两者都缺省 = 工具面与从前逐字节一致。
+  const hostToolsRaw =
+    deps.hostTools?.({
+      botId: identity.botId ?? '',
+      conversationId: identity.conversationId,
+      principalId: deps.principalId ?? null,
+      loopType: identity.loopType,
+    }) ?? [];
+  // Host tools keep their given order; a repeated name keeps its first entry
+  // (the engine would otherwise see two tools with one name).
+  const seenHostNames = new Set<string>();
+  const hostToolDefs = hostToolsRaw.filter((tool) => {
+    if (seenHostNames.has(tool.name)) return false;
+    seenHostNames.add(tool.name);
+    return true;
+  });
+  if (hostToolDefs.length > 0) registerHostToolNames(hostToolDefs.map((tool) => tool.name));
+  const policyAllows = (toolName: string): boolean => {
+    const policy = deps.toolPolicy;
+    if (policy === undefined) return true;
+    return (
+      policy(
+        {
+          botId: identity.botId ?? '',
+          conversationId: identity.conversationId,
+          principalId: deps.principalId ?? null,
+        },
+        toolName,
+      ) !== 'deny'
+    );
+  };
+  const applyToolPolicy = (tools: ToolDefinition[]): ToolDefinition[] =>
+    deps.toolPolicy === undefined ? tools : tools.filter((tool) => policyAllows(tool.name));
+
   // D73 §5.7 global dedupe: an MCP / app tool may never shadow a built-in one (a connector
   // slug `request` + tool `connection` would spell `app_request_connection`).
   const external = new Set<ToolDefinition>(mcpTools);
   const finalize = (list: ToolDefinition[]): ToolDefinition[] =>
-    dropBuiltinNameConflicts(list, external, deps.logger);
+    applyToolPolicy(
+      dropBuiltinNameConflicts([...list, ...hostToolDefs], external, deps.logger),
+    );
 
   if (identity.loopType === 'turn') {
     const taskTools =
@@ -1608,6 +1680,12 @@ export function buildSubagentResearchTools(input: {
     | 'capabilities'
     | 'logger'
   >;
+  /**
+   * 62.11 C8 / C7：宿主工具策略与子 run 的运行主体（继承父 run）。提供策略时
+   * 最终名单过同一判定；缺省 = 不过滤（现状）。
+   */
+  principalId?: string | null;
+  toolPolicy?: ToolPolicy;
 }): ToolDefinition[] {
   const coding = buildCodingTools(
     input.identity,
@@ -1636,10 +1714,23 @@ export function buildSubagentResearchTools(input: {
     identity: input.identity,
     runs: input.deps.runs,
   });
-  return dropBuiltinNameConflicts(
+  const list = dropBuiltinNameConflicts(
     [...coding, runHistory, ...web, ...mcpTools, ...capabilityTools],
     new Set(mcpTools),
     input.deps.logger,
+  );
+  // C8：子 run 的研究工具面也受宿主策略约束（ctx 与父 run 一致）。
+  if (input.toolPolicy === undefined) return list;
+  return list.filter(
+    (tool) =>
+      input.toolPolicy!(
+        {
+          botId: input.identity.botId ?? '',
+          conversationId: input.identity.conversationId,
+          principalId: input.principalId ?? null,
+        },
+        tool.name,
+      ) !== 'deny',
   );
 }
 

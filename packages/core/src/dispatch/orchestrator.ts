@@ -41,6 +41,7 @@ import {
   type AgentToolApprovalPayload,
   type AgentPermissionTier,
   type AgentView,
+  type HostCapabilityId,
   type Attachment,
   type Bot,
   type CollabClientRef,
@@ -103,6 +104,7 @@ import {
   buildAgentSessionPrompt,
   buildSystemPrompt,
   type CardPromptContext,
+  type HumanPrincipalLabel,
 } from '../agent/context/system-prompt.js';
 import {
   buildConversationContext,
@@ -120,6 +122,11 @@ import type {
   RunIdentity,
   ToolDefinition,
 } from '../agent/types.js';
+import type {
+  HostToolsProvider,
+  PrincipalDirectory,
+  ToolPolicy,
+} from '../principal/types.js';
 import type { Scheduler } from '../scheduler/scheduler.js';
 import {
   isUserFacingReason,
@@ -213,6 +220,7 @@ import type { ScheduleToolFacade } from '../tools/schedule-tools.js';
 import type { WatchToolFacade } from '../tools/watch-tools.js';
 import { WORKBENCH_OWN_READ_TOOLS, type WorkbenchToolFacade } from '../tools/workbench-tools.js';
 import { applyProfileChanges } from '../memory/service.js';
+import type { RetrievalAudience } from '../memory/retrieve.js';
 import {
   createSubagentFacade,
   buildSubagentSystemPrompt,
@@ -552,6 +560,24 @@ export interface OrchestratorDeps {
    * 经这里中止整次制作（草稿保留）。
    */
   widgetCraft?: { cancelStageRun(runId: string, reason?: string): boolean } | null;
+  /**
+   * 62.11 C2 主体目录（`CoreServicesOptions.principals`）：发言人标签、
+   * `<user_identity>` / `<conversation_info>` 的人类主体、记忆注入的主体键都经
+   * 它解析。缺省（单用户宿主）= 所有渲染与注入路径保持现状逐字节。
+   */
+  principals?: PrincipalDirectory;
+  /**
+   * 62.11 C8 宿主工具策略（`CoreServicesOptions.toolPolicy`）：deny 的工具从
+   * 最终工具面移除——内置引擎、外部智能体（ACP）、子代理研究工具、MCP / 能力
+   * 懒解析一律同一策略；提示词标志由最终工具名集合推导。缺省 = 不裁剪（现状）。
+   */
+  toolPolicy?: ToolPolicy;
+  /**
+   * 62.11 C10 宿主贡献工具（`CoreServicesOptions.hostTools`）：每次 run 追加到
+   * `buildResponseTools` 结果之后（再统一过策略）；名字登记进 shared 的 host
+   * 能力包，外部智能体路径据此保留。缺省 = 无追加（现状）。
+   */
+  hostTools?: HostToolsProvider;
 }
 
 /** The slice of the wiki domain the response loop consumes (owner-based since
@@ -616,6 +642,10 @@ export interface OrchestratorSkillsFacade {
  * The slice of the memory domain the orchestrator uses: the tool facade minus
  * `triggerMessages` (the orchestrator supplies the current batch to the tools
  * itself) plus the prompt-section builders and the reflection hook.
+ *
+ * C11 / C12 (62.05 §4) principal-keyed lookups: the section builders take the
+ * running principal (null = the single-user bucket, status quo); the retrieval
+ * audience is derived inside the memory service from it (owner fallback).
  */
 export type OrchestratorMemoryFacade = Omit<
   MemoryToolFacade,
@@ -628,13 +658,29 @@ export type OrchestratorMemoryFacade = Omit<
     reason: string,
     onDecided: (outcome: { approved: boolean; note: string }) => void,
   ): void;
-  profileCardSection(): string;
-  hardConstraintsSection(botId: string, conversationId: string): string;
-  myStateSection(botId: string, currentConversationId: string | null): string;
+  /** Compiled profile card of `principalKey` (C11; null = single-user bucket). */
+  profileCardSection(principalKey?: string | null): string;
+  /** C11 项目组发言人名片一行（~40 token，从编译卡截取）。 */
+  speakerProfileLine(principalKey: string, speakerName: string): string | null;
+  hardConstraintsSection(
+    botId: string,
+    conversationId: string,
+    principalKey?: string | null,
+    opts?: { speakerName?: string },
+  ): string;
+  myStateSection(
+    botId: string,
+    currentConversationId: string | null,
+    principalId?: string | null,
+  ): string;
   relevantMemoriesSection(input: {
     botId: string;
     conversationId: string;
     queryText: string;
+    /** C12: the speaking run's principal (audience derived, owner fallback). */
+    principalId?: string | null;
+    /** Optional precomputed audience override (host-provided). */
+    audience?: RetrievalAudience;
   }): Promise<string>;
   /** Registers the post-run reflection job (dedupe run:{runId}). */
   registerReflection(input: {
@@ -647,6 +693,12 @@ export type OrchestratorMemoryFacade = Omit<
     kind: 'turn' | 'task';
     /** Loop 续接 (D56): runs whose process records were replayed into this run. */
     continuedFromRunIds?: string[];
+    /**
+     * C7 / C11 (62.05 §2): the principal this run speaks for, carried per entry
+     * so a debounced merge attributes every extracted item to its own run even
+     * if the run row is gone by job time.
+     */
+    principalId?: string | null;
   }): void;
 };
 
@@ -1105,6 +1157,8 @@ export class Orchestrator {
           settings: deps.settings,
           bots: deps.bots,
           messages: deps.messages,
+          // 62.11 C2：续接判断的消息行把人类发送主体解析成显示名。
+          ...(deps.principals !== undefined ? { describePrincipal: deps.principals.describe } : {}),
           botId: input.botId,
           conversationId: input.conversationId,
           batchId: input.batchId,
@@ -1125,6 +1179,8 @@ export class Orchestrator {
           bots: deps.bots,
           messages: deps.messages,
           conversations: deps.conversations,
+          // 62.11 C2：负责人网关提示里的人类发言人经目录出名字（62.04 §4）。
+          ...(deps.principals !== undefined ? { describePrincipal: deps.principals.describe } : {}),
           leadBotId: input.leadBotId,
           conversationId: input.conversationId,
           batchId: input.batchId,
@@ -2677,6 +2733,61 @@ export class Orchestrator {
   }
 
   /**
+   * 62.11 C2：会话里的人类主体标签。项目组 = `conversation_principals` 在册主体
+   * 经目录映射；直聊 / 看板卡 = 会话 owner 一行（渲染层只在项目组出人类成员行，
+   * 直聊身份走 `<user_identity>`）。缺目录或解析不到的主体跳过（没有可显示的
+   * 名字就不造一个）。未提供目录 = 空数组（现状）。
+   */
+  #humanPrincipalsOf(conversationId: string): HumanPrincipalLabel[] {
+    const directory = this.#deps.principals;
+    if (directory === undefined) return [];
+    const labels: HumanPrincipalLabel[] = [];
+    const push = (principalId: string | null | undefined): void => {
+      if (principalId == null || principalId.length === 0) return;
+      const described = directory.describe(principalId);
+      if (described === null || described.name.length === 0) return;
+      labels.push({
+        name: described.name,
+        ...(described.note !== undefined ? { note: described.note } : {}),
+      });
+    };
+    const conversation = this.#deps.conversations.get(conversationId);
+    if (conversation === null) return [];
+    if (conversation.type === 'project') {
+      for (const principal of this.#deps.conversations.principals(conversationId)) {
+        push(principal.principalId);
+      }
+      return labels;
+    }
+    push(conversation.ownerPrincipalId);
+    return labels;
+  }
+
+  /**
+   * 62.11 C2 / 62.05 §4：本轮说话主体的标签（驱动恒小的 `<user_identity>` 段与
+   * 项目组的发言人名片行）。运行主体（runs.principal_id）经目录解析；没有目录、
+   * 没有运行主体或解析失败 = undefined（段不出现，现状）。
+   */
+  #speakerLabelOf(runId: string): HumanPrincipalLabel | undefined {
+    const directory = this.#deps.principals;
+    if (directory === undefined) return undefined;
+    const principalId = this.#deps.runs.principalOf(runId);
+    if (principalId === null) return undefined;
+    const described = directory.describe(principalId);
+    if (described === null || described.name.length === 0) return undefined;
+    return { name: described.name, ...(described.note !== undefined ? { note: described.note } : {}) };
+  }
+
+  /**
+   * 62.11 C15 宿主写入口（`principalOps.appendSystemMessage`）：进程内宿主直接
+   * 往对话里落一条系统消息（决议通知、加人 / 离开等）。事件名固定
+   * `host_notice`（不在 INTERNAL_SYSTEM_EVENTS 里 → 用户可见），文案由宿主给。
+   */
+  appendHostSystemMessage(conversationId: string, text: string): Message {
+    return this.#appendSystemMessage(conversationId, 'host_notice', text);
+  }
+
+  /**
    * Card branch of the prompt. Undefined for every other conversation type.
    * Wiki topics, when present, are the same body as `<project_wiki_topics>`.
    */
@@ -2932,6 +3043,10 @@ export class Orchestrator {
       timeZone: this.#deps.timeZone,
       botNames: names,
       mentionLabels,
+      // 62.11 C2：人类发送主体经目录解析成显示名（未提供目录 = 「用户」字面量现状）。
+      ...(this.#deps.principals !== undefined
+        ? { describePrincipal: (id: string) => this.#deps.principals!.describe(id) }
+        : {}),
       shareAttachmentPath: (attachment, botId) => this.#shareAttachmentPath(attachment, botId),
       // 引用回复标注（conversation.ts renderReplySuffix）：解析被引用消息，让
       // 模型知道回复关系与被引用的附件 id（图片等非文本引用尤其依赖）。
@@ -3280,6 +3395,10 @@ export class Orchestrator {
     agentId: string;
     identity: RunIdentity;
     responseTools: ToolDefinition[];
+    /** 62.11 C2：项目组的人类主体（`<conversation_info>`），缺省不出现。 */
+    humanPrincipals?: HumanPrincipalLabel[];
+    /** 62.11 C2：本轮说话主体（`<user_identity>`），缺省段不出现。 */
+    speaker?: HumanPrincipalLabel;
     workspacePath: string;
     hasWorkdir: boolean;
     memorySections: {
@@ -3353,9 +3472,17 @@ export class Orchestrator {
             process.platform,
           );
     const taskId = input.task?.id ?? null;
-    const capabilities = resolveCapabilities(bot.profile.runtime.agent.capabilities, entry, {
-      isButler: bot.systemRole === 'butler',
-    });
+    const resolvedCapabilityPacks = resolveCapabilities(
+      bot.profile.runtime.agent.capabilities,
+      entry,
+      { isButler: bot.systemRole === 'butler' },
+    );
+    // 62.11 C10：宿主贡献工具挂 `host` 能力包——宿主在运行时给出的工具不被 Bot
+    // 的包勾选挡掉（宿主是工具面的权威；未提供宿主工具的安装上集合不变）。
+    const capabilities: HostCapabilityId[] =
+      this.#deps.hostTools !== undefined && !resolvedCapabilityPacks.includes('host')
+        ? [...resolvedCapabilityPacks, 'host']
+        : resolvedCapabilityPacks;
     const loadUserConfig = this.#deps.settings.get().agents[agentId]?.loadUserConfig === true;
     // D72 P5 会话复用（design 28 §7）：窗口内、指纹一致的会话只发增量。桥
     // server 名由会话行 id 派生（换会话 = 换名字），会话级提示词里的工具名
@@ -3405,6 +3532,8 @@ export class Orchestrator {
         bot,
         conversation,
         ...(conversation.type === 'project' ? { members: this.#memberCards(conversation.id) } : {}),
+        ...(input.humanPrincipals !== undefined ? { humanPrincipals: input.humanPrincipals } : {}),
+        ...(input.speaker !== undefined ? { speaker: input.speaker } : {}),
         ...(cardPrompt !== undefined ? { card: cardPrompt } : {}),
         tools: {
           toolNames: tools.map((tool) => tool.name),
@@ -3675,6 +3804,10 @@ export class Orchestrator {
     configFiles: readonly string[];
     writable: boolean;
   }): Promise<'ok' | 'denied' | 'cancelled'> {
+    // 62.11 C9：start_task 的 cwd（绑定 workdir）同样受宿主 workdir 根约束——
+    // select 时已校验，这里对任务执行路径再断言一次（根配置变更 / 直接落库的
+    // 绑定也会被拦下）。未配置根 = no-op。
+    this.#deps.workdirs.assertInRoots(input.workdirPath);
     // Agents look for their config from the session directory up to the git
     // worktree root (OpenCode, Codex AGENTS.md …, P5 审查 H1): so does the gate.
     const searchRoot = gitRootAbove(input.workdirPath) ?? input.workdirPath;
@@ -4030,6 +4163,22 @@ export class Orchestrator {
         return;
       }
 
+      // 62.11 C8 / C10 / C2 主缝（全部缺省 = 现状逐字节）：本次运行主体
+      // （runs.principal_id，C7）驱动宿主策略 ctx、工具策略过滤、`<user_identity>`
+      // 与按主体的画像 / 记忆注入。策略 deny 的工具从最终工具面移除——内置引擎、
+      // 外部智能体（ACP）、子代理研究工具与 MCP / 能力懒解析共用同一判定。
+      const runPrincipalId = runs.principalOf(runId);
+      const toolPolicyAllows = (toolName: string): boolean => {
+        const policy = this.#deps.toolPolicy;
+        if (policy === undefined) return true;
+        return (
+          policy(
+            { botId: batch.botId, conversationId: batch.conversationId, principalId: runPrincipalId },
+            toolName,
+          ) !== 'deny'
+        );
+      };
+
       // D75 §8.1: a turn always runs on the built-in engine with the bot's
       // built-in main model; a task runs on the bot's task engine (an external
       // agent when one resolves — explicit or the app default).
@@ -4184,7 +4333,11 @@ export class Orchestrator {
             true,
           )
         : null;
-      const taskEntries = taskResolution?.entries ?? [];
+      // C8：被策略拒绝的外部工具在这里就不存在——任务面内联、两件套索引与子代理
+      // 共享同一次过滤（下面的 discovery resolve 回调再兜一层）。
+      const taskEntries = (taskResolution?.entries ?? []).filter((entry) =>
+        toolPolicyAllows(entry.name),
+      );
       // D91: more than EXTERNAL_TOOLS_INLINE_MAX enabled tools across the declared capabilities →
       // none of them is inlined; they are all reached through the capability pair (decided once
       // per run, so the tool list is fixed within it).
@@ -4278,6 +4431,8 @@ export class Orchestrator {
               },
               wrap: (entries) => wrapMcp(identity, entries),
               include: isTask ? () => true : (entry) => allowedOnReadOnlySurface(entry.decision),
+              // C8：被宿主策略拒绝的工具不进两件套索引——搜不到也调不到。
+              ...(this.#deps.toolPolicy !== undefined ? { allowedTool: toolPolicyAllows } : {}),
               onAuthRequired,
               now: () => this.#deps.clock.now(),
               logger: this.#deps.logger,
@@ -4312,12 +4467,17 @@ export class Orchestrator {
         ? {
             writeMemory: (botId, conversationId, input) =>
               memoryFacade.writeMemory(botId, conversationId, input),
-            recall: (botId, conversationId, query, kind) =>
-              memoryFacade.recall(botId, conversationId, query, kind),
-            getUserProfile: (category) => memoryFacade.getUserProfile(category),
+            // C11 / C12：工具链路把本次运行主体带下去（检索受众、写入归属、
+            // 画像桶）；单用户（无主体）= 旧行为。
+            recall: (botId, conversationId, query, kind, principalId) =>
+              memoryFacade.recall(botId, conversationId, query, kind, principalId),
+            getUserProfile: (opts) => memoryFacade.getUserProfile(opts),
+            profileCard: (principalKey) => memoryFacade.profileCard(principalKey),
             listCommitments: (botId) => memoryFacade.listCommitments(botId),
-            feedback: (botId, itemId, reason) => memoryFacade.feedback(botId, itemId, reason),
-            forget: (botId, itemIds) => memoryFacade.forget(botId, itemIds),
+            feedback: (botId, itemId, reason, principalKey) =>
+              memoryFacade.feedback(botId, itemId, reason, principalKey),
+            forget: (botId, itemIds, principalKey) =>
+              memoryFacade.forget(botId, itemIds, principalKey),
             requestProfileChange: (ident, changes, reason, signal) =>
               memoryFacade.requestProfileChange(ident, changes, reason, signal),
             // D75 审查 M4: a turn's proposal never waits — the user's decision
@@ -4565,8 +4725,15 @@ export class Orchestrator {
               currentModelRef: () => this.#conversationModelRef(isTask, batch.botId),
               ...this.#compactionRoute(batch.botId),
               buildTools: (subIdentity) =>
+                // C8 / C7: the sub run's research toolset is filtered by the
+                // same host policy (sub runs inherit the parent's principal,
+                // bot and conversation).
                 buildSubagentResearchTools({
                   identity: subIdentity,
+                  ...(runPrincipalId !== null ? { principalId: runPrincipalId } : {}),
+                  ...(this.#deps.toolPolicy !== undefined
+                    ? { toolPolicy: this.#deps.toolPolicy }
+                    : {}),
                   deps: {
                     runs,
                     gateway: this.#deps.gateway,
@@ -4594,6 +4761,10 @@ export class Orchestrator {
                               resolve: (servers) => this.#resolveCapabilityTools(servers, false),
                               wrap: (entries) => wrapMcp(subIdentity, entries),
                               include: (entry) => allowedOnReadOnlySurface(entry.decision),
+                              // C8：父 run 的宿主策略同样约束子 run 能搜 / 能调的范围。
+                              ...(this.#deps.toolPolicy !== undefined
+                                ? { allowedTool: toolPolicyAllows }
+                                : {}),
                               exclude: new Set(subInline.map((entry) => entry.name)),
                               now: () => this.#deps.clock.now(),
                               logger: this.#deps.logger,
@@ -4637,11 +4808,28 @@ export class Orchestrator {
         !isTask && bot.systemRole === 'butler'
           ? (this.#deps.workbench?.contextSection() ?? '')
           : '';
+      // 62.05 §4 注入规则（62.11 C11 / C12，全部缺省 = 现状逐字节）：直聊 /
+      // 看板卡注入运行主体的整卡 + 该主体的硬性约束；项目组不注入整卡，改为
+      // 发言人名片一行（~40 token）+ 带行内归属（speakerName）的发言人约束。
+      // 检索 / my_state 的受众由 memory service 从运行主体推导（owner 兜底）。
+      const speakerLabel = this.#speakerLabelOf(runId);
+      const speakerName = speakerLabel?.name ?? null;
       const memorySections = memoryFacade
         ? {
-            userProfile: memoryFacade.profileCardSection(),
-            hardConstraints: memoryFacade.hardConstraintsSection(batch.botId, batch.conversationId),
-            myState: memoryFacade.myStateSection(batch.botId, batch.conversationId),
+            userProfile:
+              conv.type === 'project' && runPrincipalId !== null && speakerName !== null
+                ? // 项目组：发言人名片一行，不注入整卡（62.05 §4）。
+                  (memoryFacade.speakerProfileLine(runPrincipalId, speakerName) ?? '')
+                : // 直聊 / 看板卡：运行主体的编译卡（null = 单用户 '' 桶，现状）。
+                  memoryFacade.profileCardSection(runPrincipalId),
+            hardConstraints: memoryFacade.hardConstraintsSection(
+              batch.botId,
+              batch.conversationId,
+              runPrincipalId,
+              // C11 项目口径：约束行内标注发言人归属（单用户不带）。
+              runPrincipalId !== null && speakerName !== null ? { speakerName } : undefined,
+            ),
+            myState: memoryFacade.myStateSection(batch.botId, batch.conversationId, runPrincipalId),
             ...(schedulesSection.length > 0 ? { schedules: schedulesSection } : {}),
             ...(workbenchSection.length > 0 ? { workbench: workbenchSection } : {}),
             ...(watchesSection.length > 0 ? { watches: watchesSection } : {}),
@@ -4655,6 +4843,8 @@ export class Orchestrator {
               ]
                 .filter((text) => text.length > 0)
                 .join('\n'),
+              // C12：受众由 service 从运行主体推导（owner 兜底；null = 现状全量）。
+              principalId: runPrincipalId,
             }),
           }
         : {
@@ -4911,8 +5101,23 @@ export class Orchestrator {
                 },
               }
             : {}),
+          // 62.11 C8 / C10：宿主工具拼接与策略过滤在 tools/index.ts 的 finalize
+          // 段完成（同一策略覆盖内置 / ACP / 子代理）；principalId 供记忆工具
+          // 分桶。缺省（两个选项都不传）= 工具面与提示词逐字节现状。
+          ...(this.#deps.toolPolicy !== undefined ? { toolPolicy: this.#deps.toolPolicy } : {}),
+          ...(this.#deps.hostTools !== undefined ? { hostTools: this.#deps.hostTools } : {}),
+          ...(runPrincipalId !== null ? { principalId: runPrincipalId } : {}),
+          ...(this.#deps.principals !== undefined
+            ? {
+                hasConversationPrincipal: (conversationId: string, principalId: string) =>
+                  this.#deps.conversations.hasPrincipal(conversationId, principalId),
+              }
+            : {}),
         },
       });
+      // 62.11 C8 提示词同步：最终工具名集合（含宿主工具、已过策略）驱动
+      // buildSystemPrompt 的 has* 标志，被拒工具不再被静态规则点名。
+      const finalToolNames = new Set(responseTools.map((tool) => tool.name));
       // D72 外部 Agent Bot（design 28 §4–§5）：能力包决定注入哪些宿主工具（经
       // 宿主 MCP 桥）；提示词拆成会话级（ACP 版平台规则 + <tool_policy> + 身份 /
       // 人设 / 对话信息）、run 级动态段与对话段。内置引擎不受影响。
@@ -4932,7 +5137,20 @@ export class Orchestrator {
               conversation: conv,
               agentId,
               identity,
+              // C8 / C10: the ACP path starts from the final (host-appended,
+              // policy-filtered) toolset; denied tools are absent, so the ACP
+              // static rules keyed on tool names omit them too.
+              // C8 / C10：ACP 路径以 finalize 后的最终工具面为起点（已含宿主
+              // 工具、已过策略）——被拒工具不在列表里，ACP 的静态规则按工具名
+              // 门控也随之省略。
               responseTools,
+              ...(this.#deps.principals !== undefined
+                ? { humanPrincipals: this.#humanPrincipalsOf(conv.id) }
+                : {}),
+              ...(() => {
+                const speaker = this.#speakerLabelOf(runId);
+                return speaker !== undefined ? { speaker } : {};
+              })(),
               workspacePath,
               // The <workdir> section only when the agent works in it (a
               // workspace-cwd task does not, 审查 L10).
@@ -5083,6 +5301,16 @@ export class Orchestrator {
             timeZone: this.#deps.timeZone,
             now: new Date(this.#deps.clock.now()),
             ...(conv.type === 'project' ? { members: this.#memberCards(conv.id) } : {}),
+            // 62.11 C2：人类主体行（项目组渲染；直聊行渲染层不显示，身份走
+            // <user_identity>）与恒小的 <user_identity>（缺目录 = 输入缺省，
+            // 渲染逐字节现状）。
+            ...(this.#deps.principals !== undefined
+              ? { humanPrincipals: this.#humanPrincipalsOf(conv.id) }
+              : {}),
+            ...(() => {
+              const speaker = this.#speakerLabelOf(runId);
+              return speaker !== undefined ? { speaker } : {};
+            })(),
             // D92 T1a: the lead / member rules only in a project conversation's turn loop
             // (tasks never get them — a task cannot @ members).
             ...(conv.type === 'project' && !isTask
@@ -5104,22 +5332,41 @@ export class Orchestrator {
             ...(skillsSection.length > 0 ? { skills: skillsSection } : {}),
             ...(capabilitiesSection.length > 0 ? { capabilities: capabilitiesSection } : {}),
             ...(availableAppsSection.length > 0 ? { availableApps: availableAppsSection } : {}),
+            // 62.11 C8 提示词同步：以下 has* 标志一律由「最终工具名集合」推导
+            // （拼接宿主工具 + 过滤策略之后的 finalToolNames），被策略拒绝的工具
+            // 不会再被任何静态规则点名。未提供策略 / 宿主工具时每个推导结果与
+            // 旧「按 facade 是否存在」的判定逐一等价（工具注册与 facade 同源）。
             // D91：mail_request_setup 有 mail 就注册（有无绑定都一样，与工具注册同源）；其余读写工具另按绑定门控（D144 起含邮箱内部写操作）。
-            ...(this.#deps.mail !== undefined ? { hasMailSetup: true } : {}),
+            ...(finalToolNames.has('mail_request_setup') ? { hasMailSetup: true } : {}),
             // D91: the app_request_connection rule only with the tool (appFacade is what registers it).
-            ...(appFacade !== undefined ? { hasAppRequestTool: true } : {}),
+            ...(finalToolNames.has('app_request_connection') ? { hasAppRequestTool: true } : {}),
             // D104 P1-3: the plugin-marketplace rule and the D63 ladder only with the tools.
-            ...(pluginFacade !== undefined ? { hasPluginTools: true } : {}),
-            ...(inkcopFacade !== undefined ? { hasInkcopAgentTool: true } : {}),
+            ...(finalToolNames.has('plugin_search') || finalToolNames.has('plugin_request_install')
+              ? { hasPluginTools: true }
+              : {}),
+            ...(finalToolNames.has('call_inkcop_agent') ? { hasInkcopAgentTool: true } : {}),
+            // C8：get_user_profile 被拒时静态规则不再点名它（system-prompt 侧
+            // 省略整句 + <user_profile> 引导退无工具名版本）；缺省 = 不传（现状）。
+            ...(finalToolNames.has('get_user_profile') ? {} : { hasProfileLookupTool: false }),
             // D90: only a turn that belongs to a dispatched workbench todo gets the delivery rule.
             // A pure update batch gets the update rule only: its todo is already being worked on, so
             // the 「新派发：做完给结论」 rule would read the notice as a new assignment.
             ...(todoSource !== null && !workbenchUpdate ? { workbenchDispatch: true } : {}),
             ...(workbenchUpdate ? { workbenchUpdate: true } : {}),
             // 与 settings_* 工具是否注册同源（toolDeps.settings）。
-            ...(settingsFacade !== undefined ? { hasSettingsTools: true } : {}),
+            ...(finalToolNames.has('settings_search') ||
+            finalToolNames.has('settings_read') ||
+            finalToolNames.has('settings_change')
+              ? {
+                  hasSettingsTools: true,
+                  // C8：settings_change 被拒时退到只读版设置规则。
+                  ...(finalToolNames.has('settings_change')
+                    ? {}
+                    : { hasSettingsChangeTool: false }),
+                }
+              : {}),
             // 管家的工作台规则只在确实注册了工作台工具时带（toolDeps.workbench）。
-            ...(this.#deps.workbench !== undefined ? { hasWorkbenchTools: true } : {}),
+            ...(finalToolNames.has('list_todos') ? { hasWorkbenchTools: true } : {}),
           });
         },
         messages: [
@@ -5390,6 +5637,9 @@ export class Orchestrator {
               batchId: batch.messages[0]?.batchId ?? null,
               kind: isTask ? 'task' : 'turn',
               continuedFromRunIds: continuation?.continuedFromRunIds ?? [],
+              // C7 / C11 (62.05 §2)：反思条目按所属运行带主体（job 侧仍保留
+              // runs.principalOf 兜底）；缺省（单用户）= 不带。
+              ...(runPrincipalId !== null ? { principalId: runPrincipalId } : {}),
             });
           } catch (error) {
             this.#deps.logger.warn(

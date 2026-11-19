@@ -20,6 +20,19 @@ export { sanitizeClientName } from './collab/client-name.js';
 export type { RelayClientOptions } from './remote/relay-client.js';
 export { withRemoteSource } from './remote/audit.js';
 export { withCaller, currentCaller, type RpcCaller } from './rpc/caller.js';
+export type {
+  PrincipalDescription,
+  PrincipalDirectory,
+  ToolPolicyContext,
+  ToolPolicy,
+  HostToolsContext,
+  HostToolsProvider,
+} from './principal/types.js';
+export {
+  PrincipalOps,
+  type PrincipalCardInput,
+  type PrincipalCardPatch,
+} from './principal/ops.js';
 export { FrameCodec, RelayProtocolError } from './remote/codec.js';
 export type { SessionKeys } from './remote/codec.js';
 export type { SkillsService } from './skills/registry.js';

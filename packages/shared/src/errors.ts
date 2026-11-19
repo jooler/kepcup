@@ -276,6 +276,17 @@ export const ERROR_CODES = [
   'MICRO_APP_BRIDGE_CLOSED',
   /** 微应用无响应（心跳超时，55 §9.1）；不自动重试，由用户重新打开。 */
   'MICRO_APP_UNRESPONSIVE',
+  // 主体缝（62.11 D138，docs/design/62-team-server/11-core-seams.md）
+  /**
+   * C14：设置的授权级别超过宿主上限（CoreServicesOptions.permissionCeiling，
+   * 如禁用会脱离沙箱的 bypass），设置被拒绝。
+   */
+  'PERMISSION_CEILING',
+  /**
+   * C14 / 方法策略：当前调用者无权执行——多主体下全局无人值守写入被 core
+   * 拒绝；宿主方法策略拒绝也复用此码。
+   */
+  'FORBIDDEN',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
