@@ -3512,7 +3512,13 @@ export const WIDGET_PREVIEW_RPC_METHODS = [
   'widgetPreview.run',
 ] as const satisfies readonly RpcMethodName[];
 
-const APP_METHODS = [
+/**
+ * Every app RPC method name core serves on port A (the renderer surface). Kept
+ * as a literal tuple so `AppMethodName` below is a literal union; the team
+ * server's method-policy table classifies this whole list exhaustively at
+ * compile time (62-team-server T4, "未归类即拒绝").
+ */
+export const APP_METHODS = [
   'system.ping',
   'system.info',
   'diagnostics.get',
@@ -3858,6 +3864,10 @@ const APP_METHODS = [
 ] as const satisfies readonly RpcMethodName[];
 
 export const APP_RPC_METHODS: readonly RpcMethodName[] = APP_METHODS;
+
+/** Literal union of every app RPC method name (compile-time classification surface for the team layer). */
+export type AppMethodName = (typeof APP_METHODS)[number];
+
 export const PLATFORM_RPC_METHODS: readonly RpcMethodName[] = [
   'system.shutdown',
   'unattended.disable',

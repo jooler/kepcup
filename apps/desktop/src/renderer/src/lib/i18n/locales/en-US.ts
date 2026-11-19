@@ -3428,6 +3428,12 @@ export const enUS = {
   'chats.errorCode.PERMISSION_CEILING':
     'That permission level is above the allowed ceiling; pick a lower one',
   'chats.errorCode.FORBIDDEN': "You don't have permission to do that",
+  'chats.errorCode.BOT_NOT_VISIBLE': "This Bot isn't visible to you",
+  'chats.errorCode.MEMBER_DISABLED': 'This member has been disabled',
+  'chats.errorCode.NOT_PROJECT_LEAD': 'Only the project lead can do that',
+  'chats.errorCode.RESOLUTION_STALE':
+    'The resolution has been updated or changed; refresh and try again',
+  'chats.errorCode.RESOLUTION_LOCKED': 'The resolution is locked after passing; it cannot change',
   'mail.intro':
     'Mailboxes come from mail plugins: add accounts on a mail plugin card; one plugin can hold several accounts.',
   'mail.add': 'Add mailbox',

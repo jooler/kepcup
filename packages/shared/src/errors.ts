@@ -287,6 +287,23 @@ export const ERROR_CODES = [
    * 拒绝；宿主方法策略拒绝也复用此码。
    */
   'FORBIDDEN',
+  // 团队层（62-team-server，62.03 / 62.09）：团队服务器对成员连接的业务错误码。
+  /**
+   * Bot 对该成员不可见（62.03 §4 可见性撤销）：成员与它的 direct 转为只读，
+   * 历史可看、不能再发。
+   */
+  'BOT_NOT_VISIBLE',
+  /** 成员已被禁用（62.03 D127）：登录 / 握手 / 后续调用一律拒绝。 */
+  'MEMBER_DISABLED',
+  /** 仅项目负责人可执行（62.09 §1 双负责人制：真人负责人专属动作，如移出成员、转交）。 */
+  'NOT_PROJECT_LEAD',
+  /**
+   * 决议已过期 / 状态已变化（62.09 §2 签署绑定版本）：对旧版本的签署落到新
+   * 内容上，签署不生效，需刷新后重签。
+   */
+  'RESOLUTION_STALE',
+  /** 决议已锁定不可变更（62.09 §2）：通过后不可修改 / 作废 / 删除，修正只能起新决议。 */
+  'RESOLUTION_LOCKED',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

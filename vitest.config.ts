@@ -73,6 +73,16 @@ export default defineConfig({
           ...(process.platform === 'win32' ? { testTimeout: 30_000, hookTimeout: 60_000 } : {}),
         },
       },
+      // D126 team server (branch team-server): member auth / team.db store / config
+      // parsing (same temp-dir + memory-keystore test style as the server project).
+      {
+        test: {
+          name: 'team-server',
+          include: ['apps/team-server/test/**/*.test.ts'],
+          // Same as core: Windows is several times slower for scrypt / disk.
+          ...(process.platform === 'win32' ? { testTimeout: 30_000, hookTimeout: 60_000 } : {}),
+        },
+      },
       // D73 P3: sub-registry Worker (infra/cloudflare/registry), tested against in-memory SQLite.
       {
         test: { name: 'infra-registry', include: ['infra/cloudflare/registry/test/**/*.test.ts'] },

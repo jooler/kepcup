@@ -58,6 +58,8 @@ export * from './domain/remote.js';
 export * from './domain/collab.js';
 export * from './settings-catalog/index.js';
 export * from './rpc/index.js';
+// 团队层契约（62-team-server）：方法 / 事件 / 领域 schema 全部休眠，core 不实现。
+export * from './team/index.js';
 export * from './browser/net-rules.js';
 export * from './browser/axtree.js';
 export * from './browser/ref-fingerprint.js';
