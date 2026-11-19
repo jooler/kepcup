@@ -49,7 +49,7 @@ jobs:
       release: ${{ steps.decide.outputs.release }}
       version: ${{ steps.decide.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: decide
         run: |
           version=$(node -p "require('./apps/desktop/package.json').version")
@@ -79,7 +79,7 @@ jobs:
     if: needs.prepare.outputs.release == 'true'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # arm64 的 Debian apt 基座必须来自 arm64 容器（容器平台决定二进制架构，
       # NODE_ARCH 只挑 Node/uv 下载产物——见 build-rootfs.sh 头注释），amd64
       # runner 需要 binfmt/qemu 才能跑 arm64 容器。
@@ -89,7 +89,7 @@ jobs:
       # 关键成员校验；镜像内另有 node --check / bash -n 的 shim 语法守卫）。
       - name: Build rootfs tars (x64 + arm64)
         run: bash apps/desktop/scripts/build-wsl-rootfs/build-rootfs.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: wsl-rootfs
           path: apps/desktop/resources/wsl/
@@ -130,15 +130,15 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r build
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         if: matrix.platform == 'win'
         with:
           name: wsl-rootfs
@@ -274,7 +274,7 @@ jobs:
             exit 1
           fi
           echo "CuaDriver OK：$ARCH，Team $DRV_TEAM，hash $ACTUAL"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: dist-${{ matrix.platform }}-${{ strategy.job-index }}
           path: |
@@ -287,7 +287,7 @@ jobs:
             apps/desktop/release/latest*.yml
           retention-days: 14
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: matrix.platform == 'win' && vars.MSSTORE_IDENTITY_NAME != ''
         with:
           name: store-msix
@@ -339,9 +339,9 @@ jobs:
             rpm-build libxcrypt-compat \
             gtk3 libnotify nss libXtst xdg-utils at-spi2-core libuuid libsecret \
             mesa-libgbm libxkbcommon alsa-lib cups-libs dbus-libs systemd-libs
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -366,7 +366,7 @@ jobs:
           rpm -qp --requires "$rpmfile"
           # sed 读完整输入（避免 pipefail 下 head 提前关管道让 rpm 收到 SIGPIPE）。
           rpm -qpl "$rpmfile" | sed -n '1,20p'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: dist-linux-rpm-${{ matrix.arch }}
           # latest-linux*.yml 里有 rpm 的 sha512/size，publish 会把它并进
@@ -411,7 +411,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: dist-linux-rpm-${{ matrix.arch }}
           path: rpm
@@ -447,9 +447,9 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -478,7 +478,7 @@ jobs:
           ostree init --mode=archive --repo="$repo"
           # 解包导入一遍：bundle 结构/元数据坏了会在这一步失败，而不是等用户安装。
           flatpak build-import-bundle "$repo" "$bundle"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: dist-linux-flatpak-${{ matrix.arch }}
           path: apps/desktop/release/*.flatpak
@@ -508,9 +508,9 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -532,6 +532,26 @@ jobs:
             *" 8."*) ;;
             *) echo "需要 snapcraft 8.x（canonical/snapcraft#6519），实际: $ver"; exit 1 ;;
           esac
+      # Ubuntu 分阶段更新（Phased-Update-Percentage）会让部分 runner 仍解析到
+      # 已被移出 pool 的旧修订（2026-11-19：libgbm1 25.2.8-0ubuntu0.24.04.4
+      # 404），snapcraft 因此失败并卡住 Publish。构建前强制纳入分阶段更新、
+      # 刷新索引并清掉 snapcraft 下载缓存；先用 apt 试拉 libgbm1，失败则
+      # 提前退出。不要把新修订伪装成旧文件名。
+      - name: Refresh apt for phased updates
+        run: |
+          printf '%s\n' \
+            'APT::Get::Always-Include-Phased-Updates "true";' \
+            'Update-Manager::Always-Include-Phased-Updates "true";' \
+            | sudo tee /etc/apt/apt.conf.d/99-always-include-phased-updates >/dev/null
+          sudo apt-get update
+          rm -rf "${HOME}/.cache/snapcraft/download"
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          if ! (cd "$tmp" && apt-get download libgbm1); then
+            echo "apt 无法下载 libgbm1（可能仍解析到已下架修订）" >&2
+            exit 1
+          fi
+          echo "resolved $(ls -1 "$tmp"/libgbm1_*.deb)"
       - name: Build snap
         working-directory: apps/desktop
         env:
@@ -548,7 +568,7 @@ jobs:
           unsquashfs -l "$snapfile" > /tmp/snap-contents.txt
           grep -q 'meta/snap.yaml' /tmp/snap-contents.txt
           grep -q 'app/KepCup$' /tmp/snap-contents.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: dist-linux-snap-${{ matrix.arch }}
           path: apps/desktop/release/*.snap
@@ -572,9 +592,9 @@ jobs:
             os: ubuntu-24.04-arm
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -591,7 +611,7 @@ jobs:
           /tmp/ks-smoke/dist/cli.js version
           # web 构建产物必须随包（配对链接的 origin 指向服务端自身）
           test -f /tmp/ks-smoke/web/index.html
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: dist-server-${{ matrix.name }}
           path: release-server/*.tar.gz
@@ -607,8 +627,8 @@ jobs:
       GH_REPO: ${{ github.repository }}
       TAG: v${{ needs.prepare.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v7
         with:
           pattern: dist-*
           path: dist
