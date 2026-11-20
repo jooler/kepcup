@@ -20,12 +20,16 @@ export type TeamEventName = (typeof TEAM_EVENT_NAMES)[number];
 export const teamEventSchemas = {
   /**
    * Presence state of a member changed (P0: derived from the connection table
-   * on connect/disconnect; `away` from P1).
+   * on connect/disconnect; `away` from P1). `avatar` / `note` (T6, additive):
+   * the away-state avatar flag (bot NAME only, 62.06 §2 thin contract) and the
+   * member's free-form away note — present only while the member is away.
    */
   'member.presenceChanged': z.strictObject({
     memberId: z.string().min(1),
     state: teamMemberStateSchema,
     lastSeenAt: z.number().optional(),
+    avatar: z.strictObject({ botName: z.string().min(1) }).optional(),
+    note: z.string().optional(),
   }),
   /**
    * A member's profile changed (display name / avatar). Deliberately minimal:

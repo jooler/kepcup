@@ -287,6 +287,8 @@ export const ERROR_CODES = [
    * 拒绝；宿主方法策略拒绝也复用此码。
    */
   'FORBIDDEN',
+  /** 请求频率超限（团队层硬限流，如 team.profile.push 每成员每分钟 1 次）；`details.retryAfterSec` 给出重试等待。 */
+  'RATE_LIMITED',
   // 团队层（62-team-server，62.03 / 62.09）：团队服务器对成员连接的业务错误码。
   /**
    * Bot 对该成员不可见（62.03 §4 可见性撤销）：成员与它的 direct 转为只读，
@@ -295,6 +297,8 @@ export const ERROR_CODES = [
   'BOT_NOT_VISIBLE',
   /** 成员已被禁用（62.03 D127）：登录 / 握手 / 后续调用一律拒绝。 */
   'MEMBER_DISABLED',
+  /** 私有 Bot 数量达到每成员上限（62.03 §8 P1；默认 5，管理台可调）。 */
+  'PRIVATE_BOT_LIMIT',
   /** 仅项目负责人可执行（62.09 §1 双负责人制：真人负责人专属动作，如移出成员、转交）。 */
   'NOT_PROJECT_LEAD',
   /**

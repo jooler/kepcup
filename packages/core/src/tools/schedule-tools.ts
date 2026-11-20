@@ -19,6 +19,8 @@ export interface ScheduleToolFacade {
     note: string;
     title?: string | undefined;
     origin: ScheduleOrigin;
+    /** 62.11 C13：归属主体（当前运行主体）。缺省 / null = 单用户现状。 */
+    ownerPrincipalId?: string | null;
   }): Schedule;
   /** Validates a `when` without creating (butler routines, D80); throws on invalid. */
   validateWhen(when: string, timezone?: string | null): unknown;
@@ -27,7 +29,11 @@ export interface ScheduleToolFacade {
   /** Proactive switch off / first fire in quiet hours (D80). */
   fireabilityWarnings(row: Schedule): string[];
   listForBotInConversation(botId: string, conversationId: string): Schedule[];
-  cancelOwn(botId: string, scheduleId: string): { ok: boolean; message: string };
+  cancelOwn(
+    botId: string,
+    scheduleId: string,
+    ownerPrincipalId?: string | null,
+  ): { ok: boolean; message: string };
   /** offer_schedule (D80): posts the offer card after the host checks. */
   createOffer(input: {
     botId: string;
@@ -65,8 +71,15 @@ const NOTE_DESCRIPTION = '到点时你会看到这段话：写清到时要做什
 export function buildScheduleTools(input: {
   identity: RunIdentity;
   schedule: ScheduleToolFacade;
+  /**
+   * 62.11 C13：当前运行主体（runs.principal_id，62.11 C7 经工具面传入）。
+   * 工具创建的排期归属它（到期 run 的主体与每日上限口径）；缺省 / null =
+   * 单用户现状（无归属）。
+   */
+  principalId?: string | null | undefined;
 }): ToolDefinition[] {
   const { identity, schedule } = input;
+  const owner = input.principalId ?? null;
   const requireContext = (): { botId: string; conversationId: string } | null => {
     if (identity.conversationId === null || identity.botId === null) return null;
     return { botId: identity.botId, conversationId: identity.conversationId };
@@ -106,6 +119,7 @@ export function buildScheduleTools(input: {
           note: params.note,
           ...(params.title !== undefined ? { title: params.title } : {}),
           origin: 'tool',
+          ...(owner !== null ? { ownerPrincipalId: owner } : {}),
         });
         const kind = created.kind === 'cron' ? '周期' : '一次性';
         const warnings = schedule.fireabilityWarnings(created);
@@ -153,7 +167,7 @@ export function buildScheduleTools(input: {
     execute: async (params) => {
       const ctx = requireContext();
       if (ctx === null) return noContext();
-      const outcome = schedule.cancelOwn(ctx.botId, params.schedule_id);
+      const outcome = schedule.cancelOwn(ctx.botId, params.schedule_id, owner);
       return outcome.ok
         ? { ok: true, content: outcome.message }
         : { ok: false, content: outcome.message, errorCode: 'NOT_FOUND' };

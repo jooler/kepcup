@@ -3294,6 +3294,8 @@ export const zhCN = {
   'chats.errorCode.NOT_PROJECT_LEAD': '只有项目负责人可以执行这个操作',
   'chats.errorCode.RESOLUTION_STALE': '决议内容已更新或状态已变化，请刷新后再操作',
   'chats.errorCode.RESOLUTION_LOCKED': '决议已通过锁定，不能再修改或作废',
+  'chats.errorCode.RATE_LIMITED': '操作太频繁，请稍后再试',
+  'chats.errorCode.PRIVATE_BOT_LIMIT': '私有 Bot 数量已达上限，请先删除不再使用的',
   'mail.intro': '邮箱账号由邮件插件提供：在邮件插件卡上添加账号，一个插件可以添加多个。',
   'mail.add': '添加邮箱',
   'mail.empty': '添加邮箱后，Bot 就能代你收发并处理新邮件。',

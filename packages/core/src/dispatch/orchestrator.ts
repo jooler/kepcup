@@ -1313,18 +1313,22 @@ export class Orchestrator {
    */
   /**
    * 发送主体的清洗（62.11 C4）：对齐 {@link #prepareUserMessage} 对 client 字段
-   * 的处理——id 原样（不透明），name 过控制字符、trim、截断；null 保留为 null
-   * （宿主目录尚未就绪时绑定层传 null）。清洗后的空名不冒充有名字。
+   * 的处理——id 原样（不透明），name 过控制字符、trim、截断。调用方（绑定层 /
+   * 草稿发送 / 工作台派发）不给名时经主体目录（C2）取显示名快照落库——D18
+   * 「历史保留、名称可辨」：成员禁用 / 删除后消息仍显示发送时的名字。
+   * 无目录 / describe 不到 / 空名 = null = 单用户现状。
    */
   #cleanPrincipal(principal: MessagePrincipal | undefined): MessagePrincipal | undefined {
     if (principal === undefined || principal.id.length === 0) return undefined;
-    return {
-      id: principal.id,
-      name:
-        principal.name === null || principal.name === undefined
-          ? null
-          : sanitizeClientName(principal.name),
-    };
+    let name: string | null =
+      principal.name === null || principal.name === undefined
+        ? null
+        : sanitizeClientName(principal.name);
+    if (name === null) {
+      const described = this.#deps.principals?.describe(principal.id);
+      if (described != null && described.name.length > 0) name = sanitizeClientName(described.name);
+    }
+    return { id: principal.id, name };
   }
 
   #prepareUserMessage(
@@ -2104,7 +2108,12 @@ export class Orchestrator {
     conversationId: string,
     event: string,
     text: string,
-    options: { internal?: boolean; settingResolved?: SettingCardResolved } = {},
+    options: {
+      internal?: boolean;
+      settingResolved?: SettingCardResolved;
+      /** 62.11 C13：触发归属主体（监看提醒 = 监看归属）；缺省 = 现状（无显式归属）。 */
+      ownerPrincipalId?: string | null;
+    } = {},
   ): void {
     const conversation = this.#deps.conversations.get(conversationId);
     const bot = this.#deps.bots.get(botId);
@@ -2148,7 +2157,14 @@ export class Orchestrator {
         // jobs-table priority is only the claim order; the scheduler submit
         // below (via jobs-runner) uses response priority 1.
         priority: 2,
-        payload: { messageId: message.id, event },
+        payload: {
+          messageId: message.id,
+          event,
+          // 免打扰停放后重投时保留触发归属（62.11 C13）。
+          ...(options.ownerPrincipalId != null
+            ? { ownerPrincipalId: options.ownerPrincipalId }
+            : {}),
+        },
         runAfter: endAt,
       });
       this.#deps.logger.info(
@@ -2167,7 +2183,11 @@ export class Orchestrator {
    * delivery was parked, in which case it is parked again.
    */
   deliverParkedEvent(job: JobRow): void {
-    const payload = JSON.parse(job.payload_json) as { messageId?: unknown; event?: unknown };
+    const payload = JSON.parse(job.payload_json) as {
+      messageId?: unknown;
+      event?: unknown;
+      ownerPrincipalId?: unknown;
+    };
     if (typeof payload.messageId !== 'string' || typeof payload.event !== 'string') {
       this.#deps.logger.warn({ jobId: job.id }, 'event_delivery job with malformed payload');
       return;
@@ -2197,6 +2217,7 @@ export class Orchestrator {
     conversationId: string,
     event: string,
     message: Message,
+    attribution: { ownerPrincipalId?: string | null } = {},
   ): void {
     // W7: a watch alert is its own trigger reason (the bot created the watch).
     const isWatch = event === WATCH_ALERT_EVENT;
@@ -2209,6 +2230,10 @@ export class Orchestrator {
       messages: [message],
       reason: isWatch ? 'watch' : isMail ? 'mail' : isIm ? 'im' : 'event',
       ...(isWatch || isMail || isIm ? {} : { extraAttributes: { event } }),
+      // 62.11 C13：显式触发归属（监看提醒 = 监看归属）随批次走（进 run 主体）。
+      ...(attribution.ownerPrincipalId != null
+        ? { principalId: attribution.ownerPrincipalId }
+        : {}),
     });
   }
 
@@ -2219,9 +2244,16 @@ export class Orchestrator {
    * as a persistent `event_delivery` job. The user-visible alert card is
    * posted by the watch service before this.
    */
-  deliverWatchAlertToBot(input: { botId: string; conversationId: string; text: string }): void {
+  deliverWatchAlertToBot(input: {
+    botId: string;
+    conversationId: string;
+    text: string;
+    /** 62.11 C13：监看归属（提醒 run 的主体）。缺省 = 现状。 */
+    ownerPrincipalId?: string | null;
+  }): void {
     this.deliverEventToBot(input.botId, input.conversationId, WATCH_ALERT_EVENT, input.text, {
       internal: true,
+      ...(input.ownerPrincipalId != null ? { ownerPrincipalId: input.ownerPrincipalId } : {}),
     });
   }
 
@@ -2300,6 +2332,8 @@ export class Orchestrator {
     text: string;
     /** >1 minute lateness, already humanized by the caller when present. */
     lateByMs?: number | null;
+    /** 62.11 C13：排期归属（到期 run 的主体）。缺省 = 现状。 */
+    ownerPrincipalId?: string | null;
   }): void {
     const conversation = this.#deps.conversations.get(input.conversationId);
     const bot = this.#deps.bots.get(input.botId);
@@ -2319,6 +2353,10 @@ export class Orchestrator {
       messages: [message],
       reason: 'scheduled',
       extraAttributes,
+      // 62.11 C13：到期 run 的主体 = 排期归属（覆盖 T1 的「直聊 owner」临时规则）。
+      ...(input.ownerPrincipalId != null
+        ? { principalId: input.ownerPrincipalId }
+        : {}),
     });
   }
 
@@ -2742,20 +2780,26 @@ export class Orchestrator {
     const directory = this.#deps.principals;
     if (directory === undefined) return [];
     const labels: HumanPrincipalLabel[] = [];
-    const push = (principalId: string | null | undefined): void => {
+    const push = (
+      principalId: string | null | undefined,
+      role?: 'member' | 'lead',
+    ): void => {
       if (principalId == null || principalId.length === 0) return;
       const described = directory.describe(principalId);
       if (described === null || described.name.length === 0) return;
       labels.push({
         name: described.name,
         ...(described.note !== undefined ? { note: described.note } : {}),
+        ...(role !== undefined ? { role } : {}),
       });
     };
     const conversation = this.#deps.conversations.get(conversationId);
     if (conversation === null) return [];
     if (conversation.type === 'project') {
+      // 62.09 §1：conversation_principals.role='lead' 的真人 = 项目负责人
+      // （<conversation_info> 的「项目负责人：{name}」行）。
       for (const principal of this.#deps.conversations.principals(conversationId)) {
-        push(principal.principalId);
+        push(principal.principalId, principal.role);
       }
       return labels;
     }
@@ -3182,8 +3226,22 @@ export class Orchestrator {
    * principals — the last speaker wins; principal-less rows yield null).
    * dm conversations never produce turns (no Bot member, no dispatch), and
    * every other conversation type yields null.
+   *
+   * 62.11 C13（T6，覆盖 T1 临时规则）：排期到期 / 监看提醒的批次带显式归属
+   * （排期 / 监看行的 owner_principal_id）——它在直聊上通常与 owner 一致，在
+   * 项目组上让「成员建在项目组里的排期」的 run 归到该成员。合并进用户发言的
+   * 批次仍按发言人算（用户的话是用户说的）。无显式归属（单用户 / owner 为
+   * NULL）= T1 行为不变。
    */
   #turnPrincipalOf(batch: TriggerBatch): string | null {
+    const explicit = batch.principalId;
+    if (
+      explicit != null &&
+      explicit.length > 0 &&
+      !batch.messages.some((message) => message.senderType === 'user')
+    ) {
+      return explicit;
+    }
     const conversation = this.#deps.conversations.get(batch.conversationId);
     if (conversation === null) return null;
     if (conversation.type === 'direct') return conversation.ownerPrincipalId ?? null;

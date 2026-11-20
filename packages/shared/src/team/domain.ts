@@ -125,6 +125,18 @@ export type TeamSettings = z.infer<typeof teamSettingsSchema>;
 // --- Usage (P1, 62.03 D137) ---------------------------------------------------
 
 /**
+ * UTC-ms query window for `team.usage.mine` (additive, T6): `[from, to)` —
+ * `from` inclusive, `to` exclusive.
+ */
+export const teamUsageRangeSchema = z
+  .strictObject({
+    from: z.number().int().min(0),
+    to: z.number().int().min(0),
+  })
+  .refine((range) => range.to > range.from, { message: 'range.to must be after range.from' });
+export type TeamUsageRange = z.infer<typeof teamUsageRangeSchema>;
+
+/**
  * The member's own usage view (`team.usage.mine`, P1): direct-chat
  * consumption is fully attributed to the member; project-share attribution is
  * a P2 admin-side report and not part of the member view. Totals follow the

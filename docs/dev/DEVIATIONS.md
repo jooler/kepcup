@@ -2432,3 +2432,48 @@
 - 问题：62.11 C15 设计签名为 `provisionWorkdir(root, name)`；core 缝 `workdirRoots` 已提供根列表，宿主侧再传根既冗余也扩大了 core 暴露面。同时按 README 固定契约把宿主写入口的成员查询命名为 `hasPrincipal`（core 不出现 member 语义）。
 - 决定：`provisionWorkdir(conversationId, name)`——在 `workdirRoots[0]` 下建目录并绑定到会话；根由 `CoreServicesOptions.workdirRoots` 提供。
 - 已更新的文档：本条；README 固定契约（已按此写）；PROGRESS.md T2 节。
+
+### DEV-137 C15 join/leave 系统消息措辞沿用缝文本
+
+- 状态：已决定
+- 阶段：团队服务器 T6（分支 team-server，2026-11-20）
+- 是否阻塞：否
+- 问题：T6 任务书要求加入 / 移出落「{name} 已加入项目组 / 已退出」，C15 缝 `principalOps.join/leave` 的既有通用文案为「{name} 已加入 / 已离开」；在 core 侧参数化文案会往通用缝里掺宿主语义。
+- 决定：接受缝文本（62.04 §4 的会话类型上下文在消息所在会话里已可辨）；「项目负责人已转交给 {name}」按任务书精确落地（`appendSystemMessage`）。
+- 已更新的文档：本条；PROGRESS.md T6 节。
+
+### DEV-138 C15 join/leave 不补发 conversation.updated
+
+- 状态：已决定
+- 阶段：团队服务器 T6（分支 team-server，2026-11-20）
+- 是否阻塞：否
+- 问题：名册写不发布 `conversation.updated`，理论上依赖该事件刷新的消费者看不到名册变化；但 `conversationSchema` 载荷不含人类名册（项目组无 principals 字段），补发对客户端名册刷新零增益。
+- 决定：不补发。服务端事件门的成员资格缓存由团队层 `onRosterChanged` 直清（join/leave/transfer/删除全覆盖，isolation 断言移出即断流）；客户端名册刷新由可见系统消息（message.created）驱动（T7）。
+- 已更新的文档：本条；PROGRESS.md T6 节。
+
+### DEV-139 team.profile.push 证据标记落空数组
+
+- 状态：已决定
+- 阶段：团队服务器 T6（分支 team-server，2026-11-20）
+- 是否阻塞：否
+- 问题：T6 任务书要求上行条目 `evidence_json` 写 `[{"kind":"client-sync"}]` 作来源标记；evidence schema 是冻结的 shared 契约（`{messageId, conversationId}` 对），该形状不容许；任务书预案「给 `profile_items` 增可空 origin 列」属 core 迁移。
+- 决定：evidence 落 schema 最小形状 `[]` + `source:'explicit'` + `contributed_by NULL` 组合辨识上行条目；T9 前评估是否给 `profile_items` 加可空 `origin` 列收编。
+- 已更新的文档：本条；PROGRESS.md T6 节。
+
+### DEV-140 team.usage.mine 无 byBot 口径
+
+- 状态：已决定
+- 阶段：团队服务器 T6（分支 team-server，2026-11-20）
+- 是否阻塞：否
+- 问题：任务书把 byBot 列为可选字段；T6 钉定的 core 聚合缝 `UsageService.sumByPrincipal` 无 per-bot 分组口径。另 byDay 的 `dayStart` 标 UTC 午夜而 core 聚合按服务器本地日（62.07 §3「时区暂按服务器时区」立场，仅展示层桶边界标注差异）。
+- 决定：T6 只出 byDay；byBot 与时区口径在 T9 用量分摊（`ledgerSince` 全量分摊）时统一。
+- 已更新的文档：本条；PROGRESS.md T6 节。
+
+### DEV-141 私有 Bot 配额为运行配置，管理台可视化调节面后置
+
+- 状态：已决定
+- 阶段：团队服务器 T6（分支 team-server，2026-11-20）
+- 是否阻塞：否
+- 问题：每成员私有 Bot 上限（默认 5）任务书说「管理台可调」；管理台全量在 T10。
+- 决定：上限先经 `--max-private-bots` / settings.json / env 调节（并发安全经 per-member 互斥保证）；管理台可视化调节面随 T10 管理台补。
+- 已更新的文档：本条；PROGRESS.md T6 节。

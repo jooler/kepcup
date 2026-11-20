@@ -1531,7 +1531,8 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
 
     'messages.send': method(messagesSendInputSchema, messagesSendOutputSchema, async (input) => {
       // 62.11 C4：有调用者时先校验资格（无资格 NOT_FOUND，不泄露存在性），
-      // 发送主体 = 调用者（name 快照本阶段恒 null，T2 由 PrincipalDirectory 提供）。
+      // 发送主体 = 调用者（name 快照由 orchestrator 的清洗点经 C2 目录补齐——
+      // 无目录 / describe 不到 = null = 现状）。
       const principalId = callerPrincipal();
       if (principalId !== null) {
         await assertConversationAccessible(input.conversationId, principalId);
@@ -2404,27 +2405,42 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     'schedules.list': method(
       schedulesListInputSchema,
       schedulesListOutputSchema,
-      async (input) => ({
-        schedules: services.schedules?.listEntries(input.conversationId) ?? [],
-      }),
+      async (input) => {
+        // 62.11 C13：有调用者时列表按调用者过滤；无调用者 = 现状。
+        const principalId = callerPrincipal();
+        return {
+          schedules:
+            services.schedules?.listEntries(
+              input.conversationId,
+              principalId !== null ? principalId : undefined,
+            ) ?? [],
+        };
+      },
     ),
     'schedules.cancel': method(
       schedulesCancelInputSchema,
       schedulesCancelOutputSchema,
       async (input) => {
-        services.schedules?.cancel(input.id);
+        // 62.11 C13：有调用者时按归属校验（不符 NOT_FOUND）；无调用者 = 现状。
+        services.schedules?.cancel(input.id, {}, callerPrincipal());
         return { ok: true as const };
       },
     ),
 
     // --- workbench (D90): todos + memos ---------------------------------------------
-    'todos.list': method(todosListInputSchema, todosListOutputSchema, async (input) => ({
-      todos: requireTodos(services).list({
-        ...(input.statuses !== undefined ? { statuses: input.statuses } : {}),
-        ...(input.query !== undefined ? { query: input.query } : {}),
-        ...(input.includeClosed !== undefined ? { includeClosed: input.includeClosed } : {}),
-      }),
-    })),
+    // 62.11 C13：工作台事项按调用者归属——创建落调用者、列表按调用者过滤、
+    // 按 id 写操作做归属校验（不符 NOT_FOUND）。无调用者 = 单用户现状。
+    'todos.list': method(todosListInputSchema, todosListOutputSchema, async (input) => {
+      const principalId = callerPrincipal();
+      return {
+        todos: requireTodos(services).list({
+          ...(input.statuses !== undefined ? { statuses: input.statuses } : {}),
+          ...(input.query !== undefined ? { query: input.query } : {}),
+          ...(input.includeClosed !== undefined ? { includeClosed: input.includeClosed } : {}),
+          ...(principalId !== null ? { ownerPrincipalId: principalId } : {}),
+        }),
+      };
+    }),
     'todos.get': method(todosIdInputSchema, todosGetOutputSchema, async (input) =>
       requireTodos(services).get(input.id),
     ),
@@ -2437,100 +2453,131 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         ...(input.memoId !== undefined ? { memoId: input.memoId } : {}),
         source: 'user',
         actor: 'user',
+        ownerPrincipalId: callerPrincipal(),
       }),
     ),
     'todos.update': method(todosUpdateInputSchema, todosWriteOutputSchema, async (input) =>
-      requireTodos(services).update(input.id, {
-        actor: 'user',
-        ...(input.title !== undefined ? { title: input.title } : {}),
-        ...(input.notes !== undefined ? { notes: input.notes } : {}),
-        ...(input.assignee !== undefined ? { assignee: input.assignee } : {}),
-        ...(input.when !== undefined ? { when: input.when } : {}),
-      }),
+      requireTodos(services).update(
+        input.id,
+        {
+          actor: 'user',
+          ...(input.title !== undefined ? { title: input.title } : {}),
+          ...(input.notes !== undefined ? { notes: input.notes } : {}),
+          ...(input.assignee !== undefined ? { assignee: input.assignee } : {}),
+          ...(input.when !== undefined ? { when: input.when } : {}),
+        },
+        callerPrincipal(),
+      ),
     ),
     'todos.start': method(todosIdInputSchema, todosTransitionOutputSchema, async (input) => ({
-      todo: requireTodos(services).start(input.id, 'user'),
+      todo: requireTodos(services).start(input.id, 'user', callerPrincipal()),
     })),
     'todos.complete': method(todosIdInputSchema, todosTransitionOutputSchema, async (input) => ({
-      todo: requireTodos(services).complete(input.id),
+      todo: requireTodos(services).complete(input.id, 'user', callerPrincipal()),
     })),
     'todos.cancel': method(todosIdInputSchema, todosTransitionOutputSchema, async (input) => ({
-      todo: requireTodos(services).cancel(input.id),
+      todo: requireTodos(services).cancel(input.id, 'user', callerPrincipal()),
     })),
     'todos.reopen': method(todosIdInputSchema, todosTransitionOutputSchema, async (input) => ({
-      todo: requireTodos(services).reopen(input.id),
+      todo: requireTodos(services).reopen(input.id, 'user', callerPrincipal()),
     })),
     'todos.move': method(todosMoveInputSchema, todosMoveOutputSchema, async (input) => ({
-      todo: requireTodos(services).move(input.id, {
-        beforeId: input.beforeId,
-        ...(input.assignee !== undefined ? { assignee: input.assignee } : {}),
-      }),
+      todo: requireTodos(services).move(
+        input.id,
+        {
+          beforeId: input.beforeId,
+          ...(input.assignee !== undefined ? { assignee: input.assignee } : {}),
+        },
+        callerPrincipal(),
+      ),
     })),
-    'memos.list': method(memosListInputSchema, memosListOutputSchema, async (input) => ({
-      memos: requireMemos(services).list({
-        ...(input.query !== undefined ? { query: input.query } : {}),
-        ...(input.trashed !== undefined ? { trashed: input.trashed } : {}),
-      }),
-      groups: input.trashed === true ? [] : requireMemos(services).listGroups(),
-    })),
+    // 62.11 C13：备忘 / 分组按调用者归属（同 todos 注释口径）。
+    'memos.list': method(memosListInputSchema, memosListOutputSchema, async (input) => {
+      const principalId = callerPrincipal();
+      return {
+        memos: requireMemos(services).list({
+          ...(input.query !== undefined ? { query: input.query } : {}),
+          ...(input.trashed !== undefined ? { trashed: input.trashed } : {}),
+          ...(principalId !== null ? { ownerPrincipalId: principalId } : {}),
+        }),
+        // 回收站视图照旧不出分组；正常视图按调用者过滤分组（无调用者 = 全部）。
+        groups:
+          input.trashed === true
+            ? []
+            : requireMemos(services).listGroups(principalId ?? undefined),
+      };
+    }),
     'memos.create': method(memosCreateInputSchema, memosMemoOutputSchema, async (input) => ({
       memo: requireMemos(services).create({
         body: input.body,
         source: 'user',
         ...(input.groupId !== undefined ? { groupId: input.groupId } : {}),
+        ownerPrincipalId: callerPrincipal(),
       }),
     })),
     'memos.update': method(memosUpdateInputSchema, memosMemoOutputSchema, async (input) => ({
-      memo: requireMemos(services).update(input.id, {
-        ...(input.body !== undefined ? { body: input.body } : {}),
-        ...(input.pinned !== undefined ? { pinned: input.pinned } : {}),
-      }),
+      memo: requireMemos(services).update(
+        input.id,
+        {
+          ...(input.body !== undefined ? { body: input.body } : {}),
+          ...(input.pinned !== undefined ? { pinned: input.pinned } : {}),
+        },
+        callerPrincipal(),
+      ),
     })),
     'memos.delete': method(memosIdInputSchema, memosMemoOutputSchema, async (input) => ({
-      memo: requireMemos(services).delete(input.id),
+      memo: requireMemos(services).delete(input.id, callerPrincipal()),
     })),
     'memos.restore': method(memosIdInputSchema, memosMemoOutputSchema, async (input) => ({
-      memo: requireMemos(services).restore(input.id),
+      memo: requireMemos(services).restore(input.id, callerPrincipal()),
     })),
     'memos.groups.create': method(
       memosGroupsCreateInputSchema,
       memosGroupOutputSchema,
       async (input) => ({
-        group: requireMemos(services).createGroup(input.title),
+        group: requireMemos(services).createGroup(input.title, callerPrincipal()),
       }),
     ),
     'memos.groups.rename': method(
       memosGroupsRenameInputSchema,
       memosGroupOutputSchema,
       async (input) => ({
-        group: requireMemos(services).renameGroup(input.id, input.title),
+        group: requireMemos(services).renameGroup(input.id, input.title, callerPrincipal()),
       }),
     ),
     'memos.groups.move': method(
       memosGroupsMoveInputSchema,
       memosGroupOutputSchema,
       async (input) => ({
-        group: requireMemos(services).moveGroup(input.id, input.beforeId),
+        group: requireMemos(services).moveGroup(input.id, input.beforeId, callerPrincipal()),
       }),
     ),
     'memos.groups.delete': method(memosGroupsDeleteInputSchema, okOutputSchema, async (input) => {
-      requireMemos(services).deleteGroup(input.id);
+      requireMemos(services).deleteGroup(input.id, callerPrincipal());
       return { ok: true as const };
     }),
     'memos.move': method(memosMoveInputSchema, memosMoveOutputSchema, async (input) => ({
-      memo: requireMemos(services).move(input.id, input.groupId, input.beforeId),
+      memo: requireMemos(services).move(
+        input.id,
+        input.groupId,
+        input.beforeId,
+        callerPrincipal(),
+      ),
     })),
 
-    // --- 辅助阅读便签（main.db stickies；删除对话随 conversations FK 级联） ---
-    'stickies.list': method(stickiesListInputSchema, stickiesListOutputSchema, async () => ({
-      stickies: domain.stickies.list(),
-    })),
+    // --- 辅助阅读便签（main.db stickies；删除对话随 conversations FK 级联）。
+    // 62.11 C13：归属只作用于 scope='global' 行（创建落调用者、列表按调用者
+    // 过滤、按 id 写操作校验）；会话作用域便签照旧。无调用者 = 现状。 ---
+    'stickies.list': method(stickiesListInputSchema, stickiesListOutputSchema, async () => {
+      const principalId = callerPrincipal();
+      return { stickies: domain.stickies.list(principalId !== null ? principalId : undefined) };
+    }),
     'stickies.create': method(
       stickiesCreateInputSchema,
       stickiesCreateOutputSchema,
       async (input) => {
         domain.conversations.getOrThrow(input.conversationId);
-        return { stickie: domain.stickies.create(input) };
+        return { stickie: domain.stickies.create({ ...input, ownerPrincipalId: callerPrincipal() }) };
       },
     ),
     'stickies.update': method(
@@ -2538,14 +2585,14 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       stickiesUpdateOutputSchema,
       async (input) => {
         const { id, ...patch } = input;
-        return { stickie: domain.stickies.update(id, patch) };
+        return { stickie: domain.stickies.update(id, patch, callerPrincipal()) };
       },
     ),
     'stickies.delete': method(
       stickiesDeleteInputSchema,
       stickiesDeleteOutputSchema,
       async (input) => {
-        domain.stickies.remove(input.id);
+        domain.stickies.remove(input.id, callerPrincipal());
         return { ok: true as const };
       },
     ),
@@ -2614,26 +2661,33 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       domain.sidebar.importLayout(input.layout),
     ),
 
-    // --- watches (W7) ---------------------------------------------------------
-    'watches.list': method(watchesListInputSchema, watchesListOutputSchema, async (input) => ({
-      watches: services.watches?.listEntries(input.conversationId) ?? [],
-    })),
+    // --- watches (W7)。62.11 C13：监看按调用者归属（同 todos 注释口径）。 ---
+    'watches.list': method(watchesListInputSchema, watchesListOutputSchema, async (input) => {
+      const principalId = callerPrincipal();
+      return {
+        watches:
+          services.watches?.listEntries(
+            input.conversationId,
+            principalId !== null ? principalId : undefined,
+          ) ?? [],
+      };
+    }),
     'watches.get': method(watchIdInputSchema, watchGetOutputSchema, async (input) => ({
       watch: services.watches?.get(input.id) ?? null,
     })),
     'watches.pause': method(watchIdInputSchema, watchMutateOutputSchema, async (input) => {
       const watches = requireWatches(services);
-      watches.pauseWatch(input.id);
+      watches.pauseWatch(input.id, callerPrincipal());
       return { watch: watches.get(input.id)! };
     }),
     'watches.resume': method(watchIdInputSchema, watchMutateOutputSchema, async (input) => {
       const watches = requireWatches(services);
-      watches.resumeWatch(input.id);
+      watches.resumeWatch(input.id, callerPrincipal());
       return { watch: watches.get(input.id)! };
     }),
     'watches.stop': method(watchIdInputSchema, watchMutateOutputSchema, async (input) => {
       const watches = requireWatches(services);
-      watches.stopWatch(input.id);
+      watches.stopWatch(input.id, callerPrincipal());
       return { watch: watches.get(input.id)! };
     }),
 
@@ -2680,7 +2734,8 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       schedulesAcceptOfferOutputSchema,
       async (input) => {
         if (!services.schedules) throw new AppError('NOT_IMPLEMENTED', '定时服务未就绪');
-        return { schedule: services.schedules.acceptOffer(input.messageId) };
+        // 62.11 C13：有调用者时新建排期落调用者（并做会话资格校验）。
+        return { schedule: services.schedules.acceptOffer(input.messageId, callerPrincipal()) };
       },
     ),
     'schedules.declineOffer': method(

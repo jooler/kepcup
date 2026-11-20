@@ -3460,6 +3460,9 @@ export const enUS = {
   'chats.errorCode.RESOLUTION_STALE':
     'The resolution has been updated or changed; refresh and try again',
   'chats.errorCode.RESOLUTION_LOCKED': 'The resolution is locked after passing; it cannot change',
+  'chats.errorCode.RATE_LIMITED': "That's too frequent — try again in a moment",
+  'chats.errorCode.PRIVATE_BOT_LIMIT':
+    'You have reached the private-bot limit; delete unused ones first',
   'mail.intro':
     'Mailboxes come from mail plugins: add accounts on a mail plugin card; one plugin can hold several accounts.',
   'mail.add': 'Add mailbox',

@@ -104,6 +104,49 @@ describe('team rpc method registry', () => {
       }).success,
     ).toBe(true);
   });
+
+  it('T6 P1 shapes: setAway extension, profile.push counts, usage range', () => {
+    // setAway 扩展（62.06 §2 薄契约）：note / avatar 可选，avatar 只带 botName。
+    expect(
+      teamRpcMethodSchemas['team.presence.setAway'].input.safeParse({
+        away: true,
+        note: '下午回',
+        avatar: { botName: '管家' },
+      }).success,
+    ).toBe(true);
+    expect(
+      teamRpcMethodSchemas['team.presence.setAway'].input.safeParse({
+        away: true,
+        avatar: { botName: '管家', botId: 'bot_x' },
+      }).success,
+    ).toBe(false);
+    expect(
+      teamRpcMethodSchemas['team.presence.setAway'].input.safeParse({ away: false }).success,
+    ).toBe(true);
+
+    // profile.push 返回 {added, skipped}（T6 实现口径）。
+    const pushed = teamRpcMethodSchemas['team.profile.push'].output.parse({
+      added: 3,
+      skipped: 1,
+    });
+    expect(pushed).toEqual({ added: 3, skipped: 1 });
+    expect(
+      teamRpcMethodSchemas['team.profile.push'].output.safeParse({ ok: true }).success,
+    ).toBe(false);
+
+    // usage.mine 可选 range（UTC ms 闭开区间）。
+    expect(
+      teamRpcMethodSchemas['team.usage.mine'].input.safeParse({
+        range: { from: 1736870400000, to: 1736956800000 },
+      }).success,
+    ).toBe(true);
+    expect(teamRpcMethodSchemas['team.usage.mine'].input.safeParse({}).success).toBe(true);
+    expect(
+      teamRpcMethodSchemas['team.usage.mine'].input.safeParse({
+        range: { from: 2, to: 1 },
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe('team event registry', () => {
@@ -135,6 +178,21 @@ describe('team event registry', () => {
     expect(
       teamEventSchemas['team.avatarRevoked'].safeParse({ memberId: MBR, botId: 'bot_x' }).success,
     ).toBe(true);
+    // T6：presenceChanged 增 avatar / note（可选，仅离开态出现）。
+    const awayWithAvatar = teamEventSchemas['member.presenceChanged'].parse({
+      memberId: MBR,
+      state: 'away',
+      avatar: { botName: '管家' },
+      note: '下午回',
+    });
+    expect(awayWithAvatar.avatar).toEqual({ botName: '管家' });
+    expect(
+      teamEventSchemas['member.presenceChanged'].safeParse({
+        memberId: MBR,
+        state: 'away',
+        avatar: { botName: '管家', extra: 1 },
+      }).success,
+    ).toBe(false);
   });
 });
 

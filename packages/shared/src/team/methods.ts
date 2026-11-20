@@ -4,6 +4,7 @@ import {
   teamBootstrapSchema,
   teamMemberSchema,
   teamSettingsSchema,
+  teamUsageRangeSchema,
   teamUsageSummarySchema,
 } from './domain.js';
 
@@ -136,13 +137,28 @@ export const teamRpcMethodSchemas = {
 
   // --- P1 (implemented in T6) -------------------------------------------------
 
-  /** Away state toggle (62.06 离开态): `away: false` returns the member to derived presence. */
+  /**
+   * Away state toggle (62.06 离开态): `away: false` returns the member to
+   * derived presence and clears the note / avatar flag. The server records the
+   * setting connection (T10's single avatar runtime); the avatar itself only
+   * stores `botName` and rides the `member.presenceChanged` broadcast.
+   */
   'team.presence.setAway': {
-    input: z.strictObject({ away: z.boolean() }),
+    input: z.strictObject({
+      away: z.boolean(),
+      /** Free-form away note (dm header / roster display; T7 consumes). */
+      note: z.string().max(200).optional(),
+      /** Digital-avatar flag (62.06 §2 thin contract): only the bot NAME lives here. */
+      avatar: z.strictObject({ botName: z.string().min(1).max(120) }).optional(),
+    }),
     output: okOutput,
   },
 
-  /** Profile seeding upload (62.05 §5): `{items:[{category,content}]}`, ≤100 per call, additive merge for the caller only. */
+  /**
+   * Profile seeding upload (62.05 §5): `{items:[{category,content}]}`, ≤100 per
+   * call, additive merge for the caller only (只增不改 / 只补不删). Server-side
+   * hard rate limit: one call per member per minute → RATE_LIMITED.
+   */
   'team.profile.push': {
     input: z.strictObject({
       items: z
@@ -156,7 +172,12 @@ export const teamRpcMethodSchemas = {
         )
         .max(100),
     }),
-    output: okOutput,
+    output: z.strictObject({
+      /** Items inserted (deduped by (category, normalized content) against the caller's domain). */
+      added: z.number().int().min(0),
+      /** Items skipped as duplicates (server entries are never retracted by a push). */
+      skipped: z.number().int().min(0),
+    }),
   },
 
   /** Transfer the project lead role (human lead, 62.09 §1) to another member. */
@@ -189,8 +210,16 @@ export const teamRpcMethodSchemas = {
     output: z.strictObject({ settings: teamSettingsSchema }),
   },
 
-  /** The caller's own usage (P1 direct-chat full attribution, 62.03 D137). */
-  'team.usage.mine': { input: emptyInput, output: teamUsageSummarySchema },
+  /**
+   * The caller's own usage (P1 direct-chat full attribution, 62.03 D137).
+   * `range` optional (additive, T6): UTC-ms `[from, to)` window; absent = the
+   * last 30 days. The `.default({})` tolerates an absent params frame (same
+   * semantics as `emptyInput` above).
+   */
+  'team.usage.mine': {
+    input: z.strictObject({ range: teamUsageRangeSchema.optional() }).default({}),
+    output: teamUsageSummarySchema,
+  },
 
   // --- P2 (implemented in T9) -------------------------------------------------
 

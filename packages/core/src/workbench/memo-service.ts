@@ -9,7 +9,7 @@ import {
 } from '@kepcup/shared';
 import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
-import type { ListMemosFilter, MemoStore } from './memo-store.js';
+import type { ListMemosFilter, MemoStore, StoredMemo, StoredMemoGroup } from './memo-store.js';
 
 export interface MemoServiceDeps {
   store: MemoStore;
@@ -38,29 +38,42 @@ export class MemoService {
     return this.#deps.store.list(filter);
   }
 
-  listGroups(): MemoGroup[] {
-    return this.#deps.store.listGroups();
+  /** 62.11 C13：传入主体时只列该主体的组；缺省 = 全部（单用户现状）。 */
+  listGroups(ownerPrincipalId?: string): MemoGroup[] {
+    return this.#deps.store.listGroups(ownerPrincipalId);
   }
 
   get(id: string): Memo {
     return this.#getOrThrow(id);
   }
 
-  create(input: { body: string; source?: TodoSource | undefined; groupId?: string | undefined }): Memo {
+  create(input: {
+    body: string;
+    source?: TodoSource | undefined;
+    groupId?: string | undefined;
+    /** 62.11 C13：归属主体（调用者）。缺省 / null = 单用户现状（NULL 行）。 */
+    ownerPrincipalId?: string | null | undefined;
+  }): Memo {
     const groupId = input.groupId;
-    if (groupId !== undefined && this.#deps.store.getGroup(groupId) === null) {
+    if (groupId !== undefined && this.#groupVisibleTo(groupId, input.ownerPrincipalId) === false) {
       throw new AppError('NOT_FOUND', `备忘分组 ${groupId} 不存在`);
     }
     const memo = this.#deps.store.insert({
       body: cleanBody(input.body),
       source: input.source ?? 'user',
       ...(groupId !== undefined ? { groupId } : {}),
+      ...(input.ownerPrincipalId != null ? { ownerPrincipalId: input.ownerPrincipalId } : {}),
     });
-    this.#changed(memo.id);
+    this.#changed(memo.id, memo.ownerPrincipalId);
     return memo;
   }
 
-  update(id: string, patch: { body?: string | undefined; pinned?: boolean | undefined }): Memo {
+  update(
+    id: string,
+    patch: { body?: string | undefined; pinned?: boolean | undefined },
+    ownerPrincipalId?: string | null,
+  ): Memo {
+    this.#assertOwned(id, ownerPrincipalId);
     const current = this.#getOrThrow(id);
     if (current.deletedAt !== null) {
       throw new AppError('INVALID_INPUT', '备忘在「最近删除」里，请先恢复再修改');
@@ -70,7 +83,7 @@ export class MemoService {
       ...(patch.pinned !== undefined ? { pinned: patch.pinned } : {}),
     });
     if (memo === null) throw new AppError('NOT_FOUND', `备忘 ${id} 不存在`);
-    this.#changed(id);
+    this.#changed(id, memo.ownerPrincipalId);
     return memo;
   }
 
@@ -79,15 +92,16 @@ export class MemoService {
    * `beforeId` null = end of the target group. Only live memos can move; a drop
    * at the memo's current slot publishes nothing.
    */
-  move(id: string, groupId: string | null, beforeId: string | null): Memo {
+  move(id: string, groupId: string | null, beforeId: string | null, ownerPrincipalId?: string | null): Memo {
+    this.#assertOwned(id, ownerPrincipalId);
     const current = this.#getOrThrow(id);
     if (current.deletedAt !== null) {
       throw new AppError('INVALID_INPUT', '备忘在「最近删除」里，请先恢复再移动');
     }
-    if (groupId !== null && this.#deps.store.getGroup(groupId) === null) {
+    if (groupId !== null && this.#groupVisibleTo(groupId, ownerPrincipalId) === false) {
       throw new AppError('NOT_FOUND', `备忘分组 ${groupId} 不存在`);
     }
-    let moved: { memo: Memo; changed: boolean } | null;
+    let moved: { memo: StoredMemo; changed: boolean } | null;
     try {
       moved = this.#deps.store.move(id, groupId, beforeId);
     } catch (error) {
@@ -95,29 +109,34 @@ export class MemoService {
       throw new AppError('INVALID_INPUT', '备忘拖拽位置无效', { reason: String(error) });
     }
     if (moved === null) throw new AppError('NOT_FOUND', `备忘 ${id} 不存在`);
-    if (moved.changed) this.#changed(id);
+    if (moved.changed) this.#changed(id, moved.memo.ownerPrincipalId);
     return moved.memo;
   }
 
-  createGroup(title: string): MemoGroup {
-    const group = this.#deps.store.insertGroup(cleanGroupTitle(title));
-    this.#changed();
+  createGroup(title: string, ownerPrincipalId?: string | null): MemoGroup {
+    const group = this.#deps.store.insertGroup(
+      cleanGroupTitle(title),
+      ownerPrincipalId != null ? ownerPrincipalId : null,
+    );
+    this.#changed(undefined, group.ownerPrincipalId);
     return group;
   }
 
-  renameGroup(id: string, title: string): MemoGroup {
+  renameGroup(id: string, title: string, ownerPrincipalId?: string | null): MemoGroup {
+    this.#assertGroupOwned(id, ownerPrincipalId);
     if (this.#deps.store.getGroup(id) === null) {
       throw new AppError('NOT_FOUND', `备忘分组 ${id} 不存在`);
     }
     const group = this.#deps.store.renameGroup(id, cleanGroupTitle(title));
     if (group === null) throw new AppError('NOT_FOUND', `备忘分组 ${id} 不存在`);
-    this.#changed();
+    this.#changed(undefined, group.ownerPrincipalId);
     return group;
   }
 
   /** Drag-reorder groups (`beforeId` null = end); a drop at the current slot publishes nothing. */
-  moveGroup(id: string, beforeId: string | null): MemoGroup {
-    let moved: { group: MemoGroup; changed: boolean } | null;
+  moveGroup(id: string, beforeId: string | null, ownerPrincipalId?: string | null): MemoGroup {
+    this.#assertGroupOwned(id, ownerPrincipalId);
+    let moved: { group: StoredMemoGroup; changed: boolean } | null;
     try {
       moved = this.#deps.store.moveGroup(id, beforeId);
     } catch (error) {
@@ -125,35 +144,39 @@ export class MemoService {
       throw new AppError('INVALID_INPUT', '分组拖拽位置无效', { reason: String(error) });
     }
     if (moved === null) throw new AppError('NOT_FOUND', `备忘分组 ${id} 不存在`);
-    if (moved.changed) this.#changed();
+    if (moved.changed) this.#changed(undefined, moved.group.ownerPrincipalId);
     return moved.group;
   }
 
   /** Deletes the group; its memos go back to 未分组 (memos themselves are untouched). */
-  deleteGroup(id: string): void {
+  deleteGroup(id: string, ownerPrincipalId?: string | null): void {
+    this.#assertGroupOwned(id, ownerPrincipalId);
+    const owner = this.#deps.store.getGroup(id)?.ownerPrincipalId ?? null;
     if (!this.#deps.store.deleteGroup(id)) {
       throw new AppError('NOT_FOUND', `备忘分组 ${id} 不存在`);
     }
-    this.#changed();
+    this.#changed(undefined, owner);
   }
 
   /** Moves a memo to 最近删除 (idempotent: an already trashed memo is returned as is). */
-  delete(id: string): Memo {
+  delete(id: string, ownerPrincipalId?: string | null): Memo {
+    this.#assertOwned(id, ownerPrincipalId);
     const current = this.#getOrThrow(id);
     if (current.deletedAt !== null) return current;
     const memo = this.#deps.store.softDelete(id);
     if (memo === null) throw new AppError('NOT_FOUND', `备忘 ${id} 不存在`);
-    this.#changed(id);
+    this.#changed(id, memo.ownerPrincipalId);
     return memo;
   }
 
   /** Back from 最近删除 (idempotent: a live memo is returned as is). */
-  restore(id: string): Memo {
+  restore(id: string, ownerPrincipalId?: string | null): Memo {
+    this.#assertOwned(id, ownerPrincipalId);
     const current = this.#getOrThrow(id);
     if (current.deletedAt === null) return current;
     const memo = this.#deps.store.restore(id);
     if (memo === null) throw new AppError('NOT_FOUND', `备忘 ${id} 不存在`);
-    this.#changed(id);
+    this.#changed(id, memo.ownerPrincipalId);
     return memo;
   }
 
@@ -170,8 +193,49 @@ export class MemoService {
     return memo;
   }
 
-  #changed(memoId?: string): void {
-    this.#deps.publish?.('memos.changed', memoId === undefined ? {} : { memoId });
+  /**
+   * 62.11 C13：按 id 写操作的归属校验（传入且不符 → NOT_FOUND，不泄露存在性）；
+   * 不传 / null = 现状零校验。
+   */
+  #assertOwned(id: string, ownerPrincipalId?: string | null): void {
+    if (ownerPrincipalId == null || ownerPrincipalId.length === 0) return;
+    const row = this.#deps.store.get(id);
+    if (row === null || row.ownerPrincipalId !== ownerPrincipalId) {
+      throw new AppError('NOT_FOUND', `备忘 ${id} 不存在`);
+    }
+  }
+
+  /** 分组的归属校验（同 {@link #assertOwned} 的口径）。 */
+  #assertGroupOwned(id: string, ownerPrincipalId?: string | null): void {
+    if (ownerPrincipalId == null || ownerPrincipalId.length === 0) return;
+    const row = this.#deps.store.getGroup(id);
+    if (row === null || row.ownerPrincipalId !== ownerPrincipalId) {
+      throw new AppError('NOT_FOUND', `备忘分组 ${id} 不存在`);
+    }
+  }
+
+  /**
+   * 归属主体 P 能否使用分组 `groupId`：无校验主体（单用户路径）= 只看存在性；
+   * 有主体 = 分组必须存在且归属 P（别人的组对 P 不存在，NOT_FOUND 口径）。
+   */
+  #groupVisibleTo(groupId: string, ownerPrincipalId?: string | null): boolean {
+    const group = this.#deps.store.getGroup(groupId);
+    if (group === null) return false;
+    if (ownerPrincipalId == null || ownerPrincipalId.length === 0) return true;
+    return group.ownerPrincipalId === ownerPrincipalId;
+  }
+
+  /** 62.11 C13：有归属才带 ownerPrincipalId；无归属 = 单用户现状载荷不变。 */
+  #changed(memoId?: string, ownerPrincipalId?: string | null): void {
+    this.#deps.publish?.(
+      'memos.changed',
+      memoId === undefined
+        ? (ownerPrincipalId != null ? { ownerPrincipalId } : {})
+        : {
+            memoId,
+            ...(ownerPrincipalId != null ? { ownerPrincipalId } : {}),
+          },
+    );
   }
 }
 

@@ -21,6 +21,12 @@ export interface PrincipalDescription {
  */
 export interface PrincipalDirectory {
   describe(principalId: string): PrincipalDescription | null;
+  /**
+   * 62.07 §3 通道入站通知对象（T6，62.11 通用缝）：通道账号是宿主资产，宿主
+   * 用它指明「这个邮箱 / IM 账号的入站提醒该开谁与 Bot 的直聊」。返回 null /
+   * 未实现 = 无指定对象（提醒落无主直聊 = 单用户现状）。
+   */
+  ownerForChannel?(kind: 'mail' | 'im', accountId: string): string | null;
 }
 
 /** Context a tool decision is made in; `null` ids = no principal in scope. */

@@ -53,6 +53,12 @@ export interface TriggerBatch {
   /** A retried failed turn (D75 审查 L6): stored on the created run. */
   retryOf?: string;
   /**
+   * 62.11 C13：本批触发显式归属的人类主体——排期到期（排期归属）与监看提醒
+   * （监看归属）。合并批次取第一个非空值；不出现 = 无显式归属（run 主体按
+   * 既有规则推导：直聊 owner / 项目组最后发言人）。单用户路径恒不出现。
+   */
+  principalId?: string | null;
+  /**
    * Sequential group-response hint appended after the trigger segment
    * ("在你之前，X 已经回复…", docs/dev/04-agent-runtime.md "触发段").
    */
@@ -244,17 +250,19 @@ export function mergeTriggerBatches(batches: TriggerBatch[]): TriggerBatch {
   }
   const retryOf = batches.find((batch) => batch.retryOf !== undefined)?.retryOf;
   const afterNote = [...batches].reverse().find((batch) => batch.afterNote !== undefined)?.afterNote;
+  const principalId = batches.find((batch) => batch.principalId != null)?.principalId;
   return {
     ...batchFromParts(first, parts, primary?.reason ?? first.reason),
     ...(episode !== undefined ? { episode } : {}),
     ...(retryOf !== undefined ? { retryOf } : {}),
     ...(afterNote !== undefined ? { afterNote } : {}),
+    ...(principalId !== undefined ? { principalId } : {}),
   };
 }
 
 /** A batch made of `parts` (one part = a plain batch, no `parts` field). */
 function batchFromParts(
-  base: Pick<TriggerBatch, 'conversationId' | 'botId'>,
+  base: Pick<TriggerBatch, 'conversationId' | 'botId' | 'principalId'>,
   parts: TriggerPart[],
   reason: TriggerReason,
 ): TriggerBatch {
@@ -263,6 +271,7 @@ function batchFromParts(
     botId: base.botId,
     messages: parts.flatMap((part) => part.messages).sort((a, b) => a.seq - b.seq),
     reason,
+    ...(base.principalId != null ? { principalId: base.principalId } : {}),
     ...(parts.length > 1 ? { parts } : {}),
     ...(parts.length === 1 && parts[0]?.extraAttributes !== undefined
       ? { extraAttributes: parts[0].extraAttributes }

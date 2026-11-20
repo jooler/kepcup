@@ -1139,8 +1139,16 @@ export function buildResponseTools(input: {
   const wikiTools = deps.wiki !== undefined ? buildWikiTools({ identity, wiki: deps.wiki }) : [];
 
   // P10 schedule tools (docs/dev/04-agent-runtime.md 工具目录, R 列).
+  // 62.11 C13：排期 / 监看工具的创建按当前运行主体归属（deps.principalId，
+  // 62.11 C7）；缺省（单用户）= 不带归属，行为不变。
   const scheduleTools =
-    deps.schedule !== undefined ? buildScheduleTools({ identity, schedule: deps.schedule }) : [];
+    deps.schedule !== undefined
+      ? buildScheduleTools({
+          identity,
+          schedule: deps.schedule,
+          ...(deps.principalId != null ? { principalId: deps.principalId } : {}),
+        })
+      : [];
 
   // W7 watch tools: an async hosted action like schedules (turn + task).
   const watchTools =
@@ -1150,6 +1158,7 @@ export function buildResponseTools(input: {
           watch: deps.watch,
           // D73 P2: a watch fetches its URL right away and on every interval — an egress channel.
           egress: (input, options) => gateway.egressCheck(identity, input, options),
+          ...(deps.principalId != null ? { principalId: deps.principalId } : {}),
         })
       : [];
 
@@ -1343,7 +1352,8 @@ export function buildResponseTools(input: {
         ]
       : [];
 
-  // 工作台工具（D90）：只给管家，只在对话轮工具面。
+  // 工作台工具（D90）：只给管家，只在对话轮工具面。62.11 C13：创建 / 读写
+  // 的事项与备忘按当前运行主体归属；缺省（单用户）= 不带归属，行为不变。
   const workbenchTools =
     deps.workbench !== undefined && deps.butler?.isButler === true
       ? buildWorkbenchTools({
@@ -1351,6 +1361,7 @@ export function buildResponseTools(input: {
           workbench: deps.workbench.host,
           triggerFromUser: deps.workbench.triggerFromUser,
           touchedExternal: deps.workbench.touchedExternal,
+          ...(deps.principalId != null ? { principalId: deps.principalId } : {}),
           ...(deps.updateNotice !== undefined
             ? { updateNoticeTodoIds: deps.updateNotice.todoIds }
             : {}),

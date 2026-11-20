@@ -2143,17 +2143,21 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     const workbenchTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
     const workbenchFacade: WorkbenchToolFacade = {
       isButler: (botId) => bots.get(botId)?.systemRole === 'butler',
+      // 62.11 C13：工具的创建 / 读写带当前运行主体的归属（tools 层传入）。
       listTodos: (filter) => todoService!.list(filter),
       getTodo: (id) => todoService!.get(id).todo,
       createTodo: (input) => todoService!.create(input),
-      updateTodo: (id, input) => todoService!.update(id, input),
-      startTodo: (id, actor) => todoService!.start(id, actor),
-      completeTodo: (id) => todoService!.complete(id),
-      cancelTodo: (id) => todoService!.cancel(id),
+      updateTodo: (id, input) =>
+        todoService!.update(id, input, input.ownerPrincipalId ?? null),
+      startTodo: (id, actor, ownerPrincipalId) =>
+        todoService!.start(id, actor, ownerPrincipalId ?? null),
+      completeTodo: (id, ownerPrincipalId) => todoService!.complete(id, 'user', ownerPrincipalId ?? null),
+      cancelTodo: (id, ownerPrincipalId) => todoService!.cancel(id, 'user', ownerPrincipalId ?? null),
       listMemos: (filter) => memoService!.list(filter),
       createMemo: (input) => memoService!.create(input),
-      updateMemo: (id, patch) => memoService!.update(id, patch),
-      deleteMemo: (id) => memoService!.delete(id),
+      updateMemo: (id, patch, ownerPrincipalId) =>
+        memoService!.update(id, patch, ownerPrincipalId ?? null),
+      deleteMemo: (id, ownerPrincipalId) => memoService!.delete(id, ownerPrincipalId ?? null),
       describeWhen: (row) => scheduleService!.describeWhen(row),
       isTainted: (botId, conversationId) => taint.isTainted(botId, conversationId),
       now: () => clock.now(),
@@ -2169,13 +2173,15 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       },
     };
     const scheduleFacade: ScheduleToolFacade = {
+      // 62.11 C13：工具创建的排期带当前运行主体的归属（tools 层传入）。
       createFromWhen: (input) => scheduleService!.createFromWhen(input),
       validateWhen: (when, timezone) => scheduleService!.validateWhen(when, timezone),
       describeWhen: (row) => scheduleService!.describeWhen(row),
       fireabilityWarnings: (row) => scheduleService!.fireabilityWarnings(row),
       listForBotInConversation: (botId, conversationId) =>
         scheduleService!.listForBotInConversation(botId, conversationId),
-      cancelOwn: (botId, scheduleId) => scheduleService!.cancelOwn(botId, scheduleId),
+      cancelOwn: (botId, scheduleId, ownerPrincipalId) =>
+        scheduleService!.cancelOwn(botId, scheduleId, ownerPrincipalId ?? null),
       createOffer: (input) => scheduleService!.createOffer(input),
       contextSection: (botId, conversationId) =>
         scheduleService?.contextSection(botId, conversationId) ?? '',
@@ -2195,11 +2201,12 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       modelOptions: () => handoverHost?.modelOptions() ?? [],
     };
     const watchFacade: OrchestratorWatchFacade = {
+      // 62.11 C13：工具创建的监看带当前运行主体的归属（tools 层传入）。
       create: (input) => watchService!.create(input),
       listForBotInConversation: (botId, conversationId) =>
         watchService!.listForBotInConversation(botId, conversationId),
-      stopOwn: (botId, conversationId, watchId) =>
-        watchService!.stopOwn(botId, conversationId, watchId),
+      stopOwn: (botId, conversationId, watchId, ownerPrincipalId) =>
+        watchService!.stopOwn(botId, conversationId, watchId, ownerPrincipalId ?? null),
       contextSection: (botId, conversationId) =>
         watchService?.contextSection(botId, conversationId) ?? '',
       renderContextLine: (message) =>
@@ -3100,6 +3107,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       requestApproval: (identity, kind, payload, options) =>
         approvals.request(identity, kind, payload, options),
       deliverAlert: (input) => orchestrator.deliverMailAlertToBot(input),
+      // 62.07 §3 / 62.11 C13：入站提醒的通知对象（通道 owner → 对应主体直聊）。
+      ...(options.principals !== undefined ? { principals: options.principals } : {}),
       publishAccount: (account, accountId) =>
         events.emit('mail.account_updated', { accountId, account }),
       publishMessage: (message) =>
@@ -3146,6 +3155,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       jobs,
       taint,
       deliverAlert: (input) => orchestrator.deliverImAlertToBot(input),
+      // 62.07 §3 / 62.11 C13：入站提醒的通知对象（通道 owner → 对应主体直聊）。
+      ...(options.principals !== undefined ? { principals: options.principals } : {}),
       publishAccount: (accountId) => events.emit('im.account_updated', { accountId }),
       publishMessage: (message) =>
         events.emit('message.created', { conversationId: message.conversationId, message }),

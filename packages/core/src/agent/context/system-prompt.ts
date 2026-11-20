@@ -58,6 +58,11 @@ export interface AccessPromptInfo {
 export interface HumanPrincipalLabel {
   name: string;
   note?: string | undefined;
+  /**
+   * 62.09 §1 / 62.11 C13（T6）：该主体在会话中的角色——`conversation_principals.role`。
+   * `'lead'` = 项目负责人（真人）；缺省 = 不标注（发言人标签等场景没有角色）。
+   */
+  role?: 'member' | 'lead' | undefined;
 }
 
 export interface SystemPromptInput {
@@ -678,6 +683,10 @@ function conversationInfoLines(
   }
   const leadCard = members?.find((member) => member.isLead === true);
   const leadName = leadCard?.name ?? null;
+  // 62.09 §1 双负责人制（62.11 C13，T6）：真人项目负责人 = conversation_principals
+  // 里 role='lead' 的主体。出现时由真人占用「项目负责人」行，Bot 负责人行改标
+  // 「执行负责人」（其 lead-gate 语义不变）；单用户无在册主体 = 两行都维持原状。
+  const humanLead = humanPrincipals?.find((member) => member.role === 'lead');
   // dm 会话没有 Bot 成员、不产生回合，理论上进不了这里的渲染；显式标注是
   // 防御性的（62.11 C3 dm 审计：dm 不进任何 Bot 上下文）。
   const convType =
@@ -694,8 +703,11 @@ function conversationInfoLines(
       : []),
     ...(conversation.type === 'project' && leadName !== null
       ? [
-          `项目负责人：${leadName}${selfBotId !== null && leadCard?.id === selfBotId ? '（你）' : ''}`,
+          `${humanLead !== undefined ? '执行负责人' : '项目负责人'}：${leadName}${selfBotId !== null && leadCard?.id === selfBotId ? '（你）' : ''}`,
         ]
+      : []),
+    ...(conversation.type === 'project' && humanLead !== undefined
+      ? [`项目负责人：${humanLead.name}`]
       : []),
     ...(members !== undefined && members.length > 0
       ? [
