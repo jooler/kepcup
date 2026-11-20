@@ -123,7 +123,7 @@
   {#if !('text' in message.content) || message.content.text.length > 0}
     <!-- 纯附件消息（docs/design/20-conversation-media.md）没有文本气泡，附件行即消息体。 -->
     <div
-      class="my-2 {userBubbleAccent ? '' : 'bg-primary text-primary-foreground'}"
+      class="{userBubbleAccent ? '' : 'bg-primary text-primary-foreground'}"
       style={messageBubbleStyle(uiConfig.messageBubble.user, merge, 'right')}
       style:background={userBubbleAccent?.hex}
       style:color={userBubbleAccent ? avatarOnFillForeground(userBubbleAccent) : undefined}
