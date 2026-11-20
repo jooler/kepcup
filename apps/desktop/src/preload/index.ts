@@ -52,6 +52,12 @@ const api = {
     /** 对话里 @ 本地文件/文件夹：只返回路径与类型，绝不上传文件字节。 */
     selectLocalPath: (): Promise<{ path: string; kind: 'file' | 'folder' } | null> =>
       ipcRenderer.invoke('dialog:selectLocalPath'),
+    /**
+     * T5 步骤 5「连接团队服务器」（platform.openTeamServer，62.08 §3）：另起一个
+     * 远程模式壳进程加载团队服务器的 web 构建。桌面专属——web 垫片不提供此方法。
+     */
+    openTeamServer: (input: { url: string }): Promise<{ ok: true }> =>
+      ipcRenderer.invoke('platform:openTeamServer', input),
   },
   /**
    * Syncs nativeTheme.themeSource so the macOS vibrancy material follows the

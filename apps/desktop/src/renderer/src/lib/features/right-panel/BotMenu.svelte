@@ -32,6 +32,7 @@
   import { enabledPluginCount } from '$lib/features/bot-panel/bot-plugins';
   import { plugins } from '$lib/features/plugins/plugins.svelte';
   import { inkcopCollabEnabled } from '$lib/features/inkcop-collab';
+  import { isTeamHidden } from '$lib/features/team/surface-gate';
   import type { BotConfigSection } from '$lib/features/bot-panel/bot-config-sections';
   import ConfigMenuGroup from './ConfigMenuGroup.svelte';
   import MenuRow from './MenuRow.svelte';
@@ -155,7 +156,9 @@
 </script>
 
 <div class="space-y-4" data-testid="bot-menu">
-  {#if conversationId !== undefined}
+  {#if conversationId !== undefined && !isTeamHidden('workdir-pick')}
+    <!-- 工作目录行（T5）：'workdir-pick' 被拒 surfaces 时隐藏——选择入口不存在
+         （工作目录由服务端 workdirRoots 供给，62.08 §2）。 -->
     <ConfigMenuGroup>
       <MenuRow
         icon={FolderOpen}

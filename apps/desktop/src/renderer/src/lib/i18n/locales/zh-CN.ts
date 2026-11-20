@@ -30,6 +30,8 @@ export const zhCN = {
   'chats.loadEarlier': '加载更早消息',
   'chats.recalled': '消息已撤回',
   'chats.recall': '撤回',
+  // T5：分身代回的气泡徽标（62.06，T10 预留，本阶段只渲染）。
+  'chats.avatarOriginBadge': '分身 · {name}',
   'chats.resizeHandleDrag': '拖拽调整宽度',
   'chats.deleteConversation': '删除对话',
   'chats.deleteConversationTitle': '删除与 {name} 的对话',
@@ -589,6 +591,10 @@ export const zhCN = {
   'contacts.botsTitle': 'Bot',
   'contacts.projectsTitle': '项目组',
   'contacts.projectsEmpty': '还没有项目组',
+  // T5 团队成员名册（62.04 §1 融合名册）：只有团队上下文渲染本栏。
+  'contacts.membersTitle': '成员 · {server}',
+  'contacts.membersEmpty': '还没有其他成员',
+  'contacts.selfEntry': '我（自我会话）',
   'contacts.openProject': '打开对话',
   'contacts.removeFromList': '从对话列表移除',
   'contacts.restore': '恢复',
@@ -1172,6 +1178,7 @@ export const zhCN = {
   'composer.mentionProject': '项目组',
   'composer.mentionKindBot': 'Bot',
   'composer.mentionKindProject': 'Project',
+  'composer.mentionKindMember': '成员',
   'composer.mentionPickFile': '选择文件或文件夹',
   'messages.quote': '引用',
   'messages.copy': '复制',
@@ -2506,6 +2513,16 @@ export const zhCN = {
   'settings.remoteTrustBoundaryHint':
     '配对设备等同坐在本机前的用户：可发起对话、批准审批、读写设置。撤销即时生效。',
   'settings.remotePairDevice': '连接手机…',
+  // T5：桌面「连接团队服务器」入口（另起远程模式进程窗口；web 端点隐藏）。
+  'settings.teamServerTitle': '团队服务器',
+  'settings.teamServerHint': '连接团队服务器，在新窗口打开团队版客户端。',
+  'settings.teamServerPlaceholder': 'https://team.example.com',
+  'settings.teamServerConnect': '连接',
+  'settings.teamServerConnecting': '连接中…',
+  'settings.teamServerOpening': '正在打开团队服务器窗口',
+  'settings.teamServerInvalidUrl': '地址无效：应为 http(s) 地址，且不能内嵌用户名密码',
+  'settings.teamServerFailed': '无法打开团队服务器窗口',
+  'settings.teamServerRecent': '最近使用',
   'settings.remoteRevoked': '已撤销「{name}」的遥控权限',
   'settings.remotePairTitle': '连接手机',
   'settings.remotePairHint':
@@ -4069,6 +4086,19 @@ export const zhCN = {
   'web.login.invalid': '用户名或密码不正确',
   'web.login.ratelimited': '失败次数过多，稍后再试',
   'web.login.error': '连不上服务器，请检查网络后重试',
+  // T5 团队端点：管理员重置过密码，登录门先进改密视图。
+  'web.changePassword.title': '设置新密码',
+  'web.changePassword.body': '管理员重置了你的密码，请先设置新密码再进入。',
+  'web.changePassword.current': '当前密码',
+  'web.changePassword.next': '新密码',
+  'web.changePassword.confirm': '确认新密码',
+  'web.changePassword.mismatch': '两次输入的新密码不一致',
+  'web.changePassword.submit': '保存并继续',
+  'web.changePassword.pending': '保存中…',
+  'web.changePassword.invalid': '当前密码不正确',
+  'web.changePassword.weak': '新密码强度不足（至少 8 位）',
+  'web.changePassword.ratelimited': '失败次数过多，稍后再试',
+  'web.changePassword.error': '改密失败，请检查网络后重试',
   'web.unpaired.title': '用桌面 KepCup 扫码配对',
   'web.unpaired.body':
     '在桌面 KepCup 的「设置 → 远程遥控」里点「连接手机」，用手机相机扫码打开本页；或把二维码旁的配对链接粘贴到这里。',
@@ -4110,6 +4140,12 @@ export const zhCN = {
   'web.connected.fingerprint': '密钥指纹',
   'web.install.hint': '把 KepCup 添加到主屏幕，像应用一样使用',
   'web.install.action': '添加到主屏幕',
+  // --- T5 团队服务器（62-team-server）：成员名册 / dm / 分身徽标共用 ---------------
+  'team.selfConversation': '我',
+  'team.memberOnline': '在线',
+  'team.memberAway': '离开',
+  'team.memberOffline': '离线',
+  'team.lastSeen': '最近在线 {time}',
   // --- D122 手机原生壳（docs/design/58-mobile-shell.md）------------------------
   'web.shell.disconnect': '断开',
   'web.shell.disconnectHint': '断开并回到 KepCup App 首页',

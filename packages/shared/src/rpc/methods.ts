@@ -427,6 +427,20 @@ export const diagnosticsOutputSchema = z.object({
 export type DiagnosticsOutput = z.infer<typeof diagnosticsOutputSchema>;
 export type SystemShutdownOutput = z.infer<typeof systemShutdownOutputSchema>;
 
+// --- T5 连接团队服务器（62.08 §3 桌面 P0 过渡，PLATFORM_RPC_METHODS 契约）------
+// Desktop-only: the MAIN process spawns a detached remote-mode shell pointed at
+// the team server (web 端点不实现——服务端托管的页面没有本地进程可另起). core 也
+// 不实现；渲染层经桌面 preload 桥调用（ipcMain handler 注册在 apps/desktop 主进程）。
+
+export const platformOpenTeamServerInputSchema = z.object({
+  /** Team server origin URL (http/https, validated by the main process). */
+  url: z.string().min(1),
+});
+export type PlatformOpenTeamServerInput = z.infer<typeof platformOpenTeamServerInputSchema>;
+
+export const platformOpenTeamServerOutputSchema = z.object({ ok: z.literal(true) });
+export type PlatformOpenTeamServerOutput = z.infer<typeof platformOpenTeamServerOutputSchema>;
+
 // --- update gate (P13 任务 2, port B platform methods) ----------------------
 // The main process owns electron-updater; the core only answers "is anything
 // executing?" and cancels on explicit user confirmation. Never forced.
@@ -3197,6 +3211,13 @@ export const rpcMethodSchemas = {
   },
   'share.failed.discard': { input: shareFailedDiscardInputSchema, output: okOutput },
 
+  // T5 连接团队服务器：桌面主进程实现（另起远程模式壳进程）；core / web 端不实现，
+  // 名称登记在 PLATFORM_RPC_METHODS（62.08 §3 桌面 P0 过渡）。
+  'platform.openTeamServer': {
+    input: platformOpenTeamServerInputSchema,
+    output: platformOpenTeamServerOutputSchema,
+  },
+
   // D96 远程遥控：全部 app 方法（本机与远程端点功能对等，同一 handlers）。
   'remote.status': { input: voidInput, output: remoteStatusOutputSchema },
   'remote.createPairing': { input: voidInput, output: remoteCreatePairingOutputSchema },
@@ -3881,6 +3902,8 @@ export const PLATFORM_RPC_METHODS: readonly RpcMethodName[] = [
   'files.previewResource',
   'share.targets',
   'share.consume',
+  // T5 连接团队服务器（62.08 §3）：桌面主进程实现，core / web 端不实现。
+  'platform.openTeamServer',
   // D96 远程遥控：托盘读状态 / 切开关 / 发起配对（主进程 → core，端口 B）。
   'remote.status',
   'remote.createPairing',

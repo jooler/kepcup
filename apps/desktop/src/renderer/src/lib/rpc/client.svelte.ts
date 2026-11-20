@@ -4,6 +4,8 @@ import {
   type CoreStatusPayload,
   type RpcClient,
   type SystemInfoOutput,
+  type TeamEventName,
+  type TeamRpcMethodName,
 } from '@kepcup/shared';
 import type { PlatformInfo } from '$lib/shim';
 import { domPortToTransport, isCorePortMessage } from './port';
@@ -32,6 +34,8 @@ class CoreConnection {
 
   #rpc: RpcClient | null = null;
   readonly #eventHandlers = new Map<string, Set<EventHandler>>();
+  /** 每次连接建立后的回调（团队上下文的 bootstrap 重拉等）。 */
+  readonly #connectedHandlers = new Set<() => void>();
 
   async start(): Promise<void> {
     // D96 web 构建（手机 PWA）：没有 preload 与 MessagePort，core 在桌面，
@@ -89,7 +93,7 @@ class CoreConnection {
   #applyAuthedLinkState(state: AuthedLinkState): void {
     this.connection =
       state === 'connected' ? 'connected' : state === 'reconnecting' ? 'reconnecting' : 'connecting';
-    if (state === 'connected') void this.refreshInfo();
+    if (state === 'connected') this.#notifyConnected();
   }
 
   /** 中转连接状态 → 既有 connection 状态（手机 UI 的状态页 / 横幅共用语义）。 */
@@ -100,7 +104,18 @@ class CoreConnection {
         : state === 'reconnecting' || state === 'offline'
           ? 'reconnecting'
           : 'connecting';
-    if (state === 'connected') void this.refreshInfo();
+    if (state === 'connected') this.#notifyConnected();
+  }
+
+  /** 连接建立（含断线重连）后的回调注册；返回解绑函数。 */
+  onConnected(handler: () => void): () => void {
+    this.#connectedHandlers.add(handler);
+    return () => this.#connectedHandlers.delete(handler);
+  }
+
+  #notifyConnected(): void {
+    void this.refreshInfo();
+    for (const handler of this.#connectedHandlers) handler();
   }
 
   onEvent(event: string, handler: EventHandler): () => void {
@@ -113,6 +128,25 @@ class CoreConnection {
     }
     set.add(handler);
     return () => set?.delete(handler);
+  }
+
+  /**
+   * 团队层方法调用（T5，shared team/ 契约）：与 `call` 走同一条 transport——
+   * 团队服务器在 core RPC 面上按成员策略裁决（未归类即拒绝），客户端不做
+   * 方法名白名单校验，这里只提供 `TeamRpcMethodName` 的编译期约束。
+   * 非团队上下文调用会得到服务端的 FORBIDDEN（调用点都在 teamContext.active
+   * 门控之内）。
+   */
+  async callTeam<M extends TeamRpcMethodName>(
+    method: M,
+    input?: unknown,
+  ): Promise<unknown> {
+    return this.call(method, input);
+  }
+
+  /** 团队事件订阅（shared TEAM_EVENT_NAMES，经事件代理分发，同 onEvent）。 */
+  onTeamEvent(name: TeamEventName, handler: EventHandler): () => void {
+    return this.onEvent(name, handler);
   }
 
   async call(method: string, input?: unknown): Promise<unknown> {
@@ -139,7 +173,7 @@ class CoreConnection {
       eventHandlers: this.#eventProxy() as Record<string, (payload: unknown) => void>,
     });
     this.connection = 'connected';
-    void this.refreshInfo();
+    this.#notifyConnected();
   }
 
   /**

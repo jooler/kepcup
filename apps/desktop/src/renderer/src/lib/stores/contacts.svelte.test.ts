@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { TeamMember } from '@kepcup/shared';
 
 /**
  * 通讯录名册与「从对话列表移除」（归档）：
@@ -12,6 +13,8 @@ const { handlers, state } = vi.hoisted(() => ({
     bots: [] as unknown[],
     conversations: [] as unknown[],
     calls: [] as string[],
+    /** team.* 方法的响应桩（T5 dm 用例）。 */
+    teamResponder: null as null | ((method: string, input: unknown) => unknown),
   },
 }));
 
@@ -29,11 +32,17 @@ vi.mock('$lib/rpc/client.svelte', () => ({
       if (method === 'conversations.list') return { conversations: state.conversations };
       return { ok: true };
     },
+    callTeam: async (method: string, input?: unknown) => {
+      state.calls.push(method);
+      if (state.teamResponder === null) throw new Error('no team responder');
+      return state.teamResponder(method, input);
+    },
   },
 }));
 
 const { contacts } = await import('./contacts.svelte');
 const { chat } = await import('./chat.svelte');
+const { teamContext } = await import('$lib/features/team/team-context.svelte');
 
 function directConversation(id: string, botId: string, archivedAt: number | null = null) {
   return {
@@ -78,9 +87,14 @@ beforeEach(() => {
   state.bots = [];
   state.conversations = [];
   state.calls = [];
+  state.teamResponder = null;
   contacts.bots = [];
   contacts.conversations = [];
   chat.conversations = [];
+  // 团队上下文回休眠（其余用例不依赖它）。
+  teamContext.active = false;
+  teamContext.member = null;
+  teamContext.members = [];
 });
 
 describe('通讯录名册', () => {
@@ -135,6 +149,56 @@ describe('通讯录名册', () => {
       conversation: projectConversation('conv_p1', '项目组一', 789),
     });
     expect(contacts.projects[0]?.archivedAt).toBe(789);
+  });
+});
+
+/**
+ * 团队成员名册（T5）：非团队上下文恒空数组（休眠铁律）；团队上下文下
+ * contacts 暴露 teamContext 的名册与 self（数据源在 team-context 统一拉取），
+ * openDm 走 team.dm.open 打开（自我会话传空参数帧）。
+ */
+describe('团队成员名册（T5）', () => {
+  const SELF: TeamMember = { id: 'mbr_self', displayName: '甲', state: 'online' };
+  const PEER: TeamMember = { id: 'mbr_peer', displayName: '乙', state: 'offline' };
+
+  it('非团队上下文：members / self 恒空（即使团队上下文里有残留数据）', () => {
+    teamContext.members = [PEER];
+    expect(contacts.members).toEqual([]);
+    expect(contacts.self).toBeNull();
+  });
+
+  it('团队上下文：members 与 self 透传 teamContext', () => {
+    teamContext.active = true;
+    teamContext.member = SELF;
+    teamContext.members = [SELF, PEER];
+    expect(contacts.members.map((m) => m.id)).toEqual(['mbr_self', 'mbr_peer']);
+    expect(contacts.self?.id).toBe('mbr_self');
+    teamContext.active = false;
+  });
+
+  it('openDm：对端成员带 targetMemberId 调 team.dm.open', async () => {
+    teamContext.active = true;
+    state.teamResponder = (method, input) => {
+      expect(method).toBe('team.dm.open');
+      expect(input).toEqual({ targetMemberId: 'mbr_peer' });
+      return { conversation: { id: 'conv_dm1', type: 'dm' } };
+    };
+    await expect(contacts.openDm('mbr_peer')).resolves.toBe('conv_dm1');
+  });
+
+  it('openDm：无目标（自我会话）发空参数帧', async () => {
+    teamContext.active = true;
+    state.teamResponder = (method, input) => {
+      expect(method).toBe('team.dm.open');
+      expect(input).toBeUndefined();
+      return { conversation: { id: 'conv_self', type: 'dm' } };
+    };
+    await expect(contacts.openDm()).resolves.toBe('conv_self');
+  });
+
+  it('非团队上下文 openDm 不发请求直接返回 null', async () => {
+    await expect(contacts.openDm('mbr_peer')).resolves.toBeNull();
+    expect(state.calls).not.toContain('team.dm.open');
   });
 });
 

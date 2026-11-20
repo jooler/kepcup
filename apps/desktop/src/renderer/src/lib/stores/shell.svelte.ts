@@ -24,6 +24,7 @@ import {
 } from '$lib/features/settings/sections';
 import { NARROW_HIDDEN_SETTINGS_SECTIONS } from '$lib/features/shell/narrow-layout';
 import { loadLastMainView, saveLastMainView } from '$lib/features/shell/last-main-view-persist';
+import { isTeamHidden } from '$lib/features/team/surface-gate';
 
 export type { SettingsSectionId } from '$lib/features/settings/sections';
 export type {
@@ -230,8 +231,11 @@ class ShellState {
       this.narrowSettingsOpen = true;
       return;
     }
-    // 旧深链别名已在上面改开扩展中心，到这里的一定是真实分区。
-    this.settingsSection = (section ?? 'general') as SettingsPageSection;
+    // 旧深链别名已在上面改开扩展中心，到这里的一定是真实分区。团队端点（T5）
+    // 分区被拒 surfaces 时回落到第一个可见分区（与窄屏的 resolveSettingsSection
+    // 同口径——设置卡深链是导航的旁路）；非团队上下文 resolveSettingsSection
+    // 是恒等映射，行为与现状一致。
+    this.settingsSection = resolveSettingsSection(section ?? 'general').section;
     this.settingsAnchor = anchor ?? null;
     this.settingsOpen = true;
   }
@@ -338,6 +342,10 @@ class ShellState {
   workdirSettingsRequest = $state<{ anchor: string | null } | null>(null);
 
   openWorkdirSettings(anchor?: string): void {
+    // 团队端点（T5）：'workdir-pick' 被拒 surfaces 时入口不存在——深链回落为
+    // no-op（工作目录只能由服务端 workdirRoots 供给，成员不得注册主机路径，
+    // 62.08 §2）。非团队上下文 isTeamHidden 恒 false，行为与现状一致。
+    if (isTeamHidden('workdir-pick')) return;
     this.openBotPanel('profile');
     this.workdirSettingsRequest = { anchor: anchor ?? null };
   }

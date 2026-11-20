@@ -8,6 +8,8 @@
   import { contacts } from '$lib/stores/contacts.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { shell } from '$lib/stores/shell.svelte';
+  import { teamContext } from '$lib/features/team/team-context.svelte';
+  import MemberAvatar from '$lib/features/team/MemberAvatar.svelte';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import ProjectAvatarStack from '$lib/avatars/ProjectAvatarStack.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -38,6 +40,38 @@
   const projects = $derived(contacts.projects);
   const activeProjects = $derived(projects.filter((p) => !isArchivedConversation(p)));
   const archivedProjects = $derived(projects.filter((p) => isArchivedConversation(p)));
+
+  /**
+   * 团队成员名册（T5，62.04 §1）：团队上下文下通讯录长出「成员」栏——顶部
+   * 固定「我」（自我会话），其下每个在册成员一张卡（头像 / 显示名 / 在线
+   * 状态）。点击 → team.dm.open → 打开会话。非团队上下文整栏不渲染。
+   */
+  const teamActive = $derived(teamContext.active);
+  const selfMember = $derived(contacts.self);
+  /** 成员卡（其他成员）：「我」是顶部固定条目，不在卡列表里重复出现。 */
+  const rosterMembers = $derived(
+    contacts.members.filter((member) => member.id !== teamContext.member?.id),
+  );
+
+  /** 最近在线的单行文本（离线成员卡副行；从未在线不渲染）。 */
+  function lastSeenLabel(member: { lastSeenAt?: number }): string | null {
+    if (member.lastSeenAt === undefined) return null;
+    return t('team.lastSeen', { time: new Date(member.lastSeenAt).toLocaleString() });
+  }
+
+  /** 点「我」= 打开自我会话（team.dm.open 无目标）。 */
+  async function openSelfConversation(): Promise<void> {
+    shell.closeSettings();
+    const conversationId = await contacts.openDm();
+    if (conversationId !== null) await chat.select(conversationId);
+  }
+
+  /** 点成员卡 → 打开与该成员的 dm。 */
+  async function openMemberDm(memberId: string): Promise<void> {
+    shell.closeSettings();
+    const conversationId = await contacts.openDm(memberId);
+    if (conversationId !== null) await chat.select(conversationId);
+  }
 
   async function openChat(bot: Bot): Promise<void> {
     shell.closeSettings();
@@ -196,6 +230,83 @@
       </ul>
     {/if}
   </section>
+
+  <!-- 团队成员名册（T5）：只有团队上下文渲染本栏；非团队端点行为与现状一致。 -->
+  {#if teamActive}
+    <section class="space-y-3" data-testid="contacts-members-section">
+      <h3 class="text-sm font-medium" data-testid="contacts-members-title">
+        {t('contacts.membersTitle', { server: teamContext.serverName })}
+      </h3>
+      <!-- 顶部固定「我」：点开 = 自我会话（备忘 / 文件中转）。 -->
+      {#if selfMember !== null}
+        <ul class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <li>
+            <button
+              type="button"
+              class="flex w-full items-center gap-3 rounded-xl border p-4 text-left transition-colors hover:bg-accent/40"
+              onclick={() => void openSelfConversation()}
+              data-testid="contacts-self-row"
+            >
+              <MemberAvatar
+                name={selfMember.displayName}
+                avatar={selfMember.avatar ?? null}
+                state={selfMember.state}
+                class="size-10"
+              />
+              <div class="min-w-0">
+                <p class="truncate text-sm font-medium">{selfMember.displayName}</p>
+                <p class="truncate text-xs text-muted-foreground">{t('contacts.selfEntry')}</p>
+              </div>
+            </button>
+          </li>
+        </ul>
+      {/if}
+      {#if rosterMembers.length === 0}
+        <div
+          class="flex h-16 items-center justify-center text-sm text-muted-foreground"
+          data-testid="contacts-members-empty"
+        >
+          {t('contacts.membersEmpty')}
+        </div>
+      {:else}
+        <ul class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {#each rosterMembers as member (member.id)}
+            <li>
+              <button
+                type="button"
+                class="flex w-full items-center gap-3 rounded-xl border p-4 text-left transition-colors hover:bg-accent/40"
+                onclick={() => void openMemberDm(member.id)}
+                data-testid={`member-card-${member.id}`}
+              >
+                <MemberAvatar
+                  name={member.displayName}
+                  avatar={member.avatar ?? null}
+                  state={member.state}
+                  class="size-10"
+                />
+                <div class="min-w-0">
+                  <p class="truncate text-sm font-medium" data-testid="member-card-name">
+                    {member.displayName}
+                  </p>
+                  {#if member.state === 'offline' && lastSeenLabel(member) !== null}
+                    <p class="truncate text-xs text-muted-foreground" data-testid="member-last-seen">
+                      {lastSeenLabel(member)}
+                    </p>
+                  {:else if member.state !== 'offline'}
+                    <p class="truncate text-xs text-muted-foreground" data-testid="member-state">
+                      {member.state === 'online'
+                        ? t('team.memberOnline')
+                        : t('team.memberAway')}
+                    </p>
+                  {/if}
+                </div>
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+  {/if}
 
   <!-- 项目组名册（含已从对话列表移除的） -->
   <section class="space-y-3" data-testid="contacts-projects-section">

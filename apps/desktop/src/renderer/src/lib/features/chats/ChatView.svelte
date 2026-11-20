@@ -9,6 +9,8 @@
   import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
   import { Button } from '$lib/components/ui/button';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
+  import MemberAvatar from '$lib/features/team/MemberAvatar.svelte';
+  import { teamContext } from '$lib/features/team/team-context.svelte';
   import ProjectView from '$lib/features/project/ProjectView.svelte';
   import MessageList from './MessageList.svelte';
   import Composer from './Composer.svelte';
@@ -53,6 +55,14 @@
     return !c.messages.some((m) => m.seq > card.seq && m.senderType === 'user');
   });
   const composerHint = $derived(pathGateClosed ? t('chats.setupPathGateHint') : undefined);
+  /**
+   * dm 会话头（T5，62.04 §3/§7）：dm 没有 Bot——标题是对端成员名（自我会话
+   * 标题「我」）。解析统一走 teamContext.dmPeerView（侧栏 / 搜索同源）。
+   * 非团队上下文不会出现 dm 会话（名册为空、入口不存在），此分支在现状下不可达。
+   */
+  const dmHeader = $derived(
+    teamContext.dmPeerView(current?.conversation.peerPrincipalIds ?? null),
+  );
   const headerTitle = $derived(
     current === null
       ? ''
@@ -60,8 +70,10 @@
         current.conversation.bot?.name ||
           current.conversation.bot?.id ||
           current.conversation.directBotId ||
+          (current.conversation.type === 'dm' ? dmHeader.title : '') ||
           t('rightPanel.title'),
   );
+  const isDm = $derived(current?.conversation.type === 'dm');
   const panelCollapsed = $derived(shell.rightPanelCollapsed);
   // 窄屏（33-narrow-layout）：无右栏分栏，药丸点击开 Bot 详情覆盖层；顶部
   // 左上角是「返回列表」按钮（macOS 让出红绿灯占位）。本组件只在已选中会话
@@ -210,44 +222,64 @@
           <ChevronLeft class="size-5" aria-hidden="true" />
         </Button>
       {/if}
-      <Button
-        variant="outline"
-        class="app-no-drag h-10 min-w-0 cursor-pointer gap-1.5 rounded-full border-border/25 bg-background py-0 pr-2.5 pl-1.5 text-sm font-medium shadow-xl backdrop-blur dark:border-input/25 dark:bg-background"
-        onclick={panelOverlay ? () => narrowLayout.openBotDetail() : () => shell.toggleRightPanel()}
-        title={panelOverlay
-          ? t('rightPanel.title')
-          : panelCollapsed
-            ? t('chatHeader.expandPanel')
-            : t('chatHeader.collapsePanel')}
-        data-testid="right-panel-toggle"
-      >
-        <BotAvatar
-          botId={current.conversation.directBotId ?? ''}
-          name={headerTitle}
-          avatar={current.conversation.bot?.avatar ?? null}
-          accentColor={current.conversation.bot?.accentColor ?? null}
-          mask={current.conversation.bot?.avatarMask ?? null}
-          padding={current.conversation.bot?.avatarPadding ?? null}
-          class="size-7"
-          fallbackClass="text-[10px]"
-        />
-        <span class="max-w-48 truncate pr-1.5">{headerTitle}</span>
-        {#if panelCollapsed && !panelOverlay}
-          <!-- 展开提示只在 hover 时浮现（参考 Grok），展开态不再显示箭头。
-               外层宽度 0 → 内容宽（6px 间距 + 14px 图标）撑开按钮，-ml-1.5 抵消按钮自身的
-               gap-1.5，未 hover 时按钮宽度与没有提示时完全一致 -->
-          <span
-            class="-ml-1.5 flex w-0 overflow-hidden transition-[width] duration-200 ease-out group-hover/button:w-5"
-          >
-            <ChevronRight
-              class="ml-1.5 size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity duration-200 group-hover/button:opacity-100"
-              aria-hidden="true"
-              data-testid="panel-expand-hint"
-            />
-          </span>
-        {/if}
-      </Button>
-      <PermissionModeMenu conversationId={current.conversation.id} />
+      {#if isDm}
+        <!-- dm 会话头（T5）：无 Bot 头部——对端成员头像 + 名字 + 在线状态点，
+             不可点（右栏是 Bot 详情，dm 没有）。自我会话显示「我」。 -->
+        <span
+          class="app-no-drag flex h-10 min-w-0 cursor-default items-center gap-1.5 rounded-full border-border/25 bg-background py-0 pr-2.5 pl-1.5 text-sm font-medium shadow-xl backdrop-blur dark:border-input/25 dark:bg-background border"
+          data-testid="dm-header"
+        >
+          <MemberAvatar
+            name={dmHeader.title}
+            avatar={dmHeader.avatar}
+            state={dmHeader.state}
+            class="size-7"
+            testId="dm-header-avatar"
+          />
+          <span class="max-w-48 truncate pr-1.5">{headerTitle}</span>
+        </span>
+      {:else}
+        <Button
+          variant="outline"
+          class="app-no-drag h-10 min-w-0 cursor-pointer gap-1.5 rounded-full border-border/25 bg-background py-0 pr-2.5 pl-1.5 text-sm font-medium shadow-xl backdrop-blur dark:border-input/25 dark:bg-background"
+          onclick={panelOverlay
+            ? () => narrowLayout.openBotDetail()
+            : () => shell.toggleRightPanel()}
+          title={panelOverlay
+            ? t('rightPanel.title')
+            : panelCollapsed
+              ? t('chatHeader.expandPanel')
+              : t('chatHeader.collapsePanel')}
+          data-testid="right-panel-toggle"
+        >
+          <BotAvatar
+            botId={current.conversation.directBotId ?? ''}
+            name={headerTitle}
+            avatar={current.conversation.bot?.avatar ?? null}
+            accentColor={current.conversation.bot?.accentColor ?? null}
+            mask={current.conversation.bot?.avatarMask ?? null}
+            padding={current.conversation.bot?.avatarPadding ?? null}
+            class="size-7"
+            fallbackClass="text-[10px]"
+          />
+          <span class="max-w-48 truncate pr-1.5">{headerTitle}</span>
+          {#if panelCollapsed && !panelOverlay}
+            <!-- 展开提示只在 hover 时浮现（参考 Grok），展开态不再显示箭头。
+                 外层宽度 0 → 内容宽（6px 间距 + 14px 图标）撑开按钮，-ml-1.5 抵消按钮自身的
+                 gap-1.5，未 hover 时按钮宽度与没有提示时完全一致 -->
+            <span
+              class="-ml-1.5 flex w-0 overflow-hidden transition-[width] duration-200 ease-out group-hover/button:w-5"
+            >
+              <ChevronRight
+                class="ml-1.5 size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity duration-200 group-hover/button:opacity-100"
+                aria-hidden="true"
+                data-testid="panel-expand-hint"
+              />
+            </span>
+          {/if}
+        </Button>
+        <PermissionModeMenu conversationId={current.conversation.id} />
+      {/if}
     </header>
 
     {@render chatBody(56, 'top-14')}

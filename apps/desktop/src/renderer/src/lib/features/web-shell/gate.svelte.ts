@@ -13,6 +13,7 @@ import {
   type AuthedLinkState,
 } from '$lib/rpc/authed-transport';
 import { ENDPOINT_KIND, defaultDeviceName } from './endpoint';
+import { teamContext } from '$lib/features/team/team-context.svelte';
 
 /**
  * WebShellGate 的响应式状态（web 构建 = 手机 PWA 的「门」）：把 WsTransport 的
@@ -22,10 +23,15 @@ import { ENDPOINT_KIND, defaultDeviceName } from './endpoint';
  *
  * Electron 路径（ENDPOINT_KIND === 'desktop'）恒 connected 且不订阅任何东西：
  * Gate 在桌面只是把 children 原样渲染出来，零行为变化。
+ *
+ * 团队端点（T5）：探测 / 登录响应带 `member` 即团队服务器——登录表单（用户名
+ * + 密码）沿用既有视图；`mustChangePassword` 时先进改密视图（/api/auth/password），
+ * 改成后才放行进 App；团队上下文（teamContext.begin）随识别立即拉起。
  */
 
 export type GateView =
   | 'login'
+  | 'change-password'
   | 'unpaired'
   | 'enter-name'
   | 'joining'
@@ -46,6 +52,8 @@ interface InstallPromptEvent extends Event {
 }
 
 export type LoginError = 'invalid' | 'ratelimited' | 'error' | null;
+/** 改密视图的错误分类：400 = 新密码强度不足；401 = 当前密码不对。 */
+export type ChangePasswordError = 'invalid' | 'weak' | 'ratelimited' | 'error' | null;
 
 class WebGateState {
   view = $state<GateView>('unpaired');
@@ -53,6 +61,10 @@ class WebGateState {
   authMode = $state<'probing' | 'password' | 'pairing'>('probing');
   loginError = $state<LoginError>(null);
   loginPending = $state(false);
+  /** T5 团队端点：管理员重置过密码，改密完成前不放行进 App。 */
+  mustChangePassword = $state(false);
+  changePasswordError = $state<ChangePasswordError>(null);
+  changePasswordPending = $state(false);
   /** 配对链接输入框内容（也承接 #pair=… 深链的预填）。 */
   linkInput = $state('');
   inputError = $state<string | null>(null);
@@ -94,6 +106,17 @@ class WebGateState {
     const transport = getAuthedTransport();
     transport.onLinkState((state) => this.#syncPassword(state));
     if (probe.authenticated) {
+      // 团队端点（探测 body 带 member）：团队上下文立即拉起（bootstrap 等连接
+      // 建立后自动完成），改密要求优先于进 App。
+      if (probe.member !== undefined) {
+        teamContext.begin();
+        if (probe.mustChangePassword === true) {
+          this.mustChangePassword = true;
+          this.view = 'change-password';
+          transport.connect();
+          return;
+        }
+      }
       this.view = 'booting';
       transport.connect();
     } else {
@@ -105,16 +128,25 @@ class WebGateState {
   #syncPassword(state: AuthedLinkState): void {
     if (this.authMode !== 'password') return;
     if (state === 'connected') {
-      this.view = 'connected';
+      // 改密要求未完成时不放行（会话本身有效，连接照常建立）。
+      if (!this.mustChangePassword) this.view = 'connected';
       return;
     }
     if (state === 'unauthenticated') {
       this.loginError = null;
+      this.#clearTeamSession();
       this.view = 'login';
       return;
     }
     // connecting / reconnecting：已登录过会话则等待重连，否则停在登录页。
-    if (this.view !== 'login') this.view = 'booting';
+    if (this.view !== 'login' && this.view !== 'change-password') this.view = 'booting';
+  }
+
+  /** 会话失效 / 登出：团队上下文回到休眠（团队面全部消失）。 */
+  #clearTeamSession(): void {
+    this.mustChangePassword = false;
+    this.changePasswordError = null;
+    teamContext.reset();
   }
 
   /** 登录（表单提交）：成功立即拨号，失败按错误码展示。 */
@@ -129,6 +161,20 @@ class WebGateState {
         body: JSON.stringify({ username, password }),
       });
       if (response.ok) {
+        // 团队端点：登录响应带 member（个人版为 {mode, username}，不带 member）。
+        const body = (await response.json().catch(() => null)) as {
+          member?: { id: string; displayName: string };
+          mustChangePassword?: boolean;
+        } | null;
+        if (body?.member !== undefined && typeof body.member.id === 'string') {
+          teamContext.begin();
+          if (body.mustChangePassword === true) {
+            // 先改密再进 App：会话 Cookie 已就位，但拨号推迟到改密成功后。
+            this.mustChangePassword = true;
+            this.view = 'change-password';
+            return;
+          }
+        }
         this.view = 'booting';
         getAuthedTransport().connectNow();
         return;
@@ -138,6 +184,51 @@ class WebGateState {
       this.loginError = 'error';
     } finally {
       this.loginPending = false;
+    }
+  }
+
+  /**
+   * 改密（团队端点 mustChangePassword）：POST /api/auth/password。成功后服务端
+   * 已换发新会话 Cookie（旧 token 全部失效），立即重新拨号进正常路径；401 =
+   * 当前密码不对，400 = 新密码强度不足。
+   */
+  async submitPasswordChange(currentPassword: string, newPassword: string): Promise<boolean> {
+    if (this.authMode !== 'password' || this.changePasswordPending) return false;
+    this.changePasswordPending = true;
+    this.changePasswordError = null;
+    try {
+      const response = await fetch('/api/auth/password', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      if (response.ok) {
+        this.mustChangePassword = false;
+        // 服务端已换发新会话 Cookie（改密使旧 token 全部失效）。旧连接若还在
+        // （服务端尚未按版本号踢线）直接放行；否则立即重新拨号（跳过退避）。
+        const transport = getAuthedTransport();
+        if (transport.linkState === 'connected') {
+          this.view = 'connected';
+        } else {
+          this.view = 'booting';
+          transport.connectNow();
+        }
+        return true;
+      }
+      this.changePasswordError =
+        response.status === 401
+          ? 'invalid'
+          : response.status === 400
+            ? 'weak'
+            : response.status === 429
+              ? 'ratelimited'
+              : 'error';
+      return false;
+    } catch {
+      this.changePasswordError = 'error';
+      return false;
+    } finally {
+      this.changePasswordPending = false;
     }
   }
 

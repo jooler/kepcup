@@ -12,9 +12,10 @@ import { parseLocalPathMentionToken, projectMentionToken } from '@kepcup/shared'
 
 /**
  * 候选/提及种类。`pick-file` 是 @ 菜单里的动作项（选择本地文件或文件夹），
- * 不会进入消息 mentions；`file` / `folder` 是已选中的本地路径提及。
+ * 不会进入消息 mentions；`file` / `folder` 是已选中的本地路径提及；
+ * `member` 是团队成员（T5，令牌 `principal:<id>`，@ 人 = 通知不产生 run）。
  */
-export type MentionKind = 'bot' | 'project' | 'file' | 'folder' | 'pick-file';
+export type MentionKind = 'bot' | 'project' | 'member' | 'file' | 'folder' | 'pick-file';
 
 export interface MentionTarget {
   /** 存进 message.mentions 的 token：Bot 用裸 id，项目组用 `project:<id>`，本地路径用 `file:`/`folder:` 前缀。 */
@@ -72,13 +73,16 @@ export function buildLocalPathMentionTargets(tokens: readonly string[]): Mention
 }
 
 /**
- * 名称注册表：当前项目成员优先，其余活跃 Bot 次之，其他项目组最后。同名先到
- * 先得（成员优先于同名的外部 Bot/项目组）；当前会话自己不作候选。
+ * 名称注册表：当前项目成员优先，其余活跃 Bot 次之，团队在册成员（T5）与其余
+ * 项目组最后。同名先到先得（成员优先于同名的外部 Bot/项目组）；当前会话自己
+ * 不作候选。
  */
 export function buildMentionTargets(input: {
   memberBots: Bot[];
   allBots: Bot[];
   projects: { id: string; title: string | null }[];
+  /** 团队在册成员（T5；令牌 `principal:<id>`）。非团队上下文传空数组。 */
+  members?: ReadonlyArray<{ id: string; displayName: string; avatar?: string | null }>;
   currentConversationId?: string | null;
   /** 不作候选的 Bot（如单聊里当前对话的 Bot 自己——@ 自己没有意义）。 */
   excludeBotIds?: string[];
@@ -139,6 +143,12 @@ export function buildMentionTargets(input: {
   for (const project of input.projects) {
     if (project.id === input.currentConversationId) continue;
     push(projectMentionToken(project.id), project.title, 'project');
+  }
+  // 团队在册成员（T5）：@ 人 = 通知（不产生 run）。令牌用主体前缀
+  // `principal:<id>`（README 固定契约）；同名 Bot / 项目组已先占位，成员
+  // 不重复注册（seenNames 去重）。
+  for (const member of input.members ?? []) {
+    push(`principal:${member.id}`, member.displayName, 'member');
   }
   return targets;
 }

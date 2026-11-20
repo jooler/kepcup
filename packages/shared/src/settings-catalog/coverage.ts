@@ -82,6 +82,12 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
   },
   { kind: 'action', id: 'bots.delete', reason: '删除 Bot：破坏性动作，沿用原入口与二次确认' },
   {
+    kind: 'anchor',
+    id: 'remote-team-server',
+    reason:
+      'T5「团队服务器」连接卡（62.08 §3 桌面 P0 过渡）：桌面专属入口（platform.openTeamServer），地址与最近使用存客户端本机 localStorage，不入设置目录（62.03 §5——开源设置目录不扩展）',
+  },
+  {
     kind: 'action',
     id: 'conversations.archive',
     reason: '从对话列表移除（归档）：可逆的对象管理动作，入口在侧栏右键与通讯录，不是设置',

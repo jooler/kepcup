@@ -25,3 +25,45 @@ export function exchangeMessageShape(
   }
   return { side: 'executor' };
 }
+
+/**
+ * 团队上下文的用户消息分侧（T5 步骤 4，62.04 §3/§7）：dm / 项目组里
+ * `senderType==='user'` 的消息按发送主体（`senderPrincipalId`）判左右——
+ * 自己在右（普通用户气泡），其他成员在左（带发送人名与成员头像）。
+ *
+ * 休眠语义：`teamActive` 为 false（未连接团队服务器）时恒返回 null，调用方
+ * 保持既有 `senderType` 判定，行为逐字节不变。分身代回（origin='avatar'）的
+ * 消息 senderPrincipalId 是成员本人，天然落在自己的右侧。
+ */
+export interface TeamMessageSide {
+  side: 'self' | 'peer';
+  /** 发送主体 id（`senderPrincipalId`；缺失时按自己处理）。 */
+  principalId: string | null;
+  /** 发送人显示名快照（senderName；缺失回落名册 / 主体 id，由调用方决定）。 */
+  senderName: string | null;
+}
+
+export function teamMessageSide(
+  teamActive: boolean,
+  selfMemberId: string | null | undefined,
+  message: Message,
+): TeamMessageSide | null {
+  if (!teamActive || message.senderType !== 'user') return null;
+  const principalId = message.senderPrincipalId ?? null;
+  if (principalId === null || (selfMemberId !== null && principalId === selfMemberId)) {
+    return { side: 'self', principalId, senderName: message.senderName ?? null };
+  }
+  return { side: 'peer', principalId, senderName: message.senderName ?? null };
+}
+
+/**
+ * 分身徽标的数据（T5 只渲染，为 T10 离开态分身预留，62.06）：`origin==='avatar'`
+ * 的用户消息带代回 Bot 名，气泡下方标「分身 · {botName}」。非分身消息返回 null。
+ */
+export function avatarOriginBotName(message: Message): string | null {
+  if (message.senderType !== 'user') return null;
+  const content = message.content as { origin?: string; avatar?: { botName?: unknown } };
+  if (content.origin !== 'avatar') return null;
+  const botName = content.avatar?.botName;
+  return typeof botName === 'string' && botName.length > 0 ? botName : null;
+}

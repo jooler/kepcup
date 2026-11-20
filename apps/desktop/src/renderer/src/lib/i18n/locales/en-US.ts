@@ -30,6 +30,8 @@ export const enUS = {
   'chats.loadEarlier': 'Load earlier messages',
   'chats.recalled': 'Message recalled',
   'chats.recall': 'Recall',
+  // T5: avatar-sent bubble badge (62.06, reserved for T10; render-only now).
+  'chats.avatarOriginBadge': 'Avatar · {name}',
   'chats.resizeHandleDrag': 'Drag to resize',
   'chats.deleteConversation': 'Delete conversation',
   'chats.deleteConversationTitle': 'Delete conversation with {name}',
@@ -621,6 +623,10 @@ export const enUS = {
   'contacts.botsTitle': 'Bots',
   'contacts.projectsTitle': 'Project groups',
   'contacts.projectsEmpty': 'No project groups yet',
+  // T5 team member roster (62.04 §1): rendered on team endpoints only.
+  'contacts.membersTitle': 'Members · {server}',
+  'contacts.membersEmpty': 'No other members yet',
+  'contacts.selfEntry': 'Me (self conversation)',
   'contacts.openProject': 'Open chat',
   'contacts.removeFromList': 'Remove from chat list',
   'contacts.restore': 'Restore',
@@ -1229,6 +1235,7 @@ export const enUS = {
   'composer.mentionProject': 'Project group',
   'composer.mentionKindBot': 'Bot',
   'composer.mentionKindProject': 'Project',
+  'composer.mentionKindMember': 'Member',
   'composer.mentionPickFile': 'Choose a file or folder',
   'messages.quote': 'Quote',
   'messages.copy': 'Copy',
@@ -2601,6 +2608,17 @@ export const enUS = {
   'settings.remoteTrustBoundaryHint':
     'A paired device acts like the user sitting at this desktop: it can chat, approve, and change settings. Revoking takes effect immediately.',
   'settings.remotePairDevice': 'Connect phone…',
+  // T5: desktop "connect team server" entry (spawns a remote-mode process
+  // window; hidden on web endpoints where platform.openTeamServer is absent).
+  'settings.teamServerTitle': 'Team server',
+  'settings.teamServerHint': 'Connect to a team server and open the team client in a new window.',
+  'settings.teamServerPlaceholder': 'https://team.example.com',
+  'settings.teamServerConnect': 'Connect',
+  'settings.teamServerConnecting': 'Connecting…',
+  'settings.teamServerOpening': 'Opening the team server window',
+  'settings.teamServerInvalidUrl': 'Invalid address: must be http(s) without embedded credentials',
+  'settings.teamServerFailed': 'Could not open the team server window',
+  'settings.teamServerRecent': 'Recent',
   'settings.remoteRevoked': 'Revoked remote access for "{name}"',
   'settings.remotePairTitle': 'Connect phone',
   'settings.remotePairHint':
@@ -4309,6 +4327,20 @@ export const enUS = {
   'web.login.invalid': 'Incorrect username or password',
   'web.login.ratelimited': 'Too many attempts, try again later',
   'web.login.error': 'Cannot reach the server, check your connection',
+  // T5 team endpoint: admin reset the password; the login gate shows the
+  // change-password view first.
+  'web.changePassword.title': 'Set a new password',
+  'web.changePassword.body': 'An admin reset your password. Set a new one to continue.',
+  'web.changePassword.current': 'Current password',
+  'web.changePassword.next': 'New password',
+  'web.changePassword.confirm': 'Confirm new password',
+  'web.changePassword.mismatch': 'The two passwords do not match',
+  'web.changePassword.submit': 'Save and continue',
+  'web.changePassword.pending': 'Saving…',
+  'web.changePassword.invalid': 'The current password is incorrect',
+  'web.changePassword.weak': 'The new password is too weak (at least 8 characters)',
+  'web.changePassword.ratelimited': 'Too many attempts, try again later',
+  'web.changePassword.error': 'Could not change the password, check your connection',
   'web.unpaired.title': 'Pair with desktop KepCup',
   'web.unpaired.body':
     'In desktop KepCup, open Settings → Remote control → “Connect phone”, scan the QR code with your phone camera, or paste the pairing link shown next to it.',
@@ -4356,6 +4388,12 @@ export const enUS = {
   'web.connected.fingerprint': 'Key fingerprint',
   'web.install.hint': 'Add KepCup to your home screen to use it like an app',
   'web.install.action': 'Add to Home Screen',
+  // --- T5 team server (62-team-server): shared by roster / dm / avatar badge ----
+  'team.selfConversation': 'Me',
+  'team.memberOnline': 'Online',
+  'team.memberAway': 'Away',
+  'team.memberOffline': 'Offline',
+  'team.lastSeen': 'Last seen {time}',
   // --- D122 native mobile shell (docs/design/58-mobile-shell.md) ---------------
   'web.shell.disconnect': 'Disconnect',
   'web.shell.disconnectHint': 'Disconnect and return to the KepCup app home',

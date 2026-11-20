@@ -1,6 +1,7 @@
-import type { Bot, Conversation } from '@kepcup/shared';
+import type { Bot, Conversation, TeamMember } from '@kepcup/shared';
 import { isArchivedConversation } from '@kepcup/shared';
 import { core } from '$lib/rpc/client.svelte';
+import { teamContext } from '$lib/features/team/team-context.svelte';
 
 class ContactsState {
   bots = $state<Bot[]>([]);
@@ -12,6 +13,32 @@ class ContactsState {
   /** 名册是否已加载过（首屏之后才有归档会话的名单）。 */
   rosterLoaded = $state(false);
   #started = false;
+
+  /**
+   * 团队成员名册（T5，62.04 §1 融合名册）：数据源是团队上下文的
+   * `team.members.list` + member.* 事件（在 team-context 统一拉取与刷新，
+   * 通讯录 / @ 候选 / dm 会话头共用同一份）。非团队上下文恒为空数组——
+   * 通讯录只有 Bot 与项目组两栏，与现状逐字节一致（休眠验收项）。
+   */
+  get members(): TeamMember[] {
+    return teamContext.active ? teamContext.members : [];
+  }
+
+  /** 当前成员（「成员」栏顶部的「我」条目）；非团队上下文为 null。 */
+  get self(): TeamMember | null {
+    return teamContext.active ? teamContext.member : null;
+  }
+
+  /** 打开与某成员的 dm（team.dm.open：既有会话复用，没有则新建），返回会话 id。 */
+  async openDm(targetMemberId?: string): Promise<string | null> {
+    if (!teamContext.active) return null;
+    // 无参调用（自我会话）发空参数帧：入参 schema 的 optional 字段缺省即合法。
+    const result = (await core.callTeam(
+      'team.dm.open',
+      targetMemberId === undefined ? undefined : { targetMemberId },
+    )) as { conversation: Conversation };
+    return result.conversation.id;
+  }
 
   start(): void {
     if (this.#started) return;

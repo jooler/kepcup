@@ -34,6 +34,8 @@
   import { stripMarkdown } from '$lib/strip-markdown';
   import { logoDarkUrl, logoLightUrl } from './sidebar-icons';
   import { ENDPOINT_KIND } from '$lib/features/web-shell/endpoint';
+  import { teamContext } from '$lib/features/team/team-context.svelte';
+  import MemberAvatar from '$lib/features/team/MemberAvatar.svelte';
   import { shell } from '$lib/stores/shell.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { chat, type ConversationView } from '$lib/stores/chat.svelte';
@@ -152,6 +154,8 @@
   /**
    * 设置分类条目：分区清单的事实源在 settings-section-labels（可见分区，宽屏全集），
    * 这里在「个人资料」之后插入「扩展中心」。主体内容渲染在 SettingsSectionView。
+   * 团队端点（T5）把扩展中心入口列为被拒 surfaces（'extension-center'）时不再插入
+   * ——被隐藏入口从导航消失，深链按 resolveSettingsSection 回落。
    */
   const settingsNavEntries = $derived.by(() => {
     const entries: SettingsNavEntry[] = visibleSettingsSections(false).map((section) => ({
@@ -159,12 +163,14 @@
       label: section.label,
       icon: section.icon,
     }));
-    const profileIndex = entries.findIndex((entry) => entry.id === 'profile');
-    entries.splice(profileIndex + 1, 0, {
-      id: 'extension-center',
-      label: t('sidebar.extensionCenter'),
-      icon: Blocks,
-    });
+    if (!teamContext.isTeamHidden('extension-center')) {
+      const profileIndex = entries.findIndex((entry) => entry.id === 'profile');
+      entries.splice(profileIndex + 1, 0, {
+        id: 'extension-center',
+        label: t('sidebar.extensionCenter'),
+        icon: Blocks,
+      });
+    }
     return entries;
   });
 
@@ -363,8 +369,9 @@
     return stripMarkdown(raw);
   }
 
-  /** 条目标题（图标模式的 hover 提示同源）：项目组用标题，私聊用 Bot 名。 */
+  /** 条目标题（图标模式的 hover 提示同源）：项目组用标题，私聊用 Bot 名，dm 用对端成员名。 */
   function nameOf(conversation: ConversationView): string {
+    if (conversation.type === 'dm') return teamContext.dmPeerView(conversation.peerPrincipalIds).title;
     return conversation.type === 'project'
       ? (conversation.title ?? conversation.id)
       : (conversation.bot?.name ?? conversation.directBotId ?? conversation.id);
@@ -849,9 +856,19 @@
   />
 {/snippet}
 
-<!-- 会话头像（展开/图标两模式共用）：项目组用成员头像堆叠，私聊用 Bot 头像。 -->
+<!-- 会话头像（展开/图标两模式共用）：项目组用成员头像堆叠，私聊用 Bot 头像，
+     dm 用对端成员头像（T5；自我会话回落「我」首字母）。 -->
 {#snippet conversationAvatar(conversation: ConversationView)}
-  {#if conversation.type === 'project'}
+  {#if conversation.type === 'dm'}
+    {@const peer = teamContext.dmPeerView(conversation.peerPrincipalIds)}
+    <MemberAvatar
+      name={peer.title}
+      avatar={peer.avatar}
+      state={peer.state}
+      class="size-11"
+      testId="conversation-avatar"
+    />
+  {:else if conversation.type === 'project'}
     <ProjectAvatarStack members={conversation.memberPreviews ?? []} class="size-11" />
   {:else}
     <BotAvatar
@@ -1345,17 +1362,20 @@
           >
             <Plus class="size-5" />
           </button>
-          <button
-            type="button"
-            class="app-no-drag z-10 flex size-10 shrink-0 cursor-pointer items-center justify-center
-              rounded-full text-muted-foreground transition-colors hover:bg-accent/80 hover:text-foreground"
-            onclick={() => shell.openExtensionCenter()}
-            aria-label={t('sidebar.extensionCenter')}
-            title={t('sidebar.extensionCenter')}
-            data-testid="extension-center-button"
-          >
-            <Blocks class="size-5" aria-hidden="true" />
-          </button>
+          <!-- 扩展中心入口（团队端点被拒 surfaces 时隐藏，T5）。 -->
+          {#if !teamContext.isTeamHidden('extension-center')}
+            <button
+              type="button"
+              class="app-no-drag z-10 flex size-10 shrink-0 cursor-pointer items-center justify-center
+                rounded-full text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+              onclick={() => shell.openExtensionCenter()}
+              aria-label={t('sidebar.extensionCenter')}
+              title={t('sidebar.extensionCenter')}
+              data-testid="extension-center-button"
+            >
+              <Blocks class="size-5" aria-hidden="true" />
+            </button>
+          {/if}
           <!-- 更新圆钮（ready 普通态 / awaiting-user destructive 确认态，组件内自管）。 -->
           <SidebarUpdateButton />
           <DropdownMenu.Root>
@@ -1453,20 +1473,23 @@
               </DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Root>
-          <!-- 技能市场入口（参考 Connect apps 的胶囊形态）：预置技能的浏览/添加 -->
-          <button
-            type="button"
-            class="app-no-drag z-10 flex h-10 min-w-0 flex-1 cursor-pointer items-center gap-2
-              rounded-full border border-border bg-white px-3 text-sm text-muted-foreground
-              shadow-none transition-colors hover:text-foreground dark:bg-accent"
-            onclick={() => shell.openExtensionCenter()}
-            aria-label={t('sidebar.extensionCenter')}
-            title={t('sidebar.extensionCenter')}
-            data-testid="extension-center-button"
-          >
-            <Blocks class="size-4 shrink-0" aria-hidden="true" />
-            <span class="truncate">{t('sidebar.extensionCenter')}</span>
-          </button>
+          <!-- 技能市场入口（参考 Connect apps 的胶囊形态）：预置技能的浏览/添加。
+               团队端点被拒 surfaces 时隐藏（同图标模式口径）。 -->
+          {#if !teamContext.isTeamHidden('extension-center')}
+            <button
+              type="button"
+              class="app-no-drag z-10 flex h-10 min-w-0 flex-1 cursor-pointer items-center gap-2
+                rounded-full border border-border bg-white px-3 text-sm text-muted-foreground
+                shadow-none transition-colors hover:text-foreground dark:bg-accent"
+              onclick={() => shell.openExtensionCenter()}
+              aria-label={t('sidebar.extensionCenter')}
+              title={t('sidebar.extensionCenter')}
+              data-testid="extension-center-button"
+            >
+              <Blocks class="size-4 shrink-0" aria-hidden="true" />
+              <span class="truncate">{t('sidebar.extensionCenter')}</span>
+            </button>
+          {/if}
           <!-- 更新圆钮（同图标模式的复用组件，语义见组件头注释）。 -->
           <SidebarUpdateButton />
         </div>
@@ -1534,17 +1557,20 @@
     data-testid="start-chat-search"
   />
   <div class="mt-2 space-y-0.5">
-    <button
-      type="button"
-      class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
-      onclick={() => void startConversationalCreate()}
-      data-testid="start-chat-create-bot"
-    >
-      <span class="flex size-7 items-center justify-center rounded-full bg-muted">
-        <Plus class="size-4" />
-      </span>
-      {t('sidebar.createBot')}
-    </button>
+    <!-- 团队端点 surfaces 门控（T5）：bot-create 被拒时隐藏新建入口。 -->
+    {#if !teamContext.isTeamHidden('bot-create')}
+      <button
+        type="button"
+        class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
+        onclick={() => void startConversationalCreate()}
+        data-testid="start-chat-create-bot"
+      >
+        <span class="flex size-7 items-center justify-center rounded-full bg-muted">
+          <Plus class="size-4" />
+        </span>
+        {t('sidebar.createBot')}
+      </button>
+    {/if}
     <button
       type="button"
       class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
@@ -1556,7 +1582,8 @@
       </span>
       {t('sidebar.createProject')}
     </button>
-    <!-- D48：从模板导入（web 端点无本地文件对话框，置灰不隐藏）。 -->
+    <!-- D48：从模板导入（web 端点无本地文件对话框，置灰不隐藏；团队端点按
+         endpointSupports 的 surfaces 叠加判定，同口径置灰）。 -->
     <button
       type="button"
       class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent
@@ -1714,7 +1741,7 @@
         openProjectDetail,
         'context-project-settings',
       )}
-    {:else if contextConversation?.bot?.status === 'active'}
+    {:else if contextConversation?.bot?.status === 'active' && !teamContext.isTeamHidden('bot-edit')}
       {@render contextItem(Pencil, t('sidebar.renameBot'), openRename, 'context-rename-bot')}
     {/if}
     {@render contextItem(
