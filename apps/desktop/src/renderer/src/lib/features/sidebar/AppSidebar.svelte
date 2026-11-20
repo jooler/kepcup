@@ -978,6 +978,7 @@
   {@const showMetaRow =
     preview.length > 0 ||
     ((conversation.unreadCount ?? 0) > 0 && !chat.isViewing(conversation.id)) ||
+    ((chat.mentionCounts[conversation.id] ?? 0) > 0 && !chat.isViewing(conversation.id)) ||
     (conversation.runningBotIds?.length ?? 0) > 0 ||
     (permissions.pendingByConversation[conversation.id] ?? 0) > 0}
   <Sidebar.MenuItem>
@@ -1022,6 +1023,17 @@
                   data-testid="unread-badge"
                 >
                   {conversation.unreadCount}
+                </span>
+              {/if}
+              <!-- @ 提及角标（DEV-146：web 团队上下文经本机列表渲染的团队会话与
+               团队切片同口径）；单用户本机无提及计数，恒不渲染。 -->
+              {#if (chat.mentionCounts[conversation.id] ?? 0) > 0 && !chat.isViewing(conversation.id)}
+                <span
+                  class="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium text-primary-foreground"
+                  title={t('team.mentionBadge')}
+                  data-testid="mention-badge"
+                >
+                  @{chat.mentionCounts[conversation.id]}
                 </span>
               {/if}
               {#if (conversation.runningBotIds?.length ?? 0) > 0}
@@ -1221,6 +1233,15 @@
                             data-testid="pending-badge"
                           >
                             {permissions.pendingByConversation[conversation.id]}
+                          </span>
+                        <!-- @ 提及角标（DEV-146）：优先于未读数，与团队切片窄行同款。 -->
+                        {:else if (chat.mentionCounts[conversation.id] ?? 0) > 0 && !chat.isViewing(conversation.id)}
+                          <span
+                            class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium text-primary-foreground"
+                            title={t('team.mentionBadge')}
+                            data-testid="mention-badge"
+                          >
+                            @{chat.mentionCounts[conversation.id]}
                           </span>
                         {:else if (conversation.unreadCount ?? 0) > 0 && !chat.isViewing(conversation.id)}
                           <span

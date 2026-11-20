@@ -192,6 +192,13 @@ GitHub Releases 是唯一写入口；publish job 在转正式后把 Release 资�
   `sudo snap install --dangerous --classic ./kepcup_<version>_amd64.snap`
 - 若以后要上架 Snap Store，先确认其经典约束审核政策；打包本身已就绪。
 
+## 团队服务端（apps/team-server）
+
+**不随 release.yml 发布。** `scripts/pack-server.mjs` 写死只打包 `@kepcup/server`（个人版 headless），`apps/team-server` 与 `apps/team-console` 不进任何 GitHub Release 资产；两者也**不进 main**（只在 `team-server` 分支推进，首个商业发布前拆入闭源仓，见 [design/62-team-server/08-architecture-and-rollout.md](../design/62-team-server/08-architecture-and-rollout.md) §5）。注意 `release.yml` 各 build job 与 ci.yml 的 e2e 都会跑 `pnpm -r build`——team-server / team-console 只要进了被测分支就会被构建（依赖已进 `pnpm-lock.yaml`），不发布 ≠ 不构建。
+
+- **Docker 镜像构建**：样例与要点在 `apps/team-server/deploy/Dockerfile`（node:22-slim、非 root `kepcup`、`/data` 卷、EXPOSE 8643、镜像内零安装——构建产物 `dist/`、渲染层 web 构建与管理台 dist 拷入）与 `apps/team-server/deploy/docker-compose.yml`（Caddy / Nginx 反代 TLS、管理台暴露两方案）。镜像构建不在本仓库 CI 流程内执行，由运维环境构建；构建顺序 = `pnpm install --frozen-lockfile` → `pnpm --filter @kepcup/team-console build`（产物 `apps/team-console/dist/`，不入库）→ `pnpm -r build` → `docker build`。运行、首启、备份与安全边界见 [`apps/team-server/README.md`](../../apps/team-server/README.md)。
+- **拆仓前提**：`apps/team-server` / `apps/team-console` 自成一包（依赖仅 `@kepcup/core` / `@kepcup/shared` / `ws` 与前端栈），拆入闭源仓后改依赖已发布的 core / shared 版本并确认权属（D134）。
+
 ## 待补充
 
 发版前需要确认或补齐的事项：

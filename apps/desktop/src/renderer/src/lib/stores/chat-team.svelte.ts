@@ -9,7 +9,7 @@ import {
 } from '$lib/rpc/connections.svelte';
 import { isInterimMessage } from '../features/chats/run-status-mute';
 import { isEphemeralApprovalCard } from '../features/approvals/ephemeral-approval';
-import { isSilentOnArrival } from '../features/chats/unread';
+import { teamMessageArrival } from '../features/chats/unread';
 import { notifyTeamMessage } from '$lib/features/team/team-notify';
 import { teamCacheSync } from '../features/team/cache-sync.svelte';
 import { permissions } from './permissions.svelte';
@@ -129,18 +129,9 @@ class TeamChatsState {
     const viewing = this.#host.isViewing(source, conversationId);
     // 团队会话是多人类语境：senderType 'user' 不再「必是自己的回执」（本机
     // isSilentOnArrival 的单主体口径）——只静默自己的消息回声；工作台回执卡
-    // 规则照搬（system_event + workbench origin，发送方必非 user）。
-    const isOwnEcho =
-      message.senderType === 'user' &&
-      message.senderPrincipalId !== null &&
-      message.senderPrincipalId !== undefined &&
-      message.senderPrincipalId === this.selfMemberId(source);
-    const silent = isOwnEcho || (message.senderType !== 'user' && isSilentOnArrival(message));
-    // 62.04 §4「人类 @ = 通知」：提及判定不看发送方是人是 Bot，只排除自己的
-    // 消息回声（自己 @ 自己的回声也不提醒）。
-    const mentioned =
-      !isOwnEcho &&
-      message.mentions.some((token) => token === `principal:${this.selfMemberId(source)}`);
+    // 规则照搬（system_event + workbench origin，发送方必非 user）。判定与
+    // 本机列表路径的团队会话共用一份（DEV-146，teamMessageArrival）。
+    const { silent, mentioned } = teamMessageArrival(message, this.selfMemberId(source));
     slice.conversations = slice.conversations.map((row) =>
       row.id === conversationId
         ? {

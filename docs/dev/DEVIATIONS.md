@@ -2404,7 +2404,7 @@
 
 ### DEV-134 消息变更时间 `messages.updated_at` 由 SQLite 触发器维护
 
-- 状态：已决定
+- 状态：已落实（迁移 `0078_principal_messages` 的触发器 `messages_touch_updated_at`,T1 落地）
 - 阶段：团队服务器 T1（分支 team-server，2026-11-20）
 - 是否阻塞：否
 - 问题：62.11 C6 的 `messages.changedSince` 增量补拉需要消息级「内容变更时间」。仓库约定时间由 infra/clock 注入维护（不依赖数据库时钟），但消息内容被原地改写的位置有十余处（`settings/host.ts`、`schedule/service.ts` ×4、`dispatch/tasks.ts` ×3、`updateStreamingText`、`edit` / `recall` 等），逐一在应用层维护 `updated_at` 既侵入面大也容易漏改。
@@ -2415,7 +2415,7 @@
 
 ### DEV-135 62.11 C6「删除以墓碑体现」的 core 侧口径
 
-- 状态：已决定
+- 状态：已落实（`changedSince` 覆盖编辑 / 撤回 / 状态变化,T1;桌面缓存以 `team.bootstrap` 全量对账 + `changedSince` 两层同步,T8）
 - 阶段：团队服务器 T1（分支 team-server，2026-11-20）
 - 是否阻塞：否
 - 问题：62.11 C6 写「删除以墓碑体现」，但 core 的消息模型没有消息级软删除——物理删除只有会话删除级联与 `purgeTaskInterim`（用户不可见的中间气泡），没有可承载墓碑的消息行。
@@ -2426,7 +2426,7 @@
 
 ### DEV-136 C15 `provisionWorkdir` 入参改为 `(conversationId, name)`
 
-- 状态：已决定
+- 状态：已落实（`principal/ops.ts` 按此签名实现,T2）
 - 阶段：团队服务器 T2（分支 team-server，2026-11-20）
 - 是否阻塞：否
 - 问题：62.11 C15 设计签名为 `provisionWorkdir(root, name)`；core 缝 `workdirRoots` 已提供根列表，宿主侧再传根既冗余也扩大了 core 暴露面。同时按 README 固定契约把宿主写入口的成员查询命名为 `hasPrincipal`（core 不出现 member 语义）。
@@ -2435,7 +2435,7 @@
 
 ### DEV-137 C15 join/leave 系统消息措辞沿用缝文本
 
-- 状态：已决定
+- 状态：已落实（缝文本即交付文案,T6）
 - 阶段：团队服务器 T6（分支 team-server，2026-11-20）
 - 是否阻塞：否
 - 问题：T6 任务书要求加入 / 移出落「{name} 已加入项目组 / 已退出」，C15 缝 `principalOps.join/leave` 的既有通用文案为「{name} 已加入 / 已离开」；在 core 侧参数化文案会往通用缝里掺宿主语义。
@@ -2444,7 +2444,7 @@
 
 ### DEV-138 C15 join/leave 不补发 conversation.updated
 
-- 状态：已决定
+- 状态：已落实（不补发;服务端由团队层 `onRosterChanged` 直清事件门缓存,T6）
 - 阶段：团队服务器 T6（分支 team-server，2026-11-20）
 - 是否阻塞：否
 - 问题：名册写不发布 `conversation.updated`，理论上依赖该事件刷新的消费者看不到名册变化；但 `conversationSchema` 载荷不含人类名册（项目组无 principals 字段），补发对客户端名册刷新零增益。
@@ -2453,7 +2453,7 @@
 
 ### DEV-139 team.profile.push 证据标记落空数组
 
-- 状态：已决定
+- 状态：已落实（evidence 落 `[]`,T6;`profile_items` 未加 origin 列——按 `source:'explicit' + contributed_by NULL` 组合辨识,收编评估维持不做）
 - 阶段：团队服务器 T6（分支 team-server，2026-11-20）
 - 是否阻塞：否
 - 问题：T6 任务书要求上行条目 `evidence_json` 写 `[{"kind":"client-sync"}]` 作来源标记；evidence schema 是冻结的 shared 契约（`{messageId, conversationId}` 对），该形状不容许；任务书预案「给 `profile_items` 增可空 origin 列」属 core 迁移。
@@ -2462,7 +2462,7 @@
 
 ### DEV-140 team.usage.mine 无 byBot 口径
 
-- 状态：已决定
+- 状态：已落实（byBot 随 T9 用量分摊全量分摊行兑现,byDay 桶边界仍按服务器本地日——62.07 §3「时区暂按服务器时区」立场,展示层标注）
 - 阶段：团队服务器 T6（分支 team-server，2026-11-20）
 - 是否阻塞：否
 - 问题：任务书把 byBot 列为可选字段；T6 钉定的 core 聚合缝 `UsageService.sumByPrincipal` 无 per-bot 分组口径。另 byDay 的 `dayStart` 标 UTC 午夜而 core 聚合按服务器本地日（62.07 §3「时区暂按服务器时区」立场，仅展示层桶边界标注差异）。
@@ -2471,7 +2471,7 @@
 
 ### DEV-141 私有 Bot 配额为运行配置，管理台可视化调节面后置
 
-- 状态：已决定
+- 状态：已落实（`--max-private-bots` / settings.json / env;管理台 T10 经「服务器设置」白名单键 `max-private-bots` 可视化调节,私有 Bot 页显示每成员计数与上限）
 - 阶段：团队服务器 T6（分支 team-server，2026-11-20）
 - 是否阻塞：否
 - 问题：每成员私有 Bot 上限（默认 5）任务书说「管理台可调」；管理台全量在 T10。
@@ -2519,7 +2519,7 @@
 
 ### DEV-146 多人类团队会话的未读静默口径两条渲染路径不一致
 
-- 状态：已决定（统一延后至 T11 收口执行）
+- 状态：已落实（T11 收口窗口内执行——渲染层 `features/chats/unread.ts` 增共享判定 `teamMessageArrival`（仅自己回声静默 + `principal:<自己>` 计提及）,本机列表路径（`chat.svelte.ts`）的团队上下文（`teamContext.member` 为权威）与团队切片（`chat-team.svelte.ts`）接线同一判定,新增 `chat-team-arrival.svelte.test.ts` 用例;无主体上下文（单用户本机）保持「user 一律静默」现状不变。渲染层改动属 T11 收口代码批,提交由 orchestrator 收尾）
 - 阶段：团队服务器 T7（分支 team-server，2026-11-20）
 - 是否阻塞：否
 - 问题：本机列表路径（`chat.svelte.ts`，T5 web 团队上下文同样走它）沿用 `isSilentOnArrival` 的「senderType='user' 一律静默」单主体口径——多人类团队会话里其他成员的聊天消息不计未读；T7 团队切片（`chat-team.svelte.ts`）已收紧为「仅自己回声静默」（人类发送的消息计未读、人类 @ 计提及）。同一团队会话在两条路径下未读数可能不一致。

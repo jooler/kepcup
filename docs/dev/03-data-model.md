@@ -63,6 +63,14 @@
 | main | `0065_sidebar_sections.sql` | 左栏对话分组从渲染层 localStorage（`kepcup.sidebar.sections.v1`）改存 main.db：新表 `sidebar_sections`（含内置「未指定」行）、`conversation_sidebar`（会话归属 + 置顶的稀疏偏好行，FK 级联 / `ON DELETE SET DEFAULT`） |
 | main | `0067_bot_direct_exchange.sql` | D113（D71 v2）：重建 `conversations`（`type` 增 `bot_direct`，增 `from_bot_id` / `to_bot_id` 及等式 CHECK）；`delegations` 增 `exchange_conversation_id` |
 | main | `0074_conversation_notes.sql` | 右栏 Bot 详情「便签」tab：新表 `conversation_notes`（对话级用户便签，删除对话时随 FK 级联删除） |
+| main | `0077_principal_conversations.sql` | 团队服务器 T1（D138 C3）：重建 `conversations`（首行 `-- kepcup:foreign-keys=off`，19 列）——增 `owner_principal_id`、`type` CHECK 增 `'dm'`；唯一索引**保留原名** `conversations_one_direct_per_bot` 键改 `(direct_bot_id, ifnull(owner_principal_id,''))`；新表 `conversation_principals(conversation_id, principal_id, role 'member'|'lead', joined_at, left_at)`（+ 索引 `(principal_id)`）与 `conversation_reads(conversation_id, principal_id, last_read_seq, PK(conversation_id, principal_id))` |
+| main | `0078_principal_messages.sql` | T1（C4，DEV-134）：`messages` 增 `sender_principal_id` / `sender_name` / `updated_at` + 触发器 `messages_touch_updated_at`（内容 / 状态原地改写点十余处，触发器保证不漏） |
+| main | `0079_principal_drafts.sql` | T1（C5）：`composer_drafts` 重建为 `(conversation_id, principal_key)` 复合主键（旧行 `principal_key=''`） |
+| main | `0080_principal_usage.sql` | T1（C7）：`usage_ledger` 增 `principal_id` |
+| main | `0081_principal_profile.sql` | T2（C11）：`profile_items` / `profile_proposals` 增 `principal_key NOT NULL DEFAULT ''`；`profile_card` 重建为 `principal_key TEXT PRIMARY KEY`（旧行迁 `''`） |
+| main | `0082_personal_domain_owner.sql` | T6（C13）：todos / memos / memo_groups / schedules / watches / stickies 六表增可空 `owner_principal_id` + owner 索引（stickies 为 `scope='global'` partial 索引） |
+| runs | `0017_run_principal.sql` | T1（C7）：`runs` 增 `principal_id` + 索引 `(principal_id, created_at)` |
+| memory | `0005_source_principal.sql` | T2（C12）：`memory_items` 增可空 `source_principal_id` |
 
   D73（连接应用）从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）；迁移运行器支持首行 `-- kepcup:foreign-keys=off` 指令（D92 T1a WP1：重建被大量引用的枢纽表时先关 FK）。
 
@@ -1323,6 +1331,21 @@ projects/{projectId}/            # 项目数据根（projectId = 根会话 id）
 - `wiki.db` **不走迁移目录**：DDL 内嵌在 `wiki/index-manager.ts` 并自管 `PRAGMA user_version`（当前 1，`wiki-index-store.test.ts` 保证与 `migrations/memory/0002` 的 `wiki_fts` 形态一致）；启动时对存在库做一次完整性对账，`WikiIndexStore` / `WikiFtsFacade.storeFor(owner)` 按 owner 路由（Bot 的 FTS 仍在其 `memory.db`）。
 - **来源台账** `raw/_assets/{assetId}.json`（`wiki/assets.ts` 的 `WikiAssetEntry`，对齐 D85 §3.2 的文本子集）：`{ id: 'ast_'+sha256 前 24 hex, sha256, kind: 'text'|'html', fileName, bytes, storage: 'git', rawRelPath, createdBy: {kind:'user'} | {kind:'bot', id}, sources: [{ type: 'attachment'|'file'|'url'|'text', ref, conversationId, at }], status: 'maintained', createdAt, updatedAt }`。`text` 是用户粘贴文本（仅用户可提交，`ref` 只存正文前 80 字预览，≤ `WIKI_TEXT_SOURCE_MAX_CHARS`）；同一内容重复提交只在 `sources[]` 追加，不重复入库。Bot 个人 wiki 暂不启用台账（`raw/` 来源保持匿名）。
 - 互斥：项目 wiki 的维护 / 删除共用单写入队列（互斥键 `project:{id}`）；删除项目组时先排空在途维护（`prepareProjectDeletion`）再删行与目录。
+
+## team.db（团队层，`apps/team-server`，分支 `team-server`，D126–D138）
+
+团队服务端自有数据库（与 core `main.db` 并列于数据目录，路径 `<data>/team.db`），**整库加密**——主密钥与 core keystore 共用，经 core `infra/crypto.ts` 新增的通用标签 `KEY_INFO.hostDb` 派生（core 无任何团队语义）。迁移目录 `apps/team-server/migrations/team/`，运行器同 core `infra/migrate.ts` 口径：
+
+| 迁移 | 内容 |
+|---|---|
+| `0001_init.sql` | 六表：`team_members`（`mbr_*`，含 `must_change_password`）、`admin_accounts`（`adm_*`）、`bot_visibility` + `bot_visibility_members`（双向 ON DELETE CASCADE；**缺省 = 无行即 `restricted` + 空白名单**）、`member_settings`、`audit_log`（`aud_*`，含 `detail_json` + at/actor 索引）；无 role 列（成员全员对等） |
+| `0002_dm_hidden.sql` | dm 自隐藏（`conversations.delete` 对 dm 短路 = 只对调用者隐藏；新消息 / 重新 `team.dm.open` 自动解除） |
+| `0003_channel_owners.sql` | 通道通知对象（mail / im 账号 → 指定成员；未指定 = 提醒落系统行） |
+| `0004_resolutions_usage.sql` | `project_resolutions`（决议唯一事实来源，state CHECK 收死 `open|passed|withdrawn`，快照 / 签署版本 / `card_message_id` / supersedes）+ `usage_allocations`（分摊行，幂等键 `(ledger_id, ifnull(member_id,''))` 唯一索引 + bucket CHECK + 三口径索引）+ `usage_cursor`（恒单行 `id=1`） |
+| `0005_attachment_uploads.sql` | `attachment_uploads`（附件上传台账：`attachment_id PK, member_id, created_at`）——62.03 §4「附件未转正前归上传者」的团队层执行账（core attachments 无上传者列，不动 core）：`attachments.get` / `detach` / `messages.send` 转引三路对 `message_id` NULL 且有台账行的附件按上传者校验，非上传者 NOT_FOUND（T11 安全复核补齐） |
+
+- core main / runs / memory 的主体列（T1–T6 迁移 `0077`–`0082` / runs `0017` / memory `0005`）见上文「迁移」表；运行归属规则（对话轮 = 发言人、任务继承发起轮、排期 / 监看 = 行归属、无来源后台 job = NULL）与名册历史读取（`conversations.principalHistory`）见 [design/62-team-server/11-core-seams.md](../design/62-team-server/11-core-seams.md)。
+- `member_settings` 存成员域设置（quietHours 整对象替换）；分身选择不入库（分身是客户端本端配置，服务端只见离开态与分身开关）。
 
 ## 删除级联
 

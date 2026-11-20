@@ -30,6 +30,8 @@ import {
 import { contacts } from '$lib/stores/contacts.svelte';
 import { delegations } from '$lib/stores/delegations.svelte';
 import { teamCacheSync } from '../features/team/cache-sync.svelte';
+import { teamContext } from '../features/team/team-context.svelte';
+import { notifyTeamMessage } from '../features/team/team-notify';
 import { TeamChatsState, type TeamConversationRow } from './chat-team.svelte';
 import { resolveConversationBot } from '../features/chats/conversation-bot';
 import {
@@ -45,7 +47,7 @@ import {
   saveLastConversationId,
 } from '../features/chats/last-conversation-persist';
 import { isEphemeralApprovalCard } from '../features/approvals/ephemeral-approval';
-import { isSilentOnArrival, mergeUnreadCount } from '../features/chats/unread';
+import { isSilentOnArrival, mergeUnreadCount, teamMessageArrival } from '../features/chats/unread';
 import { tasks } from '$lib/stores/tasks.svelte';
 import { isInterimMessage } from '../features/chats/run-status-mute';
 import { shell } from '$lib/stores/shell.svelte';
@@ -78,6 +80,8 @@ class ChatState {
             ? { ...conversation, lastReadSeq, unreadCount: 0 }
             : conversation,
         );
+        // 已读即已处理提及（团队切片同口径：syncReadCursor 一并清提及角标）。
+        this.#forgetMentions(conversationId);
       },
       syncMemberPreviews: (source, conversationId, members) => {
         if (source !== 'local') return;
@@ -131,6 +135,13 @@ class ChatState {
   composeMemberIds = $state<string[]>([]);
   /** Ids of bots that currently have a running loop, per conversation. */
   runningByConversation = $state<Record<string, string[]>>({});
+  /**
+   * 未读 @ 我提及数（按会话；DEV-146 与团队切片同口径）：web 团队上下文
+   * （T5 同源模式）的团队会话经本机列表渲染，`principal:<自己>` 的提及在这
+   * 里计数并提醒（62.04 §4「人类 @ = 通知」）。非团队上下文恒空记录——
+   * 单用户本机行为不变。侧栏读取渲染 @ 角标；打开会话（markRead）清零。
+   */
+  mentionCounts = $state<Record<string, number>>({});
   /** Group turn state (P05), per conversation. */
   turnByConversation = $state<Record<string, ProjectTurnState>>({});
   /**
@@ -215,6 +226,7 @@ class ChatState {
     core.onEvent('conversation.deleted', (payload) => {
       const data = payload as { id: string };
       this.conversations = this.conversations.filter((c) => c.id !== data.id);
+      this.#forgetMentions(data.id);
       tasks.forgetConversation(data.id);
       if (this.currentId === data.id) this.close();
     });
@@ -823,6 +835,14 @@ class ChatState {
       message.seq,
     );
     this.#noteLastMessage(conversationId, message);
+    // DEV-146 统一口径：web 团队上下文（T5 同源模式经本机列表渲染团队会话，
+    // 「自己是谁」取 teamContext.member）与团队切片同款——仅自己回声静默、
+    // `principal:<自己>` 计提及并提醒（62.04 §4「人类 @ = 通知」）。无主体
+    // 上下文（单用户本机，消息无主体字段）保持「user 一律静默」现行为不变。
+    const selfMemberId = teamContext.member?.id ?? null;
+    const viewing = this.isViewing(conversationId);
+    const verdict = teamMessageArrival(message, selfMemberId);
+    const silent = selfMemberId === null ? isSilentOnArrival(message) : verdict.silent;
     this.conversations = this.conversations.map((conversation) =>
       conversation.id === conversationId
         ? {
@@ -830,12 +850,27 @@ class ChatState {
             lastSeq: Math.max(conversation.lastSeq, message.seq),
             lastMessageAt: message.createdAt,
             unreadCount:
-              this.isViewing(conversation.id) || isSilentOnArrival(message)
-                ? (conversation.unreadCount ?? 0)
-                : (conversation.unreadCount ?? 0) + 1,
+              viewing || silent ? (conversation.unreadCount ?? 0) : (conversation.unreadCount ?? 0) + 1,
           }
         : conversation,
     );
+    // 提及角标与提醒（非查看、未静默时；与 chat-team.noteIncoming 同款守卫）。
+    if (verdict.mentioned && !viewing && !silent) {
+      this.mentionCounts = {
+        ...this.mentionCounts,
+        [conversationId]: (this.mentionCounts[conversationId] ?? 0) + 1,
+      };
+      const row = this.conversations.find((c) => c.id === conversationId) ?? null;
+      notifyTeamMessage('local', row, message);
+    }
+  }
+
+  /** 会话已读 / 消失：未读提及计数一并清除（团队切片 syncReadCursor 同口径）。 */
+  #forgetMentions(conversationId: string): void {
+    if (this.mentionCounts[conversationId] === undefined) return;
+    const next = { ...this.mentionCounts };
+    delete next[conversationId];
+    this.mentionCounts = next;
   }
 
   /**

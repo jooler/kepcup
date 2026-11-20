@@ -29,6 +29,10 @@ export default tseslint.config(
       // Android Studio 维护),web 构建产物与同步资产已被各自 .gitignore 覆盖。
       'apps/mobile/android/**',
       'apps/mobile/ios/**',
+      // T11 收口：本机 web 构建产物（relay 托管的压缩 bundle）与 iOS archive
+      // 里的资产副本——git 已忽略的生成物，与 apps/server/web 同类，不进 lint。
+      'infra/cloudflare/relay/public/assets/**',
+      'apps/mobile/release/**',
       'packages/core/src/**/migrations/**',
       // P12 rootfs build scripts: distro-side CI artifacts (CommonJS/bash by
       // contract, executed inside the image build — not app source).

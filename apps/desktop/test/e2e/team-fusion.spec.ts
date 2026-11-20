@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { request } from '@playwright/test';
@@ -36,9 +36,11 @@ async function startTeamServer(): Promise<TeamServer> {
   const child = spawn(process.execPath, [bin, 'run'], {
     env: {
       ...process.env,
-      KEPCUP_TEAM_DATA: dataDir,
+      // 团队服务器读 KEPCUP_TEAM_DATA_DIR（apps/team-server/src/config.ts 的
+      // --data-dir env 映射；默认 ~/.kepcup-team）：显式指到临时目录，绝不碰
+      // 真实数据目录。没有 KEPCUP_TEAM_ADMIN_TOKEN 这类 env——管理员凭据见下。
+      KEPCUP_TEAM_DATA_DIR: dataDir,
       KEPCUP_TEAM_PORT: String(TEAM_PORT),
-      KEPCUP_TEAM_ADMIN_TOKEN: 'e2e-admin-token',
     },
     stdio: 'ignore',
   });
@@ -51,15 +53,24 @@ async function startTeamServer(): Promise<TeamServer> {
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   await ctx.dispose();
-  // 管理员建成员（用户名 + 初始密码）。
+  // 管理员建成员（用户名 + 初始密码）走环回 admin API（62.03 §6，D102 模式，
+  // /api/admin/*）：Bearer token 是服务器首启写进数据目录的 admin-token 文件
+  //（随机 32B、0600；apps/team-server/src/config.ts ADMIN_TOKEN_FILE），本机
+  // 发起才被接受。console 面（/api/console/*）要管理员 cookie 会话，脚本化
+  // 建成员不用它。
+  const adminToken = readFileSync(path.join(dataDir, 'admin-token'), 'utf8').trim();
   const admin = await request.newContext({
-    extraHTTPHeaders: { 'admin-token': 'e2e-admin-token' },
+    extraHTTPHeaders: { authorization: `Bearer ${adminToken}` },
   });
   const username = 'e2e_member';
   const password = 'e2e-password-123';
-  await admin.post(`${url}/api/console/members`, {
+  // 建成员失败让 beforeAll 直接失败（否则用例集体扑在登录上更难定位）。
+  const created = await admin.post(`${url}/api/admin/members`, {
     data: { username, displayName: '融合成员', password },
   });
+  if (!created.ok()) {
+    throw new Error(`admin create member failed: ${created.status()} ${await created.text()}`);
+  }
   await admin.dispose();
   return { url, process: child, username, password };
 }
