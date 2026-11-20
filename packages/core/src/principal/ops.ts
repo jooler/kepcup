@@ -24,7 +24,7 @@ import type { CoreEventsMap } from '../start-types.js';
 
 /** Host card payload (`principalOps.appendCard`); the renderer owns the schema of `data`. */
 export interface PrincipalCardInput {
-  /** Card type id the host renderer understands (e.g. `resolution`, 62 号 T9). */
+  /** Card type id the host renderer understands (host-defined; core treats it as opaque). */
   cardType: string;
   /** Folded context / notification line (also what the model sees in context). */
   text?: string;

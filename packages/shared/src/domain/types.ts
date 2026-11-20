@@ -1801,6 +1801,11 @@ export const cardContentSchema = z.object({
    * 62.11 C15 宿主卡片（principalOps.appendCard / updateCard）：宿主自定义的
    * 卡片载荷（如 T9 的决议卡）。宿主渲染端按 cardType 自行解释；缺省 = 不是
    * 宿主卡片（updateCard 只认带这个字段的行）。
+   *
+   * cardType `'resolution'`（62.09 决议卡，T9）时 `data` 的结构由
+   * `resolutionCardSchema`（domain/resolution.ts）冻结：决议 id / 标题 / 正文 /
+   * 版本 / 状态 / 快照逐人签署版本。唯一事实来源是团队层 team.db
+   * `project_resolutions`，卡片是它的投影（状态变化经 updateCard 就地刷新）。
    */
   hostCard: z
     .object({

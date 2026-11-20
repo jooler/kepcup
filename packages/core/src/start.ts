@@ -53,6 +53,7 @@ import type {
 } from '@kepcup/shared';
 import { PrincipalOps } from './principal/ops.js';
 import type {
+  HostPromptSectionProvider,
   HostToolsProvider,
   PrincipalDirectory,
   ToolPolicy,
@@ -563,6 +564,8 @@ export interface CoreServicesOptions {
    * - `toolPolicy`（C8 工具策略）：deny 的工具从最终工具面（内置 / ACP / 子代理 /
    *   MCP 懒解析）移除，提示词同步。
    * - `hostTools`（C10 宿主贡献工具）：按 (Bot, 会话, loop) 追加进工具面。
+   * - `hostPromptSection`（T9，C10 提示词侧）：按 run 返回 `<host_rules>` 段
+   *   正文（内置与 ACP 两条提示词路径）；null / 缺省 = 段不出现。
    * - `workdirRoots`（C9）：workdir 绑定与任务 cwd 只允许在这些根之下；
    *   `principalOps.provisionWorkdir` 在 roots[0] 建目录。
    * - `permissionCeiling`（C14）：授权级别上限（超过拒绝设置，如禁 bypass）。
@@ -570,6 +573,7 @@ export interface CoreServicesOptions {
   principals?: PrincipalDirectory;
   toolPolicy?: ToolPolicy;
   hostTools?: HostToolsProvider;
+  hostPromptSection?: HostPromptSectionProvider;
   workdirRoots?: string[];
   permissionCeiling?: PermissionMode;
 }
@@ -2950,10 +2954,14 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           approvals.request(identity, kind, payload, options),
       },
       // 62.11 主体缝（全部缺省 = 现状）：C2 目录（发言人标签 / <user_identity> /
-      // 人类成员行 / 按主体注入）、C8 工具策略、C10 宿主贡献工具。
+      // 人类成员行 / 按主体注入）、C8 工具策略、C10 宿主贡献工具与 T9 的
+      // 提示词段缝（<host_rules>，两条提示词路径）。
       ...(options.principals !== undefined ? { principals: options.principals } : {}),
       ...(options.toolPolicy !== undefined ? { toolPolicy: options.toolPolicy } : {}),
       ...(options.hostTools !== undefined ? { hostTools: options.hostTools } : {}),
+      ...(options.hostPromptSection !== undefined
+        ? { hostPromptSection: options.hostPromptSection }
+        : {}),
     });
     // W3（D78）: a user revocation interrupts the affected running tasks (turns are not).
     revocations.on((event) => orchestrator.tasks.interruptForRevocation(event));

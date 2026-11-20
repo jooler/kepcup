@@ -76,6 +76,7 @@ export async function createTestStack(
     principals?: CreateTestCoreOptions['principals'];
     toolPolicy?: CreateTestCoreOptions['toolPolicy'];
     hostTools?: CreateTestCoreOptions['hostTools'];
+    hostPromptSection?: CreateTestCoreOptions['hostPromptSection'];
     workdirRoots?: CreateTestCoreOptions['workdirRoots'];
     permissionCeiling?: CreateTestCoreOptions['permissionCeiling'];
   } = {},
@@ -134,6 +135,9 @@ export async function createTestStack(
     ...(options.principals !== undefined ? { principals: options.principals } : {}),
     ...(options.toolPolicy !== undefined ? { toolPolicy: options.toolPolicy } : {}),
     ...(options.hostTools !== undefined ? { hostTools: options.hostTools } : {}),
+    ...(options.hostPromptSection !== undefined
+      ? { hostPromptSection: options.hostPromptSection }
+      : {}),
     ...(options.workdirRoots !== undefined ? { workdirRoots: options.workdirRoots } : {}),
     ...(options.permissionCeiling !== undefined
       ? { permissionCeiling: options.permissionCeiling }

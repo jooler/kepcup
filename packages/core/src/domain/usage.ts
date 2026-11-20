@@ -94,6 +94,30 @@ export interface PrincipalUsageDay {
   costUsd: number;
 }
 
+/**
+ * T9（62.03 D137）只读账行游标读取：`usage_ledger` 的一行（含 C7 主体归属）。
+ * 宿主（团队层）以 `rowid` 为游标增量拉取、以 `id`（账行主键）做分摊幂等的
+ * 去重键；core 不解释分摊口径，只保证按 rowid 升序增量可见。
+ */
+export interface UsageLedgerRow {
+  /** SQLite rowid（游标键；单调递增，但删除空洞后不保证连续）。 */
+  rowid: number;
+  /** 账行主键（`use_…`）——宿主分摊幂等的去重键。 */
+  id: string;
+  runId: string;
+  botId: string | null;
+  conversationId: string | null;
+  loopType: LoopType;
+  /** C7 记账时写入的归属主体；null = 系统消耗（单用户形态）。 */
+  principalId: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number | null;
+  createdAt: number;
+}
+
 /** 按工具的任务上下文消耗（内容估算，仅内置任务；不是计费 token）。 */
 export interface ToolUsageRecordInput {
   runId: string;
@@ -339,6 +363,53 @@ export class UsageService {
       costUsd: number;
     }>;
     return rows;
+  }
+
+  /**
+   * T9（62.03 D137）只读游标读取：`where rowid > ? order by rowid limit ?`。
+   * 团队层分摊 job 以此增量拉新账行（每批 limit 行，循环到不足一批）；纯
+   * SELECT，不写库、不注册 RPC（APP_METHODS 计数不变）。
+   */
+  ledgerSince(afterRowid: number, limit: number): UsageLedgerRow[] {
+    const rows = this.db
+      .prepare(
+        `select rowid as rowid, id, run_id, bot_id, conversation_id, loop_type, principal_id,
+                input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, created_at
+           from usage_ledger
+          where rowid > ?
+          order by rowid
+          limit ?`,
+      )
+      .all(afterRowid, limit) as Array<{
+      rowid: number;
+      id: string;
+      run_id: string;
+      bot_id: string | null;
+      conversation_id: string | null;
+      loop_type: LoopType;
+      principal_id: string | null;
+      input_tokens: number;
+      output_tokens: number;
+      cache_read_tokens: number;
+      cache_write_tokens: number;
+      cost_usd: number | null;
+      created_at: number;
+    }>;
+    return rows.map((row) => ({
+      rowid: row.rowid,
+      id: row.id,
+      runId: row.run_id,
+      botId: row.bot_id,
+      conversationId: row.conversation_id,
+      loopType: row.loop_type,
+      principalId: row.principal_id,
+      inputTokens: row.input_tokens,
+      outputTokens: row.output_tokens,
+      cacheReadTokens: row.cache_read_tokens,
+      cacheWriteTokens: row.cache_write_tokens,
+      costUsd: row.cost_usd,
+      createdAt: row.created_at,
+    }));
   }
 
   /** Raw entries since a point in time (usage.summary aggregation, P07). */

@@ -164,6 +164,11 @@ export interface SystemPromptInput {
    */
   hasWorkbenchTools?: boolean | undefined;
   /**
+   * T9（62.11 C10 提示词侧）：宿主按 run 提供的 `<host_rules>` 段正文（出卡
+   * 时机等宿主语义）。缺省 / 空串 = 段不出现（现状逐字节）。
+   */
+  hostRules?: string | undefined;
+  /**
    * 契约 v0.4：已注册 `call_inkcop_agent`（扩展中心启协作且 Bot 勾选了智能体）。
    * 为真时注入「禁止整轮直通 / 默认不调用」规则。
    */
@@ -957,6 +962,9 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
         : '使用用户最近一条消息的语言回复（包括问题、确认语、进度说明、总结与最终回复）。没有用户消息时（例如定时任务或系统触发的一轮），使用简体中文。',
     ),
     section('platform_rules', platformRules.join('\n')),
+    // T9（62.11 C10 提示词侧）：宿主贡献的规则段（如决议卡出卡时机）。缺省 /
+    // 空串 = 整段缺席，输出与从前逐字节一致。
+    section('host_rules', input.hostRules ?? ''),
     // 语音对话模式（53 号修订 v3）：只影响对话轮的回复形态，任务轮不注入。
     section(
       'voice_conversation',
@@ -1085,6 +1093,11 @@ export interface AgentSessionPromptInput {
   /** 62.05 §4：本轮说话的人类主体（同 SystemPromptInput.speaker）；缺省 = 无段。 */
   speaker?: HumanPrincipalLabel | undefined;
   card?: CardPromptContext | undefined;
+  /**
+   * T9（62.11 C10 提示词侧）：宿主贡献的 `<host_rules>` 段正文（与内置路径同一
+   * 缝）。缺省 / 空串 = 段不出现（现状逐字节）。
+   */
+  hostRules?: string | undefined;
   tools: AgentPromptTools;
 }
 
@@ -1404,6 +1417,8 @@ export function buildAgentSessionPrompt(input: AgentSessionPromptInput): string 
     ),
     section('tool_policy', buildAgentToolPolicy(tools)),
     section('file_handling', map(agentFileHandling(tools.toolNames))),
+    // T9（62.11 C10 提示词侧）：宿主贡献的规则段；缺省 / 空串 = 段缺席（现状）。
+    section('host_rules', input.hostRules ?? ''),
     section('identity', identity),
     section('persona', persona),
     section(

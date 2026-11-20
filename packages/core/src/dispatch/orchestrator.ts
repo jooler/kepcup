@@ -123,6 +123,7 @@ import type {
   ToolDefinition,
 } from '../agent/types.js';
 import type {
+  HostPromptSectionProvider,
   HostToolsProvider,
   PrincipalDirectory,
   ToolPolicy,
@@ -578,6 +579,12 @@ export interface OrchestratorDeps {
    * 能力包，外部智能体路径据此保留。缺省 = 无追加（现状）。
    */
   hostTools?: HostToolsProvider;
+  /**
+   * T9（62.11 C10 提示词侧，`CoreServicesOptions.hostPromptSection`）：宿主按
+   * run 返回 `<host_rules>` 段正文；null / 缺省 = 段不出现（内置与 ACP 两条
+   * 提示词路径逐字节现状）。
+   */
+  hostPromptSection?: HostPromptSectionProvider;
 }
 
 /** The slice of the wiki domain the response loop consumes (owner-based since
@@ -3586,6 +3593,15 @@ export class Orchestrator {
         maxNameLength: MAX_AGENT_TOOL_NAME - toolName('').length,
       });
       const cardPrompt = this.#cardPrompt(conversation, input.projectWikiTopics);
+      // T9（62.11 C10 提示词侧）：外部智能体只跑任务（D75 §8.1），loopType 恒
+      // 'task'；主体取本 run 的归属（C7）。缺省 / null / 空串 = 不传（现状）。
+      const hostRules =
+        this.#deps.hostPromptSection?.({
+          botId: bot.id,
+          conversationId: conversation.id,
+          principalId: this.#deps.runs.principalOf(input.identity.runId),
+          loopType: 'task',
+        }) ?? null;
       const sessionPrompt = buildAgentSessionPrompt({
         bot,
         conversation,
@@ -3593,6 +3609,7 @@ export class Orchestrator {
         ...(input.humanPrincipals !== undefined ? { humanPrincipals: input.humanPrincipals } : {}),
         ...(input.speaker !== undefined ? { speaker: input.speaker } : {}),
         ...(cardPrompt !== undefined ? { card: cardPrompt } : {}),
+        ...(hostRules !== null && hostRules.trim().length > 0 ? { hostRules } : {}),
         tools: {
           toolNames: tools.map((tool) => tool.name),
           nativeCapabilities: entry.nativeCapabilities,
@@ -5368,6 +5385,19 @@ export class Orchestrator {
             ...(() => {
               const speaker = this.#speakerLabelOf(runId);
               return speaker !== undefined ? { speaker } : {};
+            })(),
+            // T9（62.11 C10 提示词侧）：宿主 <host_rules> 段——ctx 与 C10 宿主
+            // 工具同一形状（conversationId 恒非空：run 必然绑定会话）。缺省 /
+            // null / 空串 = 不传（现状逐字节）。
+            ...(() => {
+              const section =
+                this.#deps.hostPromptSection?.({
+                  botId: bot.id,
+                  conversationId: conv.id,
+                  principalId: runPrincipalId,
+                  loopType: isTask ? 'task' : 'turn',
+                }) ?? null;
+              return section !== null && section.trim().length > 0 ? { hostRules: section } : {};
             })(),
             // D92 T1a: the lead / member rules only in a project conversation's turn loop
             // (tasks never get them — a task cannot @ members).

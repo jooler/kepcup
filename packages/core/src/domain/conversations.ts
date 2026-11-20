@@ -36,6 +36,19 @@ export interface ConversationPrincipal {
   joinedAt: number;
 }
 
+/**
+ * One `conversation_principals` row INCLUDING left ones (T9 read seam, 62.03
+ * D137 / 62.09 §2): the host splits usage by the principals enrolled at the
+ * row's consumption time (`joined_at <= t < coalesce(left_at, ∞)`), so the
+ * history (left_at non-null) must stay readable — the active-only
+ * {@link ConversationsService.principals} is not enough. Core never interprets
+ * the window; it only keeps the rows.
+ */
+export interface ConversationPrincipalRecord extends ConversationPrincipal {
+  /** Epoch ms the principal left, or null while still enrolled. */
+  leftAt: number | null;
+}
+
 interface PrincipalRow {
   conversation_id: string;
   principal_id: string;
@@ -354,6 +367,30 @@ export class ConversationsService {
       principalId: row.principal_id,
       role: row.role,
       joinedAt: row.joined_at,
+    }));
+  }
+
+  /**
+   * T9（62.03 D137）只读历史行：`conversation_principals` 全部行（含 left_at
+   * 非空的离开行），按 joined_at 排序。宿主按「消耗时点在册名单」分摊用量
+   * （`joined_at <= t < coalesce(left_at, ∞)`）；纯 SELECT，无行为变化——
+   * 不调用 = 与从前完全一致。
+   */
+  principalHistory(conversationId: string): ConversationPrincipalRecord[] {
+    interface HistoryRow extends PrincipalRow {
+      left_at: number | null;
+    }
+    const rows = this.db
+      .prepare(
+        'select conversation_id, principal_id, role, joined_at, left_at from conversation_principals where conversation_id = ? order by joined_at, principal_id',
+      )
+      .all(conversationId) as HistoryRow[];
+    return rows.map((row) => ({
+      conversationId: row.conversation_id,
+      principalId: row.principal_id,
+      role: row.role,
+      joinedAt: row.joined_at,
+      leftAt: row.left_at,
     }));
   }
 

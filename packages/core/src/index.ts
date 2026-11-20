@@ -27,7 +27,13 @@ export type {
   ToolPolicy,
   HostToolsContext,
   HostToolsProvider,
+  HostPromptSectionProvider,
 } from './principal/types.js';
+// C10 宿主贡献工具的宿主侧类型（团队层按它构造决议工具面）。
+export type { ToolDefinition, ToolResult } from './agent/types.js';
+// T9 只读缝（62.03 D137）：项目归属映射与账行形状（宿主分摊层用）。
+export { projectScopeOf } from './domain/project-scope.js';
+export type { UsageLedgerRow } from './domain/usage.js';
 export {
   PrincipalOps,
   type PrincipalCardInput,

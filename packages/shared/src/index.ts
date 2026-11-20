@@ -29,6 +29,7 @@ export * from './domain/micro-app.js';
 export * from './micro-app-sdk/spec.js';
 export * from './micro-app-sdk/generate.js';
 export * from './domain/present.js';
+export * from './domain/resolution.js';
 export * from './domain/ask-user.js';
 export * from './domain/mcpb.js';
 export * from './domain/bot-template.js';

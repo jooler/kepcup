@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createCore, type CoreHarness, type Keystore } from '@kepcup/core';
 import type {
+  HostPromptSectionProvider,
   HostToolsProvider,
   PrincipalDirectory,
   TimerScheduler,
@@ -147,6 +148,8 @@ export interface CreateTestCoreOptions {
   principals?: PrincipalDirectory;
   toolPolicy?: ToolPolicy;
   hostTools?: HostToolsProvider;
+  /** T9（C10 提示词侧）：宿主 `<host_rules>` 段提供者（缺省 = 不注入）。 */
+  hostPromptSection?: HostPromptSectionProvider;
   workdirRoots?: string[];
   permissionCeiling?: PermissionMode;
 }
@@ -225,6 +228,9 @@ export async function createTestCore(options: CreateTestCoreOptions = {}): Promi
     ...(options.principals !== undefined ? { principals: options.principals } : {}),
     ...(options.toolPolicy !== undefined ? { toolPolicy: options.toolPolicy } : {}),
     ...(options.hostTools !== undefined ? { hostTools: options.hostTools } : {}),
+    ...(options.hostPromptSection !== undefined
+      ? { hostPromptSection: options.hostPromptSection }
+      : {}),
     ...(options.workdirRoots !== undefined ? { workdirRoots: options.workdirRoots } : {}),
     ...(options.permissionCeiling !== undefined
       ? { permissionCeiling: options.permissionCeiling }

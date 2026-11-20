@@ -68,11 +68,26 @@ export interface TeamRpcIo {
   output: z.ZodTypeAny;
 }
 
-// --- P2 resolution view (placeholder; the full resolution schema lands in T9) --
+// --- P2 resolution view (T9: full schema frozen here; 62.09 §2 / §3) -----------
 
 /**
- * Minimal resolution view for the `team.resolutions.*` contracts (62.09).
- * T9 freezes the full schema — only additive changes from here.
+ * One snapshot member of a resolution view (T9): the propose-time human roster
+ * entry with the content version they signed. `approvedVersion` below the
+ * view's `version` = a stale signature (「待重签」); null = not signed.
+ */
+export const teamResolutionSnapshotMemberSchema = z.strictObject({
+  memberId: z.string().min(1),
+  /** Propose-time display name snapshot (deleted members stay identifiable). */
+  name: z.string(),
+  approvedVersion: z.number().int().min(1).nullable(),
+});
+export type TeamResolutionSnapshotMember = z.infer<typeof teamResolutionSnapshotMemberSchema>;
+
+/**
+ * Resolution view for the `team.resolutions.*` contracts (62.09). The card
+ * message in the project timeline renders from the same server row; this view
+ * is the list / re-hydration read for the team surface (snapshot signature
+ * details included — the renderer pairs them with member cards).
  */
 export const teamResolutionViewSchema = z.strictObject({
   /** Resolution id (`res_*`). */
@@ -84,13 +99,22 @@ export const teamResolutionViewSchema = z.strictObject({
   /** Lifecycle state (62.09 §3); passed resolutions are locked forever. */
   state: z.enum(['open', 'passed', 'withdrawn']),
   title: z.string(),
+  /** Structured body (目标 / 范围 / 执行要点) — same text as the card. */
+  body: z.string(),
   /** Content version; approvals bind to it (signatures clear on update). */
   version: z.number().int().min(1),
   /** The caller's signature on the CURRENT content version; null = not signed. */
   myApprovalVersion: z.number().int().nullable(),
+  /** Propose-time human snapshot with per-member signature versions. */
+  snapshot: z.array(teamResolutionSnapshotMemberSchema),
+  /** The `kind='card'` message carrying the resolution card (62.09 §3). */
+  cardMessageId: z.string().nullable().optional(),
   createdAt: z.number(),
+  updatedAt: z.number().optional(),
   passedAt: z.number().nullable().optional(),
   withdrawnAt: z.number().nullable().optional(),
+  /** Who withdrew: the member id (project lead RPC) or bot id (executive tool). */
+  withdrawnBy: z.string().nullable().optional(),
   /** Earlier resolution this one supersedes (display-only relation, 62.09 §2). */
   supersedesResolutionId: z.string().nullable().optional(),
 });
@@ -280,9 +304,13 @@ export const teamRpcMethodSchemas = {
     output: teamResolutionViewSchema,
   },
 
-  /** Withdraw an open resolution (executive lead bot or project lead); passed ones are locked. */
+  /**
+   * Withdraw an open resolution (executive lead bot tool or project lead RPC);
+   * passed ones are locked (RESOLUTION_LOCKED). `reason` (additive, T9) lands
+   * in the audit system message (62.09 §2 作废留痕).
+   */
   'team.resolutions.withdraw': {
-    input: z.strictObject({ resolutionId: z.string().min(1) }),
+    input: z.strictObject({ resolutionId: z.string().min(1), reason: z.string().max(500).optional() }),
     output: teamResolutionViewSchema,
   },
 } satisfies Record<TeamRpcMethodName, TeamRpcIo>;

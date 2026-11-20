@@ -137,18 +137,33 @@ export const teamUsageRangeSchema = z
 export type TeamUsageRange = z.infer<typeof teamUsageRangeSchema>;
 
 /**
- * The member's own usage view (`team.usage.mine`, P1): direct-chat
- * consumption is fully attributed to the member; project-share attribution is
- * a P2 admin-side report and not part of the member view. Totals follow the
- * core `usage_ledger` cost unit.
+ * The member's own usage view (`team.usage.mine`). P1 shipped the direct-chat
+ * full attribution; T9 (62.03 D137) upgrades the summary to the full ledger —
+ * every `usage_ledger` row lands in exactly one `usage_allocations` bucket
+ * (direct owner / project time-roster share / explicit principal / platform),
+ * so the member view adds the project share, other attributable consumption
+ * and a note of what stayed on the platform. Totals follow the core
+ * `usage_ledger` cost unit.
  */
 export const teamUsageSummarySchema = z.strictObject({
   /** Total direct-chat cost attributed to this member. */
   directTotal: z.number(),
-  /** Optional per-UTC-day breakdown (`dayStart` = UTC midnight, ms). */
+  /** Optional per-UTC-day breakdown (`dayStart` = UTC midnight, ms). T9: full attribution (all buckets). */
   byDay: z.array(z.strictObject({ dayStart: z.number(), total: z.number() })).optional(),
-  /** Optional per-bot breakdown. */
+  /** Optional per-bot breakdown (T9: from the allocation rows' bot_id — DEV-140). */
   byBot: z.array(z.strictObject({ botId: z.string(), total: z.number() })).optional(),
+  /**
+   * T9 全口径（additive, optional）：项目组均摊份额——usage_allocations 里
+   * project_conversation_id 非空的行按 share 加权后的 cost 之和。
+   */
+  projectShareTotal: z.number().optional(),
+  /** T9：其它可明确归属到本人的消耗（非直聊、非项目组的 allocation 行）。 */
+  otherTotal: z.number().optional(),
+  /**
+   * T9：同窗口内记为平台消耗的总额（member_id NULL 的行）——不归属任何成员，
+   * 这里只作「平台说明」展示，不计入本人的任何合计。
+   */
+  platformTotal: z.number().optional(),
 });
 export type TeamUsageSummary = z.infer<typeof teamUsageSummarySchema>;
 

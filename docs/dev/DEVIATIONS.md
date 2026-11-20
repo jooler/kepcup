@@ -2537,3 +2537,23 @@
 - 影响范围：`packages/shared/src/rpc/methods.ts`（platform.teamCache 入参 schema）、`apps/desktop/src/main/team-cache/service.ts`、`apps/desktop/tsconfig.node.json`。
 - 决定：① 双保险——shared zod 以 regex 钉死格式（serverHash 恰 16 位小写 hex，= `remoteProfileHash` 口径；memberId `mbr_` + 白名单字符 1–64，与 team-server 铸造的 `mbr_+ULID` 兼容）+ service 层 `assertPartitionSegments` 第二道（直连 in-process 调用不过 zod）+ `sanitizePathSegment` 降为第三道兜底；注入形状用例覆盖。**后续规范：凡「渲染层入参 → 文件系统路径」的平台方法沿用「schema regex 钉格式 + service 层同款校验」双保险，不得只靠 sanitize 兜底。** ② `tsconfig.node.json` 增 driver paths 映射（`packages/core` tsconfig 同款先例；最小构建配置改动，非依赖变更）。
 - 已更新的文档：本条；PROGRESS.md T8 节。
+
+### DEV-148 用量分摊 token 取整采用最大余数法
+
+- 状态：已落实
+- 阶段：团队服务器 T9（分支 team-server，2026-11-21）
+- 是否阻塞：否
+- 问题：任务书未定均摊取整口径；朴素 `round(t/n)` 在人数 ≥5 时合计与账行总额出现最多 ⌊n/2⌋ token 的差额（审查用例：7 token / 5 人 → Σ=5≠7），三口径合计与账表总额守恒断言会失败。
+- 影响：`apps/team-server/src/team/usage.ts` 的 `distributedShare`；`usage_allocations` 的 token 列语义。
+- 决定：**最大余数法**（base = floor(t/n)，余数按余数大小摊给前几名）——Σ tokens 恒等于账行总额；cost 为实数本就精确，双守恒；`mine` / 报表展示的「成员 token」语义为**分摊额**而非精确消耗（已在迁移注释与 PROGRESS 写明）。
+- 已更新的文档：本条；PROGRESS.md T9 节。
+
+### DEV-149 宿主工具 resolution_withdraw 的 reason 截断
+
+- 状态：已落实
+- 阶段：团队服务器 T9（分支 team-server，2026-11-21）
+- 是否阻塞：否
+- 问题：`team.resolutions.withdraw` RPC 入参有 zod `max(500)`，但宿主工具 `resolution_withdraw` 走引擎 JSON Schema 面，引擎不校验长度约束——Bot 可写超长留痕文案进系统消息。
+- 影响：`apps/team-server/src/team/resolutions.ts` 状态机 withdraw 入口。
+- 决定：状态机 `withdraw` 入口对 reason 统一 `trim().slice(0, 500)`（RPC 与工具双入口同保护，与 RPC zod 对齐，截断不报错），测试断言工具路径 600 字输入落 500 字留痕。
+- 已更新的文档：本条；PROGRESS.md T9 节。

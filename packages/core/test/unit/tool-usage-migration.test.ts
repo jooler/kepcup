@@ -124,6 +124,21 @@ describe('0073 tool_usage_ledger migration', () => {
   content     TEXT NOT NULL,
   compiled_at INTEGER NOT NULL
 );`);
+      // 0082（个人域归属）同样摘除：六个 owner 索引先删（列被索引引用时
+      // DROP COLUMN 会失败），再摘六表的 owner_principal_id 增量列。
+      // stickies 的部分索引与各表同名列一并摘除，0082 重放时原样重建。
+      db.exec('drop index todos_owner;');
+      db.exec('drop index memos_owner;');
+      db.exec('drop index memo_groups_owner;');
+      db.exec('drop index schedules_owner;');
+      db.exec('drop index watches_owner;');
+      db.exec('drop index stickies_global_owner;');
+      db.exec('alter table todos drop column owner_principal_id;');
+      db.exec('alter table memos drop column owner_principal_id;');
+      db.exec('alter table memo_groups drop column owner_principal_id;');
+      db.exec('alter table schedules drop column owner_principal_id;');
+      db.exec('alter table watches drop column owner_principal_id;');
+      db.exec('alter table stickies drop column owner_principal_id;');
       db.pragma('user_version = 72');
       db.prepare(
         `insert into usage_ledger (id, run_id, bot_id, conversation_id, loop_type, provider, model,

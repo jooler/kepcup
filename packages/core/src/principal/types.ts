@@ -46,3 +46,11 @@ export type HostToolsContext = ToolPolicyContext & { loopType: string };
 
 /** C10 host-contributed tools appended per (bot, conversation, loop type). */
 export type HostToolsProvider = (ctx: HostToolsContext) => ToolDefinition[];
+
+/**
+ * T9（62.11 C10 提示词侧，62 号设计 09 决议卡 §4 软门控）：宿主按
+ * (Bot, 会话, 主体, loop) 返回一段以 `<host_rules>` 注入的规则文本（出卡时机
+ * 等宿主语义）。ctx 与 C10 宿主工具同一形状；返回 null / 未提供 = 段不出现，
+ * 两条提示词路径逐字节现状。
+ */
+export type HostPromptSectionProvider = (ctx: HostToolsContext) => string | null;

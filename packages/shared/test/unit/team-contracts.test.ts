@@ -12,6 +12,7 @@ import {
   teamEventSchemas,
   teamMemberSchema,
   teamRpcMethodSchemas,
+  teamResolutionViewSchema,
   teamSettingsSchema,
   teamSurfaceIdSchema,
   teamUsageSummarySchema,
@@ -322,5 +323,139 @@ describe('team domain schemas', () => {
     });
     expect(usage.directTotal).toBe(1.25);
     expect(teamUsageSummarySchema.safeParse({ directTotal: 'x' }).success).toBe(false);
+  });
+
+  // --- T9（决议卡 / 用量全口径）：只增用例 -------------------------------------
+
+  it('T9 resolution view: strict state enum, snapshot signature details, body', () => {
+    const view = {
+      id: 'res_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      conversationId: 'cnv_proj',
+      issuedByBotId: 'bot_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      state: 'open',
+      title: '发布 v2',
+      body: '目标：…\n范围：…\n执行要点：…',
+      version: 2,
+      myApprovalVersion: null,
+      snapshot: [
+        { memberId: MBR, name: '阿李', approvedVersion: 1 },
+        { memberId: MBR2, name: 'Bob', approvedVersion: null },
+      ],
+      createdAt: 1736870400000,
+      updatedAt: 1736870500000,
+      cardMessageId: 'msg_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    };
+    const parsed = teamResolutionViewSchema.parse(view);
+    expect(parsed.state).toBe('open');
+    expect(parsed.snapshot[0]).toMatchObject({ memberId: MBR, approvedVersion: 1 });
+    // state 枚举收死：其它值拒绝。
+    expect(teamResolutionViewSchema.safeParse({ ...view, state: 'closed' }).success).toBe(false);
+    // 快照结构 strict：多余字段 / 错型拒绝。
+    expect(
+      teamResolutionViewSchema.safeParse({
+        ...view,
+        snapshot: [{ memberId: MBR, name: '阿李', approvedVersion: 'v1' }],
+      }).success,
+    ).toBe(false);
+    expect(
+      teamResolutionViewSchema.safeParse({
+        ...view,
+        snapshot: [{ memberId: MBR, name: '阿李', approvedVersion: null, note: 'x' }],
+      }).success,
+    ).toBe(false);
+    // body / version 必填（签署绑定版本的前提）。
+    const { body: _body, ...withoutBody } = view;
+    void _body;
+    expect(teamResolutionViewSchema.safeParse(withoutBody).success).toBe(false);
+    // 可选尾随字段：passed / withdrawn / supersedes 展示位。
+    expect(
+      teamResolutionViewSchema.safeParse({
+        ...view,
+        state: 'passed',
+        passedAt: 1736870600000,
+        myApprovalVersion: 2,
+        snapshot: [{ memberId: MBR, name: '阿李', approvedVersion: 2 }],
+      }).success,
+    ).toBe(true);
+    expect(
+      teamResolutionViewSchema.safeParse({
+        ...view,
+        state: 'withdrawn',
+        withdrawnAt: 1736870600000,
+        withdrawnBy: MBR,
+        supersedesResolutionId: null,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('T9 resolutions io: withdraw carries optional reason; approve output is the view', () => {
+    expect(
+      teamRpcMethodSchemas['team.resolutions.withdraw'].input.safeParse({
+        resolutionId: 'res_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        reason: '方向变了',
+      }).success,
+    ).toBe(true);
+    expect(
+      teamRpcMethodSchemas['team.resolutions.withdraw'].input.safeParse({
+        resolutionId: 'res_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      }).success,
+    ).toBe(true);
+    expect(
+      teamRpcMethodSchemas['team.resolutions.withdraw'].input.safeParse({
+        resolutionId: 'res_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        reason: 'x'.repeat(501),
+      }).success,
+    ).toBe(false);
+    // list 出参带快照签署明细；圈外无关字段拒。
+    expect(
+      teamRpcMethodSchemas['team.resolutions.list'].output.safeParse({
+        resolutions: [
+          {
+            id: 'res_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+            conversationId: 'cnv_proj',
+            issuedByBotId: 'bot_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+            state: 'open',
+            title: 't',
+            body: 'b',
+            version: 1,
+            myApprovalVersion: null,
+            snapshot: [{ memberId: MBR, name: '阿李', approvedVersion: null }],
+            createdAt: 1,
+          },
+        ],
+      }).success,
+    ).toBe(true);
+    expect(
+      teamRpcMethodSchemas['team.resolutions.approve'].output.safeParse({
+        id: 'res_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        conversationId: 'cnv_proj',
+        issuedByBotId: 'bot_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        state: 'passed',
+        title: 't',
+        body: 'b',
+        version: 1,
+        myApprovalVersion: 1,
+        snapshot: [],
+        createdAt: 1,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('T9 usage.mine summary: full attribution fields are additive and strict', () => {
+    const full = teamUsageSummarySchema.parse({
+      directTotal: 1.25,
+      byDay: [{ dayStart: 1736870400000, total: 2.5 }],
+      byBot: [{ botId: 'bot_01ARZ3NDEKTSV4RRFFQ69G5FAV', total: 2.5 }],
+      projectShareTotal: 0.5,
+      otherTotal: 0.25,
+      platformTotal: 3,
+    });
+    expect(full.projectShareTotal).toBe(0.5);
+    expect(full.platformTotal).toBe(3);
+    // 旧 shape（无新增字段）仍合法（additive）。
+    expect(
+      teamUsageSummarySchema.safeParse({ directTotal: 1.25, byBot: [] }).success,
+    ).toBe(true);
+    expect(teamUsageSummarySchema.safeParse({ directTotal: 1, unknown: 1 }).success).toBe(false);
   });
 });
