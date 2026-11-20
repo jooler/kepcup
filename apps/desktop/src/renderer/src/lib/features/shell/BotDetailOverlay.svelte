@@ -10,12 +10,13 @@
   import { blurEditableTarget, ESCAPE_PRIORITY, registerEscapeLayer } from './escape-layers';
 
   /**
-   * Bot 详情全屏覆盖层（宽屏右栏的 RightPanel 内容）。挂在 App 根而不是 NarrowShell：
-   * 宽屏但窗口放不下并排右栏时（sidebarLayout.panelAsOverlay）Bot 药丸同样开这一层，
-   * 且覆盖层不随宽 / 窄分支的整树重挂载而丢失（RightPanel 里未提交的 draft 保留）。
+   * Bot 详情全屏覆盖层（右栏内容的窄屏形态）。挂在 App 根而不是 NarrowShell：
+   * 覆盖层不随宽 / 窄分支的整树重挂载而丢失（RightPanel 里未提交的 draft 保留）；
+   * 宽屏中窄窗口不再走这一层（右栏改覆盖抽屉，见 ChatsArea），拉宽窗口时本层
+   * 自动收起。
    *
    * 不变量（本组件负责维护，调用方无需操心）：
-   * - 仅在「需要覆盖层」的形态下存在：并排右栏放得下时（宽屏、窗口够宽）自动收起。
+   * - 仅窄屏存在（panelAsOverlay）：拉宽到宽屏时自动收起。
    * - 没有打开的会话时不存在：在覆盖层里「移除 Bot」、或会话被其他端删除后 chat.currentId
    *   变 null，覆盖层不能留成空壳（tab 栏因覆盖层被隐藏，用户只能点 ✕）。
    * - Esc：经 escape-layers 仲裁——内部控件（行内改名 / 简介、头像选择器）和 bits-ui 弹层
