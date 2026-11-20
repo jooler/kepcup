@@ -17,6 +17,9 @@ const CLIENT_BOUND_METHODS = new Set([
   'collab.draft.send',
   'messages.send',
   'approvals.decide',
+  // T10 分身运行端绑定：team.presence.setAway 携带 client 时把该连接绑定为
+  // 分身运行端（avatarSetBy 的来源；不携带则原样透传，休眠不变）。
+  'team.presence.setAway',
 ]);
 
 export interface ClientIdentityBinding {

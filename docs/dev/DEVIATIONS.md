@@ -2557,3 +2557,23 @@
 - 影响：`apps/team-server/src/team/resolutions.ts` 状态机 withdraw 入口。
 - 决定：状态机 `withdraw` 入口对 reason 统一 `trim().slice(0, 500)`（RPC 与工具双入口同保护，与 RPC zod 对齐，截断不报错），测试断言工具路径 600 字输入落 500 字留痕。
 - 已更新的文档：本条；PROGRESS.md T9 节。
+
+### DEV-150 分身契约的 additive 扩展（setAway client / avatarRevoked targetClientId）
+
+- 状态：已落实
+- 阶段：团队服务器 T10（分支 team-server，2026-11-21）
+- 是否阻塞：否
+- 问题：62.06 的分身运行端语义需要「哪条连接设置的离开」与「定向撤销哪条连接」，但 T6 冻结的 `team.presence.setAway` 契约没有连接身份字段（avatarSetBy 可能记为 null，运行端判定退化），`team.avatarRevoked` 也只能成员级广播（会误投同成员其它连接）。
+- 影响：shared `team/methods.ts`（setAway 增可选 `client`，D119/D121 同形）、shared `team/events.ts`（avatarRevoked 增可选 `targetClientId`）、`identity-binding.ts` CLIENT_BOUND_METHODS 增 setAway、member-hub 广播路径增连接级例外。
+- 决定：两处均为**可选字段 additive 扩展**——旧客户端零感知（不带 client = 旧行为；不带 targetClientId = 原成员级广播）；运行端判定对 deviceId null 一律 fail-closed（origin='avatar' 全拒）。按 D121 先例登记为契约注记。
+- 已更新的文档：本条；PROGRESS.md T10 节。
+
+### DEV-151 管理台新包依赖与产物裁决
+
+- 状态：已落实（依赖）/ 已决定（产物与 allowBuilds）
+- 阶段：团队服务器 T10（分支 team-server，2026-11-21）
+- 是否阻塞：否
+- 问题：① 01-conventions 要求大依赖登记——新包 `@kepcup/team-console` 引入 React 全家桶与 Astryx 设计系统；② `@astryxdesign/core` 带 postinstall（打印 astryx init 提示），pnpm v11 不批准会 ERR_PNPM_IGNORED_BUILDS 破坏 `pnpm -r build`——allowBuilds 登记超出任务书名义文件清单；③ 管理台构建产物（约 840KB）是否随分支提交。
+- 影响：`apps/team-console/package.json`、`pnpm-lock.yaml`、`pnpm-workspace.yaml`、`.gitignore`。
+- 决定：① 依赖**精确锁定**（react/react-dom 19.3.1、vite 7.3.6 与仓库一致、@vitejs/plugin-react **5.1.4**（vite 7 peer 匹配线，6.x 强制 vite 8；样式走 StyleX babel，仅用其 JSX 运行时与 fast refresh）、@astryxdesign/core / theme-neutral 0.7.16、@stylexjs/stylex 0.19.2；未装无作用域 `astryx`）；private / UNLICENSED / 仅存 team-server 分支不进 main。② allowBuilds 登记经实读核实（postinstall 一次性提示、`main().catch(()=>{})` 永不失败、dist 随包发布）——**维持**；升级该包时需复核 postinstall 仍满足承诺。③ **dist 不入库**（`.gitignore` 增 `apps/team-console/dist/`）：开发/验收现场 `pnpm --filter @kepcup/team-console build` 产出，Docker 镜像内构建，team-server `--console-dir` 缺省指向 `../team-console/dist`。另：`team.memory.share` 入参为 `memoryId`（T9 冻结契约）而任务书写作 `itemId`——命名口径差异非语义分歧，console revoke-share 兼容两种审计形状。
+- 已更新的文档：本条；PROGRESS.md T10 节。

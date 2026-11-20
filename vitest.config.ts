@@ -83,6 +83,15 @@ export default defineConfig({
           ...(process.platform === 'win32' ? { testTimeout: 30_000, hookTimeout: 60_000 } : {}),
         },
       },
+      // T10-B 管理台（D133）：纯逻辑模块（API 客户端 / 表单校验 / 表格转换）的
+      // node 环境单测。别名让测试直接用 src 源码（与仓库其它项目的 src 直连模式
+      // 一致）；UI 交互验收进 T11 人工清单，这里没有 DOM 环境。
+      {
+        test: {
+          name: 'team-console',
+          include: ['apps/team-console/test/**/*.test.ts'],
+        },
+      },
       // D73 P3: sub-registry Worker (infra/cloudflare/registry), tested against in-memory SQLite.
       {
         test: { name: 'infra-registry', include: ['infra/cloudflare/registry/test/**/*.test.ts'] },

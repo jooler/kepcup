@@ -5,6 +5,7 @@
   import { connections, serverHashOf, teamSourceId, type SourceId } from '$lib/rpc/connections.svelte';
   import { teamSettings } from './team-settings.svelte';
   import { awayState } from './away-state.svelte';
+  import { avatarRuntime } from './avatar-runtime.svelte';
   import { profilePush } from './profile-push.svelte';
   import { teamContext } from './team-context.svelte';
   import { teamCacheSync } from './cache-sync.svelte';
@@ -123,14 +124,76 @@
   let awayNote = $state('');
 
   async function toggleAway(entry: SectionSource, away: boolean): Promise<void> {
-    const ok = await awayState.setAway(entry.source, away, awayNote);
+    const ok = await awayState.setAway(entry.source, away, awayNote, {
+      enabled: avatarEnabled(entry),
+      botId: avatarBotId(entry),
+    });
     if (ok) {
-      toast.success(away ? t('team.awaySetToast') : t('team.awayCleared'));
+      // Bot 解析失败时按「不开分身」降级：toast 以运行端是否真激活为准。
+      const runtimeActive = away && avatarRuntime.isActive(entry.source);
+      toast.success(
+        away
+          ? runtimeActive
+            ? t('team.awaySetAvatarToast', { bot: avatarBotLabel(entry) })
+            : t('team.awaySetToast')
+          : t('team.awayCleared'),
+      );
       awayNote = '';
     } else {
       toast.error(t('team.awayFailed'));
     }
   }
+
+  // --- 分身开关（T10：桌面融合视图启用；web 端不可用——无本机大脑） --------------
+
+  let avatarDrafts = $state<Record<string, { enabled: boolean; botId: string }>>({});
+
+  function avatarDraft(entry: SectionSource) {
+    const existing = avatarDrafts[entry.key];
+    if (existing !== undefined) return existing;
+    const hash = serverHashOf(entry.source);
+    const memberId = connections.get(entry.source).memberId ?? '';
+    const draft = {
+      enabled: false,
+      botId: hash !== null ? avatarRuntime.preferredBotId(hash, memberId) : '',
+    };
+    avatarDrafts = { ...avatarDrafts, [entry.key]: draft };
+    return draft;
+  }
+
+  function avatarEnabled(entry: SectionSource): boolean {
+    return avatarDraft(entry).enabled;
+  }
+
+  function avatarBotId(entry: SectionSource): string {
+    return avatarDraft(entry).botId;
+  }
+
+  function avatarBotLabel(entry: SectionSource): string {
+    const botId = avatarBotId(entry);
+    const bot = avatarRuntime.localBots.find((option) => option.id === botId);
+    return bot?.name ?? t('team.avatarDefaultButler');
+  }
+
+  function setAvatarEnabled(entry: SectionSource, enabled: boolean): void {
+    const draft = avatarDraft(entry);
+    avatarDrafts = { ...avatarDrafts, [entry.key]: { ...draft, enabled } };
+  }
+
+  function setAvatarBot(entry: SectionSource, botId: string): void {
+    const draft = avatarDraft(entry);
+    avatarDrafts = { ...avatarDrafts, [entry.key]: { ...draft, botId } };
+    const hash = serverHashOf(entry.source);
+    const memberId = connections.get(entry.source).memberId ?? '';
+    if (hash !== null) avatarRuntime.setPreferredBot(hash, memberId, botId);
+  }
+
+  // 本机 Bot 清单（分身选择器；桌面打开设置分区时懒加载一次）。
+  $effect(() => {
+    if (!desktop) return;
+    if (avatarRuntime.localBots.length > 0) return;
+    void avatarRuntime.loadLocalBots();
+  });
 
   function usageRows(entry: SectionSource): Array<{ day: string; total: string }> {
     const summary = teamSettings.usageBySource[entry.key];
@@ -275,16 +338,43 @@
             >
               {t('team.awaySet')}
             </Button>
-            <!-- 分身开关 T10 前不可用（置灰 + tooltip 说明）。 -->
-            <span class="relative inline-flex" title={t('team.avatarDisabledHint')}>
+            <!-- 分身开关（T10）：仅桌面融合视图可用（本机大脑代回）；web 端不可用。 -->
+            {#if desktop && serverHashOf(entry.source) !== null}
               <label
-                class="pointer-events-none flex cursor-not-allowed items-center gap-1.5 text-xs text-muted-foreground opacity-50"
+                class="flex items-center gap-1.5 text-xs text-muted-foreground"
                 data-testid={`team-avatar-toggle-${entry.key}`}
               >
-                <input type="checkbox" disabled checked={false} />
+                <input
+                  type="checkbox"
+                  checked={avatarEnabled(entry)}
+                  onchange={(event) => setAvatarEnabled(entry, (event.currentTarget as HTMLInputElement).checked)}
+                />
                 {t('team.avatarToggle')}
               </label>
-            </span>
+              {#if avatarEnabled(entry)}
+                <select
+                  class="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                  value={avatarBotId(entry)}
+                  onchange={(event) => setAvatarBot(entry, String((event.currentTarget as HTMLSelectElement).value))}
+                  data-testid={`team-avatar-bot-${entry.key}`}
+                >
+                  <option value="">{t('team.avatarDefaultButler')}</option>
+                  {#each avatarRuntime.localBots.filter((option) => !option.isButler) as bot (bot.id)}
+                    <option value={bot.id}>{bot.name}</option>
+                  {/each}
+                </select>
+              {/if}
+            {:else}
+              <span class="relative inline-flex" title={t('team.avatarDisabledHint')}>
+                <label
+                  class="pointer-events-none flex cursor-not-allowed items-center gap-1.5 text-xs text-muted-foreground opacity-50"
+                  data-testid={`team-avatar-toggle-${entry.key}`}
+                >
+                  <input type="checkbox" disabled checked={false} />
+                  {t('team.avatarToggle')}
+                </label>
+              </span>
+            {/if}
           </div>
         {/if}
       </div>

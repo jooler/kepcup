@@ -1275,6 +1275,32 @@ export const botsDeletionPreviewOutputSchema = z.object({
   /** Projects this bot leads (D92 T1a): the lead must be replaced first. */
   ledProjects: z.array(z.object({ id: z.string(), title: z.string().nullable() })),
 });
+
+/**
+ * 代答场景的一次性轻量生成（T10 / 62.06 §3）：宿主给一段对话记录与要求，让
+ * 指定 Bot 以自己的人设产出一条不调用任何工具的回复文本。通用能力——任何宿主
+ * 都可用（分身代回只是其中一种调用方），core 不解释调用场景。
+ *
+ * - `transcript` ≤ 50 条、每条 ≤ 4000 字：足够覆盖一次代答的上下文，同时把
+ *   单次调用的上下文体量压在轻量模型预算内；
+ * - `instructions` ≤ 2000 字：调用方对本轮生成的要求（口吻 / 边界），core 原样
+ *   注入，不追加任何本机数据（记忆 / 画像原文都不注入——调用方自担内容边界）。
+ */
+export const botsComposeReplyTranscriptEntrySchema = z.strictObject({
+  /** 说话者标签：建议用人名（如成员 / 同事的显示名）或 'user' / 'assistant'。 */
+  speaker: z.string().min(1).max(120),
+  /** 该说话者的一轮发言原文。 */
+  text: z.string().min(1).max(4000),
+});
+export const botsComposeReplyInputSchema = z.strictObject({
+  botId: z.string().min(1),
+  transcript: z.array(botsComposeReplyTranscriptEntrySchema).min(1).max(50),
+  instructions: z.string().min(1).max(2000),
+});
+export const botsComposeReplyOutputSchema = z.strictObject({
+  /** 生成的回复文本（模型原文；调用方负责长度裁剪与发送）。 */
+  text: z.string(),
+});
 export const interviewStartOutputSchema = z.object({
   conversationId: z.string().min(1),
 });
@@ -3023,6 +3049,11 @@ export const rpcMethodSchemas = {
   'user.avatar.data': { input: userAvatarDataInputSchema, output: userAvatarDataOutputSchema },
   'bots.delete': { input: botIdInputSchema, output: okOutput },
   'bots.deletionPreview': { input: botIdInputSchema, output: botsDeletionPreviewOutputSchema },
+  /** 代答场景的一次性无工具轻量生成（T10；模型链与记账同 light-judgement 先例）。 */
+  'bots.composeReply': {
+    input: botsComposeReplyInputSchema,
+    output: botsComposeReplyOutputSchema,
+  },
   /** 模板导出/导入（docs/design/48-bot-template-export.md）：导出前摘要。 */
   'bots.templatePreview': {
     input: botsTemplatePreviewInputSchema,
@@ -3922,6 +3953,7 @@ export const APP_METHODS = [
   'bots.accent.color',
   'bots.delete',
   'bots.deletionPreview',
+  'bots.composeReply',
   'bots.templatePreview',
   'bots.templateExport',
   'bots.templateInspect',

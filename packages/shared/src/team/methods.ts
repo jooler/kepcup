@@ -199,6 +199,11 @@ export const teamRpcMethodSchemas = {
    * derived presence and clears the note / avatar flag. The server records the
    * setting connection (T10's single avatar runtime); the avatar itself only
    * stores `botName` and rides the `member.presenceChanged` broadcast.
+   *
+   * `client`（T10，可选附加字段，D121 同款）：带上后服务端把该连接绑定的
+   * clientId 记为分身运行端（avatarSetBy）——T10 的单一运行端判定（接管撤销、
+   * origin='avatar' 代发校验）以它为准；不带时 avatarSetBy 为该连接当下已绑
+   * 定的 clientId（可能为 null，运行端判定随之退化为「未知」）。
    */
   'team.presence.setAway': {
     input: z.strictObject({
@@ -207,6 +212,8 @@ export const teamRpcMethodSchemas = {
       note: z.string().max(200).optional(),
       /** Digital-avatar flag (62.06 §2 thin contract): only the bot NAME lives here. */
       avatar: z.strictObject({ botName: z.string().min(1).max(120) }).optional(),
+      /** Caller's client identity (D119/D121 shape); binds the avatar runtime end. */
+      client: z.object({ id: z.string().min(1), name: z.string().optional() }).optional(),
     }),
     output: okOutput,
   },

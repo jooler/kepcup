@@ -12,6 +12,10 @@ allowBuilds:
   electron: true
   esbuild: true
   better-sqlite3-multiple-ciphers: true
+  # T10-B 管理台依赖 @astryxdesign/core：postinstall 只打印一次 astryx init 提示
+  # （非交互、永不失败），dist 已随包发布；不批准会让 pnpm run 的 deps 检查
+  # 报 ERR_PNPM_IGNORED_BUILDS。
+  '@astryxdesign/core': true
   # Wrangler (apps/website) downloads the local workers runtime in postinstall.
   workerd: true
   # Transitive deps of @earendil-works/pi-ai (postinstall only, no native code)

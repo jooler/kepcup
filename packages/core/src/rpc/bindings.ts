@@ -69,6 +69,8 @@ import {
   userAvatarDataOutputSchema,
   botIdInputSchema,
   botsDeletionPreviewOutputSchema,
+  botsComposeReplyInputSchema,
+  botsComposeReplyOutputSchema,
   botsTemplatePreviewInputSchema,
   botsTemplatePreviewOutputSchema,
   botsTemplateExportInputSchema,
@@ -360,6 +362,7 @@ import type { MemoService } from '../workbench/memo-service.js';
 import type { TodoService } from '../workbench/todo-service.js';
 import type { BoardService } from '../board/board-service.js';
 import { currentCaller } from './caller.js';
+import { composeBotReply } from '../agent/compose-reply.js';
 import type { RpcMethodSpec } from './server.js';
 import type { WslStatusReport } from '../sandbox/wsl/setup.js';
 import type { LimaStatusReport } from '../sandbox/lima/setup.js';
@@ -1213,6 +1216,27 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       botIdInputSchema,
       botsDeletionPreviewOutputSchema,
       async (input) => domain.lifecycle.deletionPreview(input.id),
+    ),
+    // T10 bots.composeReply（代答场景的一次性无工具轻量生成）：run + 记账同
+    // light-judgement 先例（usage_ledger.run_id 非空、conversation_id NULL）；
+    // 只注入该 Bot 的人设与调用方 instructions——不注入本机记忆与画像原文。
+    'bots.composeReply': method(
+      botsComposeReplyInputSchema,
+      botsComposeReplyOutputSchema,
+      async (input) => {
+        const bot = domain.bots.get(input.botId);
+        if (bot === null) throw new AppError('NOT_FOUND', `Bot ${input.botId} 不存在`);
+        const route = services.llmRouter?.resolveForBot(input.botId, 'triage') ?? null;
+        return composeBotReply(
+          {
+            route,
+            runs: domain.runs,
+            usage: domain.usage,
+            logger: services.logger,
+          },
+          { bot, transcript: input.transcript, instructions: input.instructions },
+        );
+      },
     ),
     // D48 Bot 模板（docs/design/48-bot-template-export.md）：导出预览 / 写文件 /
     // 导入预览（sha256 防确认后替换，同 mcpb 模式）/ 从模板新建 Bot。

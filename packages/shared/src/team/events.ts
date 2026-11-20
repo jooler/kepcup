@@ -41,6 +41,15 @@ export const teamEventSchemas = {
   /**
    * P2 离开态分身 (62.06): the member's avatar bot was revoked (member came
    * back or an admin disabled it); `botId` absent when no bot was ever spawned.
+   *
+   * `targetClientId`（T10，可选附加字段）表达「连接级定向」：携带时该事件只投递
+   * 给该成员上绑定此 clientId 的那条连接（被撤销的前一运行端）——hub 的广播
+   * 路径对它走连接级例外，其余连接（含同成员其它连接）不下发；缺省时按普通
+   * 团队事件向全部成员扇出（兼容既有广播语义）。
    */
-  'team.avatarRevoked': z.strictObject({ memberId: z.string().min(1), botId: z.string().min(1).optional() }),
+  'team.avatarRevoked': z.strictObject({
+    memberId: z.string().min(1),
+    botId: z.string().min(1).optional(),
+    targetClientId: z.string().min(1).optional(),
+  }),
 } satisfies Record<TeamEventName, z.ZodTypeAny>;

@@ -37,7 +37,7 @@ import type { RunIdentity } from '../agent/types.js';
 import type { BotProfile } from '@kepcup/shared';
 import { profileChangeApprovalPayloadSchema } from '@kepcup/shared';
 import { MemoryDbManager } from './manager.js';
-import type { MemoryStore } from './store.js';
+import type { MemoryStore, ScopedMemoryItem } from './store.js';
 import { ProfileStore } from './profile-store.js';
 import { EMBEDDING_MODEL_ID, GatewayEmbedder, LocalEmbedder, type Embedder } from './embedder.js';
 import { EMBEDDING_MODEL_VERSION } from '../env/catalog.js';
@@ -765,6 +765,16 @@ export class MemoryService {
     return this.storeFor(botId).getItem(id);
   }
 
+  /**
+   * One memory item WITH the C12 source field (T10 memory-share eligibility:
+   * the host binding layer reads `sourcePrincipalId` to check who may change
+   * the entry's scope).
+   */
+  getScopedItemFor(botId: string, id: string): ScopedMemoryItem | null {
+    if (!this.#manager.exists(botId)) return null;
+    return this.storeFor(botId).getItem(id);
+  }
+
   #emitCommitmentCreated(botId: string, conversationId: string | null, item: MemoryItem): void {
     if (item.kind !== 'commitment' || item.dueAt === null) return;
     this.#deps.publish?.('memory.commitment_created', {
@@ -1263,6 +1273,20 @@ export class MemoryService {
     if (item === null) throw new AppError('NOT_FOUND', `记忆条目 ${id} 不存在`);
     store.retract(id);
     this.#emitCommitmentInvalidated(botId, item);
+  }
+
+  /**
+   * Host-managed entry scope (C12 sourcePrincipalId, T10): set / clear one
+   * entry's source principal — `null` = the shared bucket (visible in every
+   * retrieval audience). Core has no team semantics: this only manages the
+   * generic source field ("the host administers who can see the entry");
+   * eligibility of the caller is the host binding layer's job.
+   */
+  setSource(botId: string, id: string, sourcePrincipalId: string | null): MemoryItem {
+    if (!this.#manager.exists(botId)) throw new AppError('NOT_FOUND', `记忆条目 ${id} 不存在`);
+    const store = this.storeFor(botId);
+    if (store.getItem(id) === null) throw new AppError('NOT_FOUND', `记忆条目 ${id} 不存在`);
+    return store.setSource(id, sourcePrincipalId);
   }
 
   // --- D88 asset handover (docs/design/37 §3.1) ---------------------------------

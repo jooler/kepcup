@@ -125,4 +125,12 @@ export default tseslint.config(
       'no-console': 'off',
     },
   },
+  {
+    // T10-B 管理台（D133）：对齐 apps/server 先例放开 no-console（新应用；
+    // 服务端日志与运维排查输出不属于桌面 renderer 的约束域）。
+    files: ['apps/team-console/src/**', 'apps/team-console/test/**'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
 );

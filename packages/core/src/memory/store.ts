@@ -313,6 +313,20 @@ export class MemoryStore {
     return this.getItem(id)!;
   }
 
+  /**
+   * Host-managed entry scope (C12 sourcePrincipalId; T10): set / clear the
+   * entry's source principal — `null` moves the entry to the shared bucket
+   * (the retrieval audience filter passes shared entries everywhere). The
+   * vector row is keyed by item id and reads the source back on join, so no
+   * vec-table write is needed here.
+   */
+  setSource(id: string, sourcePrincipalId: string | null): ScopedMemoryItem {
+    this.#db
+      .prepare('update memory_items set source_principal_id = ?, updated_at = ? where id = ?')
+      .run(sourcePrincipalId, this.#clock(), id);
+    return this.getItem(id)!;
+  }
+
   /** Only refreshes updated_at (similarity dedupe hit). */
   touch(id: string): void {
     this.#db.prepare('update memory_items set updated_at = ? where id = ?').run(this.#clock(), id);

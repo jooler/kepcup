@@ -5,6 +5,7 @@
   import { core } from '$lib/rpc/client.svelte';
   import { connections } from '$lib/rpc/connections.svelte';
   import { teamSettings } from '$lib/features/team/team-settings.svelte';
+  import { avatarRuntime } from '$lib/features/team/avatar-runtime.svelte';
   import { profilePush } from '$lib/features/team/profile-push.svelte';
   import ProfilePushDialog from '$lib/features/team/ProfilePushDialog.svelte';
   import { chat } from '$lib/stores/chat.svelte';
@@ -77,6 +78,8 @@
     void core.start();
     // T7 融合视图：多来源连接注册表（web 端点 / 未配置团队服务器时休眠）。
     connections.start();
+    // T10 分身运行时（桌面端点才注册；web / 未连接休眠——零事件订阅）。
+    avatarRuntime.start();
     teamSettings.start();
     // 画像上行（T7）：首次团队连接成功的确认清单（每日至多一次）。
     profilePush.start();
