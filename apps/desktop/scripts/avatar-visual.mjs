@@ -123,7 +123,7 @@ async function main() {
   await page.waitForTimeout(500);
   await page.locator('[data-testid="bot-bio-edit"]').click();
   await page.locator('[data-testid="bot-bio-inline-input"]').fill('可靠、务实，重视承诺');
-  await page.keyboard.press('Enter');
+  await page.keyboard.press('ControlOrMeta+Enter');
   await page.waitForTimeout(500);
   await shot('08-name-bio-saved');
 
