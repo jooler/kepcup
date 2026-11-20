@@ -21,6 +21,7 @@
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import MemberAvatar from '$lib/features/team/MemberAvatar.svelte';
+  import { connections } from '$lib/rpc/connections.svelte';
   import { teamContext } from '$lib/features/team/team-context.svelte';
   import MessageBody from './MessageBody.svelte';
   import { avatarOriginBotName, exchangeMessageShape, teamMessageSide } from './exchange-message';
@@ -108,10 +109,14 @@
   /**
    * 团队上下文的用户消息分侧（T5）：按 senderPrincipalId 判左右（自己在右）。
    * 非团队上下文恒 null——userSide 保持既有 senderType 判定，行为不变。
+   * T7 桌面融合视图：团队来源会话用该来源的活跃成员判自己。
    */
-  const teamSide = $derived(
-    teamMessageSide(teamContext.active, teamContext.member?.id ?? null, message),
-  );
+  const teamSelf = $derived.by(() => {
+    if (session.source !== 'local') return connections.get(session.source).memberId;
+    return teamContext.member?.id ?? null;
+  });
+  const teamActive = $derived(teamContext.active || session.source !== 'local');
+  const teamSide = $derived(teamMessageSide(teamActive, teamSelf, message));
   /** 布局用的「用户侧」（行方向 / 对齐 / 操作钮位置）：交换会话的发起方也算。 */
   const userSide = $derived(
     exchangeShape?.side === 'issuer' || (teamSide === null && isUser) || teamSide?.side === 'self',
@@ -121,7 +126,9 @@
   const teamPeerMember = $derived(
     teamPeer === null || teamPeer.principalId === null
       ? null
-      : teamContext.memberById(teamPeer.principalId),
+      : session.source === 'local'
+        ? teamContext.memberById(teamPeer.principalId)
+        : contacts.teamMemberById(session.source, teamPeer.principalId),
   );
   const teamPeerName = $derived(
     teamPeer === null

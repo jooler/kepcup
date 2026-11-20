@@ -42,6 +42,7 @@ export const TEAM_RPC_METHODS = [
   'team.dm.open',
   'team.projects.addMembers',
   'team.projects.removeMember',
+  'team.projects.roster',
   // P1 (T6)
   'team.presence.setAway',
   'team.profile.push',
@@ -95,6 +96,19 @@ export const teamResolutionViewSchema = z.strictObject({
 });
 export type TeamResolutionView = z.infer<typeof teamResolutionViewSchema>;
 
+// --- T7 roster increment（C15 名册行的唯一读出口） -----------------------------
+
+/**
+ * One human member of a project conversation (`team.projects.roster`, T7):
+ * the `team.members.list` card shape (presence included) plus the roster role.
+ * LEFT members are not listed — the server keeps their rows for usage-split
+ * history, the panel shows the ACTIVE roster only.
+ */
+export const teamProjectRosterMemberSchema = teamMemberSchema.extend({
+  role: z.enum(['lead', 'member']),
+});
+export type TeamProjectRosterMember = z.infer<typeof teamProjectRosterMemberSchema>;
+
 export const teamRpcMethodSchemas = {
   // --- P0 (implemented in T4) -------------------------------------------------
 
@@ -133,6 +147,25 @@ export const teamRpcMethodSchemas = {
       memberId: z.string().min(1),
     }),
     output: okOutput,
+  },
+
+  /**
+   * Project human roster read (T7 increment): the C15 roster rows
+   * (`conversation_principals`) were not exposed by any earlier team method —
+   * `conversations.members` lists Bot members only, so the desktop member panel
+   * had to derive the roster from message senders (wrong for a fresh project
+   * where nobody has spoken, or for a member added moments ago). Caller must be
+   * an enrolled member (NOT_FOUND otherwise — same no-existence-leak answer as
+   * the sibling `team.projects.*` writes).
+   */
+  'team.projects.roster': {
+    input: z.strictObject({ conversationId: z.string().min(1) }),
+    output: z.strictObject({
+      /** ACTIVE human principals with their card + roster role (lead first). */
+      members: z.array(teamProjectRosterMemberSchema),
+      /** The human project lead's member id; null = no lead designated. */
+      leadMemberId: z.string().nullable(),
+    }),
   },
 
   // --- P1 (implemented in T6) -------------------------------------------------

@@ -1,6 +1,6 @@
 import { isAbsolute, join, resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { readFile as fsReadFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import {
   app,
@@ -12,10 +12,12 @@ import {
   nativeTheme,
   powerMonitor,
   powerSaveBlocker,
+  safeStorage,
   session,
   shell,
   systemPreferences,
   type BrowserWindow,
+  type MessagePortMain,
 } from 'electron';
 import { CORE_SHUTDOWN_TIMEOUT_MS, type UpdateStatusPayload } from '@kepcup/shared';
 import { APP_ID, APP_NAME, appIconPath } from './app-brand';
@@ -39,6 +41,8 @@ import { CoreHost, type CoreProcessState } from './core-host';
 import { createMainWindow } from './window';
 import { resolveRemoteMode, type RemoteModeTarget } from './remote-mode';
 import { openTeamServer } from './team-window';
+import { TeamServers, writeTeamServersState } from './team-servers';
+import { openTeamSocket } from './team-bridge';
 import { installProductionAppMenu } from './devtools';
 import { WidgetWindowHost } from './widget-window';
 import { createWidgetWindow } from './widget-window-electron';
@@ -93,6 +97,11 @@ function applyTrayRemote(): void {
 let lastUpdateStatus: UpdateStatusPayload = { phase: 'idle' };
 /** D94: 分享协调器（App Group inbox → core inbox → share.consume）。 */
 let shareCoordinator: ShareIntakeCoordinator | null = null;
+/**
+ * T7 融合视图：团队服务器凭据与 WS 桥（team-servers.ts / team-bridge.ts）。懒装配
+ * 在 bootstrap 里——未配置团队服务器时零副作用（无文件 / 无连接 / 无事件）。
+ */
+let teamServersHost: TeamServers | null = null;
 /** 冷启动时先到的 `kepcup://` URL：core 就绪后再消费。 */
 const pendingShareUrls: string[] = [];
 /**
@@ -139,6 +148,8 @@ function beginQuit(): void {
   widgetPreviewHost?.dispose();
   // 组件窗口（widget-window.md §4.2）：退出即全部关闭（Runtime 卸载即停，无后台遗留）。
   widgetWindows?.closeAll();
+  // T7 融合视图：退出前断开全部团队连接（服务器侧收口 last_seen；不产生 UI 事件）。
+  teamServersHost?.shutdown();
   // D105 / P-B2：计算机操控 sidecar 回收（其 disconnect 处理会终止 CuaDriver
   // daemon）；host-shutdown-state 先立标志，权限引导等在途流程不再拉起新进程。
   markHostShuttingDown();
@@ -208,6 +219,9 @@ function ensureWindow(): BrowserWindow {
   });
   window.webContents.on('did-finish-load', () => {
     sendAppPort();
+    // T7 融合视图：页面重载后旧的团队 MessagePort 已随页面销毁，为每条活连接
+    // 换新端口对并补发（core-port 的 sendAppPort 同款语义；WS 连接不断）。
+    teamServersHost?.refreshPorts();
     if (pendingRemotePairingOpen) {
       pendingRemotePairingOpen = false;
       window?.webContents.send('open-remote-pairing');
@@ -470,6 +484,43 @@ function bootstrap(): void {
     if (typeof url !== 'string') throw new Error('invalid url');
     openTeamServer(url);
     return { ok: true as const };
+  });
+
+  // T7 步骤 1:融合视图的凭据与多账号管理 + WS 桥(team-servers.ts / team-bridge.ts)。
+  // 懒初始化在模块内:状态文件只在首个 add/login 时创建,连接只在显式 connect 时
+  // 建立——未配置团队服务器时主进程行为零变化(无文件、无连接、无事件)。token 经
+  // safeStorage 加密落 <userData>/team-servers.json,永不出主进程;safeStorage 不可
+  // 用时拒绝保存(DEV-143)。这里只做装配(注入 electron 能力);ipc handlers 注册在
+  // registerIpc(channel 约定 platform:teamServers:<verb>)。
+  teamServersHost = new TeamServers({
+    statePath: () => join(app.getPath('userData'), 'team-servers.json'),
+    safeStorage,
+    fetch,
+    readFile: async (path) => {
+      try {
+        return await fsReadFile(path, 'utf8');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+        throw error;
+      }
+    },
+    writeFile: writeTeamServersState,
+    createChannel: () => new MessageChannelMain(),
+    postPort: (serverHash, port) => {
+      // BridgePortMain 的结构子集 → Electron 端口（真实 MessagePortMain，见 createChannel）。
+      window?.webContents.postMessage('team-port', { serverHash }, [port as MessagePortMain]);
+    },
+    onChanged: () => {
+      window?.webContents.send('team-servers:changed');
+    },
+    openSocket: openTeamSocket,
+    log: (message, error) => {
+      const detail = error instanceof Error ? ` — ${error.message}` : (error ?? '');
+      console.warn(`[team-servers] ${message}${detail}`);
+    },
+  });
+  teamServersHost.registerIpc((channel, handler) => {
+    ipcMain.handle(channel, handler);
   });
 
   // macOS 毛玻璃（window.ts 的 vibrancy）：原生材质跟着 nativeTheme 走，

@@ -8,7 +8,7 @@ import {
   type CollabDraftOwnerChangedPayload,
   type CollabLease,
 } from '@kepcup/shared';
-import { core } from '$lib/rpc/client.svelte';
+import { connections, type SourceId } from '$lib/rpc/connections.svelte';
 import { composerDrafts } from '$lib/features/chats/composer-drafts.svelte';
 import { EMPTY_COMPOSER_DOC } from '$lib/features/chats/composer-draft-persist';
 import { clientIdentity } from './client-identity';
@@ -78,6 +78,12 @@ export class SharedDraftStore {
   #conversationId: string | null = null;
   #source: Source | null = null;
   #started = false;
+  /**
+   * 本 store 服务的会话来源（T7 融合视图）：团队会话的草稿 RPC / 事件 / 身份
+   * 都走该团队连接；'local'（缺省）行为不变。
+   */
+  #origin: SourceId = 'local';
+  #subscribedOrigin: SourceId | null = null;
   #composing = false;
   #pending: LocalDraftPayload | null = null;
   #debounce: ReturnType<typeof setTimeout> | null = null;
@@ -88,21 +94,25 @@ export class SharedDraftStore {
   #readyResolve: (() => void) | null = null;
 
   start(): void {
-    if (this.#started) return;
+    if (this.#started && this.#subscribedOrigin === this.#origin) return;
     this.#started = true;
+    for (const unsubscribe of this.#unsubscribers) unsubscribe();
+    this.#unsubscribers = [];
+    const conn = this.#conn();
+    this.#subscribedOrigin = this.#origin;
     this.#unsubscribers.push(
-      core.onEvent('collab.draftChanged', (payload) => {
+      conn.onEvent('collab.draftChanged', (payload) => {
         this.#onChanged(payload as CollabDraftChangedPayload);
       }),
-      core.onEvent('collab.draftOwnerChanged', (payload) => {
+      conn.onEvent('collab.draftOwnerChanged', (payload) => {
         this.#onOwnerChanged(payload as CollabDraftOwnerChangedPayload);
       }),
-      core.onEvent('collab.draftCleared', (payload) => {
+      conn.onEvent('collab.draftCleared', (payload) => {
         this.#onCleared(payload as CollabDraftClearedPayload);
       }),
       // core 重启 / 重连后租约已随内存清空：所有非 idle 状态都重新 get + claim，
       // 否则被接管方会停在 reader 等一个不存在的 owner。
-      core.onEvent('core.status', (payload) => {
+      conn.onEvent('core.status', (payload) => {
         if ((payload as { status?: string }).status !== 'ready') return;
         if (this.state === 'idle') return;
         const conversationId = this.#conversationId;
@@ -112,7 +122,11 @@ export class SharedDraftStore {
     if (typeof window !== 'undefined') window.addEventListener('pagehide', this.#onPageHide);
   }
 
-  async enter(conversationId: string | null, source: Source): Promise<void> {
+  async enter(conversationId: string | null, source: Source, origin: SourceId = 'local'): Promise<void> {
+    if (this.#origin !== origin) {
+      this.#origin = origin;
+      this.start();
+    }
     if (this.#conversationId === conversationId && this.#source === source) return;
     const previous = this.#conversationId;
     if (previous !== null && this.state === 'owner') this.#releaseLease(previous);
@@ -153,6 +167,14 @@ export class SharedDraftStore {
     return this.#ready;
   }
 
+  #conn(): ReturnType<typeof connections.get> {
+    return connections.get(this.#origin);
+  }
+
+  #identity(): { id: string; name: string; connectionId: string } {
+    return this.#origin === 'local' ? clientIdentity : this.#conn().clientIdentity;
+  }
+
   #resolveReady(): void {
     this.#readyResolve?.();
     this.#readyResolve = null;
@@ -170,6 +192,7 @@ export class SharedDraftStore {
     const conversationId = this.#conversationId;
     if (conversationId !== null && this.state === 'owner') this.#releaseLease(conversationId);
     this.#started = false;
+    this.#subscribedOrigin = null;
     this.#stopTimers();
     for (const unsubscribe of this.#unsubscribers) unsubscribe();
     this.#unsubscribers = [];
@@ -201,11 +224,12 @@ export class SharedDraftStore {
     const conversationId = this.#conversationId;
     if (conversationId === null || this.state !== 'no-owner') return false;
     try {
-      const claimed = (await core.call('collab.draft.claim', {
+      const identity = this.#identity();
+      const claimed = (await this.#conn().call('collab.draft.claim', {
         conversationId,
-        clientId: clientIdentity.id,
-        clientName: clientIdentity.name,
-        connectionId: clientIdentity.connectionId,
+        clientId: identity.id,
+        clientName: identity.name,
+        connectionId: identity.connectionId,
       })) as DraftClaimResult;
       if (this.#conversationId !== conversationId) return false;
       this.#becomeOwner(claimed.lease);
@@ -223,11 +247,12 @@ export class SharedDraftStore {
     const conversationId = this.#conversationId;
     if (conversationId === null) return false;
     try {
-      const claimed = (await core.call('collab.draft.claim', {
+      const identity = this.#identity();
+      const claimed = (await this.#conn().call('collab.draft.claim', {
         conversationId,
-        clientId: clientIdentity.id,
-        clientName: clientIdentity.name,
-        connectionId: clientIdentity.connectionId,
+        clientId: identity.id,
+        clientName: identity.name,
+        connectionId: identity.connectionId,
         force: true,
       })) as DraftClaimResult;
       if (this.#conversationId !== conversationId) return false;
@@ -263,10 +288,11 @@ export class SharedDraftStore {
       }
     }
     try {
-      await core.call('collab.draft.send', {
+      const identity = this.#identity();
+      await this.#conn().call('collab.draft.send', {
         conversationId,
-        clientId: clientIdentity.id,
-        connectionId: clientIdentity.connectionId,
+        clientId: identity.id,
+        connectionId: identity.connectionId,
         baseVersion: this.version,
         text: input.text,
         ...(input.mentions !== undefined && input.mentions.length > 0
@@ -277,7 +303,7 @@ export class SharedDraftStore {
           ? { attachmentIds: input.attachmentIds }
           : {}),
         ...(input.voiceMode === true ? { voiceMode: true } : {}),
-        client: { id: clientIdentity.id, name: clientIdentity.name },
+        client: { id: identity.id, name: identity.name },
       });
       this.#stopRenew();
       this.#stopTimers();
@@ -301,14 +327,15 @@ export class SharedDraftStore {
 
   async #load(conversationId: string): Promise<void> {
     try {
-      const result = (await core.call('collab.draft.get', {
+      const identity = this.#identity();
+      const result = (await this.#conn().call('collab.draft.get', {
         conversationId,
       })) as DraftGetResult;
       if (this.#conversationId !== conversationId) return;
-      const selfConnection = clientIdentity.connectionId;
+      const selfConnection = identity.connectionId;
       const leaseHeldByOther =
         result.lease !== null &&
-        (result.lease.ownerClientId !== clientIdentity.id ||
+        (result.lease.ownerClientId !== identity.id ||
           ((result.lease.ownerConnectionId ?? null) !== null &&
             (result.lease.ownerConnectionId ?? null) !== selfConnection));
       const localVersion = composerDrafts.syncVersion(conversationId);
@@ -325,10 +352,10 @@ export class SharedDraftStore {
         return;
       }
 
-      const claimed = (await core.call('collab.draft.claim', {
+      const claimed = (await this.#conn().call('collab.draft.claim', {
         conversationId,
-        clientId: clientIdentity.id,
-        clientName: clientIdentity.name,
+        clientId: identity.id,
+        clientName: identity.name,
         connectionId: selfConnection,
       })) as DraftClaimResult;
       if (this.#conversationId !== conversationId) return;
@@ -353,11 +380,12 @@ export class SharedDraftStore {
 
   async #refreshLease(conversationId: string): Promise<void> {
     try {
-      const result = (await core.call('collab.draft.get', {
+      const identity = this.#identity();
+      const result = (await this.#conn().call('collab.draft.get', {
         conversationId,
       })) as DraftGetResult;
       if (this.#conversationId !== conversationId) return;
-      const selfConnection = clientIdentity.connectionId;
+      const selfConnection = identity.connectionId;
       if (result.lease === null) {
         this.state = 'no-owner';
         this.owner = null;
@@ -365,7 +393,7 @@ export class SharedDraftStore {
         return;
       }
       const mine =
-        result.lease.ownerClientId === clientIdentity.id &&
+        result.lease.ownerClientId === identity.id &&
         ((result.lease.ownerConnectionId ?? null) === null ||
           (result.lease.ownerConnectionId ?? null) === selfConnection);
       if (mine) {
@@ -398,10 +426,11 @@ export class SharedDraftStore {
     const pending = this.#pending;
     if (conversationId === null || pending === null || this.state !== 'owner') return;
     try {
-      const result = (await core.call('collab.draft.update', {
+      const identity = this.#identity();
+      const result = (await this.#conn().call('collab.draft.update', {
         conversationId,
-        clientId: clientIdentity.id,
-        connectionId: clientIdentity.connectionId,
+        clientId: identity.id,
+        connectionId: identity.connectionId,
         baseVersion: this.version,
         doc: pending.doc,
         mentions: pending.mentions,
@@ -478,12 +507,13 @@ export class SharedDraftStore {
     this.#renew = setInterval(() => {
       const conversationId = this.#conversationId;
       if (conversationId === null || this.state !== 'owner') return;
-      void core
+      const identity = this.#identity();
+      void this.#conn()
         .call('collab.draft.claim', {
           conversationId,
-          clientId: clientIdentity.id,
-          clientName: clientIdentity.name,
-          connectionId: clientIdentity.connectionId,
+          clientId: identity.id,
+          clientName: identity.name,
+          connectionId: identity.connectionId,
         })
         .then((result) => {
           if (this.#conversationId !== conversationId || this.state !== 'owner') return;
@@ -531,11 +561,12 @@ export class SharedDraftStore {
   }
 
   #releaseLease(conversationId: string): void {
-    void core
+    const identity = this.#identity();
+    void this.#conn()
       .call('collab.draft.release', {
         conversationId,
-        clientId: clientIdentity.id,
-        connectionId: clientIdentity.connectionId,
+        clientId: identity.id,
+        connectionId: identity.connectionId,
       })
       .catch(() => undefined);
   }
@@ -578,10 +609,11 @@ export class SharedDraftStore {
       return;
     }
     this.owner = owner;
+    const identity = this.#identity();
     const ownerConnectionId = payload.ownerConnectionId ?? null;
     const mine =
-      owner.id === clientIdentity.id &&
-      (ownerConnectionId === null || ownerConnectionId === clientIdentity.connectionId);
+      owner.id === identity.id &&
+      (ownerConnectionId === null || ownerConnectionId === identity.connectionId);
     if (mine) {
       if (this.state !== 'owner') {
         this.state = 'owner';
@@ -608,7 +640,7 @@ export class SharedDraftStore {
     this.revision += 1;
     composerDrafts.clearDocState(payload.conversationId);
     // 读端的附件 chip 是发送者的镜像；发送者自己由 commitSent 处理。
-    if (payload.byClientId !== clientIdentity.id) {
+    if (payload.byClientId !== this.#identity().id) {
       composerDrafts.clearUploads(payload.conversationId);
     }
   }

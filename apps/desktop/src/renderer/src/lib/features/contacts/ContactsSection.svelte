@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { Archive, MessagesSquare, RotateCcw, Trash2, type LucideIcon } from '@lucide/svelte';
+  import { Archive, MessagesSquare, Moon, RotateCcw, Trash2, type LucideIcon } from '@lucide/svelte';
   import type { Component } from 'svelte';
   import { t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import type { Bot, Conversation } from '@kepcup/shared';
   import { isArchivedConversation } from '@kepcup/shared';
-  import { contacts } from '$lib/stores/contacts.svelte';
+  import { contacts, type TeamSourceSlice } from '$lib/stores/contacts.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { shell } from '$lib/stores/shell.svelte';
   import { teamContext } from '$lib/features/team/team-context.svelte';
@@ -52,6 +52,23 @@
   const rosterMembers = $derived(
     contacts.members.filter((member) => member.id !== teamContext.member?.id),
   );
+
+  /**
+   * 桌面融合视图的团队名册切片（T7，62.04 §1 双源名册）：每个已融合服务器
+   * 一栏（与 web 端点 teamContext 的成员栏同一呈现，标题带服务器名）。
+   * 断开时切片 connected=false——栏显示「未连接」占位，不伪造数据。
+   */
+  const teamSlices = $derived(
+    Object.values(contacts.teamSources).sort((a, b) => a.serverHash.localeCompare(b.serverHash)),
+  );
+
+  /** 点团队来源的成员卡 → team.dm.open（经该来源连接）→ 打开会话。 */
+  async function openTeamDm(slice: TeamSourceSlice, memberId?: string): Promise<void> {
+    if (!slice.connected) return;
+    shell.closeSettings();
+    const ref = await contacts.openTeamDm(`team:${slice.serverHash}` as const, memberId);
+    if (ref !== null) await chat.select(ref);
+  }
 
   /** 最近在线的单行文本（离线成员卡副行；从未在线不渲染）。 */
   function lastSeenLabel(member: { lastSeenAt?: number }): string | null {
@@ -293,10 +310,26 @@
                       {lastSeenLabel(member)}
                     </p>
                   {:else if member.state !== 'offline'}
-                    <p class="truncate text-xs text-muted-foreground" data-testid="member-state">
-                      {member.state === 'online'
-                        ? t('team.memberOnline')
-                        : t('team.memberAway')}
+                    <!-- 离开态徽标（T7，62.06）：月牙 + 分身提示（分身开启时）。 -->
+                    <p
+                      class="flex items-center gap-1 truncate text-xs text-muted-foreground"
+                      data-testid="member-state"
+                    >
+                      {#if member.state === 'away'}
+                        <Moon
+                          class="size-3 shrink-0 text-amber-500"
+                          aria-hidden="true"
+                          data-testid="member-away-moon"
+                        />
+                      {/if}
+                      <span class="truncate">
+                        {member.state === 'online' ? t('team.memberOnline') : t('team.memberAway')}
+                      </span>
+                      {#if member.state === 'away' && member.avatarBotName !== undefined}
+                        <span class="truncate" data-testid="member-away-avatar-hint">
+                          {t('team.awayAvatarHandling', { bot: member.avatarBotName })}
+                        </span>
+                      {/if}
                     </p>
                   {/if}
                 </div>
@@ -307,6 +340,74 @@
       {/if}
     </section>
   {/if}
+
+  <!-- 桌面融合视图的团队名册（T7，62.04 §1 双源名册）：每个已融合服务器一
+       栏，与 web 成员栏同构；断开时「未连接」占位、不伪造数据。 -->
+  {#each teamSlices as slice (slice.serverHash)}
+    <section
+      class="space-y-3"
+      data-testid={`contacts-team-${slice.serverHash}`}
+      data-connected={slice.connected ? 'true' : 'false'}
+    >
+      <h3 class="text-sm font-medium">
+        {t('contacts.membersTitle', { server: slice.serverName || slice.serverHash })}
+      </h3>
+      {#if !slice.connected}
+        <div
+          class="flex h-16 items-center justify-center text-sm text-muted-foreground"
+          data-testid={`contacts-team-placeholder-${slice.serverHash}`}
+        >
+          {t('team.serverDisconnectedRows')}
+        </div>
+      {:else}
+        <ul class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {#each slice.members as member (member.id)}
+            {#if member.id !== slice.self?.id}
+              <li>
+                <button
+                  type="button"
+                  class="flex w-full items-center gap-3 rounded-xl border p-4 text-left transition-colors hover:bg-accent/40"
+                  onclick={() => void openTeamDm(slice, member.id)}
+                  data-testid={`team-member-card-${slice.serverHash}-${member.id}`}
+                >
+                  <MemberAvatar
+                    name={member.displayName}
+                    avatar={member.avatar ?? null}
+                    state={member.state}
+                    class="size-10"
+                  />
+                  <div class="min-w-0">
+                    <p class="truncate text-sm font-medium" data-testid="member-card-name">
+                      {member.displayName}
+                    </p>
+                    {#if member.state === 'offline' && member.lastSeenAt !== undefined}
+                      <p class="truncate text-xs text-muted-foreground">
+                        {t('team.lastSeen', { time: new Date(member.lastSeenAt).toLocaleString() })}
+                      </p>
+                    {:else if member.state !== 'offline'}
+                      <p class="flex items-center gap-1 truncate text-xs text-muted-foreground">
+                        {#if member.state === 'away'}
+                          <Moon class="size-3 shrink-0 text-amber-500" aria-hidden="true" />
+                        {/if}
+                        <span class="truncate">
+                          {member.state === 'online' ? t('team.memberOnline') : t('team.memberAway')}
+                        </span>
+                        {#if member.state === 'away' && member.avatarBotName !== undefined}
+                          <span class="truncate">
+                            {t('team.awayAvatarHandling', { bot: member.avatarBotName })}
+                          </span>
+                        {/if}
+                      </p>
+                    {/if}
+                  </div>
+                </button>
+              </li>
+            {/if}
+          {/each}
+        </ul>
+      {/if}
+    </section>
+  {/each}
 
   <!-- 项目组名册（含已从对话列表移除的） -->
   <section class="space-y-3" data-testid="contacts-projects-section">

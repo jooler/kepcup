@@ -50,6 +50,42 @@ declare global {
          * 兜底（旧构建 / 类型删漏时不炸）。
          */
         openTeamServer?(input: { url: string }): Promise<{ ok: true }>;
+        /**
+         * T7 融合视图：团队服务器凭据 / 多账号 / 桥接启停（钉死契约——A2 按此消费；
+         * 实现见 apps/desktop/src/main/team-servers.ts）。token / 密码永不出主进程：
+         * 任何返回值都不含凭据字段。错误约定：reject 的 Error.message 为
+         * `JSON.stringify({code, message, details?})`（code 取 shared ERROR_CODES；
+         * JSON.parse 失败按通用错误处理）。可选字段——web 垫片不提供（判空兜底）。
+         */
+        teamServers?: {
+          list(): Promise<
+            Array<{
+              serverHash: string;
+              url: string;
+              accounts: Array<{
+                memberId: string;
+                username: string;
+                displayName: string;
+                remembered: boolean;
+              }>;
+              activeMemberId: string | null;
+              status: 'idle' | 'connecting' | 'connected' | 'unauthenticated' | 'error';
+            }>
+          >;
+          add(input: { url: string }): Promise<{ serverHash: string }>;
+          remove(input: { serverHash: string }): Promise<{ ok: true }>;
+          login(input: {
+            serverHash: string;
+            username: string;
+            password: string;
+            remember: boolean;
+          }): Promise<{ member: { id: string; displayName: string } }>;
+          logout(input: { serverHash: string }): Promise<{ ok: true }>;
+          switchAccount(input: { serverHash: string; memberId: string }): Promise<{ ok: true }>;
+          connect(input: { serverHash: string }): Promise<{ ok: true }>;
+          disconnect(input: { serverHash: string }): Promise<{ ok: true }>;
+          onChanged(cb: () => void): () => void;
+        };
       };
       /** Syncs nativeTheme.themeSource (macOS vibrancy material follows the app theme). */
       setNativeThemeSource(mode: 'light' | 'dark' | 'system'): Promise<void>;

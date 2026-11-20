@@ -441,6 +441,74 @@ export type PlatformOpenTeamServerInput = z.infer<typeof platformOpenTeamServerI
 export const platformOpenTeamServerOutputSchema = z.object({ ok: z.literal(true) });
 export type PlatformOpenTeamServerOutput = z.infer<typeof platformOpenTeamServerOutputSchema>;
 
+// --- T7 桌面融合视图（62.08 §3 / T7 §2 凭据与多账号，PLATFORM_RPC_METHODS 契约）--
+// Desktop-only: the MAIN process owns team-server credentials (safeStorage 加密
+// 落 <userData>/team-servers.json) and the fusion WS bridge（web 端不实现——T5 的
+// 同源 web 上下文不经这些方法；core 也不实现）。渲染层经桌面 preload 桥调用。
+// token 永不出主进程：list 的输出没有 token 字段，也不存在把 token 交给渲染层的
+// 方法（含 remember=false 的会话内存 token）。
+
+/** T7：某服务器上曾登录过的成员账号（登录选择器数据，62.10 §4「微信式」）。 */
+export const teamServerAccountSchema = z.object({
+  memberId: z.string().min(1),
+  username: z.string(),
+  displayName: z.string(),
+  /** true = token 已加密落盘可跨重启使用；false = 仅本次会话（内存）持有。 */
+  remembered: z.boolean(),
+});
+export type TeamServerAccount = z.infer<typeof teamServerAccountSchema>;
+
+/** T7：桥接状态机（任何变化经 ipc 事件 team-servers:changed 通知渲染层）。 */
+export const teamServerStatusSchema = z.enum([
+  'idle',
+  'connecting',
+  'connected',
+  'unauthenticated',
+  'error',
+]);
+export type TeamServerStatus = z.infer<typeof teamServerStatusSchema>;
+
+/** T7：list() 的单条目（serverHash = sha256(url) 前 16 hex，同 remoteProfileHash）。 */
+export const teamServerEntrySchema = z.object({
+  serverHash: z.string().min(1),
+  /** Normalized origin + path（同 resolveRemoteMode 的清洗规则）。 */
+  url: z.string(),
+  accounts: z.array(teamServerAccountSchema),
+  /** 同一时刻每服务器只激活一个账号；null = 已登出 / 未登录。 */
+  activeMemberId: z.string().nullable(),
+  status: teamServerStatusSchema,
+});
+export type TeamServerEntry = z.infer<typeof teamServerEntrySchema>;
+
+export const platformTeamServersListOutputSchema = z.array(teamServerEntrySchema);
+export type PlatformTeamServersListOutput = z.infer<typeof platformTeamServersListOutputSchema>;
+
+export const platformTeamServersAddInputSchema = z.object({
+  /** Team server URL（http/https、无内嵌凭据；query / hash 由主进程剥离）。 */
+  url: z.string().min(1),
+});
+export const platformTeamServersAddOutputSchema = z.object({ serverHash: z.string().min(1) });
+
+export const platformTeamServersServerHashInputSchema = z.object({
+  serverHash: z.string().min(1),
+});
+
+export const platformTeamServersLoginInputSchema = z.object({
+  serverHash: z.string().min(1),
+  username: z.string().min(1),
+  password: z.string().min(1),
+  /** false = token 仅内存持有；safeStorage 不可用时主进程强制按 false 处理。 */
+  remember: z.boolean(),
+});
+export const platformTeamServersLoginOutputSchema = z.object({
+  member: z.object({ id: z.string().min(1), displayName: z.string() }),
+});
+
+export const platformTeamServersSwitchAccountInputSchema = z.object({
+  serverHash: z.string().min(1),
+  memberId: z.string().min(1),
+});
+
 // --- update gate (P13 任务 2, port B platform methods) ----------------------
 // The main process owns electron-updater; the core only answers "is anything
 // executing?" and cancels on explicit user confirmation. Never forced.
@@ -3218,6 +3286,41 @@ export const rpcMethodSchemas = {
     output: platformOpenTeamServerOutputSchema,
   },
 
+  // T7 桌面融合视图：凭据与多账号管理 + 桥接启停（桌面主进程实现，preload 桥到
+  // ipcMain；core / web 端不实现，名称登记在 PLATFORM_RPC_METHODS）。
+  'platform.teamServers.list': {
+    input: voidInput,
+    output: platformTeamServersListOutputSchema,
+  },
+  'platform.teamServers.add': {
+    input: platformTeamServersAddInputSchema,
+    output: platformTeamServersAddOutputSchema,
+  },
+  'platform.teamServers.remove': {
+    input: platformTeamServersServerHashInputSchema,
+    output: okOutput,
+  },
+  'platform.teamServers.login': {
+    input: platformTeamServersLoginInputSchema,
+    output: platformTeamServersLoginOutputSchema,
+  },
+  'platform.teamServers.logout': {
+    input: platformTeamServersServerHashInputSchema,
+    output: okOutput,
+  },
+  'platform.teamServers.switchAccount': {
+    input: platformTeamServersSwitchAccountInputSchema,
+    output: okOutput,
+  },
+  'platform.teamServers.connect': {
+    input: platformTeamServersServerHashInputSchema,
+    output: okOutput,
+  },
+  'platform.teamServers.disconnect': {
+    input: platformTeamServersServerHashInputSchema,
+    output: okOutput,
+  },
+
   // D96 远程遥控：全部 app 方法（本机与远程端点功能对等，同一 handlers）。
   'remote.status': { input: voidInput, output: remoteStatusOutputSchema },
   'remote.createPairing': { input: voidInput, output: remoteCreatePairingOutputSchema },
@@ -3904,6 +4007,15 @@ export const PLATFORM_RPC_METHODS: readonly RpcMethodName[] = [
   'share.consume',
   // T5 连接团队服务器（62.08 §3）：桌面主进程实现，core / web 端不实现。
   'platform.openTeamServer',
+  // T7 桌面融合视图：凭据 / 多账号 / 桥接启停（桌面主进程实现，同上）。
+  'platform.teamServers.list',
+  'platform.teamServers.add',
+  'platform.teamServers.remove',
+  'platform.teamServers.login',
+  'platform.teamServers.logout',
+  'platform.teamServers.switchAccount',
+  'platform.teamServers.connect',
+  'platform.teamServers.disconnect',
   // D96 远程遥控：托盘读状态 / 切开关 / 发起配对（主进程 → core，端口 B）。
   'remote.status',
   'remote.createPairing',

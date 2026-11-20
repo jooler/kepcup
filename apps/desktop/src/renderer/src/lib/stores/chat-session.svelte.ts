@@ -3,7 +3,12 @@ import { isArchivedConversation } from '@kepcup/shared';
 import { memberPreviewsOf } from './member-preview';
 import type { ComposerReplyRef } from '../features/chats/composer-draft-persist';
 import { errorText, t } from '$lib/i18n';
-import { core } from '$lib/rpc/client.svelte';
+import {
+  connections,
+  conversationRefOf,
+  type ConversationRef,
+  type SourceId,
+} from '$lib/rpc/connections.svelte';
 import { permissions } from '$lib/stores/permissions.svelte';
 import { agentsStore } from '$lib/stores/agents.svelte';
 import { sendGateRequirement } from '../features/chats/send-gate';
@@ -53,17 +58,17 @@ export interface ActiveRunView {
 
 /** List-level updates a session cannot own (the sidebar lives on `chat`). */
 export interface ChatSessionHost {
-  syncReadCursor(conversationId: string, lastReadSeq: number): void;
-  syncMemberPreviews(conversationId: string, members: ProjectMemberView[]): void;
-  noteIncoming(conversationId: string, message: Message): void;
-  applyRunning(run: Run): void;
-  applyBot(bot: Bot): void;
+  syncReadCursor(source: SourceId, conversationId: string, lastReadSeq: number): void;
+  syncMemberPreviews(source: SourceId, conversationId: string, members: ProjectMemberView[]): void;
+  noteIncoming(source: SourceId, conversationId: string, message: Message): void;
+  applyRunning(source: SourceId, run: Run): void;
+  applyBot(source: SourceId, bot: Bot): void;
   /**
    * Sidebar (and, for the main session, the open view). Return true when
    * this host already wrote the open view, so the session does not replace
    * that merged row with the raw event.
    */
-  applyConversation(conversation: Conversation): boolean;
+  applyConversation(source: SourceId, conversation: Conversation): boolean;
 }
 
 export interface OpenSessionOptions {
@@ -97,6 +102,9 @@ const noopHost: ChatSessionHost = {
   applyConversation: () => false,
 };
 
+/** The connection a session currently talks to ('local' = the core singleton). */
+type SessionRpc = ReturnType<typeof connections.get>;
+
 /**
  * The current-conversation half of `chat`: messages, runs, members, reply,
  * and the events that belong to one conversation id. `main` is one long-lived
@@ -122,7 +130,21 @@ export class ChatSession {
   pendingSetup = $state<{ requirement: SetupRequirement; fromVoice: boolean } | null>(null);
 
   #host: ChatSessionHost;
-  #unsubscribers: Array<() => void> = [];
+  /**
+   * 本会话当前来源（T7 融合视图）：'local' 为既有行为；团队来源时本会话的
+   * 全部 RPC 与事件都走该团队连接（`connections.get(source)`）。
+   */
+  #source: SourceId = 'local';
+  /**
+   * 本机事件订阅（永挂）：本机左栏的列表级更新（host 回调）只由本会话驱动，
+   * 不能因打开团队会话而漏掉本机消息。团队来源的列表级更新由 chat.team 切片
+   * 自己订阅（单一写方，避免重复计数）；本会话对团队事件只更新打开的视图。
+   */
+  #localUnsubscribers: Array<() => void> = [];
+  #localSubscribed = false;
+  /** 当前团队来源的视图级订阅（来源切换时重挂）。 */
+  #teamSubscribedSource: SourceId | null = null;
+  #teamUnsubscribers: Array<() => void> = [];
   // 普通 Set（刻意非响应式）：事件转发台账，没有界面从它派生。
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
   #incomingListeners = new Set<(conversationId: string, message: Message) => void>();
@@ -163,10 +185,52 @@ export class ChatSession {
     if (options.attach !== false) this.start();
   }
 
-  /** Subscribe once. `chat.start` attaches `main`; other instances attach here. */
+  /**
+   * Subscribe once per source. `chat.start` attaches `main`; dialogs attach here.
+   * （本机订阅与旧版一样只在 start 落位——open 不再隐式订阅本机来源。）
+   */
   start(): void {
-    if (this.#unsubscribers.length > 0 || this.#disposed) return;
-    this.#subscribe();
+    this.#ensureSubscribed();
+  }
+
+  /** 当前来源（'local' = 既有单例语义）。 */
+  get source(): SourceId {
+    return this.#source;
+  }
+
+  /** 当前来源的连接视图（调用 / 事件 / 身份）。 */
+  #rpc(): SessionRpc {
+    return connections.get(this.#source);
+  }
+
+  /**
+   * 后台发送的归属解析：会话视图在当前来源上有记录就用它，否则视为本机
+   * （弹层 session 的任务直注等路径只发本机会话）。
+   */
+  #sourceOfId(conversationId: string): SourceId {
+    if (this.view?.conversation.id === conversationId) return this.#source;
+    return 'local';
+  }
+
+  #ensureSubscribed(): void {
+    if (this.#disposed) return;
+    if (!this.#localSubscribed) {
+      this.#localSubscribed = true;
+      this.#subscribeSource('local');
+    }
+    if (this.#source === 'local') {
+      if (this.#teamSubscribedSource !== null) {
+        for (const unsubscribe of this.#teamUnsubscribers) unsubscribe();
+        this.#teamUnsubscribers = [];
+        this.#teamSubscribedSource = null;
+      }
+      return;
+    }
+    if (this.#teamSubscribedSource === this.#source) return;
+    for (const unsubscribe of this.#teamUnsubscribers) unsubscribe();
+    this.#teamUnsubscribers = [];
+    this.#subscribeSource(this.#source);
+    this.#teamSubscribedSource = this.#source;
   }
 
   get conversationId(): string | null {
@@ -206,10 +270,19 @@ export class ChatSession {
    * Load half of opening a conversation. Returns false when the id is gone;
    * the previous view stays. Archived rows are restored first. Does not touch
    * navigation (shell, last-id, project compose, sparse interview).
+   *
+   * T7: 入参可为 `ConversationRef`（团队来源的会话经该来源的连接取数与收发）；
+   * 字符串 id 保持本机来源语义（既有调用点与测试零改动）。
    */
-  async open(id: string, options: OpenSessionOptions = {}): Promise<boolean> {
+  async open(idOrRef: string | ConversationRef, options: OpenSessionOptions = {}): Promise<boolean> {
     if (this.#disposed) return false;
-    const loaded = (await core.call('conversations.get', { id })) as {
+    const ref = conversationRefOf(idOrRef);
+    const id = ref.id;
+    this.#source = ref.source;
+    // 团队来源在 open 时挂视图级订阅（本机订阅只在 start 落位，见上）。
+    if (ref.source !== 'local') this.#ensureSubscribed();
+    const rpc = this.#rpc();
+    const loaded = (await rpc.call('conversations.get', { id })) as {
       conversation: ConversationView | null;
     };
     if (!loaded.conversation) return false;
@@ -218,25 +291,27 @@ export class ChatSession {
     // message load or unarchive, and opens the board instead.
     if (conversation.type === 'card') {
       if (options.afterResolved?.(conversation) === 'stop') return false;
-    } else if (this.#foreground && isArchivedConversation(conversation)) {
+    } else if (this.#foreground && this.#source === 'local' && isArchivedConversation(conversation)) {
       // 只有主对话会话把归档会话恢复进侧栏（与构造器的归属约束同理）。后台 /
       // 弹层 session 是纯取数——任务详情页的归属会话 session 打开用户归档的
       // 私聊时，静默 unarchive 会把它悄悄顶回左栏。归档会话照常可读。
-      const restored = (await core.call('conversations.unarchive', { id })) as {
+      // 团队来源的归档恢复由团队层语义决定，P1 不在本机侧栏恢复。
+      const restored = (await rpc.call('conversations.unarchive', { id })) as {
         conversation: ConversationView;
       };
       conversation = restored.conversation;
     }
     if (conversation.type !== 'card') options.afterResolved?.(conversation);
     const messages = await this.#loadLatest(id);
-    const runs = (await core.call('runs.list', { conversationId: id, limit: 30 })) as {
+    const runs = (await rpc.call('runs.list', { conversationId: id, limit: 30 })) as {
       runs: Run[];
     };
-    const inFlight = (await core.call('runs.list', { conversationId: id, active: true })) as {
+    const inFlight = (await rpc.call('runs.list', { conversationId: id, active: true })) as {
       runs: Run[];
     };
     // Not awaited: select must not wait on the task list (same as today).
-    void tasks.loadActive(id);
+    // 团队来源的任务页是重型面板（DEV-142）：不拉本机任务列表。
+    if (this.#source === 'local') void tasks.loadActive(id);
     const active = activeRunsOf(runs.runs, inFlight.runs, (run) => isActive(run.status));
     const failed = restoredFailedRun(runs.runs, this.#dismissedFailedRunIds);
     if (failed !== null) logFailedRun(failed);
@@ -266,7 +341,11 @@ export class ChatSession {
     await options.onReady?.(conversation);
     if (conversation.type === 'project') await this.reloadMembers();
     if (options.markOnOpen !== false) await this.markRead();
-    await permissions.loadForConversation(id, { foreground: this.#foreground });
+    await permissions.loadForConversation(id, {
+      foreground: this.#foreground,
+      ...(this.#source === 'local' ? {} : { source: this.#source }),
+      call: (method: string, input?: unknown) => rpc.call(method, input),
+    });
     return true;
   }
 
@@ -283,8 +362,12 @@ export class ChatSession {
   /** Unsubscribe. Later events for this instance are ignored. */
   dispose(): void {
     this.#disposed = true;
-    for (const unsubscribe of this.#unsubscribers) unsubscribe();
-    this.#unsubscribers = [];
+    for (const unsubscribe of this.#localUnsubscribers) unsubscribe();
+    this.#localUnsubscribers = [];
+    this.#localSubscribed = false;
+    for (const unsubscribe of this.#teamUnsubscribers) unsubscribe();
+    this.#teamUnsubscribers = [];
+    this.#teamSubscribedSource = null;
     this.#incomingListeners.clear();
     this.clear();
   }
@@ -316,7 +399,14 @@ export class ChatSession {
     } = {},
   ): Promise<{ ok: true } | { ok: false; code: string | undefined }> {
     try {
-      await core.call('messages.send', {
+      // 发送按会话归属选连接（发送是异步的——附件上传期间用户可能已切走；
+      // 当前打开的就是它则用会话源，否则按视图归属解析）。团队来源的
+      // client 标记（D121「来自 X」）用该来源自己的协作身份。
+      const source =
+        this.view?.conversation.id === conversationId ? this.#source : this.#sourceOfId(conversationId);
+      const rpc = connections.get(source);
+      const identity = source === 'local' ? null : rpc.clientIdentity;
+      await rpc.call('messages.send', {
         conversationId,
         text,
         ...(options.mentions !== undefined && options.mentions.length > 0
@@ -327,7 +417,10 @@ export class ChatSession {
           ? { attachmentIds: options.attachmentIds }
           : {}),
         ...(options.voiceMode === true ? { voiceMode: true } : {}),
-        ...(options.client !== undefined ? { client: options.client } : {}),
+        ...(identity !== null
+          ? { client: options.client ?? { id: identity.id, name: identity.name } }
+          : {}),
+        ...(identity === null && options.client !== undefined ? { client: options.client } : {}),
       });
       if (this.view?.conversation.id === conversationId) this.replyTo = null;
       return { ok: true };
@@ -339,6 +432,9 @@ export class ChatSession {
   gateForSend(): boolean {
     const view = this.view;
     if (!view) return false;
+    // 团队来源的模型 / Agent 配置在服务端域（本机设置卡不适用）：不做本机
+    // 发送门禁，由团队服务器的结构化失败（run.setup）兜底出卡。
+    if (this.#source !== 'local') return false;
     const bot = view.conversation.bot;
     if ((bot?.profile.runtime.agent.id ?? '').length > 0 && !agentsStore.loaded) {
       agentsStore.start();
@@ -360,7 +456,9 @@ export class ChatSession {
     const failed = this.view?.failedRun;
     if (failed?.setup) {
       this.dismissFailedRun(failed.id);
-      core.call('runs.setupDismissed', { runId: failed.id }).catch(() => undefined);
+      this.#rpc()
+        .call('runs.setupDismissed', { runId: failed.id })
+        .catch(() => undefined);
     }
   }
 
@@ -389,12 +487,12 @@ export class ChatSession {
     if (shell.workbenchShown) return;
     const lastSeq = view.messages.at(-1)?.seq;
     if (lastSeq === undefined || lastSeq <= view.conversation.lastReadSeq) return;
-    await core.call('conversations.markRead', {
+    await this.#rpc().call('conversations.markRead', {
       conversationId: view.conversation.id,
       seq: lastSeq,
     });
     view.conversation = { ...view.conversation, lastReadSeq: lastSeq, unreadCount: 0 };
-    this.#host.syncReadCursor(view.conversation.id, lastSeq);
+    this.#host.syncReadCursor(this.#source, view.conversation.id, lastSeq);
   }
 
   async loadEarlier(): Promise<void> {
@@ -403,7 +501,7 @@ export class ChatSession {
     view.loadingEarlier = true;
     try {
       const oldestSeq = view.messages[0]?.seq ?? 1;
-      const result = (await core.call('messages.list', {
+      const result = (await this.#rpc().call('messages.list', {
         conversationId: view.conversation.id,
         beforeSeq: oldestSeq,
         limit: PAGE_SIZE,
@@ -418,7 +516,7 @@ export class ChatSession {
 
   async retryRun(runId: string): Promise<void> {
     try {
-      await core.call('runs.retry', { runId });
+      await this.#rpc().call('runs.retry', { runId });
     } catch (error) {
       toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
     }
@@ -428,15 +526,17 @@ export class ChatSession {
     this.#dismissedFailedRunIds.add(runId);
     const view = this.view;
     if (view?.failedRun?.id === runId) view.failedRun = null;
-    core.call('runs.dismissFailure', { runId }).catch((error: unknown) => {
-      toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
-    });
+    this.#rpc()
+      .call('runs.dismissFailure', { runId })
+      .catch((error: unknown) => {
+        toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
+      });
   }
 
   async reloadMembers(): Promise<void> {
     const view = this.view;
     if (!view || view.conversation.type !== 'project') return;
-    const result = (await core.call('conversations.members', {
+    const result = (await this.#rpc().call('conversations.members', {
       conversationId: view.conversation.id,
     })) as { members: ProjectMemberView[] };
     view.members = result.members;
@@ -444,7 +544,7 @@ export class ChatSession {
       ...view.conversation,
       memberPreviews: memberPreviewsOf(result.members),
     };
-    this.#host.syncMemberPreviews(view.conversation.id, result.members);
+    this.#host.syncMemberPreviews(this.#source, view.conversation.id, result.members);
   }
 
   startReply(message: Message): void {
@@ -472,6 +572,12 @@ export class ChatSession {
   }
 
   #holdConversation(id: string): void {
+    // 任务页保留只对本机会话（tasks store 是本机域；团队来源的任务页按
+    // DEV-142「在团队窗口打开」，且跨来源 id 可能与本机会话碰撞）。
+    if (this.#source !== 'local') {
+      this.#releaseConversation();
+      return;
+    }
     if (this.#heldConversationId === id) return;
     if (this.#heldConversationId !== null) tasks.release(this.#heldConversationId);
     tasks.retain(id);
@@ -484,41 +590,51 @@ export class ChatSession {
     this.#heldConversationId = null;
   }
 
-  #subscribe(): void {
+  /**
+   * 在 `source` 上订阅事件。本机事件走完整流程（host 列表回调 + 视图）；
+   * 团队事件只更新打开的视图（列表级更新归 chat.team 切片，单一写方）。
+   */
+  #subscribeSource(source: SourceId): void {
+    const rpc = connections.get(source);
+    const unsubs = source === 'local' ? this.#localUnsubscribers : this.#teamUnsubscribers;
     const listen = (event: string, handler: (payload: unknown) => void): void => {
-      this.#unsubscribers.push(core.onEvent(event, handler));
+      unsubs.push(rpc.onEvent(event, handler));
     };
     listen('message.created', (payload) => {
       const data = payload as { conversationId: string; message: Message };
-      this.#ingestMessage(data.conversationId, data.message);
+      this.#ingestMessage(source, data.conversationId, data.message);
     });
     listen('message.updated', (payload) => {
       const data = payload as { conversationId: string; message: Message };
-      this.#replaceMessage(data.message);
+      this.#replaceMessage(source, data.message);
     });
     listen('run.status', (payload) => {
       const data = payload as { run: Run };
-      this.#applyRun(data.run);
+      this.#applyRun(source, data.run);
     });
     listen('run.progress', (payload) => {
       const data = payload as { runId: string; text?: string; toolName?: string };
-      this.#applyProgress(data);
+      this.#applyProgress(source, data);
     });
     listen('bot.updated', (payload) => {
       const data = payload as { bot: Bot };
-      this.#applyBot(data.bot);
+      this.#applyBot(source, data.bot);
     });
     listen('conversation.updated', (payload) => {
       const data = payload as { conversation: Conversation };
-      this.#applyConversation(data.conversation);
+      this.#applyConversation(source, data.conversation);
     });
   }
 
-  #ingestMessage(conversationId: string, message: Message): void {
+  #ingestMessage(source: SourceId, conversationId: string, message: Message): void {
     if (this.#disposed) return;
     if (isInterimMessage(message) || isEphemeralApprovalCard(message)) return;
-    this.#host.noteIncoming(conversationId, message);
+    if (source === 'local') this.#host.noteIncoming('local', conversationId, message);
     // 播报订阅口（53 号）：在 interim / 临时审批卡过滤之后、视图判重之前透传；
+    // 本机事件恒透传（打开团队会话不丢本机播报链路），团队事件只在该来源
+    // 是当前会话来源时透传。
+    const forwardToListeners = source === 'local' || source === this.#source;
+    if (!forwardToListeners) return;
     // 只读会话（view 为空或别的会话）也照发——订阅方按需自筛。单个订阅方抛错
     // 只 warn 留痕（对齐 logFailedRun 的「错误不静默」惯例），不影响其他订阅方
     // 与 ingest 主流程（消息照常入列表）。
@@ -548,16 +664,17 @@ export class ChatSession {
     if (message.senderType === 'user') void this.markRead();
   }
 
-  #replaceMessage(message: Message): void {
-    if (this.#disposed) return;
+  #replaceMessage(source: SourceId, message: Message): void {
+    if (this.#disposed || source !== this.#source) return;
     const view = this.view;
     if (!view || view.conversation.id !== message.conversationId) return;
     view.messages = view.messages.map((item) => (item.id === message.id ? message : item));
   }
 
-  #applyRun(run: Run): void {
+  #applyRun(source: SourceId, run: Run): void {
     if (this.#disposed || run.conversationId === null) return;
-    this.#host.applyRunning(run);
+    if (source === 'local') this.#host.applyRunning('local', run);
+    if (source !== this.#source) return;
     const view = this.view;
     if (!view || view.conversation.id !== run.conversationId) return;
     if (isActive(run.status)) {
@@ -586,8 +703,11 @@ export class ChatSession {
           : view.failedRun;
   }
 
-  #applyProgress(data: { runId: string; text?: string; toolName?: string }): void {
-    if (this.#disposed) return;
+  #applyProgress(
+    source: SourceId,
+    data: { runId: string; text?: string; toolName?: string },
+  ): void {
+    if (this.#disposed || source !== this.#source) return;
     const view = this.view;
     const entry = view?.activeRuns.find((item) => item.run.id === data.runId);
     if (!view || !entry) return;
@@ -601,9 +721,10 @@ export class ChatSession {
     view.activeRuns = [...view.activeRuns];
   }
 
-  #applyBot(bot: Bot): void {
+  #applyBot(source: SourceId, bot: Bot): void {
     if (this.#disposed) return;
-    this.#host.applyBot(bot);
+    if (source === 'local') this.#host.applyBot('local', bot);
+    if (source !== this.#source) return;
     const view = this.view;
     if (!view) return;
     if (view.conversation.bot?.id === bot.id) {
@@ -616,9 +737,11 @@ export class ChatSession {
     }
   }
 
-  #applyConversation(conversation: Conversation): void {
+  #applyConversation(source: SourceId, conversation: Conversation): void {
     if (this.#disposed) return;
-    const hostWroteView = this.#host.applyConversation(conversation);
+    const hostWroteView =
+      source === 'local' ? this.#host.applyConversation('local', conversation) : false;
+    if (source !== this.#source) return;
     const view = this.view;
     if (!view || view.conversation.id !== conversation.id) return;
     // The main host merges unread and running markers onto the open view.
@@ -634,7 +757,7 @@ export class ChatSession {
   }
 
   async #loadLatest(conversationId: string): Promise<Message[]> {
-    const result = (await core.call('messages.list', {
+    const result = (await this.#rpc().call('messages.list', {
       conversationId,
       limit: PAGE_SIZE,
     })) as { messages: Message[] };
@@ -645,7 +768,9 @@ export class ChatSession {
     for (const message of messages) {
       const setting = settingCardOf(message);
       if (setting === null || setting.state !== 'pending' || setting.mode !== 'link') continue;
-      core.call('settings.cards.recheck', { messageId: message.id }).catch(() => undefined);
+      this.#rpc()
+        .call('settings.cards.recheck', { messageId: message.id })
+        .catch(() => undefined);
     }
   }
 }

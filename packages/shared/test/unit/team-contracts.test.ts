@@ -33,13 +33,14 @@ const APP_METHOD_NAMES_ARE_LITERAL: AppMethodName extends RpcMethodName
   : never = true;
 void APP_METHOD_NAMES_ARE_LITERAL;
 
-const METHOD_COUNT = 19; // README 固定契约清单逐项枚举（P0×5 + P1×9 + P2×5），名字不得改动。
+const METHOD_COUNT = 20; // README 固定契约清单逐项枚举（P0×5 + P1×9 + P2×5）+ T7 名册读口 roster，名字不得改动。
 const EXPECTED_METHODS = [
   'team.bootstrap',
   'team.members.list',
   'team.dm.open',
   'team.projects.addMembers',
   'team.projects.removeMember',
+  'team.projects.roster',
   'team.presence.setAway',
   'team.profile.push',
   'team.projects.transferLead',
@@ -146,6 +147,51 @@ describe('team rpc method registry', () => {
         range: { from: 2, to: 1 },
       }).success,
     ).toBe(false);
+  });
+
+  it('T7 roster shape: card + role, strict, leadMemberId nullable', () => {
+    // 输入：只收 conversationId（strict）。
+    expect(
+      teamRpcMethodSchemas['team.projects.roster'].input.safeParse({
+        conversationId: 'cnv_proj',
+      }).success,
+    ).toBe(true);
+    expect(
+      teamRpcMethodSchemas['team.projects.roster'].input.safeParse({
+        conversationId: 'cnv_proj',
+        memberIds: [MBR],
+      }).success,
+    ).toBe(false);
+
+    // 输出：成员卡（team.members.list 同形）+ role；leadMemberId 可空；多余字段拒。
+    const roster = teamRpcMethodSchemas['team.projects.roster'].output.parse({
+      members: [
+        { id: MBR, displayName: '阿李', state: 'online', role: 'lead' },
+        { id: MBR2, displayName: 'Bob', avatar: null, state: 'away', role: 'member', avatarBotName: '管家' },
+      ],
+      leadMemberId: MBR,
+    });
+    expect(roster.members[0]).toMatchObject({ id: MBR, role: 'lead' });
+    expect(roster.members[1]).toMatchObject({ id: MBR2, role: 'member', avatarBotName: '管家' });
+    expect(
+      teamRpcMethodSchemas['team.projects.roster'].output.safeParse({
+        members: [{ id: MBR, displayName: '阿李', state: 'online', role: 'owner' }],
+        leadMemberId: null,
+      }).success,
+    ).toBe(false);
+    expect(
+      teamRpcMethodSchemas['team.projects.roster'].output.safeParse({
+        members: [],
+        leadMemberId: null,
+        callerEnrolled: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      teamRpcMethodSchemas['team.projects.roster'].output.safeParse({
+        members: [{ id: MBR, displayName: '阿李', state: 'online', role: 'member' }],
+        leadMemberId: null,
+      }).success,
+    ).toBe(true);
   });
 });
 

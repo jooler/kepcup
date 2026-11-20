@@ -15,6 +15,23 @@ ipcRenderer.on('core-port', (event) => {
   window.postMessage({ type: 'core-port', nonce: portNonce }, window.location.origin, event.ports);
 });
 
+// T7 融合视图：团队连接的 MessagePort（主进程 team-bridge 持另一端），与 core-port
+// 同一条 window.postMessage 通道 + 同一个 nonce（防页面伪造：沙箱 iframe 读不到
+// nonce）。载荷多一个 serverHash，渲染层按 `team:${serverHash}` 来源归位；每条
+// team-port 消息都携带**全新的** port（首次 connect / 换账号重连 / 窗口重载补发），
+// 渲染层收到即应替换该来源的旧 transport。
+ipcRenderer.on('team-port', (event, meta) => {
+  window.postMessage(
+    {
+      type: 'team-port',
+      nonce: portNonce,
+      serverHash: (meta as { serverHash?: unknown } | null)?.serverHash,
+    },
+    window.location.origin,
+    event.ports,
+  );
+});
+
 // 窗口衬底材质标记（main/window.ts 的 acrylic 注释）：Win11 22H2+ 主进程经
 // webPreferences.additionalArguments 写进 process.argv，同步可读 —— 渲染层
 // 首帧即可据此把侧栏透明化，不走异步 IPC（否则 startup 会有闪色跳变）。
@@ -58,6 +75,55 @@ const api = {
      */
     openTeamServer: (input: { url: string }): Promise<{ ok: true }> =>
       ipcRenderer.invoke('platform:openTeamServer', input),
+    /**
+     * T7 融合视图：凭据 / 多账号 / 桥接启停（主进程 team-servers.ts 实现；token
+     * 永不出主进程——任何返回值都不含 token / 密码）。错误约定：reject 的
+     * Error.message 是 `JSON.stringify({code, message, details?})`（code 取 shared
+     * ERROR_CODES；解析失败按通用错误处理）。
+     */
+    teamServers: {
+      list: (): Promise<
+        Array<{
+          serverHash: string;
+          url: string;
+          accounts: Array<{
+            memberId: string;
+            username: string;
+            displayName: string;
+            remembered: boolean;
+          }>;
+          activeMemberId: string | null;
+          status: 'idle' | 'connecting' | 'connected' | 'unauthenticated' | 'error';
+        }>
+      > => ipcRenderer.invoke('platform:teamServers:list'),
+      add: (input: { url: string }): Promise<{ serverHash: string }> =>
+        ipcRenderer.invoke('platform:teamServers:add', input),
+      remove: (input: { serverHash: string }): Promise<{ ok: true }> =>
+        ipcRenderer.invoke('platform:teamServers:remove', input),
+      login: (input: {
+        serverHash: string;
+        username: string;
+        password: string;
+        remember: boolean;
+      }): Promise<{ member: { id: string; displayName: string } }> =>
+        ipcRenderer.invoke('platform:teamServers:login', input),
+      logout: (input: { serverHash: string }): Promise<{ ok: true }> =>
+        ipcRenderer.invoke('platform:teamServers:logout', input),
+      switchAccount: (input: { serverHash: string; memberId: string }): Promise<{ ok: true }> =>
+        ipcRenderer.invoke('platform:teamServers:switchAccount', input),
+      connect: (input: { serverHash: string }): Promise<{ ok: true }> =>
+        ipcRenderer.invoke('platform:teamServers:connect', input),
+      disconnect: (input: { serverHash: string }): Promise<{ ok: true }> =>
+        ipcRenderer.invoke('platform:teamServers:disconnect', input),
+      /** 状态 / 名单变化（主进程推送 ipc 事件 team-servers:changed）；返回解绑函数。 */
+      onChanged: (callback: () => void): (() => void) => {
+        const listener = (): void => callback();
+        ipcRenderer.on('team-servers:changed', listener);
+        return () => {
+          ipcRenderer.removeListener('team-servers:changed', listener);
+        };
+      },
+    },
   },
   /**
    * Syncs nativeTheme.themeSource so the macOS vibrancy material follows the

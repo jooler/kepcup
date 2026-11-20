@@ -1,9 +1,11 @@
 <script lang="ts">
   import type { Attachment } from '@kepcup/shared';
+  import type { SourceId } from '$lib/rpc/connections.svelte';
   import { Image as ImageIcon, Paperclip, Play } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import type { PersistedAttachment } from './composer-draft-persist';
   import { attachmentUrl, downloadAttachment } from './attachments.svelte';
+  import { getChatSession } from './chat-session-context';
   import { mediaViewer } from './media-viewer.svelte';
 
   /**
@@ -42,6 +44,11 @@
     };
   }
 
+  /** 本引用块所属会话的来源（T7：团队会话附件经团队连接拉字节）。 */
+  function sourceOf(): SourceId {
+    return getChatSession().source;
+  }
+
   function stateOf(ref: PersistedAttachment): LoadState {
     return loaded[ref.attachmentId] ?? { url: null, failed: false };
   }
@@ -49,7 +56,7 @@
   function ensureLoaded(ref: PersistedAttachment): void {
     if (loaded[ref.attachmentId] !== undefined) return;
     loaded[ref.attachmentId] = { url: null, failed: false };
-    attachmentUrl(toAttachment(ref))
+    attachmentUrl(toAttachment(ref), sourceOf())
       .then((url) => {
         loaded[ref.attachmentId] = { url, failed: false };
       })
@@ -112,7 +119,7 @@
       <button
         type="button"
         class="flex shrink-0 items-center gap-1 rounded-full border bg-background px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-accent"
-        onclick={() => void downloadAttachment(toAttachment(ref))}
+        onclick={() => void downloadAttachment(toAttachment(ref), sourceOf())}
         data-testid="quoted-media-chip"
       >
         <Paperclip class="size-3" />

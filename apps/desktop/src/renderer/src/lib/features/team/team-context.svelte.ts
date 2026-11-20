@@ -3,6 +3,7 @@ import { teamBootstrapSchema } from '@kepcup/shared';
 import { t } from '$lib/i18n';
 import { core } from '$lib/rpc/client.svelte';
 import { isTeamHidden, setTeamHiddenSurfaces } from './surface-gate';
+import { markTeamSectionSource } from './team-availability';
 
 /**
  * 团队上下文（T5 步骤 2，62.08 §3 / 62.04 §7）：渲染层与团队服务器会话的
@@ -45,6 +46,8 @@ class TeamContextState {
   begin(): void {
     if (this.#started) return;
     this.#started = true;
+    // T7：「团队」设置分区在 web 团队端点出现（离开态 / 免打扰 / 用量）。
+    markTeamSectionSource('local', true);
     this.#bind();
     // 已连接的会话（登录前 Cookie 就在）不会再触发 onConnected：直接试一次。
     void this.#refresh();
@@ -61,6 +64,7 @@ class TeamContextState {
     this.permissionCeiling = null;
     setTeamHiddenSurfaces([]);
     this.members = [];
+    markTeamSectionSource('local', false);
     this.#started = false;
     this.#refreshing = false;
   }

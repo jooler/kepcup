@@ -939,6 +939,9 @@
   });
   $effect(() => {
     // 草稿键：对话按会话 id，任务直注用 `task:<id>`（同库不同键，互不串台）。
+    // T7 融合视图：草稿键保持会话 id（shared-draft 的 RPC 需要真实 id；
+    // composerDrafts 的协作身份 / 附件 RPC 经 setRpcSource 按来源路由）。
+    const conversationSource = chatSession.source;
     const draftsKey = injectMode
       ? injectTaskId === null
         ? null
@@ -949,10 +952,11 @@
     const currentMentionTokens = mentionTokens;
     const currentReply = replyTo;
     if (!injectMode) {
+      composerDrafts.setRpcSource(conversationSource);
       // D119：进入 / 切换会话即上报在线状态（同一会话重复调用幂等）。
-      presence.enter(draftsKey, presenceSource);
+      presence.enter(draftsKey, presenceSource, conversationSource);
       // D120：加载共享草稿并 claim（被占用则转只读镜像）。
-      void sharedDraft.enter(draftsKey, presenceSource);
+      void sharedDraft.enter(draftsKey, presenceSource, conversationSource);
     }
     if (draftsKey !== activeDraftKey) {
       activeDraftKey = draftsKey;

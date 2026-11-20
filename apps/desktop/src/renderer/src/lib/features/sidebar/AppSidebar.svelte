@@ -27,6 +27,7 @@
     Smartphone,
     MonitorSmartphone,
     FileUp,
+    Moon,
     type LucideIcon,
   } from '@lucide/svelte';
   import { t } from '$lib/i18n';
@@ -35,6 +36,8 @@
   import { logoDarkUrl, logoLightUrl } from './sidebar-icons';
   import { ENDPOINT_KIND } from '$lib/features/web-shell/endpoint';
   import { teamContext } from '$lib/features/team/team-context.svelte';
+  import TeamConversationsGroup from '$lib/features/team/TeamConversationsGroup.svelte';
+  import { awayState } from '$lib/features/team/away-state.svelte';
   import MemberAvatar from '$lib/features/team/MemberAvatar.svelte';
   import { shell } from '$lib/stores/shell.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
@@ -1338,6 +1341,8 @@
               {/each}
             </div>
           {/if}
+          <!-- T7 融合视图：团队会话分组（本机分组之下；未融合时不渲染）。 -->
+          <TeamConversationsGroup {collapsed} />
         {/if}
       </Sidebar.GroupContent>
     </Sidebar.Group>
@@ -1407,6 +1412,17 @@
                 <MonitorSmartphone aria-hidden="true" />
                 {t('menu.deviceName')}
               </DropdownMenu.Item>
+              {#if awayState.activeSource() !== null}
+                <DropdownMenu.Item
+                  onclick={() => shell.openSettings('team')}
+                  data-testid="menu-away"
+                >
+                  <Moon aria-hidden="true" />
+                  {awayState.isAway(awayState.activeSource()!)
+                    ? t('team.awayClear')
+                    : t('team.awaySet')}
+                </DropdownMenu.Item>
+              {/if}
               <DropdownMenu.Separator />
               <DropdownMenu.Item
                 onclick={() => shell.openSettings('general')}
@@ -1456,6 +1472,17 @@
                 <MonitorSmartphone aria-hidden="true" />
                 {t('menu.deviceName')}
               </DropdownMenu.Item>
+              {#if awayState.activeSource() !== null}
+                <DropdownMenu.Item
+                  onclick={() => shell.openSettings('team')}
+                  data-testid="menu-away"
+                >
+                  <Moon aria-hidden="true" />
+                  {awayState.isAway(awayState.activeSource()!)
+                    ? t('team.awayClear')
+                    : t('team.awaySet')}
+                </DropdownMenu.Item>
+              {/if}
               <DropdownMenu.Separator />
               <DropdownMenu.Item
                 onclick={() => shell.openSettings('general')}

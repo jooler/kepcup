@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ChevronLeft, ChevronRight, MessageSquare } from '@lucide/svelte';
+  import { ChevronLeft, ChevronRight, MessageSquare, Moon } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { getChatSession } from './chat-session-context';
@@ -11,6 +11,7 @@
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import MemberAvatar from '$lib/features/team/MemberAvatar.svelte';
   import { teamContext } from '$lib/features/team/team-context.svelte';
+  import { contacts } from '$lib/stores/contacts.svelte';
   import ProjectView from '$lib/features/project/ProjectView.svelte';
   import MessageList from './MessageList.svelte';
   import Composer from './Composer.svelte';
@@ -57,11 +58,17 @@
   const composerHint = $derived(pathGateClosed ? t('chats.setupPathGateHint') : undefined);
   /**
    * dm 会话头（T5，62.04 §3/§7）：dm 没有 Bot——标题是对端成员名（自我会话
-   * 标题「我」）。解析统一走 teamContext.dmPeerView（侧栏 / 搜索同源）。
+   * 标题「我」）。web 团队端点解析统一走 teamContext.dmPeerView；T7 桌面
+   * 融合视图的团队来源按来源解析（contacts.dmPeerViewOf，含离开态提示）。
    * 非团队上下文不会出现 dm 会话（名册为空、入口不存在），此分支在现状下不可达。
    */
+  const dmHeaderSource = $derived(
+    session.source === 'local' ? null : session.source,
+  );
   const dmHeader = $derived(
-    teamContext.dmPeerView(current?.conversation.peerPrincipalIds ?? null),
+    dmHeaderSource === null
+      ? { ...teamContext.dmPeerView(current?.conversation.peerPrincipalIds ?? null), awayNote: null as string | null }
+      : contacts.dmPeerViewOf(dmHeaderSource, current?.conversation.peerPrincipalIds ?? null),
   );
   const headerTitle = $derived(
     current === null
@@ -237,6 +244,18 @@
             testId="dm-header-avatar"
           />
           <span class="max-w-48 truncate pr-1.5">{headerTitle}</span>
+          <!-- 离开态提示（T7，62.01 S10/S12）：月牙 + 「已离开，消息将积攒待回」；
+               分身开启时显示「将由其分身处理」。 -->
+          {#if dmHeader.state === 'away' && dmHeader.peerId !== null}
+            <span
+              class="flex shrink-0 items-center gap-1 pr-1 text-[10px] font-normal text-amber-600 dark:text-amber-400"
+              data-testid="dm-away-hint"
+              title={dmHeader.awayNote ?? t('team.dmAwayHint')}
+            >
+              <Moon class="size-3" aria-hidden="true" />
+              {dmHeader.awayNote ?? t('team.dmAwayHint')}
+            </span>
+          {/if}
         </span>
       {:else}
         <Button

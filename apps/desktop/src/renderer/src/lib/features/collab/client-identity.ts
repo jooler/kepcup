@@ -59,3 +59,60 @@ export const clientIdentity = {
   connectionId: newId('conn'),
   color: collabColorForClient(id),
 };
+
+/**
+ * 团队来源的客户端身份（T7 融合视图，62.08 §3）：每个团队连接的 clientIdentity
+ * 独立——localStorage 键带 serverHash 与成员 id（同设备多账号登录不同成员时
+ * 各自稳定，62.10 §4）；connectionId 每次页面加载为该来源单独生成。显示名与
+ * 本机共用一份（同一个用户在同一窗口里的设备名）。
+ *
+ * 'local' 原样返回上面的单例（既有测试与调用点零改动）。
+ */
+export interface ClientIdentityView {
+  readonly id: string;
+  readonly name: string;
+  readonly connectionId: string;
+  readonly color: string;
+}
+
+const teamIdentities = new Map<string, ClientIdentityView>();
+
+function teamIdentityKey(serverHash: string, memberId: string | null): string {
+  return `kepcup.collab.clientId.team.${serverHash}.${memberId ?? 'anon'}`;
+}
+
+function teamIdentityOf(serverHash: string, memberId: string | null): ClientIdentityView {
+  const key = teamIdentityKey(serverHash, memberId);
+  const cached = teamIdentities.get(key);
+  if (cached !== undefined) return cached;
+  const store = storage();
+  let clientId: string | null = null;
+  try {
+    clientId = store?.getItem(key) ?? null;
+  } catch {
+    // localStorage 不可用：按未存过处理（下面生成新 id）。
+  }
+  if (clientId === null || clientId.length === 0) {
+    clientId = newId('client');
+    try {
+      store?.setItem(key, clientId);
+    } catch {
+      // 隐私模式：本次会话内仍稳定。
+    }
+  }
+  const identity: ClientIdentityView = {
+    id: clientId,
+    get name(): string {
+      return clientNameState.name;
+    },
+    connectionId: newId('conn'),
+    color: collabColorForClient(clientId),
+  };
+  teamIdentities.set(key, identity);
+  return identity;
+}
+
+export function clientIdentityFor(source: 'local' | { serverHash: string; memberId: string | null }): ClientIdentityView {
+  if (source === 'local') return clientIdentity;
+  return teamIdentityOf(source.serverHash, source.memberId);
+}

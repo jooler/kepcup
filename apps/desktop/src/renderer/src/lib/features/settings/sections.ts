@@ -19,6 +19,7 @@ export type SettingsSectionId =
   | 'agents'
   | 'profile'
   | 'contacts'
+  | 'team'
   | 'unattended'
   | 'remote'
   | 'environment'
@@ -57,6 +58,7 @@ const SECTION_FALLBACK_ORDER: ReadonlyArray<
   'browser',
   'computer-use',
   'contacts',
+  'team',
   'unattended',
   'remote',
   'environment',
