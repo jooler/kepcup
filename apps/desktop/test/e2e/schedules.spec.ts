@@ -200,6 +200,14 @@ test('schedules tab and settings overview: list display and two-step cancel', as
       timeout: 15_000,
     });
 
+    // D80 回写：面板口径取消同样经 message.updated 把对话中的回执卡改为已取消。
+    await expect(
+      page
+        .locator('[data-testid^="schedule-receipt-msg_"]')
+        .filter({ hasText: '提醒用户看报表' })
+        .locator('[data-testid="schedule-receipt"]'),
+    ).toHaveAttribute('data-schedule-status', 'cancelled', { timeout: 15_000 });
+
     // The settings overview follows (schedules.list is live on refresh).
     await openSettings(page);
     await page.locator('[data-testid="settings-nav-unattended"]').click();

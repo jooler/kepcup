@@ -15,7 +15,7 @@ import {
   type MockChatRequest,
   type MockLlmServer,
 } from '@kepcup/testkit';
-import type { Run } from '@kepcup/shared';
+import { SCHEDULE_CREATED_EVENT, type Message, type Run } from '@kepcup/shared';
 import { createMemoryKeystore, type CoreHarness, type ScheduleService } from '@kepcup/core';
 import { nextLocalMidnight } from '../../src/memory/local-date.js';
 
@@ -927,6 +927,72 @@ describe('P10 主动消息与调度（集成，可控时钟）', () => {
     } finally {
       await second.cleanup();
       await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('schedules.cancel（右栏面板口径）回写对话回执卡并推 message.updated / schedules.changed', async () => {
+    const clock = new TestClock();
+    const stack = await createTestStack({ clock, timers: clock });
+    try {
+      const bot = await makeBot(stack.core, '阿卡');
+      const conv = await openDirect(stack.core, bot.id);
+      const service = schedulesOf(stack);
+      const created = service.createOnce({
+        botId: bot.id,
+        conversationId: conv.id,
+        runAt: clock.now() + 60 * 60_000,
+        note: '右栏面板要取消的任务',
+      });
+
+      // 创建即出回执卡，带 active 快照
+      const card = await waitFor(
+        async () =>
+          (await listMessages(stack.core, conv.id)).find(
+            (m) =>
+              m.kind === 'system_event' &&
+              (m.content as { event?: string }).event === SCHEDULE_CREATED_EVENT,
+          ) ?? null,
+        { label: 'receipt card after create' },
+      );
+      expect((card.content as { schedule?: { status?: string } }).schedule?.status).toBe('active');
+
+      // 面板取消口径：schedules.cancel RPC（右栏 SchedulesPanel / 回执卡按钮同一条）
+      const seen: Array<{ event: string; payload: unknown }> = [];
+      const offs = ['message.updated', 'schedules.changed'].map((event) =>
+        stack.core.onEvent(event, (payload: unknown) => {
+          seen.push({ event, payload });
+        }),
+      );
+      try {
+        await stack.core.rpc.call('schedules.cancel', { id: created.id });
+        expect(service.store.get(created.id)?.status).toBe('cancelled');
+
+        // ① DB 侧回执卡已回写
+        const after = (await listMessages(stack.core, conv.id)).find((m) => m.id === card.id);
+        expect(
+          (after?.content as { schedule?: { status?: string } } | undefined)?.schedule?.status,
+        ).toBe('cancelled');
+
+        // ② message.updated 事件：renderer 重绘回执卡的全部输入
+        const updated = seen.filter((e) => e.event === 'message.updated') as Array<{
+          event: string;
+          payload: { conversationId?: string; message?: Message };
+        }>;
+        expect(updated).toHaveLength(1);
+        expect(updated[0]!.payload.conversationId).toBe(conv.id);
+        expect(updated[0]!.payload.message?.id).toBe(card.id);
+        expect(
+          (updated[0]!.payload.message?.content as { schedule?: { status?: string } } | undefined)
+            ?.schedule?.status,
+        ).toBe('cancelled');
+
+        // ③ schedules.changed 事件：右栏面板列表刷新依赖
+        expect(seen.map((e) => e.event)).toContain('schedules.changed');
+      } finally {
+        for (const off of offs) off();
+      }
+    } finally {
+      await stack.cleanup();
     }
   });
 });
