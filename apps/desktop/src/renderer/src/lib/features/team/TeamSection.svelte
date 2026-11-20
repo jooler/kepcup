@@ -7,6 +7,8 @@
   import { awayState } from './away-state.svelte';
   import { profilePush } from './profile-push.svelte';
   import { teamContext } from './team-context.svelte';
+  import { teamCacheSync } from './cache-sync.svelte';
+  import { getDesktopTeamCacheExtras } from './team-cache-store';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { ENDPOINT_KIND } from '$lib/features/web-shell/endpoint';
 
@@ -136,6 +138,91 @@
       day: new Date(row.dayStart).toLocaleDateString(),
       total: row.total.toFixed(2),
     }));
+  }
+
+  // --- 本地缓存（T8 步骤 5，仅桌面融合视图；web 无分区概念） -------------------
+
+  let cacheUsage = $state<Record<string, string>>({});
+  let cacheLimit = $state<Record<string, number>>({});
+  let cacheBusy = $state<string | null>(null);
+  // 普通 Set：已加载过占用读数的卡片 key（防 $effect 自触发的记账，非 UI 状态）。
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
+  const cacheInfoLoaded = new Set<string>();
+
+  const CACHE_LIMIT_CHOICES: Array<{ label: string; bytes: number }> = [
+    { label: '256 MB', bytes: 256 * 1024 * 1024 },
+    { label: '1 GB', bytes: 1024 * 1024 * 1024 },
+    { label: '2 GB', bytes: 2 * 1024 * 1024 * 1024 },
+    { label: '5 GB', bytes: 5 * 1024 * 1024 * 1024 },
+    { label: '10 GB', bytes: 10 * 1024 * 1024 * 1024 },
+  ];
+
+  function formatCacheBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  }
+
+  /** 占用读数（每卡一次；$effect 触发，失败静默显示「暂无」）。 */
+  $effect(() => {
+    if (!desktop) return;
+    for (const entry of sources) {
+      if (serverHashOf(entry.source) === null) continue;
+      if (cacheInfoLoaded.has(entry.key)) continue;
+      cacheInfoLoaded.add(entry.key);
+      void loadCacheInfo(entry);
+    }
+  });
+
+  async function loadCacheInfo(entry: SectionSource): Promise<void> {
+    const extras = getDesktopTeamCacheExtras();
+    if (extras === null) {
+      cacheUsage = { ...cacheUsage, [entry.key]: t('team.cacheUnavailable') };
+      return;
+    }
+    const hash = serverHashOf(entry.source);
+    const memberId = hash === null ? null : connections.get(entry.source).memberId;
+    if (hash === null || memberId === null) return;
+    try {
+      const usage = await extras.usage({ serverHash: hash, memberId });
+      cacheUsage = {
+        ...cacheUsage,
+        [entry.key]:
+          usage.cacheBytes === null
+            ? t('team.cacheEmpty')
+            : t('team.cacheUsage', { size: formatCacheBytes(usage.cacheBytes) }),
+      };
+      cacheLimit = { ...cacheLimit, [entry.key]: usage.attachmentLimitBytes };
+    } catch {
+      cacheUsage = { ...cacheUsage, [entry.key]: t('team.cacheEmpty') };
+    }
+  }
+
+  async function changeCacheLimit(entry: SectionSource, limitBytes: number): Promise<void> {
+    const extras = getDesktopTeamCacheExtras();
+    if (extras === null) return;
+    try {
+      await extras.setAttachmentLimit(limitBytes);
+      cacheLimit = { ...cacheLimit, [entry.key]: limitBytes };
+      toast.success(t('team.cacheLimitSaved'));
+      await loadCacheInfo(entry);
+    } catch {
+      toast.error(t('team.cacheClearFailed'));
+    }
+  }
+
+  async function clearCache(entry: SectionSource): Promise<void> {
+    cacheBusy = entry.key;
+    try {
+      await teamCacheSync.clearCurrentPartition(entry.source);
+      toast.success(t('team.cacheCleared'));
+      await loadCacheInfo(entry);
+    } catch {
+      toast.error(t('team.cacheClearFailed'));
+    } finally {
+      cacheBusy = null;
+    }
   }
 </script>
 
@@ -300,6 +387,45 @@
           >
             {t('team.profilePushRefresh')}
           </Button>
+        </div>
+      {/if}
+
+      <!-- 本地缓存（T8 步骤 5，仅桌面）：占用显示 + 附件上限 + 清除当前分区。 -->
+      {#if desktop && serverHashOf(entry.source) !== null}
+        <div class="space-y-2" data-testid={`team-cache-${entry.key}`}>
+          <p class="text-xs font-medium">{t('team.cacheTitle')}</p>
+          <p class="text-xs text-muted-foreground" data-testid={`team-cache-usage-${entry.key}`}>
+            {cacheUsage[entry.key] ?? t('team.cacheEmpty')}
+          </p>
+          <div class="flex flex-wrap items-center gap-2">
+            <label class="text-xs text-muted-foreground" for={`team-cache-limit-${entry.key}`}>
+              {t('team.cacheAttachmentLimit')}
+            </label>
+            <select
+              id={`team-cache-limit-${entry.key}`}
+              class="h-8 rounded-md border border-input bg-background px-2 text-sm"
+              value={cacheLimit[entry.key] ?? 1024 * 1024 * 1024}
+              onchange={(event) =>
+                void changeCacheLimit(
+                  entry,
+                  Number((event.currentTarget as HTMLSelectElement).value),
+                )}
+              data-testid={`team-cache-limit-${entry.key}`}
+            >
+              {#each CACHE_LIMIT_CHOICES as choice (choice.bytes)}
+                <option value={choice.bytes}>{choice.label}</option>
+              {/each}
+            </select>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={cacheBusy === entry.key}
+              onclick={() => void clearCache(entry)}
+              data-testid={`team-cache-clear-${entry.key}`}
+            >
+              {t('team.cacheClear')}
+            </Button>
+          </div>
         </div>
       {/if}
     </div>

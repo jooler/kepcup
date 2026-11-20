@@ -104,6 +104,9 @@ importers:
       '@tiptap/suggestion':
         specifier: ^3.31.4
         version: 3.31.4(@floating-ui/dom@1.8.0)(@tiptap/core@3.31.4(@tiptap/pm@3.31.4))(@tiptap/pm@3.31.4)
+      better-sqlite3-multiple-ciphers:
+        specifier: 13.0.3
+        version: 13.0.3
       bits-ui:
         specifier: 2.19.3
         version: 2.19.3(@internationalized/date@3.12.0)(svelte@5.57.1(@typescript-eslint/types@8.71.0))

@@ -9,6 +9,7 @@ import {
   type ConversationRef,
   type SourceId,
 } from '$lib/rpc/connections.svelte';
+import { teamCacheSync } from '../features/team/cache-sync.svelte';
 import { permissions } from '$lib/stores/permissions.svelte';
 import { agentsStore } from '$lib/stores/agents.svelte';
 import { sendGateRequirement } from '../features/chats/send-gate';
@@ -281,6 +282,40 @@ export class ChatSession {
     this.#source = ref.source;
     // 团队来源在 open 时挂视图级订阅（本机订阅只在 start 落位，见上）。
     if (ref.source !== 'local') this.#ensureSubscribed();
+    // T8 读路径（团队来源）：先渲染缓存（秒开 + 离线兜底），随后服务端路径在
+    // 上面覆盖（在线时）；服务端不可达且缓存有快照 → 离线只读视图（跳过 runs /
+    // markRead / permissions 等写与服务端取数）。卡片会话不走缓存（chat.select
+    // 的 stop 语义在服务端路径里，先装视图会破坏导航）。
+    const cached =
+      ref.source !== 'local' ? await teamCacheSync.loadCachedSession(ref.source, id) : null;
+    if (cached !== null && cached.conversation.type !== 'card') {
+      this.view = {
+        conversation: cached.conversation as ConversationView,
+        messages: cached.messages,
+        activeRuns: [],
+        failedRun: null,
+        loadingEarlier: false,
+        hasEarlier: cached.messages.length >= PAGE_SIZE,
+        members: [],
+      };
+      this.replyTo = null;
+      this.pendingSetup = null;
+      this.composerInsertion = null;
+    }
+    if (
+      ref.source !== 'local' &&
+      cached !== null &&
+      cached.conversation.type !== 'card' &&
+      connections.get(ref.source).status !== 'connected'
+    ) {
+      // 离线只读：缓存快照就是本次打开的结果（不伪造在线数据）。afterResolved /
+      // onReady 照常走（导航收尾与侧栏行 upsert 不依赖服务端）；markRead /
+      // permissions / runs 等写与服务端取数全部跳过。
+      options.afterResolved?.(cached.conversation as ConversationView);
+      this.#holdConversation(id);
+      await options.onReady?.(cached.conversation as ConversationView);
+      return true;
+    }
     const rpc = this.#rpc();
     const loaded = (await rpc.call('conversations.get', { id })) as {
       conversation: ConversationView | null;
@@ -501,17 +536,55 @@ export class ChatSession {
     view.loadingEarlier = true;
     try {
       const oldestSeq = view.messages[0]?.seq ?? 1;
+      // T8 读路径（团队来源）：先试缓存（离线可翻更早历史）；缓存无更早时在线
+      // 向服务端补并把结果回写缓存，离线则止于缓存（hasEarlier=false）。
+      if (this.#source !== 'local') {
+        const cached = await teamCacheSync.getMessagesFromCache(this.#source, view.conversation.id, {
+          beforeSeq: oldestSeq,
+          limit: PAGE_SIZE,
+        });
+        if (cached !== null) {
+          if (cached.length > 0) {
+            view.messages = [...cached, ...view.messages];
+            view.hasEarlier = cached.length >= PAGE_SIZE;
+            this.#recheckPendingLinkCards(cached);
+          } else if (connections.get(this.#source).status === 'connected') {
+            const fetched = await this.#fetchEarlierFromServer(view.conversation.id, oldestSeq);
+            view.messages = [...fetched, ...view.messages];
+            view.hasEarlier = fetched.length >= PAGE_SIZE;
+            this.#recheckPendingLinkCards(fetched);
+            void teamCacheSync.rememberMessages(this.#source, view.conversation.id, fetched);
+          } else {
+            view.hasEarlier = false;
+          }
+          return;
+        }
+        // 缓存禁用（null）：走既有服务端路径。
+      }
       const result = (await this.#rpc().call('messages.list', {
         conversationId: view.conversation.id,
         beforeSeq: oldestSeq,
         limit: PAGE_SIZE,
       })) as { messages: Message[] };
+      if (this.#source !== 'local') {
+        void teamCacheSync.rememberMessages(this.#source, view.conversation.id, result.messages);
+      }
       view.messages = [...result.messages, ...view.messages];
       view.hasEarlier = result.messages.length >= PAGE_SIZE;
       this.#recheckPendingLinkCards(result.messages);
     } finally {
       view.loadingEarlier = false;
     }
+  }
+
+  /** 服务端的更早一页（loadEarlier 的在线补拉路径；报错原样抛出）。 */
+  async #fetchEarlierFromServer(conversationId: string, oldestSeq: number): Promise<Message[]> {
+    const result = (await this.#rpc().call('messages.list', {
+      conversationId,
+      beforeSeq: oldestSeq,
+      limit: PAGE_SIZE,
+    })) as { messages: Message[] };
+    return result.messages;
   }
 
   async retryRun(runId: string): Promise<void> {
@@ -761,6 +834,10 @@ export class ChatSession {
       conversationId,
       limit: PAGE_SIZE,
     })) as { messages: Message[] };
+    // T8：服务端拉到的最新页回写缓存（团队来源）——缓存与在线读保持同源。
+    if (this.#source !== 'local') {
+      void teamCacheSync.rememberMessages(this.#source, conversationId, result.messages);
+    }
     return result.messages;
   }
 

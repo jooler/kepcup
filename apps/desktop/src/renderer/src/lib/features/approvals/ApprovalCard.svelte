@@ -69,6 +69,8 @@
   }: { approval: Approval; autofocus?: boolean; variant?: 'card' | 'folded' } = $props();
 
   const pending = $derived(approval.status === 'pending');
+  /** T8 离线只读：团队来源断线 → 决定按钮置灰（路由来源在 permissions 内）。 */
+  const approvalOffline = $derived(pending && permissions.approvalSourceOffline(approval.id));
   /** D121：另一位客户端做的决定；本机做的决定不重复标注。 */
   const decidedBy = $derived(
     approval.decision?.decidedBy !== undefined &&
@@ -1482,7 +1484,8 @@
           <Button
             size="sm"
             onclick={() => void addAllowlistAndApprove()}
-            disabled={allowlistBusy ||
+            disabled={approvalOffline ||
+              allowlistBusy ||
               allowlistPattern.trim().length === 0 ||
               allowlistPatternProblem !== null}
             data-testid="approval-allowlist-confirm">{t('allowlist.addAndApprove')}</Button
@@ -1498,13 +1501,15 @@
       </div>
     {:else}
       <div class="mt-3 flex flex-wrap items-center gap-2">
+        <!-- T8 离线只读：团队来源断线 → 决定按钮置灰（permissions.approvalSourceOffline）。 -->
         <Button
           size="sm"
           onclick={approve}
-          disabled={approval.kind === 'butler_proposal' &&
+          disabled={approvalOffline ||
+            (approval.kind === 'butler_proposal' &&
             butlerProposal !== null &&
             butlerProposal.proposalType !== 'project' &&
-            butlerKept.length === 0}
+            butlerKept.length === 0)}
           data-testid="approval-approve"
           >{approval.kind === 'butler_proposal'
             ? t('approvals.butlerConfirm')
@@ -1514,8 +1519,12 @@
                 : t('approvals.egress.allowOnce')
               : t('approvals.approve')}</Button
         >
-        <Button size="sm" variant="outline" onclick={deny} data-testid="approval-deny"
-          >{t('approvals.deny')}</Button
+        <Button
+          size="sm"
+          variant="outline"
+          onclick={deny}
+          disabled={approvalOffline}
+          data-testid="approval-deny">{t('approvals.deny')}</Button
         >
         {#if canAddAllowlist}
           <Button

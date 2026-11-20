@@ -4,6 +4,7 @@
   import { Button } from '$lib/components/ui/button';
   import { connections } from '$lib/rpc/connections.svelte';
   import { fusionPref } from '$lib/features/team/fusion-pref';
+  import { teamCacheSync } from '$lib/features/team/cache-sync.svelte';
   import {
     getTeamServersApi,
     parseTeamError,
@@ -162,6 +163,9 @@
     busyHash = server.serverHash;
     try {
       await api.remove({ serverHash: server.serverHash });
+      // T8（62.10 §4）：移除服务器 = 清除该服务器全部成员分区（含附件与密钥文件
+      // + 各成员的同步 cursor）。确认框文案已提示；清除失败不影响移除本身。
+      await teamCacheSync.clearServerPartitions(server.serverHash);
       removeTarget = null;
       await refresh();
     } catch (error) {

@@ -86,6 +86,59 @@ declare global {
           disconnect(input: { serverHash: string }): Promise<{ ok: true }>;
           onChanged(cb: () => void): () => void;
         };
+        /**
+         * T8 客户端本地缓存（platform.teamCache.*，README 固定契约）：分区整库加密的
+         * 只读镜像（主进程 team-cache/ 实现）。会话 / 消息视图字段与
+         * team.bootstrap / messages.list 完全一致（shared conversationCacheSchema /
+         * messageCacheSchema）。错误约定同 teamServers。可选字段——web 垫片不提供
+         * （web 缓存走渲染层 IndexedDB 适配器，同名 TeamCacheStore 接口）。
+         */
+        teamCache?: {
+          open(input: { serverHash: string; memberId: string }): Promise<{ ok: true }>;
+          close(input: { serverHash: string; memberId: string }): Promise<{ ok: true }>;
+          putConversations(input: {
+            serverHash: string;
+            memberId: string;
+            conversations: unknown[];
+            replace?: boolean;
+          }): Promise<{ ok: true }>;
+          putMessages(input: {
+            serverHash: string;
+            memberId: string;
+            conversationId: string;
+            messages: unknown[];
+            replace?: boolean;
+          }): Promise<{ ok: true }>;
+          getConversations(input: {
+            serverHash: string;
+            memberId: string;
+          }): Promise<{ conversations: unknown[] }>;
+          getMessages(input: {
+            serverHash: string;
+            memberId: string;
+            conversationId: string;
+            limit?: number;
+            beforeSeq?: number;
+          }): Promise<{ messages: unknown[] }>;
+          putAttachment(input: {
+            serverHash: string;
+            memberId: string;
+            key: string;
+            bytes: string;
+          }): Promise<{ ok: true }>;
+          getAttachment(input: {
+            serverHash: string;
+            memberId: string;
+            key: string;
+          }): Promise<{ bytes: string } | { missing: true }>;
+          clearPartition(input: { serverHash: string; memberId: string }): Promise<{ ok: true }>;
+          clearServer(input: { serverHash: string }): Promise<{ ok: true }>;
+          usage(input: {
+            serverHash: string;
+            memberId: string;
+          }): Promise<{ cacheBytes: number | null; attachmentLimitBytes: number }>;
+          setAttachmentLimit(input: { limitBytes: number }): Promise<{ ok: true }>;
+        };
       };
       /** Syncs nativeTheme.themeSource (macOS vibrancy material follows the app theme). */
       setNativeThemeSource(mode: 'light' | 'dark' | 'system'): Promise<void>;

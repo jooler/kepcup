@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ChevronLeft, ChevronRight, MessageSquare, Moon } from '@lucide/svelte';
   import { t } from '$lib/i18n';
+  import { connections } from '$lib/rpc/connections.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { getChatSession } from './chat-session-context';
   import { isSingleBotConversation } from './single-bot-conversation';
@@ -81,6 +82,17 @@
           t('rightPanel.title'),
   );
   const isDm = $derived(current?.conversation.type === 'dm');
+  /**
+   * 团队来源的离线只读（T8，62.10 §2）：团队连接断开（offline / reconnecting /
+   * 未认证）时当前会话由缓存提供——输入坞置灰 + 「离线只读」横幅（无离线发送
+   * 队列）。本机来源恒 false（core 单例自管重连，横幅体系不变）。
+   */
+  const teamOffline = $derived(
+    session.source !== 'local' && connections.get(session.source).status !== 'connected',
+  );
+  const composerReadOnly = $derived(
+    current!.conversation.readOnly || pathGateClosed || teamOffline,
+  );
   const panelCollapsed = $derived(shell.rightPanelCollapsed);
   // 窄屏（33-narrow-layout）：无右栏分栏，药丸点击开 Bot 详情覆盖层；顶部
   // 左上角是「返回列表」按钮（macOS 让出红绿灯占位）。本组件只在已选中会话
@@ -96,7 +108,8 @@
    * 只读（含访谈目录闸门）时不收；上传链路同一份 composerDrafts。
    */
   const fileDropZone = createFileDropZone({
-    enabled: () => current !== null && !(current.conversation.readOnly || pathGateClosed),
+    enabled: () =>
+      current !== null && !(current.conversation.readOnly || pathGateClosed || teamOffline),
     onFiles: (files) => {
       const conversationId = current?.conversation.id;
       if (conversationId !== undefined) composerDrafts.uploadFiles(conversationId, files);
@@ -112,8 +125,8 @@
   只留 12px 呼吸空隙）。snippet 里 current 已由外层分支保证非空。
 -->
 {#snippet chatBody(topInset: number, bannerTopClass: string)}
-  <!-- 浮动提示条（只读 / 确认模式 / 执行失败） -->
-  <ChatBanners topClass={bannerTopClass} />
+  <!-- 浮动提示条（只读 / 团队离线只读 / 确认模式 / 执行失败） -->
+  <ChatBanners topClass={bannerTopClass} teamOffline={teamOffline} />
 
   {#if hasMessages}
     <MessageList {topInset} bottomInset={composerDockHeight} />
@@ -160,8 +173,8 @@
       </div>
     {/if}
     <Composer
-      readOnly={current!.conversation.readOnly || pathGateClosed}
-      readOnlyHint={composerHint}
+      readOnly={composerReadOnly}
+      readOnlyHint={composerHint ?? (teamOffline ? t('team.offlineReadOnlyHint') : undefined)}
       centered={!hasMessages}
     />
   </div>

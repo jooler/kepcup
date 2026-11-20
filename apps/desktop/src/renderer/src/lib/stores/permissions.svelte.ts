@@ -227,6 +227,16 @@ class PermissionsState {
     this.unattended = (await core.call('unattended.get')) as UnattendedState;
   }
 
+  /**
+   * 该审批当前路由来源是否「离线」（T8 离线只读）：团队来源断线 → 决定按钮置灰
+   * （离线发不了 decide——写操作在断线时不可用）。本机来源恒 false。
+   */
+  approvalSourceOffline(approvalId: string): boolean {
+    const source = this.#approvalSource.get(approvalId) ?? 'local';
+    if (source === 'local') return false;
+    return connections.get(source).status !== 'connected';
+  }
+
   async decide(
     approvalId: string,
     approve: boolean,

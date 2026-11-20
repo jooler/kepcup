@@ -29,6 +29,7 @@ import {
 } from '$lib/rpc/connections.svelte';
 import { contacts } from '$lib/stores/contacts.svelte';
 import { delegations } from '$lib/stores/delegations.svelte';
+import { teamCacheSync } from '../features/team/cache-sync.svelte';
 import { TeamChatsState, type TeamConversationRow } from './chat-team.svelte';
 import { resolveConversationBot } from '../features/chats/conversation-bot';
 import {
@@ -208,6 +209,9 @@ class ChatState {
     this.main.start();
     // 团队切片（T7）：注册表休眠时恒为空（未配置团队服务器 = 现状）。
     this.team.start();
+    // 本地缓存同步引擎（T8，62.10）：团队来源连接建立后启动 bootstrap 对账 /
+    // 事件直写 / 重连补拉；无团队来源 / platform 缺失时零副作用（休眠铁律）。
+    teamCacheSync.start();
     core.onEvent('conversation.deleted', (payload) => {
       const data = payload as { id: string };
       this.conversations = this.conversations.filter((c) => c.id !== data.id);

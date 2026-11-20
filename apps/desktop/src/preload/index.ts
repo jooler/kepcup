@@ -124,6 +124,67 @@ const api = {
         };
       },
     },
+    /**
+     * T8 客户端本地缓存（platform.teamCache.*，主进程 team-cache/ 实现）：分区整库
+     * 加密的只读镜像。会话 / 消息视图字段与 team.bootstrap / messages.list 一致
+     * （shared conversationCacheSchema / messageCacheSchema）。错误约定同 teamServers
+     * （reject 的 Error.message 是 JSON 载荷）。web 垫片不提供（web 走 IndexedDB）。
+     */
+    teamCache: {
+      open: (input: { serverHash: string; memberId: string }): Promise<{ ok: true }> =>
+        ipcRenderer.invoke('platform:teamCache:open', input),
+      close: (input: { serverHash: string; memberId: string }): Promise<{ ok: true }> =>
+        ipcRenderer.invoke('platform:teamCache:close', input),
+      putConversations: (input: {
+        serverHash: string;
+        memberId: string;
+        conversations: unknown[];
+        replace?: boolean;
+      }): Promise<{ ok: true }> => ipcRenderer.invoke('platform:teamCache:putConversations', input),
+      putMessages: (input: {
+        serverHash: string;
+        memberId: string;
+        conversationId: string;
+        messages: unknown[];
+        replace?: boolean;
+      }): Promise<{ ok: true }> => ipcRenderer.invoke('platform:teamCache:putMessages', input),
+      getConversations: (input: {
+        serverHash: string;
+        memberId: string;
+      }): Promise<{ conversations: unknown[] }> =>
+        ipcRenderer.invoke('platform:teamCache:getConversations', input),
+      getMessages: (input: {
+        serverHash: string;
+        memberId: string;
+        conversationId: string;
+        limit?: number;
+        beforeSeq?: number;
+      }): Promise<{ messages: unknown[] }> =>
+        ipcRenderer.invoke('platform:teamCache:getMessages', input),
+      putAttachment: (input: {
+        serverHash: string;
+        memberId: string;
+        key: string;
+        bytes: string;
+      }): Promise<{ ok: true }> => ipcRenderer.invoke('platform:teamCache:putAttachment', input),
+      getAttachment: (input: {
+        serverHash: string;
+        memberId: string;
+        key: string;
+      }): Promise<{ bytes: string } | { missing: true }> =>
+        ipcRenderer.invoke('platform:teamCache:getAttachment', input),
+      clearPartition: (input: { serverHash: string; memberId: string }): Promise<{ ok: true }> =>
+        ipcRenderer.invoke('platform:teamCache:clearPartition', input),
+      clearServer: (input: { serverHash: string }): Promise<{ ok: true }> =>
+        ipcRenderer.invoke('platform:teamCache:clearServer', input),
+      usage: (input: {
+        serverHash: string;
+        memberId: string;
+      }): Promise<{ cacheBytes: number | null; attachmentLimitBytes: number }> =>
+        ipcRenderer.invoke('platform:teamCache:usage', input),
+      setAttachmentLimit: (input: { limitBytes: number }): Promise<{ ok: true }> =>
+        ipcRenderer.invoke('platform:teamCache:setAttachmentLimit', input),
+    },
   },
   /**
    * Syncs nativeTheme.themeSource so the macOS vibrancy material follows the

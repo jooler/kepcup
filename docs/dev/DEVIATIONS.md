@@ -2527,3 +2527,13 @@
 - 可选方案：a) T7 一并统一本机列表路径（审查期单方面改 T5 已验收行为，回归面不可控）；b) 维持两口径到 T11 统一。
 - 决定：b——T11 收口时把「仅自己回声静默 + 人类 @ 计提及」落到本机列表路径的团队会话（需区分来源与本人主体；单用户路径行为不变），统一后跑相关定向测试复核。
 - 已更新的文档：本条；PROGRESS.md T7 节。
+
+### DEV-147 缓存分区标识的路径注入双保险与加密驱动 types 映射
+
+- 状态：已落实
+- 阶段：团队服务器 T8（分支 team-server，2026-11-21）
+- 是否阻塞：否
+- 问题：① `platform.teamCache.*` 的分区标识（serverHash / memberId）来自渲染层 IPC 入参并拼进 `<userData>/team-cache/<serverHash>/<memberId>/` 文件系统路径，移交版 zod schema 仅 `min(1)`，路径安全完全押在 service 层 `sanitizePathSegment` 兜底上；② `better-sqlite3-multiple-ciphers` 的 exports map 无 types condition，`apps/desktop` 直接依赖后 tsc 需要类型映射。
+- 影响范围：`packages/shared/src/rpc/methods.ts`（platform.teamCache 入参 schema）、`apps/desktop/src/main/team-cache/service.ts`、`apps/desktop/tsconfig.node.json`。
+- 决定：① 双保险——shared zod 以 regex 钉死格式（serverHash 恰 16 位小写 hex，= `remoteProfileHash` 口径；memberId `mbr_` + 白名单字符 1–64，与 team-server 铸造的 `mbr_+ULID` 兼容）+ service 层 `assertPartitionSegments` 第二道（直连 in-process 调用不过 zod）+ `sanitizePathSegment` 降为第三道兜底；注入形状用例覆盖。**后续规范：凡「渲染层入参 → 文件系统路径」的平台方法沿用「schema regex 钉格式 + service 层同款校验」双保险，不得只靠 sanitize 兜底。** ② `tsconfig.node.json` 增 driver paths 映射（`packages/core` tsconfig 同款先例；最小构建配置改动，非依赖变更）。
+- 已更新的文档：本条；PROGRESS.md T8 节。

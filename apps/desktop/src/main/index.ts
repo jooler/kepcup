@@ -42,6 +42,7 @@ import { createMainWindow } from './window';
 import { resolveRemoteMode, type RemoteModeTarget } from './remote-mode';
 import { openTeamServer } from './team-window';
 import { TeamServers, writeTeamServersState } from './team-servers';
+import { TeamCacheService } from './team-cache/service';
 import { openTeamSocket } from './team-bridge';
 import { installProductionAppMenu } from './devtools';
 import { WidgetWindowHost } from './widget-window';
@@ -102,6 +103,12 @@ let shareCoordinator: ShareIntakeCoordinator | null = null;
  * 在 bootstrap 里——未配置团队服务器时零副作用（无文件 / 无连接 / 无事件）。
  */
 let teamServersHost: TeamServers | null = null;
+/**
+ * T8 客户端本地缓存（platform.teamCache.*，team-cache/service.ts）：分区整库加密
+ * 的只读镜像。构造零副作用——分区目录只在同步引擎首次 open 时创建（未配置团队
+ * 服务器 = 无目录，休眠铁律）。
+ */
+let teamCacheHost: TeamCacheService | null = null;
 /** 冷启动时先到的 `kepcup://` URL：core 就绪后再消费。 */
 const pendingShareUrls: string[] = [];
 /**
@@ -150,6 +157,8 @@ function beginQuit(): void {
   widgetWindows?.closeAll();
   // T7 融合视图：退出前断开全部团队连接（服务器侧收口 last_seen；不产生 UI 事件）。
   teamServersHost?.shutdown();
+  // T8：退出前关掉打开的缓存分区（数据保留；WAL 收口）。
+  teamCacheHost?.closeAll();
   // D105 / P-B2：计算机操控 sidecar 回收（其 disconnect 处理会终止 CuaDriver
   // daemon）；host-shutdown-state 先立标志，权限引导等在途流程不再拉起新进程。
   markHostShuttingDown();
@@ -520,6 +529,23 @@ function bootstrap(): void {
     },
   });
   teamServersHost.registerIpc((channel, handler) => {
+    ipcMain.handle(channel, handler);
+  });
+
+  // T8 步骤 1:客户端本地缓存(62.10 D136)。分区库 <userData>/team-cache/<serverHash>/
+  // <memberId>/cache.db 用与 core 同款 better-sqlite3-multiple-ciphers 整库加密,
+  // 分区密钥经 safeStorage 加密落 key.bin(safeStorage 不可用 → open 拒绝 → 渲染层
+  // 整体禁用缓存,不做明文兜底)。构造零副作用;ipc handlers 注册在 registerIpc
+  // (channel 约定 platform:teamCache:<verb>)。
+  teamCacheHost = new TeamCacheService({
+    baseDir: () => join(app.getPath('userData'), 'team-cache'),
+    safeStorage,
+    log: (message, error) => {
+      const detail = error instanceof Error ? ` — ${error.message}` : (error ?? '');
+      console.warn(`[team-cache] ${message}${detail}`);
+    },
+  });
+  teamCacheHost.registerIpc((channel, handler) => {
     ipcMain.handle(channel, handler);
   });
 

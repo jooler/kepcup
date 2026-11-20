@@ -205,6 +205,9 @@ import {
   effectStatusSchema,
   conversationSchema,
   providerInstanceSchema,
+  // T8 缓存视图类型（镜像 conversation/message 的服务端形状）。
+  type Conversation,
+  type Message,
   capabilityModelsSchema,
   embeddingStatusSchema,
   envInstallSchema,
@@ -508,6 +511,119 @@ export const platformTeamServersSwitchAccountInputSchema = z.object({
   serverHash: z.string().min(1),
   memberId: z.string().min(1),
 });
+
+// --- T8 客户端本地缓存（62.10 D136 / T8 §2，PLATFORM_RPC_METHODS 契约）--------
+// Desktop-only: the MAIN process owns the encrypted per-partition mirror
+// (<userData>/team-cache/<serverHash>/<memberId>/cache.db, better-sqlite3-
+// multiple-ciphers 整库加密 + safeStorage 保护的分区密钥；附件逐文件 AEAD)。
+// web 端不实现——web 的缓存走渲染层 IndexedDB 适配器（同名 TeamCacheStore 接口，
+// 不加密，平台限制文档明示）；core 也不实现。渲染层经桌面 preload 桥调用。
+// 缓存是只读镜像：这里没有任何把本地改动回写服务端的通路；分区只服务当前
+// 登录成员（成员资格由渲染层同步引擎保证——分区库内部不再校验成员）。
+
+/** 缓存的会话视图：与 team.bootstrap / conversations.list 的字段完全一致（镜像）。 */
+export const conversationCacheSchema = conversationSchema;
+export type ConversationCache = Conversation;
+
+/** 缓存的消息视图：与 messages.list 的字段完全一致（含卡片内容的原样 JSON）。 */
+export const messageCacheSchema = messageSchema;
+export type MessageCache = Message;
+
+/**
+ * 分区标识的格式钉死（T8 审查修正）：serverHash / memberId 会拼进文件系统路径
+ * （`<userData>/team-cache/<serverHash>/<memberId>/`），必须在 schema 层拒绝
+ * `..` / `/` / `\` / 绝对路径等任何路径注入形状——serverHash 恰为
+ * `teamServerHash`（= remoteProfileHash，sha256(url) 前 16 位小写 hex，同
+ * remote-mode.ts 的 REMOTE_PROFILE_PATTERN）；memberId 为团队服务器铸造的
+ * `mbr_` 前缀 + 白名单字符集（数字 / 字母，ULID 兼容）。service.ts 再做一道
+ * 同款校验（双保险：直连 in-process 调用不过 zod）。
+ */
+export const TEAM_CACHE_SERVER_HASH_PATTERN = /^[0-9a-f]{16}$/;
+export const TEAM_CACHE_MEMBER_ID_PATTERN = /^mbr_[0-9A-Za-z]{1,64}$/;
+
+const platformTeamCachePartitionInputSchema = z.object({
+  serverHash: z.string().regex(TEAM_CACHE_SERVER_HASH_PATTERN),
+  memberId: z.string().regex(TEAM_CACHE_MEMBER_ID_PATTERN),
+});
+
+export const platformTeamCacheOpenInputSchema = platformTeamCachePartitionInputSchema;
+export const platformTeamCacheOpenOutputSchema = z.object({ ok: z.literal(true) });
+
+export const platformTeamCacheCloseInputSchema = platformTeamCachePartitionInputSchema;
+export const platformTeamCacheCloseOutputSchema = z.object({ ok: z.literal(true) });
+
+export const platformTeamCachePutConversationsInputSchema =
+  platformTeamCachePartitionInputSchema.extend({
+    /** Upsert 全量；replace=true = 对账（删除列表里不存在的行，bootstrap 收敛用）。 */
+    conversations: z.array(conversationCacheSchema),
+    replace: z.boolean().optional(),
+  });
+export const platformTeamCachePutConversationsOutputSchema = z.object({ ok: z.literal(true) });
+
+export const platformTeamCachePutMessagesInputSchema =
+  platformTeamCachePartitionInputSchema.extend({
+    conversationId: z.string().min(1),
+    /** 按 seq upsert；replace=true = 该会话全量重置（损坏 / seq 越界重拉用）。 */
+    messages: z.array(messageCacheSchema),
+    replace: z.boolean().optional(),
+  });
+export const platformTeamCachePutMessagesOutputSchema = z.object({ ok: z.literal(true) });
+
+export const platformTeamCacheGetConversationsInputSchema = platformTeamCachePartitionInputSchema;
+export const platformTeamCacheGetConversationsOutputSchema = z.object({
+  conversations: z.array(conversationCacheSchema),
+});
+
+export const platformTeamCacheGetMessagesInputSchema = platformTeamCachePartitionInputSchema.extend({
+  conversationId: z.string().min(1),
+  /** seq < beforeSeq（上滑分页）；缺省 = 最新一页。语义对齐 core messages.list。 */
+  beforeSeq: z.number().int().optional(),
+  limit: z.number().int().min(1).max(200).default(60),
+});
+export const platformTeamCacheGetMessagesOutputSchema = z.object({
+  /** 按 seq 升序返回（core messages.list 同款：desc 取页后再反转）。 */
+  messages: z.array(messageCacheSchema),
+});
+
+export const platformTeamCachePutAttachmentInputSchema =
+  platformTeamCachePartitionInputSchema.extend({
+    /** 附件 id（attachments.get 的 id；文件名落盘前先哈希，防路径注入）。 */
+    key: z.string().min(1),
+    /** base64 字节；主进程写盘前按分区密钥派生子密钥 AEAD 加密（AAD 绑定 key）。 */
+    bytes: z.string().min(1),
+  });
+export const platformTeamCachePutAttachmentOutputSchema = z.object({ ok: z.literal(true) });
+
+export const platformTeamCacheGetAttachmentInputSchema =
+  platformTeamCachePartitionInputSchema.extend({
+    key: z.string().min(1),
+  });
+export const platformTeamCacheGetAttachmentOutputSchema = z.union([
+  z.object({ bytes: z.string() }),
+  z.object({ missing: z.literal(true) }),
+]);
+
+export const platformTeamCacheClearPartitionInputSchema = platformTeamCachePartitionInputSchema;
+export const platformTeamCacheClearPartitionOutputSchema = z.object({ ok: z.literal(true) });
+
+export const platformTeamCacheClearServerInputSchema = z.object({
+  serverHash: z.string().regex(TEAM_CACHE_SERVER_HASH_PATTERN),
+});
+export const platformTeamCacheClearServerOutputSchema = z.object({ ok: z.literal(true) });
+
+/** 设置卡「缓存占用」：分区占用（库 + 附件文件）与附件上限读数。 */
+export const platformTeamCacheUsageInputSchema = platformTeamCachePartitionInputSchema;
+export const platformTeamCacheUsageOutputSchema = z.object({
+  /** 分区尚未建立（从未缓存过）时为 null。 */
+  cacheBytes: z.number().nullable(),
+  attachmentLimitBytes: z.number(),
+});
+
+/** 设置卡「附件上限」：写 <userData>/team-cache/prefs.json（非敏感，不进设置目录）。 */
+export const platformTeamCacheSetAttachmentLimitInputSchema = z.object({
+  limitBytes: z.number().int().min(1),
+});
+export const platformTeamCacheSetAttachmentLimitOutputSchema = z.object({ ok: z.literal(true) });
 
 // --- update gate (P13 任务 2, port B platform methods) ----------------------
 // The main process owns electron-updater; the core only answers "is anything
@@ -3321,6 +3437,58 @@ export const rpcMethodSchemas = {
     output: okOutput,
   },
 
+  // T8 客户端本地缓存（62.10 D136）：桌面主进程实现（分区整库加密 + 附件 AEAD
+  // + LRU）；web 端不实现（渲染层 IndexedDB 适配器同接口），core 不实现。
+  'platform.teamCache.open': {
+    input: platformTeamCacheOpenInputSchema,
+    output: platformTeamCacheOpenOutputSchema,
+  },
+  'platform.teamCache.close': {
+    input: platformTeamCacheCloseInputSchema,
+    output: platformTeamCacheCloseOutputSchema,
+  },
+  'platform.teamCache.putConversations': {
+    input: platformTeamCachePutConversationsInputSchema,
+    output: platformTeamCachePutConversationsOutputSchema,
+  },
+  'platform.teamCache.putMessages': {
+    input: platformTeamCachePutMessagesInputSchema,
+    output: platformTeamCachePutMessagesOutputSchema,
+  },
+  'platform.teamCache.getConversations': {
+    input: platformTeamCacheGetConversationsInputSchema,
+    output: platformTeamCacheGetConversationsOutputSchema,
+  },
+  'platform.teamCache.getMessages': {
+    input: platformTeamCacheGetMessagesInputSchema,
+    output: platformTeamCacheGetMessagesOutputSchema,
+  },
+  'platform.teamCache.putAttachment': {
+    input: platformTeamCachePutAttachmentInputSchema,
+    output: platformTeamCachePutAttachmentOutputSchema,
+  },
+  'platform.teamCache.getAttachment': {
+    input: platformTeamCacheGetAttachmentInputSchema,
+    output: platformTeamCacheGetAttachmentOutputSchema,
+  },
+  'platform.teamCache.clearPartition': {
+    input: platformTeamCacheClearPartitionInputSchema,
+    output: platformTeamCacheClearPartitionOutputSchema,
+  },
+  'platform.teamCache.clearServer': {
+    input: platformTeamCacheClearServerInputSchema,
+    output: platformTeamCacheClearServerOutputSchema,
+  },
+  // 设置卡（T8 步骤 5）：占用读数与附件上限（prefs.json，非敏感不入设置目录）。
+  'platform.teamCache.usage': {
+    input: platformTeamCacheUsageInputSchema,
+    output: platformTeamCacheUsageOutputSchema,
+  },
+  'platform.teamCache.setAttachmentLimit': {
+    input: platformTeamCacheSetAttachmentLimitInputSchema,
+    output: platformTeamCacheSetAttachmentLimitOutputSchema,
+  },
+
   // D96 远程遥控：全部 app 方法（本机与远程端点功能对等，同一 handlers）。
   'remote.status': { input: voidInput, output: remoteStatusOutputSchema },
   'remote.createPairing': { input: voidInput, output: remoteCreatePairingOutputSchema },
@@ -4016,6 +4184,19 @@ export const PLATFORM_RPC_METHODS: readonly RpcMethodName[] = [
   'platform.teamServers.switchAccount',
   'platform.teamServers.connect',
   'platform.teamServers.disconnect',
+  // T8 客户端本地缓存（62.10 D136）：桌面主进程实现，web / core 不实现。
+  'platform.teamCache.open',
+  'platform.teamCache.close',
+  'platform.teamCache.putConversations',
+  'platform.teamCache.putMessages',
+  'platform.teamCache.getConversations',
+  'platform.teamCache.getMessages',
+  'platform.teamCache.putAttachment',
+  'platform.teamCache.getAttachment',
+  'platform.teamCache.clearPartition',
+  'platform.teamCache.clearServer',
+  'platform.teamCache.usage',
+  'platform.teamCache.setAttachmentLimit',
   // D96 远程遥控：托盘读状态 / 切开关 / 发起配对（主进程 → core，端口 B）。
   'remote.status',
   'remote.createPairing',

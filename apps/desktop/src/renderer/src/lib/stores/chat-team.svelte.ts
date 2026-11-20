@@ -11,6 +11,7 @@ import { isInterimMessage } from '../features/chats/run-status-mute';
 import { isEphemeralApprovalCard } from '../features/approvals/ephemeral-approval';
 import { isSilentOnArrival } from '../features/chats/unread';
 import { notifyTeamMessage } from '$lib/features/team/team-notify';
+import { teamCacheSync } from '../features/team/cache-sync.svelte';
 import { permissions } from './permissions.svelte';
 import type { ConversationView } from './chat-session.svelte';
 
@@ -184,12 +185,49 @@ class TeamChatsState {
     return connections.get(source).memberId;
   }
 
-  /** 断线占位：清空切片数据（不伪造），保留切片存在感由 status 表达。 */
+  /**
+   * 断线占位：先同步清空（不伪造在线数据的既有语义），再尝试由本地缓存水合
+   * （T8 离线只读——列表由缓存提供；无缓存时维持空占位）。
+   */
   markDisconnected(serverHash: string): void {
     const slice = this.slices[serverHash];
-    if (!slice) return;
-    slice.conversations = [];
-    slice.lastMessageText = {};
+    if (slice) {
+      slice.conversations = [];
+      slice.lastMessageText = {};
+    }
+    void this.#hydrateFromCache(serverHash);
+  }
+
+  /**
+   * 缓存水合（T8 步骤 4）：把分区里的会话镜像装进切片。已连接且在线数据已到位
+   * 时不回退（避免异步水合竞态覆盖新鲜数据）；缓存不可用 / 为空时维持「未连接」
+   * 占位（不伪造数据——既有行为）。
+   */
+  async #hydrateFromCache(serverHash: string): Promise<void> {
+    const source = teamSourceId(serverHash);
+    const cached = await teamCacheSync.getConversationsFromCache(source);
+    if (cached === null || cached.length === 0) {
+      const stale = this.slices[serverHash];
+      if (stale) {
+        stale.conversations = [];
+        stale.lastMessageText = {};
+      }
+      return;
+    }
+    // 已连接且列表已由服务端刷新：跳过（缓存只兜离线 / 首屏前的空档）。
+    const existing = this.slices[serverHash];
+    if (connections.get(source).status === 'connected' && (existing?.conversations.length ?? 0) > 0) {
+      return;
+    }
+    const slice = this.ensureSlice(serverHash);
+    slice.conversations = cached.map((conversation) => rowOf(conversation as ConversationView));
+    const previews: Record<string, string> = {};
+    for (const conversation of cached) {
+      if (conversation.lastMessageText !== undefined && conversation.lastMessageText.length > 0) {
+        previews[conversation.id] = conversation.lastMessageText;
+      }
+    }
+    slice.lastMessageText = previews;
   }
 
   dispose(): void {
@@ -217,6 +255,8 @@ class TeamChatsState {
       const conn = connections.get(source);
       if (this.#wired.has(conn)) continue;
       this.#wired.add(conn);
+      // T8：先由缓存水合（秒出——打开侧栏即有历史），随后服务端刷新覆盖。
+      void this.#hydrateFromCache(hash);
       this.#unsubscribers.push(conn.onConnected(() => void this.#refresh(hash)));
       this.#unsubscribers.push(
         conn.onEvent('conversation.updated', (payload) => {
@@ -311,8 +351,8 @@ class TeamChatsState {
       }
       slice.lastMessageText = previews;
     } catch {
-      // 断开 / 未认证：切片保留「未连接」空占位，不伪造数据。
-      this.markDisconnected(serverHash);
+      // 断开 / 未认证：缓存水合（T8 离线只读），无缓存时保留「未连接」空占位。
+      await this.#hydrateFromCache(serverHash);
     }
   }
 

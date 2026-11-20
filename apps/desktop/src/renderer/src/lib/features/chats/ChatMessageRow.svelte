@@ -117,6 +117,10 @@
   });
   const teamActive = $derived(teamContext.active || session.source !== 'local');
   const teamSide = $derived(teamMessageSide(teamActive, teamSelf, message));
+  /** T8 离线只读：团队来源断线时写操作（撤回等）置灰（缓存只读镜像）。 */
+  const teamOffline = $derived(
+    session.source !== 'local' && connections.get(session.source).status !== 'connected',
+  );
   /** 布局用的「用户侧」（行方向 / 对齐 / 操作钮位置）：交换会话的发起方也算。 */
   const userSide = $derived(
     exchangeShape?.side === 'issuer' || (teamSide === null && isUser) || teamSide?.side === 'self',
@@ -211,6 +215,7 @@
       isLast &&
       message.senderType === 'user' &&
       delegatedBy === null &&
+      !teamOffline &&
       (teamSide === null || teamSide.side === 'self'),
   );
   /**
