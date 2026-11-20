@@ -116,6 +116,8 @@ declare global {
       checkForUpdate(): Promise<{ ok: boolean; message?: string }>;
       /** BR-P13-002: re-arms the gate's drain poll (「继续等待」). */
       keepWaitingOnUpdate(): Promise<void>;
+      /** 「取消更新」：停下本次下载并跳过该版本（gate 相位守卫：仅 downloading 有效）。 */
+      cancelUpdateDownload(): Promise<void>;
       /** dev/e2e-only (DCE'd in packaged builds): drives the real gate's evaluate(). */
       testGateEvaluate?(version: string): Promise<void>;
       onUpdateStatus(callback: (status: unknown) => void): () => void;

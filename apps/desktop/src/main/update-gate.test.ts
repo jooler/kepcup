@@ -21,7 +21,7 @@ interface Harness {
   flush(ms: number): Promise<void>;
 }
 
-function harness(): Harness {
+function harness(options?: { skippedVersions?: readonly string[] }): Harness {
   let activeRuns = 0;
   let activeError: Error | null = null;
   let cancelError: Error | null = null;
@@ -48,6 +48,7 @@ function harness(): Harness {
     quitAndInstall: () => installed.push(true),
     onStatus: (status) => statuses.push(status),
     now: () => now.value,
+    skippedVersions: options?.skippedVersions,
   });
 
   return {
@@ -233,6 +234,69 @@ describe('UpdateGate', () => {
     const h = harness();
     await h.gate.keepWaiting();
     expect(h.gate.phase).toBe('idle');
+  });
+
+  test('cancelDownload guards on the downloading phase and returns the version', async () => {
+    const h = harness();
+    // 相位守卫：idle 下的迟到点击是 no-op（BR-P13-005 同风格）。
+    expect(h.gate.cancelDownload()).toBeUndefined();
+    expect(h.gate.phase).toBe('idle');
+
+    h.gate.onDownloading('1.1.0', 30);
+    expect(h.gate.cancelDownload()).toBe('1.1.0');
+    expect(h.gate.phase).toBe('idle');
+    expect(h.gate.status.version).toBeUndefined();
+    expect(h.gate.status.percent).toBeUndefined();
+
+    // 决策相位同样不取消（下载已结束，没有下载可停）。
+    await h.gate.evaluate('1.2.0');
+    expect(h.gate.phase).toBe('ready-to-install');
+    expect(h.gate.cancelDownload()).toBeUndefined();
+    expect(h.gate.phase).toBe('ready-to-install');
+  });
+
+  test('a cancelled version is skipped: re-checks, late progress and raced downloads are all ignored', async () => {
+    const h = harness();
+    expect(h.gate.onUpdateAvailable('1.1.0')).toBe(true);
+    expect(h.gate.phase).toBe('downloading');
+
+    expect(h.gate.cancelDownload()).toBe('1.1.0');
+    expect(h.gate.phase).toBe('idle');
+
+    // 24h 定时重查把同一版本再报一次：静默，不重新进入下载。
+    expect(h.gate.onUpdateAvailable('1.1.0')).toBe(false);
+    expect(h.gate.phase).toBe('idle');
+
+    // 取消竞态：迟到的 download-progress 与已经完成的 update-downloaded。
+    h.gate.onDownloading('1.1.0', 60);
+    expect(h.gate.phase).toBe('idle');
+    await h.gate.evaluate('1.1.0');
+    expect(h.gate.phase).toBe('idle');
+    expect(h.installed).toHaveLength(0);
+
+    // 出现更新的版本：恢复正常流程。
+    expect(h.gate.onUpdateAvailable('1.2.0')).toBe(true);
+    expect(h.gate.phase).toBe('downloading');
+    await h.gate.evaluate('1.2.0');
+    expect(h.gate.phase).toBe('ready-to-install');
+  });
+
+  test('persisted skipped versions are honored from construction', async () => {
+    const h = harness({ skippedVersions: ['1.0.0'] });
+    expect(h.gate.onUpdateAvailable('1.0.0')).toBe(false);
+    expect(h.gate.phase).toBe('idle');
+    // 其它版本不受影响。
+    expect(h.gate.onUpdateAvailable('1.0.1')).toBe(true);
+    expect(h.gate.phase).toBe('downloading');
+  });
+
+  test('onUpdateAvailable switches to downloading immediately (manual check UX)', async () => {
+    const h = harness();
+    expect(h.gate.onUpdateAvailable('1.1.0')).toBe(true);
+    // update-available 即切 downloading：不等首个 download-progress。
+    expect(h.gate.status).toMatchObject({ phase: 'downloading', version: '1.1.0' });
+    h.gate.onDownloading('1.1.0', 42.4);
+    expect(h.gate.status).toMatchObject({ phase: 'downloading', percent: 42.4 });
   });
 
   test('an unrelated error never washes away the awaiting-user decision (BR-P13-002)', async () => {

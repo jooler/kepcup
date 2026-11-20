@@ -15,6 +15,7 @@ import {
   type UpdateSource,
   type UpdateSourceStore,
 } from './update-sources';
+import { appendSkippedVersion, type UpdateSkipStore } from './update-skip';
 
 // electron-updater is CommonJS and exposes autoUpdater via an
 // Object.defineProperty getter, which Node's CJS named-export detection cannot
@@ -48,6 +49,9 @@ export interface UpdaterWiring {
   gate: UpdateGate;
   /** Manual re-check (settings/update UI action; failures are quiet). */
   checkNow(): Promise<void>;
+  /** 「取消更新」：停下本次下载并把该版本记入跳过集合（相位守卫在 gate：
+   * 只有 downloading 相位有效；跳过版本持久化，更新的版本恢复正常流程）。 */
+  cancelDownload(): void;
   dispose(): void;
 }
 
@@ -74,6 +78,8 @@ export function wireUpdater(options: {
   scheduleChecks?: boolean;
   /** 选源赢家持久化（生产 = userData 文件，update-sources.ts）；缺省不持久化。 */
   store?: UpdateSourceStore;
+  /** 「取消更新 = 跳过该版本」的持久化（生产 = userData 文件）；缺省不持久化。 */
+  skipStore?: UpdateSkipStore;
   /** Test seam: probe timeout override (unit contexts). */
   probeTimeoutMs?: number;
   /**
@@ -115,9 +121,13 @@ export function wireUpdater(options: {
       probeTimeoutMs: options.probeTimeoutMs,
     });
   }
-  autoUpdater.autoDownload = true;
+  // 自动下载关闭（下载中可见进度、可取消，见 runCheck/cancelDownload）：
+  // update-available 后由 runCheck 拿 checkForUpdates 返回的 token 手动
+  // downloadUpdate；决策相位的 sticky 语义不变（BR-P13-002）。
+  autoUpdater.autoDownload = false;
   // Quitting the app normally also installs a downloaded update (belt and
-  // braces alongside the explicit installNow path).
+  // braces alongside the explicit installNow path). 「取消的会话内不自动装」
+  // 的临时保险在 cancelDownload 里置回 false，正常下载完成时恢复。
   autoUpdater.autoInstallOnAppQuit = true;
   if (options.forceDevUpdateConfig === true) {
     autoUpdater.forceDevUpdateConfig = true;
@@ -135,12 +145,19 @@ export function wireUpdater(options: {
     error: (message?: unknown, ...rest: unknown[]) => host.log(text(message), rest[0]),
   };
 
+  const skipStore = options.skipStore ?? {
+    load: (): string[] => [],
+    save: () => undefined,
+  };
+
   const gate = new UpdateGate({
     listActiveRuns: options.listActiveRuns,
     cancelActiveRuns: options.cancelActiveRuns,
     delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     quitAndInstall: () => autoUpdater.quitAndInstall(),
     onStatus: (status) => host.broadcast(UPDATE_STATUS_CHANNEL, status),
+    // 跨启动恢复的跳过版本（用户上次取消过的）：同名版本静默不下载。
+    skippedVersions: skipStore.load(),
   });
 
   // macOS: quitAndInstall 走 Electron 原生 autoUpdater，先关窗口再发
@@ -152,13 +169,23 @@ export function wireUpdater(options: {
   }
 
   let availableVersion: string | undefined;
+  /** update-available 后待启动的下载版本（由 runCheck 消费）。 */
+  let downloadRequest: string | null = null;
   autoUpdater.on('checking-for-update', () => gate.onChecking());
   autoUpdater.on('update-available', (info) => {
     availableVersion = String(info.version);
     host.log(`update available: ${availableVersion}`);
-    // 立即从 checking 切到 downloading：手动检查查到更新后，检查按钮马上
-    // 让位给进度（首个 download-progress 可能要等首包到达才来）。
-    gate.onDownloading(availableVersion);
+    // gate 判定跳过集合：被用户取消过的版本静默忽略（否则 24h 定时重查会
+    // 立刻把同一版本下回来，「取消更新」名存实亡）。未跳过则立即切到
+    // downloading：手动检查查到更新后，检查按钮马上让位给进度，不等首包。
+    if (!gate.onUpdateAvailable(availableVersion)) {
+      host.log(`update skipped (user cancelled earlier): ${availableVersion}`);
+      return;
+    }
+    // 手动下载不在事件里直接启动：downloadUpdate 需要 checkForUpdates 返回
+    // 的 cancellationToken（该类不随 electron-updater 导出，跨包直引是幽灵
+    // 依赖），由 runCheck 在检查返回后统一取 token 启动。
+    downloadRequest = availableVersion;
   });
   // BR-P13-008: "no update" is a real result — the gate resolves checking →
   // idle so the manual check can settle event-driven (no wall-clock guess).
@@ -175,6 +202,8 @@ export function wireUpdater(options: {
   });
   autoUpdater.on('update-downloaded', (info) => {
     host.log(`update downloaded: ${String(info.version)}`);
+    // 「取消的会话内不自动装」的保险解除：一次新的完整下载回到默认语义。
+    autoUpdater.autoInstallOnAppQuit = true;
     void gate.evaluate(String(info.version)).catch((error) => {
       host.log('update gate failed', error);
       gate.onError(error instanceof Error ? error.message : String(error));
@@ -210,11 +239,61 @@ export function wireUpdater(options: {
     host.log(`update source: ${source.id}`);
   }
 
+  /** checkForUpdates 的返回：autoDownload=false 时 cancellationToken 未被自动
+   * 下载占用，正是手动 downloadUpdate 需要传的取消句柄。 */
+  type CheckResult = NonNullable<Awaited<ReturnType<typeof autoUpdater.checkForUpdates>>>;
+  /** 在途下载的取消句柄（cancelDownload 里取消）。 */
+  let activeDownloadToken: NonNullable<CheckResult['cancellationToken']> | null = null;
+
+  /** 检查更新；查到且未被跳过的更新由这里手动启动下载（autoDownload=false）。 */
+  async function runCheck(): Promise<void> {
+    const result = await autoUpdater.checkForUpdates();
+    const version = downloadRequest;
+    if (result === null || !result.isUpdateAvailable || version === null) return;
+    downloadRequest = null;
+    const token = result.cancellationToken;
+    // 类型上可选（运行时 checkForUpdates 恒建 token）；万一未来实现不给，
+    // 宁可静默不下载也不带 undefined 传参。
+    if (token === undefined) return;
+    activeDownloadToken = token;
+    try {
+      await autoUpdater.downloadUpdate(token);
+    } catch (error) {
+      if (token.cancelled) {
+        // 用户取消：gate 已在 cancelDownload 里切回 idle；CancellationError 不
+        // 进 autoUpdater 的 error 事件，这里静默吸收，不抖 error 相位。
+        host.log(`update download cancelled: ${version}`);
+      } else {
+        host.log('update download failed', error);
+        gate.onError(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      if (activeDownloadToken === token) activeDownloadToken = null;
+    }
+  }
+
+  /**
+   * 「取消更新」：停下本次下载并把该版本记入跳过集合（相位守卫在 gate，仅
+   * downloading 有效）。跳过集合持久化到 userData；出现更新的版本自动恢复
+   * 正常流程。本会话内同时关掉 autoInstallOnAppQuit：取消后退出应用绝不把
+   * 该版本自动装上（正常下载完成时恢复）。
+   */
+  function cancelDownload(): void {
+    const version = gate.cancelDownload();
+    if (version === undefined) return;
+    // 迟到的 downloadRequest（update-available 已过、token 尚未取到时取消）。
+    downloadRequest = null;
+    appendSkippedVersion(skipStore, version);
+    autoUpdater.autoInstallOnAppQuit = false;
+    if (activeDownloadToken !== null) activeDownloadToken.cancel();
+    host.log(`update cancelled by user: ${version} (skipped until a newer version)`);
+  }
+
   async function checkQuietly(): Promise<void> {
     if (external !== null) return;
     if (selector === null) {
       try {
-        await autoUpdater.checkForUpdates();
+        await runCheck();
       } catch (error) {
         host.log('update check failed', error);
         gate.onError(error instanceof Error ? error.message : String(error));
@@ -230,7 +309,7 @@ export function wireUpdater(options: {
     }
     try {
       applySource(picked);
-      await autoUpdater.checkForUpdates();
+      await runCheck();
     } catch (error) {
       // 先不进 error 相位：镜像回退成功时用户不应看到错误一闪而过。
       host.log(`update check failed via ${picked.id}`, error);
@@ -240,7 +319,7 @@ export function wireUpdater(options: {
         if (fallback !== null && fallback.id !== picked.id) {
           try {
             applySource(fallback);
-            await autoUpdater.checkForUpdates();
+            await runCheck();
             return null;
           } catch (error2) {
             host.log(`update check failed via ${fallback.id}`, error2);
@@ -258,6 +337,7 @@ export function wireUpdater(options: {
   return {
     gate,
     checkNow: checkQuietly,
+    cancelDownload,
     dispose() {
       for (const timer of timers) {
         clearTimeout(timer);

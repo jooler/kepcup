@@ -53,6 +53,7 @@ import {
 } from './sensor-permission';
 import { wireUpdater } from './updater';
 import { createFileUpdateSourceStore } from './update-sources';
+import { createFileUpdateSkipStore } from './update-skip';
 import { ShareIntakeCoordinator, type ShareIntakeOutcome } from './share-intake/coordinator';
 import { shareGroupDir } from './share-intake/app-group';
 
@@ -910,6 +911,8 @@ function bootstrap(): void {
     // 选源赢家的持久化（GitHub/R2/OSS 探测的结果）：跨启动记住可达的源，
     // 之后每次检查直达，不再探测。
     store: createFileUpdateSourceStore(() => app.getPath('userData')),
+    // 「取消更新 = 跳过该版本」的持久化：跨启动记住用户取消过的版本。
+    skipStore: createFileUpdateSkipStore(() => app.getPath('userData')),
     // dev 下真查 feed 的显式开关（electron-updater 未打包默认跳过检查）；
     // 不开则 dev 里检查恒为 skip，不影响 e2e（NODE_ENV=test 本就不排定时检查）。
     forceDevUpdateConfig: !app.isPackaged && process.env.KEPCUP_DEV_UPDATE_CHECK === '1',
@@ -956,6 +959,11 @@ function bootstrap(): void {
   // in awaiting-user forever (each confirmation grants a fresh wait budget).
   ipcMain.handle('update:keepWaiting', async () => {
     await updater.gate.keepWaiting();
+  });
+  // 「取消更新」：停下本次下载并跳过该版本（相位守卫在 gate——只有
+  // downloading 相位有效，其它相位的迟到点击是 no-op）。
+  ipcMain.handle('update:cancelDownload', () => {
+    updater.cancelDownload();
   });
   // dev/e2e-only seam (DCE'd from packaged builds, same mechanism as the
   // mock-LLM seeding): drives the REAL gate through evaluate() so the e2e can

@@ -2337,6 +2337,14 @@ export const zhCN = {
   'update.installFailed': '更新未能完成：{reason}',
   'update.checkFailed': '无法检查更新：{reason}',
   'update.viewLogs': '查看日志',
+  'update.progressTitle': '更新进度',
+  'update.cardDownloading': '正在下载新版本 v{version}',
+  'update.cardDownloaded': '已下载',
+  'update.cardReady': '新版本 v{version} 已下载完成，重启应用后即可生效。',
+  'update.cardWaiting': '新版本 v{version} 已下载，等待 {count} 个执行结束后自动应用。',
+  'update.cancelDownload': '取消更新',
+  'update.cardCancelHint': '取消将跳过此版本，直到更新的版本发布',
+  'update.downloadingLabel': '正在下载更新（{percent}%）',
 
   // --- P13-B 任务 4: 首次启动引导（features/onboarding） -----------------------
   'onboarding.welcomeTitle': '欢迎使用 KepCup',

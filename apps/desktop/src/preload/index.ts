@@ -211,6 +211,11 @@ const api = {
    */
   keepWaitingOnUpdate: (): Promise<void> => ipcRenderer.invoke('update:keepWaiting'),
   /**
+   * 「取消更新」：停下本次下载并跳过该版本（gate 相位守卫：仅 downloading
+   * 有效；跳过版本持久化，更新的版本恢复正常流程）。
+   */
+  cancelUpdateDownload: (): Promise<void> => ipcRenderer.invoke('update:cancelDownload'),
+  /**
    * dev/e2e-only seam (DCE'd from packaged builds, same mechanism as the
    * mock-LLM seeding): drives the REAL gate through evaluate() so e2e can
    * exercise the production transition without a real update feed.
