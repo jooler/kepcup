@@ -20,6 +20,7 @@ export const enUS = {
   'menu.contacts': 'Contacts',
   'menu.connectPhone': 'Connect phone',
   'menu.deviceName': 'Device name',
+  'menu.teamServer': 'Team server',
   'narrow.tabBarLabel': 'Global navigation',
   'narrow.tabChats': 'Chats',
   'narrow.tabContacts': 'Contacts',

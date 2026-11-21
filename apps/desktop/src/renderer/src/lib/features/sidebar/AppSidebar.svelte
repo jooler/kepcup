@@ -26,6 +26,7 @@
     PinOff,
     Smartphone,
     MonitorSmartphone,
+    Server,
     FileUp,
     Moon,
     type LucideIcon,
@@ -1433,6 +1434,14 @@
                 <MonitorSmartphone aria-hidden="true" />
                 {t('menu.deviceName')}
               </DropdownMenu.Item>
+              <!-- 团队服务器（62.08）：设置页 → 远程遥控分区顶部的连接卡。 -->
+              <DropdownMenu.Item
+                onclick={() => shell.openSettings('remote', 'remote-team-server')}
+                data-testid="menu-team-server"
+              >
+                <Server aria-hidden="true" />
+                {t('menu.teamServer')}
+              </DropdownMenu.Item>
               {#if awayState.activeSource() !== null}
                 <DropdownMenu.Item
                   onclick={() => shell.openSettings('team')}
@@ -1492,6 +1501,14 @@
               >
                 <MonitorSmartphone aria-hidden="true" />
                 {t('menu.deviceName')}
+              </DropdownMenu.Item>
+              <!-- 团队服务器（62.08）：设置页 → 远程遥控分区顶部的连接卡。 -->
+              <DropdownMenu.Item
+                onclick={() => shell.openSettings('remote', 'remote-team-server')}
+                data-testid="menu-team-server"
+              >
+                <Server aria-hidden="true" />
+                {t('menu.teamServer')}
               </DropdownMenu.Item>
               {#if awayState.activeSource() !== null}
                 <DropdownMenu.Item

@@ -19,6 +19,7 @@ export const zhCN = {
   'menu.contacts': '通讯录',
   'menu.connectPhone': '连接手机',
   'menu.deviceName': '设备名称',
+  'menu.teamServer': '团队服务器',
   // 窄屏单栏布局（docs/design/33-narrow-layout.md）：底部全局 tab 与详情页返回
   'narrow.tabBarLabel': '全局导航',
   'narrow.tabChats': '对话',

@@ -58,7 +58,7 @@ console（闭源）──▶ /api/console/*（HTTP 面）◀──────�
 
 | 改动类型 | 提交位置 | 推送 |
 |---|---|---|
-| 开源（desktop / packages / docs / infra） | 宿主仓根 | `origin`（`team-server` 分支或 main 流程） |
+| 开源（desktop / packages / docs / infra） | 宿主仓根 | `origin`（`v0.5.16` 分支或 main 流程） |
 | 闭源（server / console / 62 文档 / todo） | `apps/team-server/` 内（= 私有仓根） | 私有仓 `main` |
 | 跨两侧的功能 | 分别提交（先闭源后开源或反之） | 各自推送 |
 
@@ -79,4 +79,5 @@ console（闭源）──▶ /api/console/*（HTTP 面）◀──────�
 
 - 私有仓：`git filter-repo --path apps/team-server --path docs/design/62-team-server --path todo/team-server`（两遍：先抽路径、再剥 `apps/team-server/` 前缀），25 个闭源提交 + 根内容提交，`team-server` 分支更名为 `main`。
 - 公开仓：`git filter-repo --invert-paths` 移除 `apps/team-server`、`apps/team-console`、`docs/design/62-team-server`、`todo/team-server` 四个路径的全部历史，`team-server` 分支 force push 覆盖（旧 SHA 残留接受）。
+- 分支收口（2026-11-21）：`team-server` 分支并入 `v0.5.16`（重写历史与 v0.5.16 原始历史在合并提交 7f53492d 汇合；v0.5.16 侧的发布修复以补丁回放保留），`team-server` 与 feat/*、backup/*、list 等分支本地与远端一并删除——此后开源改动在 `v0.5.16` 推进。
 - 拆分前的结构重组（`apps/team-console` 并入 `apps/team-server/console/`、server 自身收进 `apps/team-server/server/`、跨包相对路径修正、deploy Dockerfile/compose 改为以私有仓根为 context）作为最后一个混合提交随两仓历史分别保留。
