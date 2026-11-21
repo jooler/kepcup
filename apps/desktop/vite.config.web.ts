@@ -1,6 +1,6 @@
 import { readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { defineConfig, type PreviewServer } from 'vite';
+import { defineConfig, type PreviewServer, type ViteDevServer } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import tailwindcss from '@tailwindcss/vite';
 
@@ -80,10 +80,69 @@ const previewNoSpaFallback = {
   },
 };
 
+/**
+ * dev 代理目标（server.proxy 只作用于 dev server——build:web 与 playwright 的
+ * vite preview 完全不经过它，生产仍由宿主同源托管）。web 客户端与宿主服务器
+ * 全同源：/api/auth/* 登录 Cookie（HttpOnly）+ /rpc WS 升级自动带 Cookie，dev
+ * 下由 vite 把两路转发到本机 server（apps/server 与 apps/team-server 同一托管
+ * 约定；KEPCUP_TEAM_DEV_TARGET 可改指向，与团队管理台的 dev 代理同名同义）。
+ */
+const devProxyTarget = process.env.KEPCUP_TEAM_DEV_TARGET || 'http://127.0.0.1:8643';
+
+/**
+ * dev server 独有适配（build 与 preview 不经过 configureServer）：
+ * - `/` 重写进 web 入口 index.web.html——web 入口与 Electron 的 index.html 同
+ *   目录并存，vite dev 的 spa fallback 会把后者当根入口；生产（apps/server /
+ *   team-server 的 static.ts）按根路径托管 web 构建，dev 对齐这一语义。
+ * - /sw.js 回 404——dev 下 public/sw.js 会被静态服务，SW 注册成功会把 dev 资源
+ *   缓存进 CacheStorage 干扰 HMR；注册侧本就 .catch(() => {}) 静默兜底
+ *   （web-main.ts），404 即天然跳过，无需改渲染层源码。
+ */
+const devServerAdapt = {
+  name: 'web-dev-server-adapt',
+  configureServer(server: ViteDevServer) {
+    server.middlewares.use((req, res, next) => {
+      const url = (req.url ?? '').split('?')[0] ?? '';
+      if (url === '/') {
+        req.url = '/index.web.html';
+        return next();
+      }
+      if (url === '/sw.js') {
+        res.statusCode = 404;
+        res.end();
+        return;
+      }
+      next();
+    });
+  },
+};
+
 export default defineConfig({
   root: resolve(__dirname, 'src/renderer'),
   // 相对 base：同一构建可被自建中转托管在任意路径下（配对 URL 带出真实地址）。
   base: './',
+  server: {
+    proxy: {
+      '/api': {
+        target: devProxyTarget,
+        changeOrigin: true,
+      },
+      '/rpc': {
+        // WS 同源转发。CSWSH 纵深：cookie 握手校验 Origin.host === Host（升级
+        // 门，session-hub 同款），vite 代理 changeOrigin 只改 Host 不改 Origin
+        // ——不重写 Origin 的话 dev 下握手一律 403。改写后 Origin.host 与被
+        // changeOrigin 改写过的 Host 一致，校验通过。
+        target: devProxyTarget,
+        changeOrigin: true,
+        ws: true,
+        configure: (proxy) => {
+          proxy.on('proxyReqWs', (proxyReq) => {
+            proxyReq.setHeader('origin', devProxyTarget);
+          });
+        },
+      },
+    },
+  },
   resolve: {
     alias: {
       $lib: resolve(__dirname, 'src/renderer/src/lib'),
@@ -95,6 +154,7 @@ export default defineConfig({
     renameEntryHtmlToIndex,
     cleanHashedAssets,
     previewNoSpaFallback,
+    devServerAdapt,
   ],
   define: {
     __KEPCUP_TEST_HOOKS__: 'false',

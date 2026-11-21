@@ -31,8 +31,10 @@ pnpm --filter @kepcup/team-server test    # 308 个服务端测试
 pnpm --filter @kepcup/team-console build  # 管理台构建 → console/dist/
 pnpm test                                  # 根 vitest 会自动注册 team 项目
 
-# 3. 开发模式（在 apps/team-server 内）：同时起 server（node --watch，8643）
-#    与 console（vite HMR，localhost:5173/console/，/api 代理到 8643）
+# 3. 开发模式（在 apps/team-server 内）：同时起 server（node --watch，8643）、
+#    console（vite HMR，localhost:5173/console/，/api 代理到 8643）与渲染层
+#    web 客户端（vite HMR，localhost:5274/，/api 与 /rpc 代理到 8643；需宿主
+#    仓 apps/desktop 在位——独立 checkout 自动跳过）
 cd apps/team-server && pnpm dev
 ```
 
