@@ -4,6 +4,7 @@
   import GeneralSection from './GeneralSection.svelte';
   import HardwareSection from './HardwareSection.svelte';
   import ContactsSection from '$lib/features/contacts/ContactsSection.svelte';
+  import TeamSection from '$lib/features/team/TeamSection.svelte';
   import SandboxSection from './SandboxSection.svelte';
   import UnattendedSection from './UnattendedSection.svelte';
   import AllowlistSection from './AllowlistSection.svelte';
@@ -86,6 +87,10 @@
 {:else if section === 'contacts'}
   <div data-settings-section="contacts">
     <ContactsSection />
+  </div>
+{:else if section === 'team'}
+  <div data-settings-section="team" class="space-y-6">
+    <TeamSection />
   </div>
 {:else if section === 'unattended'}
   <div data-settings-section="unattended" class="space-y-6">

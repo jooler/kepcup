@@ -25,7 +25,7 @@ import { parseIsoOrThrow } from '../schedule/when.js';
 import { placeItem } from '../board/positions.js';
 import { WORKBENCH_POSITION_MIN_GAP, WORKBENCH_POSITION_STEP } from '@kepcup/shared';
 import { MemoStore } from './memo-store.js';
-import { TodoStore } from './todo-store.js';
+import { TodoStore, type StoredTodo } from './todo-store.js';
 
 /**
  * Allowed status moves of a todo (docs/design/39-workbench.md §2.1). A periodic todo stays in
@@ -101,6 +101,8 @@ export interface WorkbenchMessagePort {
     butlerDrafted: boolean;
     /** Project assignee's effective lead bot: the message @-mentions it (explicit target). */
     leadBotId: string | null;
+    /** 62.11 C4: the principal the dispatch acts for (the target chat's owner); absent = single-user. */
+    principal?: { id: string; name: string | null } | undefined;
     /** Runs after the message is stored + published, before it is routed to a bot. */
     onAppended?: ((message: Message) => void) | undefined;
   }): {
@@ -129,6 +131,8 @@ export interface WorkbenchMessagePort {
      * current assignee, which may have changed since (periodic todos).
      */
     dispatchMessageId: string | null;
+    /** 62.11 C4: the principal the update acts for (the conversation's owner); absent = single-user. */
+    principal?: { id: string; name: string | null } | undefined;
   }): { message: Message } | null;
   /** Whether the bot has a built-in main model to run a turn on. */
   hasTurnModel(botId: string): boolean;
@@ -207,6 +211,11 @@ export interface CreateTodoInput {
   source?: TodoSource | undefined;
   /** Who performs this call (attributes an immediate dispatch / the schedule). Default = `source`. */
   actor?: TodoActor | undefined;
+  /**
+   * 62.11 C13：归属主体（RPC 调用者 / 工具运行主体）。缺省 / null =
+   * 单用户现状（NULL 行）。
+   */
+  ownerPrincipalId?: string | null | undefined;
 }
 
 export interface UpdateTodoInput {
@@ -224,6 +233,10 @@ export interface ListTodosInput {
   statuses?: readonly TodoStatus[] | undefined;
   query?: string | undefined;
   includeClosed?: boolean | undefined;
+  /**
+   * 62.11 C13：传入时只返回该主体拥有的行；缺省 = 不过滤（单用户现状）。
+   */
+  ownerPrincipalId?: string | undefined;
 }
 
 interface DispatchContext {
@@ -306,6 +319,7 @@ export class TodoService implements WorkbenchDispatchPort {
         ...(input.statuses !== undefined ? { statuses: input.statuses } : {}),
         ...(input.query !== undefined ? { query: input.query } : {}),
         ...(closedAfter !== undefined ? { closedAfter } : {}),
+        ...(input.ownerPrincipalId !== undefined ? { ownerPrincipalId: input.ownerPrincipalId } : {}),
         // Board cards are a board concern. The RPC shape is unchanged.
         excludeBoardCards: true,
       })
@@ -412,6 +426,7 @@ export class TodoService implements WorkbenchDispatchPort {
         assignee,
         source: input.source ?? 'user',
         ...(input.memoId !== undefined ? { memoId: input.memoId } : {}),
+        ...(input.ownerPrincipalId != null ? { ownerPrincipalId: input.ownerPrincipalId } : {}),
       });
       this.#changed(todo.id);
       let current = todo;
@@ -440,7 +455,9 @@ export class TodoService implements WorkbenchDispatchPort {
   update(
     id: string,
     input: UpdateTodoInput,
+    ownerPrincipalId?: string | null,
   ): { todo: TodoEntry; warnings: string[]; notified: boolean } {
+    this.#assertOwned(id, ownerPrincipalId);
     const actor: TodoActor = input.actor ?? 'user';
     this.#assertBoardWritable(id, actor);
     const todo = this.#getOrThrow(id);
@@ -471,7 +488,7 @@ export class TodoService implements WorkbenchDispatchPort {
     if (typeof when === 'string' && when !== NOW) this.#deps.schedules.validateWhen(when);
 
     return this.#guard(() => {
-      const fields = (): Todo => {
+      const fields = (): StoredTodo => {
         let current = todo;
         if (input.title !== undefined || input.notes !== undefined) {
           current =
@@ -557,7 +574,12 @@ export class TodoService implements WorkbenchDispatchPort {
    * run is out) is rejected — the UI blocks it, this is the backstop. A pure
    * reorder never touches `updated_at`.
    */
-  move(id: string, input: { beforeId: string | null; assignee?: TodoAssignee | null }): TodoEntry {
+  move(
+    id: string,
+    input: { beforeId: string | null; assignee?: TodoAssignee | null },
+    ownerPrincipalId?: string | null,
+  ): TodoEntry {
+    this.#assertOwned(id, ownerPrincipalId);
     this.#assertBoardWritable(id, 'user');
     const todo = this.#getOrThrow(id);
     if (todo.status === 'done' || todo.status === 'cancelled') {
@@ -711,6 +733,10 @@ export class TodoService implements WorkbenchDispatchPort {
         viaButler: pending.byButler,
         butlerDrafted: todo.source === 'butler',
         dispatchMessageId: run.messageId,
+        // 62.11 C4: same owner attribution as the dispatch itself.
+        ...(conversation.ownerPrincipalId != null
+          ? { principal: { id: conversation.ownerPrincipalId, name: null } }
+          : {}),
       });
       if (sent === null) {
         // Nobody to tell yet: try again later, for as long as the dispatch is in flight.
@@ -741,7 +767,8 @@ export class TodoService implements WorkbenchDispatchPort {
   // --- transitions ---------------------------------------------------------------
 
   /** 立即开始: dispatches a draft (or scheduled) todo now; needs an assignee. */
-  start(id: string, actor: TodoActor = 'user'): TodoEntry {
+  start(id: string, actor: TodoActor = 'user', ownerPrincipalId?: string | null): TodoEntry {
+    this.#assertOwned(id, ownerPrincipalId);
     this.#assertBoardWritable(id, actor);
     const todo = this.#getOrThrow(id);
     if (todo.status !== 'draft' && todo.status !== 'scheduled') {
@@ -770,7 +797,8 @@ export class TodoService implements WorkbenchDispatchPort {
   }
 
   /** The user accepts the result (or marks a stuck in-progress todo done). */
-  complete(id: string, actor: TodoActor = 'user'): TodoEntry {
+  complete(id: string, actor: TodoActor = 'user', ownerPrincipalId?: string | null): TodoEntry {
+    this.#assertOwned(id, ownerPrincipalId);
     this.#assertBoardWritable(id, actor);
     const todo = this.#getOrThrow(id);
     if (todo.status !== 'delivered' && todo.status !== 'in_progress') {
@@ -791,7 +819,8 @@ export class TodoService implements WorkbenchDispatchPort {
   }
 
   /** Cancels any open todo (a periodic one: 「已停止」) together with its schedule. */
-  cancel(id: string, actor: TodoActor = 'user'): TodoEntry {
+  cancel(id: string, actor: TodoActor = 'user', ownerPrincipalId?: string | null): TodoEntry {
+    this.#assertOwned(id, ownerPrincipalId);
     this.#assertBoardWritable(id, actor);
     const todo = this.#getOrThrow(id);
     if (todo.status === 'done' || todo.status === 'cancelled') {
@@ -816,21 +845,26 @@ export class TodoService implements WorkbenchDispatchPort {
    * schedules are cancelled first: `schedules.todo_id` is `ON DELETE SET NULL`, which would
    * otherwise leave a live workbench schedule pointing at nothing.
    */
-  purge(id: string, actor: TodoActor = 'user'): boolean {
+  purge(id: string, actor: TodoActor = 'user', ownerPrincipalId?: string | null): boolean {
+    this.#assertOwned(id, ownerPrincipalId);
     this.#assertBoardWritable(id, actor);
     // Capture the board location before the side row cascades away with the todo.
     const location = this.#boardLocation(id);
+    // 62.11 C13：归属也在删行前抓——todos.changed 在删除之后才发，行没了查
+    // 出的 owner 是 null，归属成员（含发起方自己的多端）就收不到事件了。
+    const owner = this.store.get(id)?.ownerPrincipalId ?? null;
     return this.#guard(() => {
       this.#dropPendingUpdate(id);
       this.#cancelSchedules(id);
       const deleted = this.store.delete(id);
-      if (deleted) this.#changed(id, location);
+      if (deleted) this.#changed(id, location, owner);
       return deleted;
     });
   }
 
   /** Back from done / cancelled to draft. */
-  reopen(id: string, actor: TodoActor = 'user'): TodoEntry {
+  reopen(id: string, actor: TodoActor = 'user', ownerPrincipalId?: string | null): TodoEntry {
+    this.#assertOwned(id, ownerPrincipalId);
     this.#assertBoardWritable(id, actor);
     const todo = this.#getOrThrow(id);
     if (todo.status !== 'done' && todo.status !== 'cancelled') {
@@ -855,10 +889,17 @@ export class TodoService implements WorkbenchDispatchPort {
   // --- scheduling ------------------------------------------------------------------
 
   /** Creates (or moves) the schedule of `todo` and parks it in `scheduled`. */
-  #schedule(todo: Todo, when: string, timezone: string | undefined, actor: TodoActor): Todo {
+  #schedule(
+    todo: StoredTodo,
+    when: string,
+    timezone: string | undefined,
+    actor: TodoActor,
+  ): StoredTodo {
     const assignee = todo.assignee;
     if (assignee === null) throw new AppError('INVALID_INPUT', '设置时间前请先选择执行者');
     const target = this.#targetOf(todo);
+    // 62.11 C13：事项排期继承事项归属（到期 run 的主体与每日上限口径）。
+    const ownerPrincipalId = this.store.get(todo.id)?.ownerPrincipalId ?? null;
     return this.#tx(() => {
       const existing = this.#activeSchedule(todo.id);
       if (
@@ -876,6 +917,7 @@ export class TodoService implements WorkbenchDispatchPort {
           conversationId: target.conversationId,
           when,
           ...(timezone !== undefined ? { timezone } : {}),
+          ...(ownerPrincipalId !== null ? { ownerPrincipalId } : {}),
           title: todo.title,
           note: todo.notes,
         });
@@ -890,7 +932,7 @@ export class TodoService implements WorkbenchDispatchPort {
   }
 
   /** Executor changed while draft / scheduled: a live schedule moves to the new target. */
-  #reassign(todo: Todo, assignee: TodoAssignee, actor: TodoActor): Todo {
+  #reassign(todo: StoredTodo, assignee: TodoAssignee, actor: TodoActor): StoredTodo {
     const existing = this.#activeSchedule(todo.id);
     const updated = this.#applyAssignee(todo, assignee);
     if (existing === null) {
@@ -915,7 +957,7 @@ export class TodoService implements WorkbenchDispatchPort {
     return this.#schedule(updated, carried.when, carried.timezone, actor);
   }
 
-  #applyAssignee(todo: Todo, assignee: TodoAssignee): Todo {
+  #applyAssignee(todo: StoredTodo, assignee: TodoAssignee): StoredTodo {
     return this.store.update(todo.id, { assignee, blockedReason: null }) ?? todo;
   }
 
@@ -928,9 +970,9 @@ export class TodoService implements WorkbenchDispatchPort {
 
   /** Back to draft: schedule cancelled, status moved, optional assignee / reason changes. */
   #toDraft(
-    todo: Todo,
+    todo: StoredTodo,
     patch: { assignee?: TodoAssignee | null; blockedReason?: string | null },
-  ): Todo {
+  ): StoredTodo {
     this.#cancelSchedules(todo.id);
     return this.#move(todo, 'draft', {
       ...(patch.assignee !== undefined ? { assignee: patch.assignee } : {}),
@@ -981,7 +1023,7 @@ export class TodoService implements WorkbenchDispatchPort {
    * typed user message (direct → delivery gate, project → ProjectTurnCoordinator). Not subject to
    * the proactive switch, quiet hours or the daily cap (it is the user's instruction).
    */
-  #dispatch(todo: Todo, context: DispatchContext): Todo {
+  #dispatch(todo: StoredTodo, context: DispatchContext): StoredTodo {
     const notify = context.notify !== false;
     const assignee = todo.assignee;
     if (assignee === null) throw new AppError('INVALID_INPUT', '请先选择执行者');
@@ -998,6 +1040,10 @@ export class TodoService implements WorkbenchDispatchPort {
     if (!periodic) this.#move(todo, 'in_progress', { blockedReason: null });
     let held: boolean;
     try {
+      // 62.11 C4: the dispatch acts for the target chat's owner (direct chats);
+      // project / board chats and owner-less chats have no principal to attach.
+      const targetOwner =
+        this.#deps.conversations.get(target.conversationId)?.ownerPrincipalId ?? null;
       held =
         this.#deps.dispatcher.dispatch({
           conversationId: target.conversationId,
@@ -1014,6 +1060,9 @@ export class TodoService implements WorkbenchDispatchPort {
             : assignee.kind === 'project'
               ? (assignee.leadBotId ?? target.leadBotId)
               : null,
+          ...(targetOwner !== null
+            ? { principal: { id: targetOwner, name: null } }
+            : {}),
           onAppended: (message) => {
             this.store.updateRun(run.id, { messageId: message.id });
           },
@@ -1192,7 +1241,7 @@ export class TodoService implements WorkbenchDispatchPort {
   }
 
   /** True when the todo was modified. */
-  #reconcileTodo(todo: Todo): boolean {
+  #reconcileTodo(todo: StoredTodo): boolean {
     const problem = this.#executorProblem(todo);
     if (problem !== null) {
       this.#dropExecutor(todo, problem);
@@ -1235,7 +1284,7 @@ export class TodoService implements WorkbenchDispatchPort {
    * failed, the assignee cleared (a lost lead bot only clears the lead) and the todo returns to
    * draft with the reason.
    */
-  #dropExecutor(todo: Todo, problem: string): Todo {
+  #dropExecutor(todo: StoredTodo, problem: string): StoredTodo {
     this.#cancelSchedules(todo.id);
     this.#failOpenRuns(todo.id);
     if (this.#isBoard(todo.id)) {
@@ -1426,7 +1475,14 @@ export class TodoService implements WorkbenchDispatchPort {
       };
     }
     if (assignee.kind === 'bot') {
-      const { conversation, created } = this.#deps.conversations.openDirect(assignee.botId);
+      // 62.11 C13：派发落在「该事项归属主体与执行者」的直聊里（覆盖 T1 的
+      // 「上次派发对话」近似——那是 todos 拿到自己的归属列之前的过渡口径）。
+      // 无归属（单用户）= 无 owner 的现状直聊。
+      const ownerPrincipalId = this.store.get(todo.id)?.ownerPrincipalId ?? null;
+      const { conversation, created } = this.#deps.conversations.openDirect(
+        assignee.botId,
+        ownerPrincipalId !== null ? { ownerPrincipalId } : undefined,
+      );
       if (created) this.#deps.publish?.('conversation.updated', { conversation });
       return {
         leadBotId: assignee.botId,
@@ -1524,22 +1580,34 @@ export class TodoService implements WorkbenchDispatchPort {
     return bot.profile.identity.name || bot.name;
   }
 
-  #getOrThrow(id: string): Todo {
+  #getOrThrow(id: string): StoredTodo {
     const todo = this.store.get(id);
     if (todo === null) throw new AppError('NOT_FOUND', `事项 ${id} 不存在`);
     return todo;
   }
 
+  /**
+   * 62.11 C13：按 id 写操作的归属校验。传入 principal 且行归属不符 → NOT_FOUND
+   * （不泄露存在性，与绑定层的会话资格校验同口径）；不传 / null = 现状零校验。
+   */
+  #assertOwned(id: string, ownerPrincipalId?: string | null): void {
+    if (ownerPrincipalId == null || ownerPrincipalId.length === 0) return;
+    const row = this.store.get(id);
+    if (row === null || row.ownerPrincipalId !== ownerPrincipalId) {
+      throw new AppError('NOT_FOUND', `事项 ${id} 不存在`);
+    }
+  }
+
   /** Validated status move + patch; returns the fresh row. */
   #move(
-    todo: Todo,
+    todo: StoredTodo,
     to: TodoStatus,
     patch: {
       assignee?: TodoAssignee | null;
       blockedReason?: string | null;
       pendingWhen?: string | null;
     } = {},
-  ): Todo {
+  ): StoredTodo {
     const status = this.#assertMove(todo, to);
     return (
       this.store.update(todo.id, {
@@ -1670,7 +1738,11 @@ export class TodoService implements WorkbenchDispatchPort {
    * `known` when the side row is already gone (purge); `null` means it was
    * not a card, `undefined` looks the row up.
    */
-  #changed(todoId: string, known?: { projectId: string; columnId: string } | null): void {
+  #changed(
+    todoId: string,
+    known?: { projectId: string; columnId: string } | null,
+    ownerOverride?: string | null,
+  ): void {
     const location = known !== undefined ? known : this.#boardLocation(todoId);
     if (location !== null) {
       this.deliverBoardChanged({
@@ -1680,7 +1752,17 @@ export class TodoService implements WorkbenchDispatchPort {
       });
       return;
     }
-    this.#deps.publish?.('todos.changed', { todoId });
+    // 62.11 C13：有归属才带 ownerPrincipalId（团队层只下发给归属成员）；
+    // 无归属 = 单用户现状载荷逐字段不变。`ownerOverride`（purge 在删行前抓的
+    // 归属）优先——删行后再查只会得到 null，成员自己删事项的事件就没人收到了。
+    const ownerPrincipalId =
+      ownerOverride !== undefined
+        ? ownerOverride
+        : (this.store.get(todoId)?.ownerPrincipalId ?? null);
+    this.#deps.publish?.('todos.changed', {
+      todoId,
+      ...(ownerPrincipalId !== null ? { ownerPrincipalId } : {}),
+    });
   }
 
   /** Marks the service busy so reconcile (fired by `schedules.changed`) leaves mid-flight state alone. */

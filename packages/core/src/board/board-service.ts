@@ -73,11 +73,15 @@ export class BoardService {
   /**
    * Columns and cards ordered by position. When the board has no columns and
    * `seedTitles` yields at least one title, seeds them in one transaction.
+   * `principalId` (62.11 C5): when given, card unread counts read that
+   * principal's `conversation_reads` row instead of the conversation-wide
+   * `last_read_seq` (missing row = 0).
    */
   get(
     projectId: string,
     seedTitles: readonly string[] | undefined,
     actor: ProjectActor,
+    principalId?: string | null | undefined,
   ): { columns: BoardColumn[]; cards: BoardCard[] } {
     this.#project(projectId);
     if (
@@ -103,7 +107,7 @@ export class BoardService {
         if (seeded) this.#changed({ projectId });
       }
     }
-    return this.#snapshot(projectId);
+    return this.#snapshot(projectId, principalId);
   }
 
   createColumn(
@@ -461,8 +465,16 @@ export class BoardService {
     }).conversation.id;
   }
 
-  /** Unread, pending approvals, and cards awaiting acceptance across the project. */
-  summary(projectId: string): { unread: number; pendingApprovals: number; delivered: number } {
+  /**
+   * Unread, pending approvals, and cards awaiting acceptance across the
+   * project. `principalId` (62.11 C5): when given, unread counts read that
+   * principal's `conversation_reads` row instead of the conversation-wide
+   * `last_read_seq` (missing row = 0, i.e. everything unread).
+   */
+  summary(
+    projectId: string,
+    principalId?: string | null | undefined,
+  ): { unread: number; pendingApprovals: number; delivered: number } {
     this.#project(projectId);
     let unread = 0;
     let pendingApprovals = 0;
@@ -474,10 +486,23 @@ export class BoardService {
       // history behind a new assignee has no entry, so it stays out.
       const conversation = this.#visibleConversation(card.todoId, card.blockedReason);
       if (conversation === null) continue;
-      unread += Math.max(0, conversation.lastSeq - conversation.lastReadSeq);
+      unread += this.#unreadOf(conversation, principalId);
       pendingApprovals += this.#deps.approvals.pendingCount(conversation.id);
     }
     return { unread, pendingApprovals, delivered };
+  }
+
+  /**
+   * Unread count of a card thread: `lastSeq - lastReadSeq`, with `lastReadSeq`
+   * from the principal's read row when a principal is given (62.11 C5),
+   * otherwise the conversation-wide column.
+   */
+  #unreadOf(conversation: Conversation, principalId?: string | null | undefined): number {
+    const lastReadSeq =
+      principalId != null && principalId.length > 0
+        ? this.#deps.conversations.lastReadSeqOf(conversation.id, principalId)
+        : conversation.lastReadSeq;
+    return Math.max(0, conversation.lastSeq - lastReadSeq);
   }
 
   /**
@@ -529,10 +554,13 @@ export class BoardService {
     for (const row of rows) this.#deps.todos.releaseExecutor(row.id, BLOCKED_EXECUTOR_DELETED);
   }
 
-  #snapshot(projectId: string): { columns: BoardColumn[]; cards: BoardCard[] } {
+  #snapshot(
+    projectId: string,
+    principalId?: string | null | undefined,
+  ): { columns: BoardColumn[]; cards: BoardCard[] } {
     return {
       columns: this.#deps.store.listColumns(projectId).map(toColumn),
-      cards: this.#deps.store.listCards(projectId).map((row) => this.#toCard(row)),
+      cards: this.#deps.store.listCards(projectId).map((row) => this.#toCard(row, principalId)),
     };
   }
 
@@ -653,7 +681,7 @@ export class BoardService {
     return latest;
   }
 
-  #toCard(row: BoardCardRecord): BoardCard {
+  #toCard(row: BoardCardRecord, principalId?: string | null | undefined): BoardCard {
     const entry = this.#deps.todos.get(row.todoId).todo;
     const conversation = this.#visibleConversation(row.todoId, row.blockedReason);
     const assignee =
@@ -681,8 +709,7 @@ export class BoardService {
         lastRun: entry.lastRun,
       },
       conversationId: conversation?.id ?? null,
-      unreadCount:
-        conversation === null ? 0 : Math.max(0, conversation.lastSeq - conversation.lastReadSeq),
+      unreadCount: conversation === null ? 0 : this.#unreadOf(conversation, principalId),
       pendingApprovals:
         conversation === null ? 0 : this.#deps.approvals.pendingCount(conversation.id),
       task: taskProjection(views),

@@ -15,6 +15,13 @@ export interface KeyInfo {
 export const KEY_INFO = {
   mainDb: 'db:main',
   runsDb: 'db:runs',
+  /**
+   * Host-embedded database key info: for host applications that embed core and
+   * keep their own encrypted SQLite database next to it (currently the team
+   * server's team.db, derived from the same master key). Generic label on
+   * purpose — core knows nothing about the host's schema or semantics.
+   */
+  hostDb: 'db:host',
   secrets: 'secrets:v1',
   /**
    * HMAC key for the opaque session ids sent to model providers

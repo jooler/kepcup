@@ -73,6 +73,24 @@ describe('cardPreviewText（左栏卡片预览）', () => {
     expect(cardPreviewText({ cardType: 'bot_handover' })).toBe('🤝 Bot 移交');
     expect(cardPreviewText({ cardType: 'something_new' })).toBe('🗂️ 卡片');
   });
+
+  it('T9 决议卡：标题取 hostCard.data 槽位（C15 appendCard 的实际形状）', () => {
+    expect(
+      cardPreviewText({
+        cardType: 'resolution',
+        hostCard: {
+          text: '[决议卡] 统一文档模板（v1，讨论中）',
+          data: { resolutionId: 'res_1', title: '统一文档模板', version: 1, state: 'open' },
+        },
+      }),
+    ).toBe('📝 决议卡 统一文档模板');
+    // 缺 text / 缺 data / 空 title 时仍有兜底标题。
+    expect(cardPreviewText({ cardType: 'resolution' })).toBe('📝 决议卡');
+    expect(cardPreviewText({ cardType: 'resolution', hostCard: {} })).toBe('📝 决议卡');
+    expect(
+      cardPreviewText({ cardType: 'resolution', hostCard: { data: { title: '   ' } } }),
+    ).toBe('📝 决议卡');
+  });
 });
 
 describe('messagePreviewText（最后一条消息）', () => {

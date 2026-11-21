@@ -28,7 +28,7 @@ import type { MessagesService } from '../domain/messages.js';
 import { untrustedBlock } from '../infra/data-boundary.js';
 import { parseIsoOrThrow } from './when.js';
 import type { Orchestrator } from '../dispatch/orchestrator.js';
-import { SchedulesStore } from './store.js';
+import { SchedulesStore, type StoredSchedule } from './store.js';
 import { nextCronFireAt, isValidCron } from './cron.js';
 import {
   evaluateGuard,
@@ -78,6 +78,11 @@ export interface CreateOnceInput {
   commitmentId?: string | null;
   /** Commitment linkage may create overdue tasks (they fire with late_by). */
   allowPast?: boolean;
+  /**
+   * 62.11 C13：归属主体（创建调用者 / 事项归属）。同时给 conversationId 时
+   * 校验资格（直聊 owner 匹配或在册）。缺省 / null = 单用户现状（NULL 行）。
+   */
+  ownerPrincipalId?: string | null;
 }
 
 export interface CreateCronInput {
@@ -89,6 +94,8 @@ export interface CreateCronInput {
   title?: string | undefined;
   origin?: ScheduleOrigin | undefined;
   commitmentId?: string | null;
+  /** 62.11 C13：归属主体（同 CreateOnceInput.ownerPrincipalId）。 */
+  ownerPrincipalId?: string | null;
 }
 
 /** `schedule` tool / offer card / butler routine (D80): `when` is ISO 8601 or cron. */
@@ -100,6 +107,8 @@ export interface CreateFromWhenInput {
   note: string;
   title?: string | undefined;
   origin: ScheduleOrigin;
+  /** 62.11 C13：归属主体（同 CreateOnceInput.ownerPrincipalId）。 */
+  ownerPrincipalId?: string | null;
 }
 
 /**
@@ -131,6 +140,8 @@ export interface CreateForTodoInput {
   timezone?: string | null | undefined;
   title: string;
   note: string;
+  /** 62.11 C13：归属主体（TodoService 传事项归属）。 */
+  ownerPrincipalId?: string | null;
 }
 
 /** A validated `when` (D80 validateWhen). */
@@ -262,6 +273,7 @@ export class ScheduleService {
   /** `schedule` tool / commitment linkage: one-shot task at an absolute time. */
   createOnce(input: CreateOnceInput): Schedule {
     this.#assertFireable(input.botId, input.conversationId);
+    this.#assertOwnerEligible(input.ownerPrincipalId, input.conversationId);
     const note = this.#cleanNote(input.note);
     if (!input.allowPast && input.runAt <= this.#deps.clock.now()) {
       throw new AppError('INVALID_INPUT', '时间在过去，无法创建定时任务');
@@ -278,6 +290,7 @@ export class ScheduleService {
       ...(input.commitmentId !== undefined && input.commitmentId !== null
         ? { commitmentId: input.commitmentId }
         : {}),
+      ...(input.ownerPrincipalId != null ? { ownerPrincipalId: input.ownerPrincipalId } : {}),
       nextFireAt: input.runAt,
     });
     this.#reload();
@@ -288,6 +301,7 @@ export class ScheduleService {
   /** `schedule` tool: recurring task on a cron expression in a time zone. */
   createCron(input: CreateCronInput): Schedule {
     this.#assertFireable(input.botId, input.conversationId);
+    this.#assertOwnerEligible(input.ownerPrincipalId, input.conversationId);
     const expression = input.expression.trim();
     if (!isValidCron(expression)) {
       throw new AppError('INVALID_INPUT', `无法识别的 cron 表达式：${expression}`);
@@ -313,6 +327,7 @@ export class ScheduleService {
       ...(input.commitmentId !== undefined && input.commitmentId !== null
         ? { commitmentId: input.commitmentId }
         : {}),
+      ...(input.ownerPrincipalId != null ? { ownerPrincipalId: input.ownerPrincipalId } : {}),
       nextFireAt: next,
     });
     this.#reload();
@@ -359,6 +374,7 @@ export class ScheduleService {
       note: input.note,
       ...(input.title !== undefined ? { title: input.title } : {}),
       origin: input.origin,
+      ...(input.ownerPrincipalId != null ? { ownerPrincipalId: input.ownerPrincipalId } : {}),
     };
     return parsed.kind === 'once'
       ? this.createOnce({ ...common, runAt: parsed.runAt })
@@ -377,6 +393,7 @@ export class ScheduleService {
     if (!conversation || conversation.readOnly) {
       throw new AppError('NOT_FOUND', '对话不存在或已删除');
     }
+    this.#assertOwnerEligible(input.ownerPrincipalId, input.conversationId);
     const title = input.title.trim().replace(/\s+/g, ' ');
     if (title.length === 0) throw new AppError('INVALID_INPUT', '事项标题不能为空');
     const row = this.store.insert({
@@ -391,6 +408,7 @@ export class ScheduleService {
       title,
       origin: 'workbench',
       todoId: input.todoId,
+      ...(input.ownerPrincipalId != null ? { ownerPrincipalId: input.ownerPrincipalId } : {}),
     });
     this.#reload();
     this.#afterCreate(row);
@@ -496,6 +514,43 @@ export class ScheduleService {
     }
     if (!this.#deps.conversations.memberBotIds(conversationId).includes(botId)) {
       throw new AppError('INVALID_INPUT', 'Bot 不在该对话中');
+    }
+  }
+
+  /**
+   * 62.11 C13：归属主体对该会话是否有资格——直聊 owner 匹配、dm / 项目组在册
+   * （`conversation_principals`，未离开）、看板卡按其父项目在册。排期 / 监看同时
+   * 带 owner 与 conversation_id 时必须一致（到期 run 的主体应能在该会话看到结果）。
+   */
+  #ownerEligible(ownerPrincipalId: string, conversationId: string): boolean {
+    const conversation = this.#deps.conversations.get(conversationId);
+    if (conversation === null) return false;
+    if (conversation.ownerPrincipalId === ownerPrincipalId) return true;
+    if (this.#deps.conversations.hasPrincipal(conversationId, ownerPrincipalId)) return true;
+    return (
+      conversation.type === 'card' &&
+      conversation.parentProjectId !== null &&
+      this.#deps.conversations.hasPrincipal(conversation.parentProjectId, ownerPrincipalId)
+    );
+  }
+
+  #assertOwnerEligible(ownerPrincipalId: string | null | undefined, conversationId: string): void {
+    if (ownerPrincipalId == null || ownerPrincipalId.length === 0) return;
+    if (!this.#ownerEligible(ownerPrincipalId, conversationId)) {
+      // 从该主体的视角这个会话不可见：NOT_FOUND（不泄露存在性，与会话资格校验同口径）。
+      throw new AppError('NOT_FOUND', '对话不存在或无访问权限');
+    }
+  }
+
+  /**
+   * 62.11 C13：按 id 写操作的归属校验（传入且不符 → NOT_FOUND）；
+   * 不传 / null = 现状零校验。
+   */
+  #assertOwned(scheduleId: string, ownerPrincipalId?: string | null): void {
+    if (ownerPrincipalId == null || ownerPrincipalId.length === 0) return;
+    const row = this.store.get(scheduleId);
+    if (row === null || row.ownerPrincipalId !== ownerPrincipalId) {
+      throw new AppError('NOT_FOUND', `定时任务 ${scheduleId} 不存在`);
     }
   }
 
@@ -646,7 +701,14 @@ export class ScheduleService {
   }
 
   #publishChanged(row: Schedule): void {
-    this.#deps.publish?.('schedules.changed', { conversationId: row.conversationId, scheduleId: row.id });
+    // 62.11 C13：有归属才带 ownerPrincipalId（团队层据此只下发给归属成员）；
+    // 无归属 = 单用户现状载荷不变。
+    const ownerPrincipalId = this.store.get(row.id)?.ownerPrincipalId ?? null;
+    this.#deps.publish?.('schedules.changed', {
+      conversationId: row.conversationId,
+      scheduleId: row.id,
+      ...(ownerPrincipalId !== null ? { ownerPrincipalId } : {}),
+    });
   }
 
   /**
@@ -891,7 +953,11 @@ export class ScheduleService {
    * 「设置」 on an offer card: deterministic creation (origin 'offer'); the
    * card itself becomes the receipt. Does not wake the bot (§3.5).
    */
-  acceptOffer(messageId: string): Schedule {
+  /**
+   * 62.11 C13：`ownerPrincipalId`（RPC 调用者）传入时落到新建的排期上并做
+   * 会话资格校验；缺省 = 现状（无归属）。
+   */
+  acceptOffer(messageId: string, ownerPrincipalId?: string | null): Schedule {
     const { card, offer } = this.#pendingOffer(messageId);
     // Already scheduled under the same name (e.g. via the schedule tool after
     // the user agreed in words): point the card at it instead of duplicating.
@@ -912,6 +978,7 @@ export class ScheduleService {
         title: offer.title,
         note: offer.note,
         origin: 'offer',
+        ...(ownerPrincipalId != null ? { ownerPrincipalId } : {}),
       });
     } catch (error) {
       // Past time, bot gone / no longer a member, conversation read-only: the
@@ -986,7 +1053,7 @@ export class ScheduleService {
    * `schedule_fired` event; the once → done / cron → next-occurrence advance is the same.
    * Must run before the null-bot check below: a group todo without a lead bot has no bot id.
    */
-  #fireWorkbench(row: Schedule, fireAt: number): void {
+  #fireWorkbench(row: StoredSchedule, fireAt: number): void {
     const port = this.#workbench;
     if (port === null || row.todoId === null) {
       this.#deps.logger.warn(
@@ -1028,7 +1095,7 @@ export class ScheduleService {
     this.#reload();
   }
 
-  #fire(row: Schedule, fireAt: number): void {
+  #fire(row: StoredSchedule, fireAt: number): void {
     try {
       if (row.origin === 'workbench') {
         this.#fireWorkbench(row, fireAt);
@@ -1071,7 +1138,9 @@ export class ScheduleService {
         behavior: bot.profile.behavior,
         now,
         timeZone: this.#deps.timeZone,
-        sentToday: this.sentProactiveCount(botId, now),
+        // 62.11 C13：每日上限按 (Bot, 排期归属主体) 计数（一个成员的排期不挤占
+        // 他人的配额）；无归属 = 按 Bot 全量（单用户现状）。
+        sentToday: this.sentProactiveCount(botId, row.ownerPrincipalId),
         isEvent: false,
       });
       if (verdict.kind === 'defer') {
@@ -1100,6 +1169,8 @@ export class ScheduleService {
         scheduleId: row.id,
         text,
         lateByMs: isLateEnough(lateByMs) ? lateByMs : null,
+        // 62.11 C13：到期 run 的主体 = 排期归属。
+        ...(row.ownerPrincipalId != null ? { ownerPrincipalId: row.ownerPrincipalId } : {}),
       });
       this.store.update(row.id, { lastFiredAt: now });
       if (row.kind === 'once') {
@@ -1139,8 +1210,12 @@ export class ScheduleService {
    * delivery, long before its output exists — so same-instant fires cannot all
    * slip past the cap (BR-P10-005). The reservation dissolves when the run
    * settles without output (skip_reply and failed runs never count, P10 任务 5).
+   *
+   * 62.11 C13：`principalId` 传入时按 (Bot, 主体) 计数（一个成员的排期不挤占
+   * 他人的配额）；缺省 / null = 按 Bot 全量（单用户现状）。
    */
-  sentProactiveCount(botId: string, now: number): number {
+  sentProactiveCount(botId: string, principalId?: string | null): number {
+    const now = this.#deps.clock.now();
     const timeZone = this.#deps.timeZone;
     const dayStart = localDayStart(now, timeZone);
     const dayEnd = nextLocalMidnight(now, timeZone);
@@ -1149,10 +1224,15 @@ export class ScheduleService {
         `select count(*) as n from runs
          where bot_id = ? and trigger_reason = 'scheduled'
            and created_at >= ? and created_at < ?
+           ${principalId != null && principalId.length > 0 ? 'and principal_id = ?' : ''}
            and (output_message_ids_json is not null and output_message_ids_json != '[]'
                 or status in ('queued', 'running', 'waiting_approval', 'waiting_lease'))`,
       )
-      .get(botId, dayStart, dayEnd) as { n: number };
+      .get(
+        ...(principalId != null && principalId.length > 0
+          ? [botId, dayStart, dayEnd, principalId]
+          : [botId, dayStart, dayEnd]),
+      ) as { n: number };
     return row.n;
   }
 
@@ -1235,7 +1315,8 @@ export class ScheduleService {
 
   // --- queries & RPC -----------------------------------------------------------
 
-  cancel(id: string, options: { reassigned?: boolean } = {}): Schedule {
+  cancel(id: string, options: { reassigned?: boolean } = {}, ownerPrincipalId?: string | null): Schedule {
+    this.#assertOwned(id, ownerPrincipalId);
     const row = this.store.get(id);
     if (row === null) throw new AppError('NOT_FOUND', `定时任务 ${id} 不存在`);
     if (row.status !== 'active') throw new AppError('INVALID_INPUT', '该任务已结束，无法取消');
@@ -1309,6 +1390,12 @@ export class ScheduleService {
         commitmentId: target.commitmentId ?? null,
         todoId: row.todoId,
         nextFireAt,
+        // 62.11 C13：归属随行——但接手方会话必须仍对该主体可见（D88 移交的接手
+        // 对话不经建立时校验）；不可见时降为无归属（宁可无归属也不错归属）。
+        ...(row.ownerPrincipalId != null &&
+        this.#ownerEligible(row.ownerPrincipalId, target.conversationId)
+          ? { ownerPrincipalId: row.ownerPrincipalId }
+          : {}),
       });
       created = inserted;
       for (const job of queued) {
@@ -1408,9 +1495,21 @@ export class ScheduleService {
   }
 
   /** cancel_schedule tool: a bot may only cancel its own tasks. */
-  cancelOwn(botId: string, scheduleId: string): { ok: boolean; message: string } {
+  cancelOwn(
+    botId: string,
+    scheduleId: string,
+    ownerPrincipalId?: string | null,
+  ): { ok: boolean; message: string } {
     const row = this.store.get(scheduleId);
     if (row === null || row.botId !== botId) {
+      return { ok: false, message: '定时任务不存在，或不是你创建的任务' };
+    }
+    // 62.11 C13：运行主体的归属校验（不符 = 对该主体不存在）。
+    if (
+      ownerPrincipalId != null &&
+      ownerPrincipalId.length > 0 &&
+      row.ownerPrincipalId !== ownerPrincipalId
+    ) {
       return { ok: false, message: '定时任务不存在，或不是你创建的任务' };
     }
     // D90: a todo the user dispatched from the workbench is the user's, not the bot's.
@@ -1423,13 +1522,13 @@ export class ScheduleService {
     return { ok: true, message: '已取消该定时任务' };
   }
 
-  listEntries(conversationId?: string | undefined): ScheduleEntry[] {
+  listEntries(conversationId?: string | undefined, ownerPrincipalId?: string): ScheduleEntry[] {
     const rows =
       conversationId === undefined
-        ? this.store.listActive()
+        ? this.store.listActive(ownerPrincipalId)
         : this.#deps.conversations.get(conversationId)?.type === 'project'
-          ? this.store.listActiveForConversationScope(conversationId)
-          : this.store.listActiveForConversation(conversationId);
+          ? this.store.listActiveForConversationScope(conversationId, ownerPrincipalId)
+          : this.store.listActiveForConversation(conversationId, ownerPrincipalId);
     const now = this.#deps.clock.now();
     return rows.map((row) => {
       const bot = row.botId === null ? null : this.#deps.bots.get(row.botId);
@@ -1453,20 +1552,30 @@ export class ScheduleService {
   }
 
   /** Live guard verdict for an active task that cannot fire right now. */
-  #deferredReason(row: Schedule, profile: BotProfile | null, now: number): string | null {
+  #deferredReason(
+    row: StoredSchedule,
+    profile: BotProfile | null,
+    now: number,
+  ): string | null {
     // Workbench rows are not held back by the proactive guardrails (D90).
     if (row.status !== 'active' || profile === null || row.botId === null) return null;
     if (row.origin === 'workbench') return null;
-    const verdict = this.#verdictFor(profile, row.botId, now);
+    const verdict = this.#verdictFor(profile, row.botId, now, row.ownerPrincipalId ?? null);
     return verdict.kind === 'defer' ? guardReasonText(verdict.reason) : null;
   }
 
-  #verdictFor(profile: BotProfile, botId: string, now: number): GuardVerdict {
+  #verdictFor(
+    profile: BotProfile,
+    botId: string,
+    now: number,
+    ownerPrincipalId?: string | null,
+  ): GuardVerdict {
     return evaluateGuard({
       behavior: profile.behavior,
       now,
       timeZone: this.#deps.timeZone,
-      sentToday: this.sentProactiveCount(botId, now),
+      // 62.11 C13：上限预检与实际触发同一 (Bot, 主体) 口径。
+      sentToday: this.sentProactiveCount(botId, ownerPrincipalId ?? null),
       isEvent: false,
     });
   }

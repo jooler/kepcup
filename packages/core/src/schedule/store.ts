@@ -20,9 +20,20 @@ interface ScheduleRow {
   next_fire_at: number | null;
   last_fired_at: number | null;
   created_at: number;
+  owner_principal_id: string | null;
 }
 
-function rowToSchedule(row: ScheduleRow): Schedule {
+/**
+ * A schedule row plus the ownership column that stays out of the shared RPC
+ * shape (62.11 C13): the owning human principal, NULL = the single-user status
+ * quo. Scheduled-fire runs are attributed to it, and the proactive daily cap
+ * counts per (bot, owner).
+ */
+export interface StoredSchedule extends Schedule {
+  ownerPrincipalId?: string | null;
+}
+
+function rowToSchedule(row: ScheduleRow): StoredSchedule {
   return {
     id: row.id,
     botId: row.bot_id,
@@ -40,6 +51,7 @@ function rowToSchedule(row: ScheduleRow): Schedule {
     nextFireAt: row.next_fire_at,
     lastFiredAt: row.last_fired_at,
     createdAt: row.created_at,
+    ...(row.owner_principal_id !== null ? { ownerPrincipalId: row.owner_principal_id } : {}),
   };
 }
 
@@ -57,6 +69,8 @@ export interface InsertScheduleInput {
   commitmentId?: string | null;
   /** Workbench todo this schedule fires for (origin = 'workbench', D90). */
   todoId?: string | null;
+  /** 62.11 C13：归属主体（创建调用者 / 事项归属）。缺省 / null = NULL 行（现状）。 */
+  ownerPrincipalId?: string | null;
   nextFireAt: number | null;
 }
 
@@ -93,8 +107,9 @@ export class SchedulesStore {
       .prepare(
         `insert into schedules
            (id, bot_id, conversation_id, kind, run_at, cron, timezone, note,
-            title, origin, commitment_id, todo_id, status, next_fire_at, last_fired_at, created_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, null, ?)`,
+            title, origin, commitment_id, todo_id, status, next_fire_at, last_fired_at, created_at,
+            owner_principal_id)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, null, ?, ?)`,
       )
       .run(
         id,
@@ -113,24 +128,25 @@ export class SchedulesStore {
         input.todoId ?? null,
         input.nextFireAt,
         this.clock.now(),
+        input.ownerPrincipalId ?? null,
       );
     return this.getOrThrow(id);
   }
 
-  get(id: string): Schedule | null {
+  get(id: string): StoredSchedule | null {
     const row = this.db.prepare('select * from schedules where id = ?').get(id) as
       | ScheduleRow
       | undefined;
     return row ? rowToSchedule(row) : null;
   }
 
-  private getOrThrow(id: string): Schedule {
+  private getOrThrow(id: string): StoredSchedule {
     const row = this.get(id);
     if (row === null) throw new Error(`schedule ${id} disappeared after insert`);
     return row;
   }
 
-  update(id: string, patch: UpdateSchedulePatch): Schedule | null {
+  update(id: string, patch: UpdateSchedulePatch): StoredSchedule | null {
     const row = this.get(id);
     if (row === null) return null;
     this.db
@@ -150,7 +166,7 @@ export class SchedulesStore {
    * Edits the timing / title of a row in place (D90 reschedule / retitle); the card
    * snapshot is rewritten by the service.
    */
-  updateTiming(id: string, patch: UpdateScheduleTimingPatch): Schedule | null {
+  updateTiming(id: string, patch: UpdateScheduleTimingPatch): StoredSchedule | null {
     const row = this.get(id);
     if (row === null) return null;
     this.db
@@ -172,7 +188,7 @@ export class SchedulesStore {
   }
 
   /** Active schedules with a pending occurrence at or before `now`. */
-  due(now: number): Schedule[] {
+  due(now: number): StoredSchedule[] {
     return (
       this.db
         .prepare(
@@ -183,7 +199,7 @@ export class SchedulesStore {
   }
 
   /** The active schedule with the earliest pending occurrence (timer target). */
-  earliestActive(): Schedule | null {
+  earliestActive(): StoredSchedule | null {
     const row = this.db
       .prepare(
         "select * from schedules where status = 'active' and next_fire_at is not null order by next_fire_at limit 1",
@@ -196,7 +212,7 @@ export class SchedulesStore {
    * Active schedules of a conversation, plus — when it is a project — the
    * schedules that live on its card conversations.
    */
-  listActiveForConversationScope(conversationId: string): Schedule[] {
+  listActiveForConversationScope(conversationId: string, ownerPrincipalId?: string): StoredSchedule[] {
     return this.#list(
       `where status = 'active' and (
          conversation_id = ?
@@ -204,23 +220,25 @@ export class SchedulesStore {
            select id from conversations
            where type = 'card' and parent_project_id = ?
          )
-       )
+       )${ownerPrincipalId === undefined ? '' : ' and owner_principal_id = ?'}
        order by next_fire_at is null, next_fire_at`,
       conversationId,
       conversationId,
+      ...(ownerPrincipalId === undefined ? [] : [ownerPrincipalId]),
     );
   }
 
   /** Active schedules of one conversation (list_schedules tool). */
-  listActiveForConversation(conversationId: string): Schedule[] {
+  listActiveForConversation(conversationId: string, ownerPrincipalId?: string): StoredSchedule[] {
     return this.#list(
-      "where conversation_id = ? and status = 'active' order by next_fire_at is null, next_fire_at",
+      `where conversation_id = ? and status = 'active'${ownerPrincipalId === undefined ? '' : ' and owner_principal_id = ?'} order by next_fire_at is null, next_fire_at`,
       conversationId,
+      ...(ownerPrincipalId === undefined ? [] : [ownerPrincipalId]),
     );
   }
 
   /** Active schedules of one bot in one conversation (ownership-scoped). */
-  listActiveForBotInConversation(botId: string, conversationId: string): Schedule[] {
+  listActiveForBotInConversation(botId: string, conversationId: string): StoredSchedule[] {
     return this.#list(
       "where bot_id = ? and conversation_id = ? and status = 'active' order by next_fire_at is null, next_fire_at",
       botId,
@@ -229,7 +247,7 @@ export class SchedulesStore {
   }
 
   /** Active schedules of one bot across its conversations (D88 handover inventory). */
-  listActiveForBot(botId: string): Schedule[] {
+  listActiveForBot(botId: string): StoredSchedule[] {
     return this.#list(
       "where bot_id = ? and status = 'active' order by next_fire_at is null, next_fire_at, created_at",
       botId,
@@ -237,28 +255,32 @@ export class SchedulesStore {
   }
 
   /** Active schedules of one workbench todo (D90: at most one by invariant). */
-  listActiveForTodo(todoId: string): Schedule[] {
+  listActiveForTodo(todoId: string): StoredSchedule[] {
     return this.#list(
       "where todo_id = ? and status = 'active' order by next_fire_at is null, next_fire_at, created_at",
       todoId,
     );
   }
 
-  /** Every active schedule, soonest first (settings overview / RPC list). */
-  listActive(): Schedule[] {
+  /**
+   * Every active schedule, soonest first (settings overview / RPC list).
+   * 62.11 C13：传入主体时只返回该主体拥有的行；缺省 = 不过滤（单用户现状）。
+   */
+  listActive(ownerPrincipalId?: string): StoredSchedule[] {
     return this.#list(
-      "where status = 'active' order by next_fire_at is null, next_fire_at, created_at",
+      `where status = 'active'${ownerPrincipalId === undefined ? '' : ' and owner_principal_id = ?'} order by next_fire_at is null, next_fire_at, created_at`,
+      ...(ownerPrincipalId === undefined ? [] : [ownerPrincipalId]),
     );
   }
 
-  #list(clause: string, ...params: string[]): Schedule[] {
+  #list(clause: string, ...params: string[]): StoredSchedule[] {
     return (
       this.db.prepare(`select * from schedules ${clause}`).all(...params) as ScheduleRow[]
     ).map(rowToSchedule);
   }
 
   /** 承诺作废 → 对应任务取消（P10 任务 6）；返回被取消的行（D80 回写回执卡）。 */
-  cancelByCommitment(botId: string, commitmentId: string): Schedule[] {
+  cancelByCommitment(botId: string, commitmentId: string): StoredSchedule[] {
     return (
       this.db
         .prepare(
@@ -269,7 +291,7 @@ export class SchedulesStore {
   }
 
   /** 移出项目组：该 Bot 在此项目组的任务取消（03-data-model 删除级联）；返回被取消的行。 */
-  cancelForBotInConversation(botId: string, conversationId: string): Schedule[] {
+  cancelForBotInConversation(botId: string, conversationId: string): StoredSchedule[] {
     return (
       this.db
         .prepare(

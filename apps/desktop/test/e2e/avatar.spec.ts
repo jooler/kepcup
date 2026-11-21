@@ -120,7 +120,7 @@ test('avatar: preset picker applies instantly, reset restores default, upload pe
     await page.keyboard.press('Escape');
     await expect(picker).toBeHidden();
 
-    // 名称 / 简介点按直编：Enter 保存并全界面同步。
+    // 名称 / 简介点按直编：名称 Enter、简介 Cmd/Ctrl+Enter 保存并全界面同步。
     await page.locator('[data-testid="bot-name-edit"]').click();
     await page.locator('[data-testid="bot-name-inline-input"]').fill('小诚');
     await page.keyboard.press('Enter');
@@ -131,7 +131,7 @@ test('avatar: preset picker applies instantly, reset restores default, upload pe
 
     await page.locator('[data-testid="bot-bio-edit"]').click();
     await page.locator('[data-testid="bot-bio-inline-input"]').fill('可靠、务实');
-    await page.keyboard.press('Enter');
+    await page.keyboard.press('ControlOrMeta+Enter');
     await expect(page.locator('[data-testid="bot-bio-edit"]')).toHaveText('可靠、务实');
 
     // 名称直编写入的是 profile 持久层：重开右栏（收起再展开）后仍在。

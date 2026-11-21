@@ -3,6 +3,7 @@ import {
   type EndpointCapabilityId,
   type EndpointKind,
 } from '@kepcup/shared';
+import { isTeamHidden } from '../team/surface-gate';
 
 /**
  * 端点形态（D96，design 46 §3.2 / host-capabilities.ts 尾部）：web 构建（手机
@@ -15,9 +16,15 @@ import {
  */
 export const ENDPOINT_KIND: EndpointKind = window.kepcup.isWeb === true ? 'remote' : 'desktop';
 
-/** 本端点是否具备某个 UI 能力（desktop 恒全量；remote 缺 DESKTOP_ONLY 全集）。 */
+/**
+ * 本端点是否具备某个 UI 能力（desktop 恒全量；remote 缺 DESKTOP_ONLY 全集）。
+ * 团队端点（T5）叠加 surfaces 门控：`team.bootstrap.surfaces.hidden` 里的能力
+ * id 按「不具备」处理——既有消费点（文件对话框、计算机操控、沙箱向导等）的
+ * 不可用态统一收口。非团队上下文 `isTeamHidden` 恒 false，行为不变。
+ */
 export function endpointSupports(id: EndpointCapabilityId): boolean {
-  return endpointHasCapability(ENDPOINT_KIND, id);
+  if (!endpointHasCapability(ENDPOINT_KIND, id)) return false;
+  return !isTeamHidden(id);
 }
 
 export { defaultDeviceName } from '../../device-name';

@@ -47,16 +47,20 @@ class FakeWebSocket {
   }
 }
 
-function stubFetch(statusFor: (url: string, call: number) => number | 'throw'): void {
+function stubFetch(
+  statusFor: (url: string, call: number) => number | 'throw',
+  /** 响应 body（whoami 200 的团队标记探测会读 json；其余路径不读）。 */
+  body: unknown = {},
+): void {
   let calls = 0;
   vi.stubGlobal(
     'fetch',
-    vi.fn((input: RequestInfo | URL): Promise<{ status: number }> => {
+    vi.fn((input: RequestInfo | URL): Promise<{ status: number; json: () => Promise<unknown> }> => {
       calls += 1;
       const url = typeof input === 'string' ? input : String(input);
       const outcome = statusFor(url, calls);
       if (outcome === 'throw') return Promise.reject(new Error('network down'));
-      return Promise.resolve({ status: outcome });
+      return Promise.resolve({ status: outcome, json: async () => body });
     }),
   );
 }
@@ -108,6 +112,41 @@ describe('probeServerAuth', () => {
     expect(second).toBe(first);
     await first;
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+  });
+
+  // --- T5 团队端点标记（whoami 200 body 带 member）-----------------------------
+
+  it('200 body 带 member → 团队端点（member + mustChangePassword 透传）', async () => {
+    stubFetch(
+      () => 200,
+      { member: { id: 'mbr_1', displayName: '甲' }, mustChangePassword: true },
+    );
+    const mod = await loadModule();
+    expect(await mod.probeServerAuth()).toEqual({
+      mode: 'password',
+      authenticated: true,
+      member: { id: 'mbr_1', displayName: '甲' },
+      mustChangePassword: true,
+    });
+  });
+
+  it('200 body 无 member / 坏 JSON / 形状不对 → 个人版路径（probe 不带 member）', async () => {
+    for (const body of [
+      { mode: 'password', username: 'admin' },
+      null,
+      'not json object',
+      { member: { id: 'mbr_1' } }, // 缺 displayName：形状不对按个人版
+    ]) {
+      stubFetch(() => 200, body);
+      const mod = await loadModule();
+      expect(await mod.probeServerAuth()).toEqual({ mode: 'password', authenticated: true });
+    }
+  });
+
+  it('401（团队 / 个人版都不带 member）保持既有形状', async () => {
+    stubFetch(() => 401, { error: 'unauthenticated' });
+    const mod = await loadModule();
+    expect(await mod.probeServerAuth()).toEqual({ mode: 'password', authenticated: false });
   });
 });
 

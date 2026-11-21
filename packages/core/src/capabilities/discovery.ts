@@ -130,6 +130,12 @@ export interface CapabilityDiscoveryInput {
   wrap(entries: McpToolEntry[]): ToolDefinition[];
   /** 条目是否进索引（对话轮 / 子代理 = `allowedOnReadOnlySurface`，任务 = 全部）。 */
   include(entry: McpToolEntry): boolean;
+  /**
+   * 62.11 C8 宿主工具策略：返回 false 的工具在解析后即被丢弃（不进索引 →
+   * `capability_search` 搜不到、`capability_call` 调不到），也不计入 omitted
+   * （被策略拒绝不是「只在任务中可用」）。缺省 = 不裁剪（现状）。
+   */
+  allowedTool?: ((toolName: string) => boolean) | undefined;
   /** 已逐个挂在工具列表里的工具名（不再进索引，避免重复）。 */
   exclude?: ReadonlySet<string> | undefined;
   /** 解析时发现授权问题的回调（orchestrator 据此让 `app_request_connection` 认得它）。 */
@@ -181,11 +187,17 @@ export function createCapabilityDiscovery(input: CapabilityDiscoveryInput): Capa
         );
         return false;
       });
-      const included = usable.filter(
+      // C8：被宿主策略拒绝的工具先于索引谓词丢弃（搜不到也调不到，不计入
+      // omitted——那是「只在任务中可用」的计数）。
+      const policyUsable =
+        input.allowedTool === undefined
+          ? usable
+          : usable.filter((entry) => input.allowedTool!(entry.name));
+      const included = policyUsable.filter(
         (entry) => input.include(entry) && !(input.exclude?.has(entry.name) ?? false),
       );
       // 谓词挡掉的才算「只在任务中可用」；已经逐个挂载的（exclude）不算。
-      const omitted = usable.filter(
+      const omitted = policyUsable.filter(
         (entry) => !input.include(entry) && !(input.exclude?.has(entry.name) ?? false),
       ).length;
       const tools = input.wrap(included);

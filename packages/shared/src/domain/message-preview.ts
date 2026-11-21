@@ -124,6 +124,12 @@ export function cardPreviewText(content: Record<string, unknown>): string {
     );
   }
 
+  // T9（62.09）：决议卡（hostCard.data 载荷，domain/resolution.ts）——标题进侧栏预览。
+  if (cardType === 'resolution') {
+    const payload = recordOf(recordOf(content.hostCard).data);
+    return line('📝', '决议卡', textOf(payload.title));
+  }
+
   const approval = APPROVAL_CARD_TITLE[cardType];
   if (approval !== undefined) return line(approval.icon, approval.title);
 

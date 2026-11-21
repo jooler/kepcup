@@ -1,9 +1,10 @@
+import { untrack } from 'svelte';
 import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
 import {
   clampSidebarWidth,
   effectiveSidebarWidth,
   maxSidebarWidthFor,
-  rightPanelFits,
+  nextPanelDrawer,
   isSidebarCollapsed,
   loadSidebarWidth,
   saveSidebarWidth,
@@ -24,14 +25,46 @@ class SidebarLayoutState {
   /** 按窗口宽度夹取后的实际宽度（偏好宽度 width 不被改写，窗口拉回去就恢复）。 */
   effectiveWidth = $derived(effectiveSidebarWidth(this.width, narrowLayout.windowWidth));
 
-  /** 宽屏下常驻右栏是否放得下（聊天区 / 右栏各有最小宽度）。 */
-  panelFits = $derived(rightPanelFits(narrowLayout.windowWidth, this.effectiveWidth));
+  /**
+   * 宽屏内右栏是否走覆盖抽屉（中窄窗口）：并排会把对话区挤到舒适宽以下（右栏按
+   * 比例切宽，见 nextPanelDrawer）。带滞回（530 进 / 570 出，对话可用宽轴）——历史
+   * 状态是滞回的一部分，不能用 $derived；初始值按当前窗口算一次，后续由 effect
+   * 维护（单例构造不在组件上下文，$effect.root 包裹才能在模块加载时建立）。窗口 /
+   * 侧栏宽度任一变化都可能翻转；窄屏下无意义（整树换 NarrowShell），消费点都在
+   * 宽屏分支。
+   */
+  panelAsDrawer = $state(
+    nextPanelDrawer(
+      false,
+      narrowLayout.windowWidth,
+      effectiveSidebarWidth(this.width, narrowLayout.windowWidth),
+    ),
+  );
 
   /**
-   * Bot 详情是否走全屏覆盖层：窄屏，或宽屏但窗口太窄放不下并排右栏
-   *（此时 Bot 药丸开覆盖层而不是展开右栏）。
+   * Bot 详情是否走全屏覆盖层：仅窄屏（33-narrow-layout）。宽屏一栏：窗口够宽并排、
+   * 中窄覆盖抽屉（panelAsDrawer），不再有「宽屏放不下跳全屏层」的第三条分叉。
    */
-  panelAsOverlay = $derived(narrowLayout.narrow || !this.panelFits);
+  panelAsOverlay = $derived(narrowLayout.narrow);
+
+  /**
+   * 维护 panelAsDrawer 的滞回（历史状态是滞回的一部分，不能用 $derived）。单例
+   * 构造不在组件上下文，$effect.root 包裹才能在模块加载时建立；单例不销毁，无需 dispose。
+   */
+  constructor() {
+    $effect.root(() => {
+      $effect(() => {
+        const windowWidth = narrowLayout.windowWidth;
+        const sidebarWidth = this.effectiveWidth;
+        const next = nextPanelDrawer(
+          untrack(() => this.panelAsDrawer),
+          windowWidth,
+          sidebarWidth,
+        );
+        if (next !== untrack(() => this.panelAsDrawer)) this.panelAsDrawer = next;
+      });
+    });
+  }
 
   /** 最小宽即图标模式。 */
   collapsed = $derived(isSidebarCollapsed(this.width));

@@ -761,7 +761,15 @@ export class DelegationHost implements DelegationToolFacade {
       });
       return 'parked';
     }
-    const home = this.#deps.conversations.openDirect(delegation.toBotId);
+    // 62.11 C3 owner judgment: the executor's home chat represents the
+    // delegating conversation — its owner keeps the home (a B shared by two
+    // principals gets one home per principal). Null owner = single-user shape.
+    const sourceOwner =
+      this.#deps.conversations.get(delegation.fromConversationId)?.ownerPrincipalId ?? null;
+    const home = this.#deps.conversations.openDirect(
+      delegation.toBotId,
+      sourceOwner !== null ? { ownerPrincipalId: sourceOwner } : undefined,
+    );
     if (home.created) this.#deps.publish('conversation.updated', { conversation: home.conversation });
 
     // 崩溃恢复重投（working 但 run_id 尚未回填）：任务消息已在，复用既有消息

@@ -64,19 +64,29 @@ export class ProjectsService {
     this.#pluginDirectory = directory;
   }
 
-  create(input: {
-    title: string;
-    goal?: string | null;
-    leadBotId: string;
-    memberBotIds: string[];
-  }): Conversation {
+  create(
+    input: {
+      title: string;
+      goal?: string | null;
+      leadBotId: string;
+      memberBotIds: string[];
+      /** 62.11 C3: human principals joining the project (client pass-through). */
+      principalIds?: string[] | undefined;
+    },
+    opts?: { leadPrincipalId?: string | null } | undefined,
+  ): Conversation {
     const title = input.title.trim();
     if (title.length === 0) {
       throw new AppError('INVALID_INPUT', '项目组名称不能为空');
     }
     this.#validateGoal(input.goal);
     const unique = [...new Set(input.memberBotIds)];
-    if (unique.length < 2) {
+    // 62.11 C3: a non-empty human roster keeps the group collaborative on its
+    // own, so the bot-member floor drops from 2 to 1 (lead ∈ members still
+    // holds). The binding layer enrolls the caller as the human lead via
+    // `opts.leadPrincipalId` — that alone does not relax the floor.
+    const hasPrincipals = (input.principalIds?.length ?? 0) > 0;
+    if (unique.length < (hasPrincipals ? 1 : 2)) {
       throw new AppError('INVALID_INPUT', '项目组至少需要 2 个成员（含负责人）');
     }
     if (!unique.includes(input.leadBotId)) {
@@ -92,6 +102,17 @@ export class ProjectsService {
       }
     }
 
+    // 62.11 C3 roster: the caller leads (role='lead'), client-supplied ids
+    // join as members; deduped, empty after cleaning = no rows written.
+    const leadPrincipalId =
+      opts?.leadPrincipalId != null && opts.leadPrincipalId.trim().length > 0
+        ? opts.leadPrincipalId.trim()
+        : null;
+    const memberPrincipalIds = [...new Set(input.principalIds ?? [])].filter(
+      (id) => id.trim().length > 0 && id.trim() !== leadPrincipalId,
+    );
+    const hasPrincipalRoster = leadPrincipalId !== null || memberPrincipalIds.length > 0;
+
     const id = newId('conv');
     const now = this.deps.clock.now();
     const run = this.deps.db.transaction(() => {
@@ -106,6 +127,22 @@ export class ProjectsService {
             'insert into conversation_members (conversation_id, bot_id, joined_at) values (?, ?, ?)',
           )
           .run(id, botId, now);
+      }
+      if (hasPrincipalRoster) {
+        if (leadPrincipalId !== null) {
+          this.deps.db
+            .prepare(
+              "insert into conversation_principals (conversation_id, principal_id, role, joined_at) values (?, ?, 'lead', ?)",
+            )
+            .run(id, leadPrincipalId, now);
+        }
+        for (const principalId of memberPrincipalIds) {
+          this.deps.db
+            .prepare(
+              "insert into conversation_principals (conversation_id, principal_id, role, joined_at) values (?, ?, 'member', ?)",
+            )
+            .run(id, principalId.trim(), now);
+        }
       }
     });
     run.immediate();

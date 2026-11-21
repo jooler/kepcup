@@ -22,6 +22,38 @@ interface ConversationRow {
   card_todo_id: string | null;
   from_bot_id: string | null;
   to_bot_id: string | null;
+  owner_principal_id: string | null;
+}
+
+/** In-conversation participant role of a human principal (fixed vocabulary). */
+export type ConversationPrincipalRole = 'member' | 'lead';
+
+/** One active (not yet left) principal roster row of a conversation. */
+export interface ConversationPrincipal {
+  conversationId: string;
+  principalId: string;
+  role: ConversationPrincipalRole;
+  joinedAt: number;
+}
+
+/**
+ * One `conversation_principals` row INCLUDING left ones (T9 read seam, 62.03
+ * D137 / 62.09 §2): the host splits usage by the principals enrolled at the
+ * row's consumption time (`joined_at <= t < coalesce(left_at, ∞)`), so the
+ * history (left_at non-null) must stay readable — the active-only
+ * {@link ConversationsService.principals} is not enough. Core never interprets
+ * the window; it only keeps the rows.
+ */
+export interface ConversationPrincipalRecord extends ConversationPrincipal {
+  /** Epoch ms the principal left, or null while still enrolled. */
+  leftAt: number | null;
+}
+
+interface PrincipalRow {
+  conversation_id: string;
+  principal_id: string;
+  role: ConversationPrincipalRole;
+  joined_at: number;
 }
 
 export function conversationRowToConversation(row: ConversationRow): Conversation {
@@ -45,6 +77,10 @@ export function conversationRowToConversation(row: ConversationRow): Conversatio
     lastReadSeq: row.last_read_seq,
     lastMessageAt: row.last_message_at,
     createdAt: row.created_at,
+    // 62.11 C3: owner of a `direct` conversation (null / absent on single-user
+    // installs and on dm / project rows). Omitted when null so dormant
+    // conversation payloads stay byte-identical.
+    ...(row.owner_principal_id !== null ? { ownerPrincipalId: row.owner_principal_id } : {}),
   };
 }
 
@@ -88,7 +124,7 @@ export class ConversationsService {
   get(id: string): Conversation | null {
     const row = this.db.prepare('select * from conversations where id = ?').get(id) as
       ConversationRow | undefined;
-    return row ? conversationRowToConversation(row) : null;
+    return row ? this.#hydrate([row])[0] ?? null : null;
   }
 
   getOrThrow(id: string): Conversation {
@@ -110,7 +146,7 @@ export class ConversationsService {
         "select * from conversations where type not in ('card', 'bot_direct') order by coalesce(last_message_at, created_at) desc",
       )
       .all() as ConversationRow[];
-    return rows.map(conversationRowToConversation);
+    return this.#hydrate(rows);
   }
 
   /**
@@ -123,7 +159,76 @@ export class ConversationsService {
         "select * from conversations where archived_at is null and type not in ('card', 'bot_direct') order by coalesce(last_message_at, created_at) desc",
       )
       .all() as ConversationRow[];
-    return rows.map(conversationRowToConversation);
+    return this.#hydrate(rows);
+  }
+
+  /**
+   * Conversations a human principal may see (62.11 C3): those they own (their
+   * `direct` chats) plus those they are an active participant of (`dm` /
+   * `project` rosters). Card and exchange conversations resolve through their
+   * parent (see {@link accessibleBy}) and stay off the roster, like
+   * {@link list}. `visibleOnly` applies the {@link listVisible} filter
+   * (archived rows dropped); omitted / false = the {@link list} roster.
+   */
+  listForPrincipal(
+    principalId: string,
+    opts?: { visibleOnly?: boolean } | undefined,
+  ): Conversation[] {
+    const visibleOnly = opts?.visibleOnly === true;
+    const rows = this.db
+      .prepare(
+        `select * from conversations c
+          where c.type not in ('card', 'bot_direct')
+            ${visibleOnly ? 'and c.archived_at is null' : ''}
+            and (
+              (c.type = 'direct' and c.owner_principal_id = ?)
+              or exists (
+                select 1 from conversation_principals p
+                 where p.conversation_id = c.id and p.principal_id = ? and p.left_at is null
+              )
+            )
+          order by coalesce(c.last_message_at, c.created_at) desc`,
+      )
+      .all(principalId, principalId) as ConversationRow[];
+    return this.#hydrate(rows);
+  }
+
+  /**
+   * Whether the principal may touch this conversation (62.04 §2 会话资格,
+   * core-side seam): direct = its owner; dm / project = active roster member;
+   * card / bot_direct resolve through their parent project / the delegation's
+   * source chat. Missing conversation = false (never leak existence).
+   */
+  async accessibleBy(conversationId: string, principalId: string): Promise<boolean> {
+    const conversation = this.get(conversationId);
+    if (conversation === null) return false;
+    switch (conversation.type) {
+      case 'direct':
+        return conversation.ownerPrincipalId === principalId;
+      case 'dm':
+      case 'project':
+        return this.hasPrincipal(conversationId, principalId);
+      case 'card': {
+        const parent = conversation.parentProjectId;
+        return parent !== null && this.hasPrincipal(parent, principalId);
+      }
+      case 'bot_direct': {
+        // The exchange conversation belongs to the delegation that opened it;
+        // eligibility follows the delegating chat: a direct chat by owner, a
+        // project chat by roster (delegations can be proposed from a project).
+        const row = this.db
+          .prepare(
+            'select from_conversation_id as id from delegations where exchange_conversation_id = ? limit 1',
+          )
+          .get(conversationId) as { id: string } | undefined;
+        if (row === undefined) return false;
+        const source = this.get(row.id);
+        if (source === null) return false;
+        if (source.type === 'direct') return source.ownerPrincipalId === principalId;
+        if (source.type === 'project') return this.hasPrincipal(source.id, principalId);
+        return false;
+      }
+    }
   }
 
   /**
@@ -160,23 +265,33 @@ export class ConversationsService {
    * domain never resurrects it. Restoring is a user action and lives in the
    * RPC layer (`conversations.openDirect` / `conversations.unarchive`), so
    * background deliveries (mail, workbench) don't pull it back into the list.
+   *
+   * `opts.ownerPrincipalId` (62.11 C3) scopes the chat per human principal —
+   * one conversation per (bot, owner), matching the unique index
+   * `conversations_one_direct_per_bot`. Omitted / null = the single-user chat
+   * (owner NULL, exactly the pre-team-server rows and lookup).
    */
-  openDirect(botId: string): { conversation: Conversation; created: boolean } {
+  openDirect(
+    botId: string,
+    opts?: { ownerPrincipalId?: string | null } | undefined,
+  ): { conversation: Conversation; created: boolean } {
+    const ownerPrincipalId = opts?.ownerPrincipalId ?? null;
     const existing = this.db
       .prepare(
-        "select * from conversations where type = 'direct' and direct_bot_id = ? and read_only = 0",
+        "select * from conversations where type = 'direct' and direct_bot_id = ? and read_only = 0 " +
+          "and ifnull(owner_principal_id, '') = ?",
       )
-      .get(botId) as ConversationRow | undefined;
-    if (existing) return { conversation: conversationRowToConversation(existing), created: false };
+      .get(botId, ownerPrincipalId ?? '') as ConversationRow | undefined;
+    if (existing) return { conversation: this.#hydrate([existing])[0]!, created: false };
 
     const id = newId('conv');
     const now = this.clock.now();
     const run = this.db.transaction(() => {
       this.db
         .prepare(
-          'insert into conversations (id, type, direct_bot_id, created_at) values (?, ?, ?, ?)',
+          'insert into conversations (id, type, direct_bot_id, owner_principal_id, created_at) values (?, ?, ?, ?, ?)',
         )
-        .run(id, 'direct', botId, now);
+        .run(id, 'direct', botId, ownerPrincipalId, now);
       this.db
         .prepare(
           'insert into conversation_members (conversation_id, bot_id, joined_at) values (?, ?, ?)',
@@ -185,6 +300,108 @@ export class ConversationsService {
     });
     run.immediate();
     return { conversation: this.getOrThrow(id), created: true };
+  }
+
+  /**
+   * Opens (or reuses) a human-to-human `dm` conversation (62.11 C3 / 62.04 §2):
+   * no bot, no lead, no dispatch — participants live in
+   * `conversation_principals`. A single id opens the principal's self
+   * conversation. Idempotent on the unordered id pair: the lookup compares the
+   * full active roster, so a left participant rejoining matches a fresh
+   * conversation, never a stale one. Every participant joins as
+   * `role = 'member'` (`'lead'` is reserved for project leads).
+   */
+  openDm(principalIds: string[]): { conversation: Conversation; created: boolean } {
+    const ids = [...new Set(principalIds.map((id) => id.trim()).filter((id) => id.length > 0))].sort();
+    if (ids.length === 0) {
+      throw new AppError('INVALID_INPUT', 'dm conversation requires at least one principal');
+    }
+    const placeholders = ids.map(() => '?').join(', ');
+    const candidates = this.db
+      .prepare(
+        `select conversation_id as id from conversation_principals
+          where left_at is null and principal_id in (${placeholders})
+          group by conversation_id
+          having count(distinct principal_id) = ?`,
+      )
+      .all(...ids, ids.length) as Array<{ id: string }>;
+    for (const candidate of candidates) {
+      const roster = this.#activePrincipalIds(candidate.id);
+      if (roster.length !== ids.length) continue;
+      if (!ids.every((id) => roster.includes(id))) continue;
+      const conversation = this.get(candidate.id);
+      if (conversation !== null && conversation.type === 'dm') {
+        return { conversation, created: false };
+      }
+    }
+
+    const id = newId('conv');
+    const now = this.clock.now();
+    const run = this.db.transaction(() => {
+      // dm rows carry neither a bot nor a lead (every 0077 CHECK holds with
+      // those columns NULL).
+      this.db
+        .prepare("insert into conversations (id, type, created_at) values (?, 'dm', ?)")
+        .run(id, now);
+      for (const principalId of ids) {
+        this.db
+          .prepare(
+            "insert into conversation_principals (conversation_id, principal_id, role, joined_at) values (?, ?, 'member', ?)",
+          )
+          .run(id, principalId, now);
+      }
+    });
+    run.immediate();
+    return { conversation: this.getOrThrow(id), created: true };
+  }
+
+  /** Active (not left) principals of a conversation, in join order. */
+  principals(conversationId: string): ConversationPrincipal[] {
+    const rows = this.db
+      .prepare(
+        'select conversation_id, principal_id, role, joined_at from conversation_principals where conversation_id = ? and left_at is null order by joined_at, principal_id',
+      )
+      .all(conversationId) as PrincipalRow[];
+    return rows.map((row) => ({
+      conversationId: row.conversation_id,
+      principalId: row.principal_id,
+      role: row.role,
+      joinedAt: row.joined_at,
+    }));
+  }
+
+  /**
+   * T9（62.03 D137）只读历史行：`conversation_principals` 全部行（含 left_at
+   * 非空的离开行），按 joined_at 排序。宿主按「消耗时点在册名单」分摊用量
+   * （`joined_at <= t < coalesce(left_at, ∞)`）；纯 SELECT，无行为变化——
+   * 不调用 = 与从前完全一致。
+   */
+  principalHistory(conversationId: string): ConversationPrincipalRecord[] {
+    interface HistoryRow extends PrincipalRow {
+      left_at: number | null;
+    }
+    const rows = this.db
+      .prepare(
+        'select conversation_id, principal_id, role, joined_at, left_at from conversation_principals where conversation_id = ? order by joined_at, principal_id',
+      )
+      .all(conversationId) as HistoryRow[];
+    return rows.map((row) => ({
+      conversationId: row.conversation_id,
+      principalId: row.principal_id,
+      role: row.role,
+      joinedAt: row.joined_at,
+      leftAt: row.left_at,
+    }));
+  }
+
+  /** Whether the principal is an active participant (left rows excluded). */
+  hasPrincipal(conversationId: string, principalId: string): boolean {
+    const row = this.db
+      .prepare(
+        'select 1 as hit from conversation_principals where conversation_id = ? and principal_id = ? and left_at is null limit 1',
+      )
+      .get(conversationId, principalId) as { hit: number } | undefined;
+    return row !== undefined;
   }
 
   /**
@@ -223,10 +440,40 @@ export class ConversationsService {
     return this.getOrThrow(id);
   }
 
-  markRead(conversationId: string, seq: number): void {
+  /**
+   * Marks messages read up to `seq`. With `principalId` (62.11 C5) the write
+   * goes only to the per-principal `conversation_reads` row (upsert max); the
+   * conversation-wide `last_read_seq` stays untouched. Without one this is the
+   * single-user path exactly as before (the old column).
+   */
+  markRead(conversationId: string, seq: number, principalId?: string | null | undefined): void {
+    if (principalId != null && principalId.length > 0) {
+      this.db
+        .prepare(
+          `insert into conversation_reads (conversation_id, principal_id, last_read_seq)
+           values (?, ?, ?)
+           on conflict(conversation_id, principal_id) do update set
+             last_read_seq = max(last_read_seq, excluded.last_read_seq)`,
+        )
+        .run(conversationId, principalId, seq);
+      return;
+    }
     this.db
       .prepare('update conversations set last_read_seq = max(last_read_seq, ?) where id = ?')
       .run(seq, conversationId);
+  }
+
+  /**
+   * The principal's stored read position (62.11 C5, read by the binding layer's
+   * conversation view). Missing row = 0 (never read anything).
+   */
+  lastReadSeqOf(conversationId: string, principalId: string): number {
+    const row = this.db
+      .prepare(
+        'select last_read_seq as seq from conversation_reads where conversation_id = ? and principal_id = ?',
+      )
+      .get(conversationId, principalId) as { seq: number } | undefined;
+    return row?.seq ?? 0;
   }
 
   setReadOnly(conversationId: string, readOnly: boolean): void {
@@ -414,6 +661,47 @@ export class ConversationsService {
   #publishUpdated(conversations: readonly Conversation[]): void {
     if (this.db.inTransaction) return;
     for (const conversation of conversations) this.hooks?.onUpdated?.(conversation);
+  }
+
+  /**
+   * Maps rows and enriches `dm` rows with their active principal roster
+   * (62.11 C3 `peerPrincipalIds`; the binding layer's conversation view reads
+   * the same roster). Non-dm rows pass through untouched — and with no dm rows
+   * at all (every single-user database) this is a pure map.
+   */
+  #hydrate(rows: ConversationRow[]): Conversation[] {
+    const conversations = rows.map(conversationRowToConversation);
+    const dmIds = conversations.filter((c) => c.type === 'dm').map((c) => c.id);
+    if (dmIds.length === 0) return conversations;
+    const placeholders = dmIds.map(() => '?').join(', ');
+    const roster = this.db
+      .prepare(
+        `select conversation_id, principal_id from conversation_principals
+          where left_at is null and conversation_id in (${placeholders})
+          order by joined_at, principal_id`,
+      )
+      .all(...dmIds) as Array<{ conversation_id: string; principal_id: string }>;
+    const peers = new Map<string, string[]>();
+    for (const row of roster) {
+      const list = peers.get(row.conversation_id) ?? [];
+      list.push(row.principal_id);
+      peers.set(row.conversation_id, list);
+    }
+    return conversations.map((conversation) =>
+      conversation.type === 'dm'
+        ? { ...conversation, peerPrincipalIds: peers.get(conversation.id) ?? [] }
+        : conversation,
+    );
+  }
+
+  /** Active principal ids of a conversation (raw list, no ordering guarantee). */
+  #activePrincipalIds(conversationId: string): string[] {
+    const rows = this.db
+      .prepare(
+        'select principal_id as id from conversation_principals where conversation_id = ? and left_at is null',
+      )
+      .all(conversationId) as Array<{ id: string }>;
+    return rows.map((row) => row.id);
   }
 
   /** Internal: bump last_message_at (called by the messages service). */

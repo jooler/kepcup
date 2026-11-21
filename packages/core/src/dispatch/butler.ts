@@ -280,12 +280,20 @@ export class ButlerHost implements ButlerToolFacade {
     try {
       const lines =
         proposal.proposalType === 'project'
-          ? this.#createProject(proposal, approval.decision?.leadBotId)
+          ? this.#createProject(
+              proposal,
+              approval.decision?.leadBotId,
+              this.#deps.conversations.get(conversationId)?.ownerPrincipalId ?? null,
+            )
           : this.#createBots(
               approval.id,
               proposal,
               approval.decision?.selection,
               approval.decision?.routineSelection,
+              // 62.11 C3 owner judgment: the proposal was confirmed in the
+              // butler chat of a specific owner — the new bot's direct chat
+              // belongs to the same owner (null on single-user rows).
+              this.#deps.conversations.get(conversationId)?.ownerPrincipalId ?? null,
             );
       this.#notify(butlerId, conversationId, lines.join('\n'));
     } catch (error) {
@@ -305,6 +313,8 @@ export class ButlerHost implements ButlerToolFacade {
     proposal: Extract<ButlerProposalPayload, { proposalType: 'bots' | 'bot' }>,
     selection: number[] | undefined,
     routineSelection: string[] | undefined,
+    /** 62.11 C3: the confirming conversation's owner (null = single-user). */
+    ownerPrincipalId: string | null,
   ): string[] {
     const indexes = selection ?? proposal.bots.map((_, index) => index);
     const keptRoutines = routineSelection !== undefined ? new Set(routineSelection) : null;
@@ -329,6 +339,7 @@ export class ButlerHost implements ButlerToolFacade {
           item,
           offset + order,
           modelGone ? { model: '' } : undefined,
+          ownerPrincipalId,
         );
         announceCreatedBot(this.#deps, record);
         created.push(record.bot);
@@ -378,15 +389,20 @@ export class ButlerHost implements ButlerToolFacade {
   #createProject(
     proposal: Extract<ButlerProposalPayload, { proposalType: 'project' }>,
     decisionLeadBotId: string | undefined,
+    /** 62.11 C3: the confirming conversation's owner becomes the human lead. */
+    ownerPrincipalId: string | null,
   ): string[] {
     // D92 T1a WP4: the card carries the lead; the user's decision may override it
     // (approvals.decide validates it stays one of the proposal's members).
-    const project = this.#deps.projects.create({
-      title: proposal.title,
-      memberBotIds: proposal.memberBotIds,
-      goal: proposal.goal,
-      leadBotId: decisionLeadBotId ?? proposal.leadBotId,
-    });
+    const project = this.#deps.projects.create(
+      {
+        title: proposal.title,
+        memberBotIds: proposal.memberBotIds,
+        goal: proposal.goal,
+        leadBotId: decisionLeadBotId ?? proposal.leadBotId,
+      },
+      ownerPrincipalId !== null ? { leadPrincipalId: ownerPrincipalId } : undefined,
+    );
     this.#deps.logger.info(
       {
         proposalType: 'project',

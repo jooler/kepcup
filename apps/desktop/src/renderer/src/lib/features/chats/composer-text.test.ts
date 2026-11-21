@@ -83,6 +83,69 @@ describe('buildMentionTargets', () => {
     });
     expect(filtered.map((t) => t.token)).toEqual(['bot_other']);
   });
+
+  // --- T5：团队在册成员候选（令牌 principal:<id>，@ 人 = 通知）-----------------
+
+  it('团队在册成员进候选：token 用 principal: 前缀、kind 为 member', () => {
+    const withMembers = buildMentionTargets({
+      memberBots: [],
+      allBots: [],
+      projects: [{ id: 'g1', title: '项目组' }],
+      members: [
+        { id: 'mbr_1', displayName: '阿甲' },
+        { id: 'mbr_2', displayName: '阿乙' },
+      ],
+    });
+    expect(withMembers.map((t) => [t.token, t.kind, t.name])).toEqual([
+      [projectMentionToken('g1'), 'project', '项目组'],
+      ['principal:mbr_1', 'member', '阿甲'],
+      ['principal:mbr_2', 'member', '阿乙'],
+    ]);
+  });
+
+  it('非团队上下文 members 缺省 / 空数组：候选与现状一致', () => {
+    const baseline = buildMentionTargets({
+      memberBots: [],
+      allBots: [bot('bot_a', '阿甲')],
+      projects: [],
+    });
+    const empty = buildMentionTargets({
+      memberBots: [],
+      allBots: [bot('bot_a', '阿甲')],
+      projects: [],
+      members: [],
+    });
+    expect(empty).toEqual(baseline);
+  });
+
+  it('成员与同名 Bot / 项目组同名先到先得（Bot 与项目组优先注册）', () => {
+    const merged = buildMentionTargets({
+      memberBots: [bot('bot_a', '阿甲')],
+      allBots: [],
+      projects: [],
+      members: [{ id: 'mbr_1', displayName: '阿甲' }, { id: 'mbr_2', displayName: '阿乙' }],
+    });
+    expect(merged.map((t) => [t.token, t.kind])).toEqual([
+      ['bot_a', 'bot'],
+      ['principal:mbr_2', 'member'],
+    ]);
+  });
+
+  it('@成员名 命中 member 候选（正则按名字匹配，token 带 principal: 前缀）', () => {
+    const memberTargets = buildMentionTargets({
+      memberBots: [],
+      allBots: [],
+      projects: [],
+      members: [{ id: 'mbr_1', displayName: '阿甲' }],
+    });
+    const segments = segmentComposerText('请问 @阿甲 怎么看', memberTargets);
+    expect(segments).toEqual([
+      { kind: 'text', text: '请问 ' },
+      { kind: 'mention', text: '@阿甲', target: memberTargets[0] },
+      { kind: 'text', text: ' 怎么看' },
+    ]);
+    expect(resolveMentionTokens('@阿甲', memberTargets)).toEqual(['principal:mbr_1']);
+  });
 });
 
 describe('segmentComposerText', () => {

@@ -3,6 +3,7 @@ import type { Attachment } from '@kepcup/shared';
 import { EMPTY_COMPOSER_DOC } from './composer-draft-persist';
 import { errorText, t, listSeparator } from '$lib/i18n';
 import { core } from '$lib/rpc/client.svelte';
+import { connections, type SourceId } from '$lib/rpc/connections.svelte';
 import { toast } from 'svelte-sonner';
 import { attachmentUrl } from './attachments.svelte';
 import {
@@ -115,6 +116,20 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 class ComposerDraftsState {
+  /**
+   * 附件 RPC 的会话来源（T7 融合视图）：Composer 进入会话时设置——团队会话的
+   * 附件上传 / 状态 / 摘除经该团队连接；缺省 'local'（既有行为）。
+   */
+  #rpcSource: SourceId = 'local';
+
+  setRpcSource(source: SourceId): void {
+    this.#rpcSource = source;
+  }
+
+  #rpc(): ReturnType<typeof connections.get> {
+    return connections.get(this.#rpcSource);
+  }
+
   /** 打开过的会话的输入框草稿；text/mentions/reply 由 Composer 的水合/保存 effect 同步。 */
   #runtime = $state<Record<string, ComposerRuntimeDraft>>({});
   /** 启动时从 localStorage 载入的快照：未打开过的会话原样保留，打开时晋升为 runtime。 */
@@ -354,7 +369,7 @@ class ComposerDraftsState {
     conversationId?: string,
   ): Promise<AttachmentIssue> {
     if (attachmentIds.length === 0) return { missing: [], sent: [] };
-    const result = (await core.call('attachments.status', {
+    const result = (await this.#rpc().call('attachments.status', {
       conversationId: conversationId ?? this.#ownerOf(key),
       ids: [...attachmentIds],
     })) as { statuses: AttachmentStatusLike[] };
@@ -436,7 +451,7 @@ class ComposerDraftsState {
       const task = (async (): Promise<string | null> => {
         try {
           const bytesBase64 = await fileToBase64(file);
-          const result = (await core.call('attachments.upload', {
+          const result = (await this.#rpc().call('attachments.upload', {
             conversationId,
             fileName: entry.fileName,
             mime: entry.mime,
@@ -507,7 +522,7 @@ class ComposerDraftsState {
     const id = upload.attachmentId ?? (task !== undefined ? await task.catch(() => null) : null);
     if (id === null) return;
     try {
-      await core.call('attachments.detach', { id });
+      await this.#rpc().call('attachments.detach', { id });
     } catch (error) {
       toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
     }

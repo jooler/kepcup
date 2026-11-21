@@ -86,6 +86,10 @@ describe('main 0018 task_events 迁移', () => {
         ...row,
         owner_bot_id: null,
         task_id: null,
+        // 0078 主体缝：发送主体两列与触发器维护的 updated_at 对旧行均为 NULL。
+        sender_principal_id: null,
+        sender_name: null,
+        updated_at: null,
       })),
     );
     // 0030 直发改造删除了草稿阶段的 draft_id 列；0033 回收遗弃很久的未绑定附件行

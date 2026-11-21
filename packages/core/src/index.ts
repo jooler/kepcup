@@ -19,6 +19,28 @@ export {
 export { sanitizeClientName } from './collab/client-name.js';
 export type { RelayClientOptions } from './remote/relay-client.js';
 export { withRemoteSource } from './remote/audit.js';
+export { withCaller, currentCaller, type RpcCaller } from './rpc/caller.js';
+export type {
+  PrincipalDescription,
+  PrincipalDirectory,
+  ToolPolicyContext,
+  ToolPolicy,
+  HostToolsContext,
+  HostToolsProvider,
+  HostPromptSectionProvider,
+} from './principal/types.js';
+// C10 宿主贡献工具的宿主侧类型（团队层按它构造决议工具面）。
+export type { ToolDefinition, ToolResult } from './agent/types.js';
+// T9 只读缝（62.03 D137）：项目归属映射与账行形状（宿主分摊层用）。
+export { projectScopeOf } from './domain/project-scope.js';
+// C12 受众判定（62.05 §3，T10 memory-share 测试用）：单条目 × 会话受众的放行规则。
+export { passesAudience } from './memory/retrieve.js';
+export type { UsageLedgerRow } from './domain/usage.js';
+export {
+  PrincipalOps,
+  type PrincipalCardInput,
+  type PrincipalCardPatch,
+} from './principal/ops.js';
 export { FrameCodec, RelayProtocolError } from './remote/codec.js';
 export type { SessionKeys } from './remote/codec.js';
 export type { SkillsService } from './skills/registry.js';

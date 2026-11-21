@@ -203,13 +203,25 @@ export type SkillsMissingPayload = z.infer<typeof skillsMissingPayloadSchema>;
 export const schedulesChangedPayloadSchema = z.object({
   conversationId: z.string(),
   scheduleId: z.string(),
+  /**
+   * 62.11 C13：该排期的归属主体（团队层据此只下发给归属成员的连接）。
+   * 无归属（单用户现状）= 字段不出现。
+   */
+  ownerPrincipalId: z.string().optional(),
 });
 
 /**
  * A workbench todo was created / changed / dispatched / settled (D90) — also when the
  * butler changed it in the background: the workbench refetches.
  */
-export const todosChangedPayloadSchema = z.object({ todoId: z.string() });
+export const todosChangedPayloadSchema = z.object({
+  todoId: z.string(),
+  /**
+   * 62.11 C13：该事项的归属主体（团队层据此只下发给归属成员的连接）。
+   * 无归属（单用户现状）= 字段不出现。
+   */
+  ownerPrincipalId: z.string().optional(),
+});
 
 /** A board column or card changed. `cardId` / `columnId` are set when one row is the subject. */
 export const boardChangedPayloadSchema = z.object({
@@ -224,7 +236,14 @@ export type BoardChangedPayload = z.infer<typeof boardChangedPayloadSchema>;
  * was created / renamed / deleted (D90). `memoId` is absent for group-only
  * changes; the renderer just re-pulls the whole list either way.
  */
-export const memosChangedPayloadSchema = z.object({ memoId: z.string().optional() });
+export const memosChangedPayloadSchema = z.object({
+  memoId: z.string().optional(),
+  /**
+   * 62.11 C13：该备忘（或分组变化涉及的分组）的归属主体（团队层据此只下发给
+   * 归属成员的连接）。无归属（单用户现状）= 字段不出现。
+   */
+  ownerPrincipalId: z.string().optional(),
+});
 
 // --- P09 events (docs/dev/phases/P09-wiki.md) ----------------------------------
 
@@ -353,6 +372,11 @@ export const watchUpdatedPayloadSchema = z.object({
   watch: watchEntrySchema,
   /** The watch row is gone (its bot or conversation was deleted). */
   removed: z.boolean().optional(),
+  /**
+   * 62.11 C13：该监看的归属主体（团队层据此只下发给归属成员的连接）。
+   * 无归属（单用户现状）= 字段不出现。
+   */
+  ownerPrincipalId: z.string().optional(),
 });
 
 export const mailAccountUpdatedPayloadSchema = z.object({

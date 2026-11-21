@@ -69,8 +69,17 @@ export interface WatchServiceDeps {
   profileKeyFor: (botId: string) => string;
   /** Browser network rule: loopback only with a bound workdir (design 14 网络). */
   allowLoopback: (conversationId: string) => boolean;
-  /** Wakes one turn of the bot (internal `watch_alert` event, reason `watch`). */
-  deliverAlert: (input: { botId: string; conversationId: string; text: string }) => void;
+  /**
+   * Wakes one turn of the bot (internal `watch_alert` event, reason `watch`).
+   * 62.11 C13：`ownerPrincipalId`（监看归属）传入时随唤醒走——提醒触发的 run
+   * 主体 = 监看归属。缺省 = 现状。
+   */
+  deliverAlert: (input: {
+    botId: string;
+    conversationId: string;
+    text: string;
+    ownerPrincipalId?: string | null;
+  }) => void;
   publish: (event: string, payload: unknown) => void;
   /** 应用状态提示（监看被系统暂停）：弹一条轻量提示，不落库、不进对话。 */
   notice: (notice: AppNoticePayload) => void;
@@ -82,6 +91,11 @@ export interface CreateWatchInput {
   source: unknown;
   condition: unknown;
   intervalSec: number;
+  /**
+   * 62.11 C13：归属主体（创建调用者）。同时给 conversationId 时校验资格
+   * （直聊 owner 匹配或在册）。缺省 / null = 单用户现状（NULL 行）。
+   */
+  ownerPrincipalId?: string | null;
 }
 
 /** Node clamps longer setTimeout delays to 1 ms (see schedule/service.ts). */
@@ -312,6 +326,7 @@ export class WatchService {
   /** `watch_create` tool: validates, caps, inserts (first check right away), posts the card. */
   create(input: CreateWatchInput): StoredWatch {
     this.#assertTarget(input.botId, input.conversationId);
+    this.#assertOwnerEligible(input.ownerPrincipalId, input.conversationId);
     const source = parseOrThrow(watchSourceSchema, input.source, '监看来源');
     const condition = parseOrThrow(watchConditionSchema, input.condition, '监看条件');
     if (!Number.isFinite(input.intervalSec) || input.intervalSec < WATCH_MIN_INTERVAL_SEC) {
@@ -342,6 +357,7 @@ export class WatchService {
       intervalSec,
       // The first check (baseline) runs right away.
       nextCheckAt: this.#deps.clock.now(),
+      ...(input.ownerPrincipalId != null ? { ownerPrincipalId: input.ownerPrincipalId } : {}),
     });
     this.#appendCard(row, { watchId: row.id, watchEvent: 'created' });
     this.#publishWatch(row);
@@ -349,15 +365,17 @@ export class WatchService {
     return row;
   }
 
-  pauseWatch(id: string): Watch {
+  pauseWatch(id: string, ownerPrincipalId?: string | null): Watch {
     const row = this.#getOrThrow(id);
+    this.#assertOwned(row, ownerPrincipalId);
     if (row.status !== 'active') throw new AppError('INVALID_INPUT', '只有进行中的监看可以暂停');
     return this.#userWrite(row, { status: 'paused' });
   }
 
   /** Resume: failures reset, checks right away. */
-  resumeWatch(id: string): Watch {
+  resumeWatch(id: string, ownerPrincipalId?: string | null): Watch {
     const row = this.#getOrThrow(id);
+    this.#assertOwned(row, ownerPrincipalId);
     if (row.status !== 'paused') throw new AppError('INVALID_INPUT', '只有已暂停的监看可以恢复');
     this.#assertTarget(row.botId, row.conversationId);
     this.#dismissPausedNotice(row.id);
@@ -373,17 +391,31 @@ export class WatchService {
     return updated;
   }
 
-  stopWatch(id: string): Watch {
+  stopWatch(id: string, ownerPrincipalId?: string | null): Watch {
     const row = this.#getOrThrow(id);
+    this.#assertOwned(row, ownerPrincipalId);
     if (row.status === 'stopped') return publicWatch(row);
     this.#dismissPausedNotice(row.id);
     return this.#userWrite(row, { status: 'stopped' });
   }
 
   /** `watch_stop` tool: a bot only stops its own watches of this conversation. */
-  stopOwn(botId: string, conversationId: string, id: string): { ok: boolean; message: string } {
+  stopOwn(
+    botId: string,
+    conversationId: string,
+    id: string,
+    ownerPrincipalId?: string | null,
+  ): { ok: boolean; message: string } {
     const row = this.store.get(id);
     if (row === null || row.botId !== botId || row.conversationId !== conversationId) {
+      return { ok: false, message: '监看不存在，或不是你在本对话创建的监看' };
+    }
+    // 62.11 C13：运行主体的归属校验（不符 = 对该主体不存在）。
+    if (
+      ownerPrincipalId != null &&
+      ownerPrincipalId.length > 0 &&
+      row.ownerPrincipalId !== ownerPrincipalId
+    ) {
       return { ok: false, message: '监看不存在，或不是你在本对话创建的监看' };
     }
     if (row.status === 'stopped') return { ok: true, message: '该监看已经停止' };
@@ -500,8 +532,8 @@ export class WatchService {
     return row === null ? null : this.#entry(row);
   }
 
-  listEntries(conversationId?: string): WatchEntry[] {
-    return this.store.listLive(conversationId).map((row) => this.#entry(row));
+  listEntries(conversationId?: string, ownerPrincipalId?: string): WatchEntry[] {
+    return this.store.listLive(conversationId, ownerPrincipalId).map((row) => this.#entry(row));
   }
 
   /** `watch_list` tool: the bot's live watches in this conversation. */
@@ -533,6 +565,39 @@ export class WatchService {
   #assertTarget(botId: string, conversationId: string): void {
     if (!this.#targetAlive(botId, conversationId)) {
       throw new AppError('NOT_FOUND', 'Bot 或对话不存在，或 Bot 已不在该对话中');
+    }
+  }
+
+  /**
+   * 62.11 C13：归属主体对该会话是否有资格（直聊 owner 匹配、dm / 项目组在册、
+   * 看板卡按父项目在册）。监看同时带 owner 与 conversation_id 时必须一致
+   * （提醒 run 的主体应能在该会话看到结果）。
+   */
+  #ownerEligible(ownerPrincipalId: string, conversationId: string): boolean {
+    const conversation = this.#deps.conversations.get(conversationId);
+    if (conversation === null) return false;
+    if (conversation.ownerPrincipalId === ownerPrincipalId) return true;
+    if (this.#deps.conversations.hasPrincipal(conversationId, ownerPrincipalId)) return true;
+    return (
+      conversation.type === 'card' &&
+      conversation.parentProjectId !== null &&
+      this.#deps.conversations.hasPrincipal(conversation.parentProjectId, ownerPrincipalId)
+    );
+  }
+
+  #assertOwnerEligible(ownerPrincipalId: string | null | undefined, conversationId: string): void {
+    if (ownerPrincipalId == null || ownerPrincipalId.length === 0) return;
+    if (!this.#ownerEligible(ownerPrincipalId, conversationId)) {
+      // 从该主体的视角这个会话不可见：NOT_FOUND（不泄露存在性）。
+      throw new AppError('NOT_FOUND', '对话不存在或无访问权限');
+    }
+  }
+
+  /** 按 id 写操作的归属校验（传入且不符 → NOT_FOUND）；不传 / null = 现状零校验。 */
+  #assertOwned(row: StoredWatch, ownerPrincipalId?: string | null): void {
+    if (ownerPrincipalId == null || ownerPrincipalId.length === 0) return;
+    if (row.ownerPrincipalId !== ownerPrincipalId) {
+      throw new AppError('NOT_FOUND', `监看 ${row.id} 不存在`);
     }
   }
 
@@ -780,6 +845,8 @@ export class WatchService {
         botId: row.botId,
         conversationId: row.conversationId,
         text: wakeText(row, payload.seq, detail, summary),
+        // 62.11 C13：提醒 run 的主体 = 监看归属。
+        ...(row.ownerPrincipalId != null ? { ownerPrincipalId: row.ownerPrincipalId } : {}),
       });
     }
   }
@@ -852,7 +919,12 @@ export class WatchService {
   #remove(row: StoredWatch): void {
     if (!this.store.delete(row.id)) return;
     this.#dismissPausedNotice(row.id);
-    this.#deps.publish('watch.updated', { watch: this.#entry(row), removed: true });
+    this.#deps.publish('watch.updated', {
+      watch: this.#entry(row),
+      removed: true,
+      // 62.11 C13：有归属才带 ownerPrincipalId；无归属 = 单用户现状载荷不变。
+      ...(row.ownerPrincipalId !== null ? { ownerPrincipalId: row.ownerPrincipalId } : {}),
+    });
     this.#reload();
   }
 
@@ -881,7 +953,11 @@ export class WatchService {
   }
 
   #publishWatch(row: StoredWatch): void {
-    this.#deps.publish('watch.updated', { watch: this.#entry(row) });
+    this.#deps.publish('watch.updated', {
+      watch: this.#entry(row),
+      // 62.11 C13：有归属才带 ownerPrincipalId；无归属 = 单用户现状载荷不变。
+      ...(row.ownerPrincipalId !== null ? { ownerPrincipalId: row.ownerPrincipalId } : {}),
+    });
   }
 }
 

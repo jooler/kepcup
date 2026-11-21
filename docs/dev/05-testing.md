@@ -181,6 +181,22 @@ docker run --rm -v "$WT:$WT" -v "$NODE_DIR:$NODE_DIR:ro" -w "$WT" --user "$(id -
 - **基线**（`d75@7138daf`，2026-10-08）：全量 1559 例中 33 条失败，全部是容器环境原因（沙箱自检 / bwrap / socat / 外网：`sandbox-isolation` 10、`projects` 6、`skills-authoring` 4、`env-distro-toolchain` 3、`skills` 3、`workspace-tools` 3、`toolchain-sandbox` 2、`wiki-url` 2），逐条清单见 `todo/supervisor-and-tasks.md` §6。判定标准是「失败集合不超出基线」，不是全绿；偶发负载超时（`web-tools`、`memory`「两个 Bot 同时产生画像提案」、`agents-service` 登录状态）单跑复核。D75 收口时（W3 后）全量 1755 例、33 条失败，除 `approvals` 一条（已由 `26e15f2` 修正）外均在基线集合内；`projects` 的「blocks switching projects while a bot is executing」已转为通过。
 - **e2e**：在 `kepcup-test:trixie-xvfb` 中先 `npx electron-vite build`（产出 `apps/desktop/out`），再在 `apps/desktop` 下 `xvfb-run node ../../node_modules/@playwright/test/cli.js test …`（容器加 `--shm-size=1g`）。D75 W3 后全量 70 例、3 例失败（`browser.spec`「删除 Bot 后其浏览器分区数据不存在」、`sandbox.spec`「run status line shows the command description while a command executes」、`wiki.spec`「wiki tab: browse the page tree …」），与 main 上的失败一致。
 
+## 团队服务器与团队控制台测试（D126–D138，分支 `team-server`）
+
+`vitest.config.ts` 有两个团队相关项目：`team-server`（`apps/team-server/test/`，含 `packages/shared/test` 侧的 team 契约用例经 shared 项目跑）与 `team-console`（`apps/team-console/`，纯逻辑 node 环境——API 客户端 / 表单校验 / 表格转换 / 构建配置断言，UI 交互验收靠人工）。
+
+| 范围 | 命令 |
+|---|---|
+| team-server 全部 | `node scripts/run-tests.mjs run apps/team-server/test` |
+| team-console 全部 | `node scripts/run-tests.mjs run --project team-console` |
+| shared team 契约 | `node scripts/run-tests.mjs run packages/shared/test/unit/team-contracts.test.ts packages/shared/test/unit/remote-contracts.test.ts` |
+| 单包 | `pnpm --filter @kepcup/team-server test` / `pnpm --filter @kepcup/team-console test` |
+
+- **隔离不变量专项**：`apps/team-server/test/isolation.test.ts`（62.08 §6 P0 口径全项：两成员两直聊互不串线、全读路径拒、事件逐帧零泄漏、记忆与画像按主体〔mock LLM 请求体断言〕、`PERMISSION_CEILING` 与无人值守失效、注入假方法缺省拒绝）；方法 / 事件全量归类枚举在 `policy.test.ts`（`APP_METHODS` 342 全量）与 `event-policy.test.ts`（57 个 `RPC_EVENT_NAMES` 全量）。
+- **core 缝测试**：`packages/core/test/unit/` 下 `rpc-caller` / `principal-labels` / `conversations-principal` / `messages-principal` / `collab-drafts-principal` / `usage-principal` / `profile-principal` / `memory-audience` / `tool-policy` / `workdir-roots` / `permission-ceiling` / `principal-ops` / `principal-migration` / `personal-domain-*` 等（清单见 [design/62-team-server/11-core-seams.md](../design/62-team-server/11-core-seams.md) §5 现状节）。
+- **休眠不变量**：core 不传主体缝选项 = 行为不变——`apps/server/test`（个人版 8 文件）每阶段作零改动对照跑；既有 core 测试零改动是合入门槛。桌面休眠面（未配置团队服务器 = 现状）在渲染层 `team-*` / `chat-session-cache` / `contacts-*` 测试断言。
+- **真机 e2e**：`apps/desktop/test/e2e/team-fusion.spec.ts`（`KEPCUP_TEAM_E2E=1` 门控，用户 Mac 上执行；清单见 PROGRESS「团队服务器 T5」节末）。
+
 ## CI 矩阵
 
 | 任务 | macOS（arm64） | Ubuntu 24.04（x64） | Windows（x64） |

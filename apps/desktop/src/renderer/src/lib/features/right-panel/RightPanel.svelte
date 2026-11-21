@@ -392,8 +392,8 @@
   let editingBio = $state(false);
   let bioDraft = $state('');
 
-  /** 编辑态输入框挂载即聚焦，点按后光标立即可见。 */
-  function focusOnMount(node: HTMLInputElement): void {
+  /** 编辑态输入控件挂载即聚焦，点按后光标立即可见（input / textarea 通用）。 */
+  function focusOnMount(node: HTMLElement): void {
     node.focus();
   }
 
@@ -572,28 +572,33 @@
             </button>
           {/if}
           {#if editingBio}
-            <!-- 空简介时宽度由 placeholder 撑起（field-sizing:content 对空值取
-                 placeholder 尺寸），与展示态的占位文案宽度衔接。 -->
-            <input
-              class="field-sizing-content h-6 max-w-full min-w-12 rounded-md bg-accent px-2 text-center text-sm outline-none placeholder:text-muted-foreground"
+            <!-- 多行直编：Enter 换行、Cmd/Ctrl+Enter 提交、Esc 取消、blur 提交；
+                 宽度与展示态同约束（min(36ch,100%)），两态切换不跳动；空简介时宽度
+                 由 placeholder 撑起（field-sizing:content 对空值取 placeholder
+                 尺寸），与展示态的占位文案宽度衔接。 -->
+            <textarea
+              class="field-sizing-content max-w-[min(36ch,100%)] min-w-12 resize-none rounded-md bg-accent px-2 py-0.5 text-center text-sm outline-none placeholder:text-muted-foreground"
               bind:value={bioDraft}
               maxlength={500}
+              rows={1}
               placeholder={t('rightPanel.bioPlaceholder')}
               use:focusOnMount
               onkeydown={(e) => {
-                if (e.key === 'Enter') void commitBio();
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  void commitBio();
+                }
                 if (e.key === 'Escape') {
                   e.preventDefault();
                   editingBio = false;
                 }
               }}
               onblur={() => void commitBio()}
-              data-testid="bot-bio-inline-input"
-            />
+              data-testid="bot-bio-inline-input"></textarea>
           {:else}
             <button
               type="button"
-              class="h-6 max-w-full truncate rounded-md px-2 py-0.5 text-sm text-muted-foreground transition-colors hover:bg-accent {bot.bio
+              class="max-w-[min(36ch,100%)] rounded-md px-2 py-0.5 text-sm break-words whitespace-pre-wrap text-muted-foreground transition-colors hover:bg-accent {bot.bio
                 ? ''
                 : 'italic'}"
               onclick={startBioEdit}

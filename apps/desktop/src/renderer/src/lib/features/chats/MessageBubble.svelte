@@ -19,6 +19,7 @@
   import BotWidgetCard from '$lib/features/widgets/BotWidgetCard.svelte';
   import PresentCard from '$lib/features/present/PresentCard.svelte';
   import TaskQuestionCard from '$lib/features/tasks/TaskQuestionCard.svelte';
+  import ResolutionCard from '$lib/features/team/ResolutionCard.svelte';
   import SetupQuestionCard from './SetupQuestionCard.svelte';
   import SetupPathCard from './SetupPathCard.svelte';
   import ChatMessageRow from './ChatMessageRow.svelte';
@@ -124,6 +125,10 @@
       ? message.content.present
       : null,
   );
+  // T9 决议卡（62.09）：宿主卡消息（hostCard.data 载荷，ResolutionCard 渲染）。
+  const isResolutionCard = $derived(
+    isCard && 'cardType' in message.content && message.content.cardType === 'resolution',
+  );
   const cardApproval = $derived(
     isCard &&
       !isChangesCard &&
@@ -133,6 +138,7 @@
       appUiCard === null &&
       widgetCard === null &&
       presentCard === null &&
+      !isResolutionCard &&
       'approvalId' in message.content
       ? (permissions.approvals[message.content.approvalId] ?? null)
       : null,
@@ -269,6 +275,11 @@
   <!-- D75 任务卡：信息卡，居中；进行中可取消，失败可重试，取消后附改动摘要 -->
   <div class="flex py-1" data-testid="card-message">
     <TaskCard taskId={taskCardId} />
+  </div>
+{:else if isResolutionCard}
+  <!-- T9 决议卡（62.09）：宿主卡消息，宽卡；签署按钮按调用者身份显隐 -->
+  <div class="flex py-1" data-testid="card-message">
+    <ResolutionCard {message} />
   </div>
 {:else if isCard}
   <!-- 留在消息流里的审批卡（导入、安装、移交等）。中途权限弹窗只在 dock。 -->

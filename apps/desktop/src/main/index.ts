@@ -1,6 +1,6 @@
 import { isAbsolute, join, resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { readFile as fsReadFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import {
   app,
@@ -12,10 +12,12 @@ import {
   nativeTheme,
   powerMonitor,
   powerSaveBlocker,
+  safeStorage,
   session,
   shell,
   systemPreferences,
   type BrowserWindow,
+  type MessagePortMain,
 } from 'electron';
 import { CORE_SHUTDOWN_TIMEOUT_MS, type UpdateStatusPayload } from '@kepcup/shared';
 import { APP_ID, APP_NAME, appIconPath } from './app-brand';
@@ -38,6 +40,10 @@ import { isOpenablePreviewLinkUrl } from './apps-ui-policy';
 import { CoreHost, type CoreProcessState } from './core-host';
 import { createMainWindow } from './window';
 import { resolveRemoteMode, type RemoteModeTarget } from './remote-mode';
+import { openTeamServer } from './team-window';
+import { TeamServers, writeTeamServersState } from './team-servers';
+import { TeamCacheService } from './team-cache/service';
+import { openTeamSocket } from './team-bridge';
 import { installProductionAppMenu } from './devtools';
 import { WidgetWindowHost } from './widget-window';
 import { createWidgetWindow } from './widget-window-electron';
@@ -53,6 +59,7 @@ import {
 } from './sensor-permission';
 import { wireUpdater } from './updater';
 import { createFileUpdateSourceStore } from './update-sources';
+import { createFileUpdateSkipStore } from './update-skip';
 import { ShareIntakeCoordinator, type ShareIntakeOutcome } from './share-intake/coordinator';
 import { shareGroupDir } from './share-intake/app-group';
 
@@ -91,6 +98,17 @@ function applyTrayRemote(): void {
 let lastUpdateStatus: UpdateStatusPayload = { phase: 'idle' };
 /** D94: 分享协调器（App Group inbox → core inbox → share.consume）。 */
 let shareCoordinator: ShareIntakeCoordinator | null = null;
+/**
+ * T7 融合视图：团队服务器凭据与 WS 桥（team-servers.ts / team-bridge.ts）。懒装配
+ * 在 bootstrap 里——未配置团队服务器时零副作用（无文件 / 无连接 / 无事件）。
+ */
+let teamServersHost: TeamServers | null = null;
+/**
+ * T8 客户端本地缓存（platform.teamCache.*，team-cache/service.ts）：分区整库加密
+ * 的只读镜像。构造零副作用——分区目录只在同步引擎首次 open 时创建（未配置团队
+ * 服务器 = 无目录，休眠铁律）。
+ */
+let teamCacheHost: TeamCacheService | null = null;
 /** 冷启动时先到的 `kepcup://` URL：core 就绪后再消费。 */
 const pendingShareUrls: string[] = [];
 /**
@@ -137,6 +155,10 @@ function beginQuit(): void {
   widgetPreviewHost?.dispose();
   // 组件窗口（widget-window.md §4.2）：退出即全部关闭（Runtime 卸载即停，无后台遗留）。
   widgetWindows?.closeAll();
+  // T7 融合视图：退出前断开全部团队连接（服务器侧收口 last_seen；不产生 UI 事件）。
+  teamServersHost?.shutdown();
+  // T8：退出前关掉打开的缓存分区（数据保留；WAL 收口）。
+  teamCacheHost?.closeAll();
   // D105 / P-B2：计算机操控 sidecar 回收（其 disconnect 处理会终止 CuaDriver
   // daemon）；host-shutdown-state 先立标志，权限引导等在途流程不再拉起新进程。
   markHostShuttingDown();
@@ -206,6 +228,9 @@ function ensureWindow(): BrowserWindow {
   });
   window.webContents.on('did-finish-load', () => {
     sendAppPort();
+    // T7 融合视图：页面重载后旧的团队 MessagePort 已随页面销毁，为每条活连接
+    // 换新端口对并补发（core-port 的 sendAppPort 同款语义；WS 连接不断）。
+    teamServersHost?.refreshPorts();
     if (pendingRemotePairingOpen) {
       pendingRemotePairingOpen = false;
       window?.webContents.send('open-remote-pairing');
@@ -458,6 +483,71 @@ function bootstrap(): void {
     // persisted onboarding setting).
     onboardingVisible: __KEPCUP_TEST_HOOKS__ ? process.env.KEPCUP_ONBOARDING !== 'off' : true,
   }));
+
+  // T5 步骤 5:「连接团队服务器」(platform.openTeamServer {url},web 端不实现)——另起一个
+  // 远程模式壳进程加载团队服务器的 web 构建;同一 profile 已有实例时,子进程经对方
+  // 的单实例锁自然退出并由对方聚焦窗口。入参校验(地址规则)在 team-window 内,
+  // 非法地址走 rejected promise 由渲染层卡片显示。
+  ipcMain.handle('platform:openTeamServer', (_event, input: unknown) => {
+    const url = (input as { url?: unknown } | null)?.url;
+    if (typeof url !== 'string') throw new Error('invalid url');
+    openTeamServer(url);
+    return { ok: true as const };
+  });
+
+  // T7 步骤 1:融合视图的凭据与多账号管理 + WS 桥(team-servers.ts / team-bridge.ts)。
+  // 懒初始化在模块内:状态文件只在首个 add/login 时创建,连接只在显式 connect 时
+  // 建立——未配置团队服务器时主进程行为零变化(无文件、无连接、无事件)。token 经
+  // safeStorage 加密落 <userData>/team-servers.json,永不出主进程;safeStorage 不可
+  // 用时拒绝保存(DEV-143)。这里只做装配(注入 electron 能力);ipc handlers 注册在
+  // registerIpc(channel 约定 platform:teamServers:<verb>)。
+  teamServersHost = new TeamServers({
+    statePath: () => join(app.getPath('userData'), 'team-servers.json'),
+    safeStorage,
+    fetch,
+    readFile: async (path) => {
+      try {
+        return await fsReadFile(path, 'utf8');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+        throw error;
+      }
+    },
+    writeFile: writeTeamServersState,
+    createChannel: () => new MessageChannelMain(),
+    postPort: (serverHash, port) => {
+      // BridgePortMain 的结构子集 → Electron 端口（真实 MessagePortMain，见 createChannel）。
+      window?.webContents.postMessage('team-port', { serverHash }, [port as MessagePortMain]);
+    },
+    onChanged: () => {
+      window?.webContents.send('team-servers:changed');
+    },
+    openSocket: openTeamSocket,
+    log: (message, error) => {
+      const detail = error instanceof Error ? ` — ${error.message}` : (error ?? '');
+      console.warn(`[team-servers] ${message}${detail}`);
+    },
+  });
+  teamServersHost.registerIpc((channel, handler) => {
+    ipcMain.handle(channel, handler);
+  });
+
+  // T8 步骤 1:客户端本地缓存(62.10 D136)。分区库 <userData>/team-cache/<serverHash>/
+  // <memberId>/cache.db 用与 core 同款 better-sqlite3-multiple-ciphers 整库加密,
+  // 分区密钥经 safeStorage 加密落 key.bin(safeStorage 不可用 → open 拒绝 → 渲染层
+  // 整体禁用缓存,不做明文兜底)。构造零副作用;ipc handlers 注册在 registerIpc
+  // (channel 约定 platform:teamCache:<verb>)。
+  teamCacheHost = new TeamCacheService({
+    baseDir: () => join(app.getPath('userData'), 'team-cache'),
+    safeStorage,
+    log: (message, error) => {
+      const detail = error instanceof Error ? ` — ${error.message}` : (error ?? '');
+      console.warn(`[team-cache] ${message}${detail}`);
+    },
+  });
+  teamCacheHost.registerIpc((channel, handler) => {
+    ipcMain.handle(channel, handler);
+  });
 
   // macOS 毛玻璃（window.ts 的 vibrancy）：原生材质跟着 nativeTheme 走，
   // 而应用内主题由 mode-watcher 管理。渲染层在用户切换亮/暗（含恢复跟随
@@ -910,6 +1000,8 @@ function bootstrap(): void {
     // 选源赢家的持久化（GitHub/R2/OSS 探测的结果）：跨启动记住可达的源，
     // 之后每次检查直达，不再探测。
     store: createFileUpdateSourceStore(() => app.getPath('userData')),
+    // 「取消更新 = 跳过该版本」的持久化：跨启动记住用户取消过的版本。
+    skipStore: createFileUpdateSkipStore(() => app.getPath('userData')),
     // dev 下真查 feed 的显式开关（electron-updater 未打包默认跳过检查）；
     // 不开则 dev 里检查恒为 skip，不影响 e2e（NODE_ENV=test 本就不排定时检查）。
     forceDevUpdateConfig: !app.isPackaged && process.env.KEPCUP_DEV_UPDATE_CHECK === '1',
@@ -957,6 +1049,11 @@ function bootstrap(): void {
   ipcMain.handle('update:keepWaiting', async () => {
     await updater.gate.keepWaiting();
   });
+  // 「取消更新」：停下本次下载并跳过该版本（相位守卫在 gate——只有
+  // downloading 相位有效，其它相位的迟到点击是 no-op）。
+  ipcMain.handle('update:cancelDownload', () => {
+    updater.cancelDownload();
+  });
   // dev/e2e-only seam (DCE'd from packaged builds, same mechanism as the
   // mock-LLM seeding): drives the REAL gate through evaluate() so the e2e can
   // exercise the production transition path without a real update feed.
@@ -999,8 +1096,14 @@ if (process.env.KEPCUP_HOME) {
 // 远程模式与本地实例并存：独立 userData 让单实例锁、localStorage（clientId /
 // 显示名 / 草稿缓冲）与登录 Cookie 都不和本地桌面互相抢占——同一台机器上可以
 // 同时开「本地壳」和「远端壳」当两个客户端测试协作（design 57）。
+// T5 步骤 5（62.08 §3）：带 KEPCUP_REMOTE_PROFILE（team-window 启动器写的地址
+// 哈希）时再细分到 <userData>/remote/<profile>——多个团队服务器窗口与本地实例
+// 互不抢占单实例锁；手工启动的远程壳（无 profile）沿用既有 remote 分区，默认
+// 行为不变。必须在请求单实例锁之前设置。
 if (remoteMode !== null) {
-  app.setPath('userData', join(app.getPath('userData'), 'remote'));
+  const remoteLeaf =
+    remoteMode.profile === null ? 'remote' : join('remote', remoteMode.profile);
+  app.setPath('userData', join(app.getPath('userData'), remoteLeaf));
 }
 
 // D73 P3 §7.5: the privileged `kepcup-app` scheme must be registered before `app.ready`; the

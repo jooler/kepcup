@@ -69,7 +69,7 @@
     try {
       // 用户消息：原始录音附件（首次点击才拉字节）；Bot 消息：TTS 缓存 / 合成。
       if (attachment !== null) {
-        await speechAudio.toggleSource(message.id, () => attachmentUrl(attachment));
+        await speechAudio.toggleSource(message.id, () => attachmentUrl(attachment, session.source));
       } else {
         await speechAudio.toggle(message);
       }

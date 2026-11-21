@@ -1,4 +1,4 @@
-import { unattendedStateSchema, type UnattendedState } from '@kepcup/shared';
+import { AppError, unattendedStateSchema, type UnattendedState } from '@kepcup/shared';
 import type { SettingsService } from '../domain/settings.js';
 import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
@@ -9,6 +9,15 @@ export interface UnattendedDeps {
   logger: CoreLogger;
   /** Publishes `unattended.changed` (and the port-B tray notification). */
   publish: (state: UnattendedState) => void;
+  /**
+   * 62.11 C14: a host that injects principals (`CoreServicesOptions.principals`)
+   * runs the engine for several humans — the global unattended switch would
+   * push every conversation of everyone to `bypass`, so it is switched off
+   * unconditionally: `effective()` always reports off (all global branches
+   * collapse naturally) and `enable` is refused with `FORBIDDEN`. `disable`
+   * stays allowed so a stored on-state can still be cleaned up.
+   */
+  principalsActive?: boolean;
 }
 
 /**
@@ -30,6 +39,11 @@ export class UnattendedService {
 
   /** Current state with the time box applied (auto-off past `until`). */
   effective(): UnattendedState {
+    // 62.11 C14: with principals in scope the global switch never applies
+    // (read-only short-circuit — no settings write on this path).
+    if (this.#deps.principalsActive === true) {
+      return unattendedStateSchema.parse({ enabled: false, until: null, enabledAt: null });
+    }
     const state = this.get();
     if (!state.enabled) return state;
     if (state.until !== null && this.#deps.clock.now() >= state.until) {
@@ -39,6 +53,12 @@ export class UnattendedService {
   }
 
   enable(input: { hours: number | null; acknowledgeRisk: true }): UnattendedState {
+    if (this.#deps.principalsActive === true) {
+      throw new AppError(
+        'FORBIDDEN',
+        '多主体环境下不能开启全局无人值守模式（每个会话请使用各自的授权级别）',
+      );
+    }
     const now = this.#deps.clock.now();
     const state = unattendedStateSchema.parse({
       enabled: true,

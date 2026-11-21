@@ -15,6 +15,14 @@ export interface AuthProbe {
   mode: 'password' | 'pairing';
   /** password 模式下当前 Cookie 是否已登录。 */
   authenticated: boolean;
+  /**
+   * 团队端点标记（T5，62.08 §3）：whoami 200 的 body 带 `member` 即团队服务器
+   * （个人版服务器 200 返回 `{mode,username}`，无 member）。个人版路径完全不带
+   * 这些字段——休眠铁律：非团队上下文行为不变。
+   */
+  member?: { id: string; displayName: string };
+  /** 团队端点：管理员重置过密码，登录门应先进改密视图（/api/auth/password）。 */
+  mustChangePassword?: boolean;
 }
 
 let probeCache: Promise<AuthProbe | null> | null = null;
@@ -33,21 +41,53 @@ function whoamiProbeUrl(): string {
 }
 
 /**
+ * 解析 whoami 200 body 里的团队端点标记（T5）：`member: {id, displayName}` 是
+ * 团队服务器的唯一标识（个人版返回 `{mode, username}`）。body 缺失 / 坏 JSON /
+ * 字段形状不对都按「个人版」处理——绝不因为 body 读不到而改变既有三态语义。
+ */
+function teamMemberOf(body: unknown): AuthProbe['member'] | undefined {
+  if (typeof body !== 'object' || body === null) return undefined;
+  const member = (body as { member?: unknown }).member;
+  if (typeof member !== 'object' || member === null) return undefined;
+  const { id, displayName } = member as { id?: unknown; displayName?: unknown };
+  if (typeof id !== 'string' || id.length === 0 || typeof displayName !== 'string') {
+    return undefined;
+  }
+  return { id, displayName };
+}
+
+/**
  * 探测服务器认证模型（成功结果记忆化，CoreConnection 与 Gate 共享同一次请求）：
  * `/api/auth/whoami` 404 = 配对模式（无此路由）；401/200 = 密码模式。
  * 其余一律返回 null（不定论，不记忆）——网络失败，或反代在服务重启/上游未起时
  * 回的 5xx（审查 P3：原先 502 也被当 password，登录页对着网关错误死磕）。
  * null 不记忆，下次调用重新探测。
+ * 200 时顺带解析 body：带 `member` 即团队端点（401 的两种服务器 body 都没有
+ * member，无需读），`mustChangePassword` 随标志透传给登录门。
  */
 export function probeServerAuth(): Promise<AuthProbe | null> {
   if (probeCache !== null) return probeCache;
   const pending = fetch(whoamiProbeUrl(), { cache: 'no-store' })
-    .then((response): AuthProbe | null => {
+    .then(async (response): Promise<AuthProbe | null> => {
       if (response.status === 404) {
         return { mode: 'pairing', authenticated: false };
       }
-      if (response.status === 200 || response.status === 401) {
-        return { mode: 'password', authenticated: response.status === 200 };
+      if (response.status === 200) {
+        const body = await response.json().catch(() => null);
+        const member = teamMemberOf(body);
+        if (member !== undefined) {
+          return {
+            mode: 'password',
+            authenticated: true,
+            member,
+            mustChangePassword:
+              (body as { mustChangePassword?: unknown } | null)?.mustChangePassword === true,
+          };
+        }
+        return { mode: 'password', authenticated: true };
+      }
+      if (response.status === 401) {
+        return { mode: 'password', authenticated: false };
       }
       return null;
     })

@@ -21,6 +21,8 @@ export interface MemoryToolFacade {
       kind: MemoryKind;
       dueAt?: string;
       validUntil?: string;
+      /** C12: the writing run's principal (null = single-user shared bucket). */
+      sourcePrincipalId?: string | null;
       triggerMessages: Message[];
     },
   ): Promise<RememberResult>;
@@ -29,11 +31,30 @@ export interface MemoryToolFacade {
     conversationId: string,
     query: string,
     kind?: MemoryKind,
+    /** C12: the speaking run's principal (audience scoping for retrieval). */
+    principalId?: string | null,
   ): Promise<RetrievedMemories>;
-  getUserProfile(category?: ProfileCategory): ProfileItem[];
+  /** C11: entries of ONE principal domain (the speaking run's by default). */
+  getUserProfile(opts?: {
+    principalKey?: string | null;
+    category?: ProfileCategory;
+  }): ProfileItem[];
+  /** C11: the compiled card of one principal domain (memberId lookups). */
+  profileCard(principalKey: string): { content: string | null; compiledAt: number | null };
   listCommitments(botId: string): MemoryItem[];
-  feedback(botId: string, itemId: string, reason: 'outdated' | 'wrong'): { ok: boolean; message: string };
-  forget(botId: string, itemIds: string[]): { retracted: string[]; proposed: string[] };
+  feedback(
+    botId: string,
+    itemId: string,
+    reason: 'outdated' | 'wrong',
+    /** C11: the acting run's principal (cross-principal entries out of reach). */
+    principalKey?: string | null,
+  ): { ok: boolean; message: string };
+  forget(
+    botId: string,
+    itemIds: string[],
+    /** C11: the acting run's principal (cross-principal entries out of reach). */
+    principalKey?: string | null,
+  ): { retracted: string[]; proposed: string[] };
   /** Blocking `profile_change` approval; applies changes when approved. */
   requestProfileChange(
     identity: RunIdentity,
@@ -73,8 +94,20 @@ export const PROFILE_CHANGE_FIELDS = [
 export function buildMemoryTools(input: {
   identity: RunIdentity;
   memory: MemoryToolFacade;
+  /**
+   * C7 / C11 / C12: the principal the current run speaks for. Scoped reads
+   * (get_user_profile / recall) and writes (remember) use it; without it the
+   * single-user bucket applies (status quo).
+   */
+  principalId?: string | null;
+  /**
+   * C11 get_user_profile.member_id gate (62.05 §2): only principals present
+   * in the current conversation may be queried, and only their compiled card
+   * is returned. Absent = no in-conversation roster (member_id is rejected).
+   */
+  hasConversationPrincipal?: (conversationId: string, principalId: string) => boolean;
 }): ToolDefinition[] {
-  const { identity, memory } = input;
+  const { identity, memory, principalId } = input;
   const requireConversation = (): { botId: string; conversationId: string } | null => {
     if (identity.conversationId === null || identity.botId === null) return null;
     return { botId: identity.botId, conversationId: identity.conversationId };
@@ -108,6 +141,8 @@ export function buildMemoryTools(input: {
         content: params.content,
         kind: params.kind,
         ...(params.due_at !== undefined ? { dueAt: params.due_at } : {}),
+        // C12: the entry is attributed to the writing run's principal.
+        sourcePrincipalId: principalId ?? null,
         triggerMessages: memory.triggerMessages(),
       });
       if (!result.ok) {
@@ -140,11 +175,14 @@ export function buildMemoryTools(input: {
     execute: async (params) => {
       const ctx = requireConversation();
       if (ctx === null) return noConversation();
+      // C12: retrieval is scoped to the current conversation's audience (the
+      // speaking principal's direct chat / the current project).
       const result = await memory.recall(
         ctx.botId,
         ctx.conversationId,
         params.query,
         params.kind,
+        principalId,
       );
       if (result.items.length === 0) return { ok: true, content: '没有找到相关记忆。' };
       const lines = result.items.map((item) => `- [${item.id}] (${item.kind}) ${item.content}`);
@@ -152,10 +190,20 @@ export function buildMemoryTools(input: {
     },
   };
 
-  const getUserProfile: ToolDefinition<{ category?: (typeof CATEGORIES)[number] }> = {
+  // 62.05 §2「工具描述措辞同步改」+ C11 member_id 查询：只在主体缝在场时切换到
+  // 主体版描述与 member_id 参数——两个选项都缺省（单用户休眠）时，工具的描述与
+  // JSON schema 与从前逐字节一致（验收：工具列表与提示词现状）。
+  const principalAware =
+    (principalId !== undefined && principalId !== null) ||
+    input.hasConversationPrincipal !== undefined;
+  const getUserProfile: ToolDefinition<{
+    category?: (typeof CATEGORIES)[number];
+    member_id?: string;
+  }> = {
     name: 'get_user_profile',
-    description:
-      '查询共享用户画像的完整条目（所有 Bot 共享）。系统提示词里的 <user_profile> 只是约 400 token 的摘要，可能被截断；需要沟通偏好、工作、兴趣、边界、近况等具体细节时按分类查询，不要凭摘要猜测。',
+    description: principalAware
+      ? '查询当前发言成员的画像完整条目；项目组内可用 member_id 查询在场其他成员（只返回其编译卡摘要，不含原始条目）。系统提示词里的 <user_profile> 只是约 400 token 的摘要，可能被截断；需要沟通偏好、工作、兴趣、边界、近况等具体细节时按分类查询，不要凭摘要猜测。'
+      : '查询共享用户画像的完整条目（所有 Bot 共享）。系统提示词里的 <user_profile> 只是约 400 token 的摘要，可能被截断；需要沟通偏好、工作、兴趣、边界、近况等具体细节时按分类查询，不要凭摘要猜测。',
     parameters: Type.Object({
       category: Type.Optional(
         Type.Union(
@@ -166,9 +214,38 @@ export function buildMemoryTools(input: {
           },
         ),
       ),
+      ...(principalAware
+        ? {
+            member_id: Type.Optional(
+              Type.String({
+                description:
+                  '项目组内在场成员的主体 id；传入时只返回该成员的编译卡摘要（约 400 token），不返回原始条目，也不接受 category。',
+              }),
+            ),
+          }
+        : {}),
     }),
     execute: async (params) => {
-      const items = memory.getUserProfile(params.category);
+      if (params.member_id !== undefined) {
+        // C11: member lookups need an in-conversation roster and return the
+        // compiled card only (never raw entries, never off-roster principals).
+        const ctx = requireConversation();
+        if (ctx === null) return noConversation();
+        const enrolled = input.hasConversationPrincipal?.(ctx.conversationId, params.member_id);
+        if (enrolled !== true) {
+          return {
+            ok: false,
+            content: '该主体不在当前会话的名册中，无法查询其画像。',
+            errorCode: 'INVALID_INPUT',
+          };
+        }
+        const card = memory.profileCard(params.member_id);
+        if (card.content === null || card.content.length === 0) {
+          return { ok: true, content: '画像中还没有该主体的编译卡。' };
+        }
+        return { ok: true, content: `<untrusted>\n${card.content}\n</untrusted>` };
+      }
+      const items = memory.getUserProfile({ principalKey: principalId ?? '', category: params.category });
       if (items.length === 0) return { ok: true, content: '画像中还没有该分类的条目。' };
       const lines = items.map((item) => `- [${item.id}] (${item.category}) ${item.content}`);
       return { ok: true, content: `<untrusted>\n${lines.join('\n')}\n</untrusted>` };
@@ -206,7 +283,7 @@ export function buildMemoryTools(input: {
     execute: async (params) => {
       const ctx = requireConversation();
       if (ctx === null) return noConversation();
-      const result = memory.feedback(ctx.botId, params.item_id, params.reason);
+      const result = memory.feedback(ctx.botId, params.item_id, params.reason, principalId);
       return { ok: result.ok, content: result.message, ...(result.ok ? {} : { errorCode: 'NOT_FOUND' }) };
     },
   };
@@ -221,7 +298,7 @@ export function buildMemoryTools(input: {
     execute: async (params) => {
       const ctx = requireConversation();
       if (ctx === null) return noConversation();
-      const result = memory.forget(ctx.botId, params.item_ids);
+      const result = memory.forget(ctx.botId, params.item_ids, principalId);
       const parts: string[] = [];
       if (result.retracted.length > 0) parts.push(`已撤回 ${result.retracted.join('、')}`);
       if (result.proposed.length > 0) parts.push(`画像撤回提案已提交并触发整理：${result.proposed.join('、')}`);

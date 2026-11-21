@@ -21,8 +21,18 @@ export interface ProjectTurnState {
 import { board } from '$lib/features/board/board.svelte';
 import { errorText, t } from '$lib/i18n';
 import { core } from '$lib/rpc/client.svelte';
+import {
+  connections,
+  conversationRefOf,
+  type ConversationRef,
+  type SourceId,
+} from '$lib/rpc/connections.svelte';
 import { contacts } from '$lib/stores/contacts.svelte';
 import { delegations } from '$lib/stores/delegations.svelte';
+import { teamCacheSync } from '../features/team/cache-sync.svelte';
+import { teamContext } from '../features/team/team-context.svelte';
+import { notifyTeamMessage } from '../features/team/team-notify';
+import { TeamChatsState, type TeamConversationRow } from './chat-team.svelte';
 import { resolveConversationBot } from '../features/chats/conversation-bot';
 import {
   composeAddMember,
@@ -37,7 +47,7 @@ import {
   saveLastConversationId,
 } from '../features/chats/last-conversation-persist';
 import { isEphemeralApprovalCard } from '../features/approvals/ephemeral-approval';
-import { isSilentOnArrival, mergeUnreadCount } from '../features/chats/unread';
+import { isSilentOnArrival, mergeUnreadCount, teamMessageArrival } from '../features/chats/unread';
 import { tasks } from '$lib/stores/tasks.svelte';
 import { isInterimMessage } from '../features/chats/run-status-mute';
 import { shell } from '$lib/stores/shell.svelte';
@@ -58,31 +68,60 @@ class ChatState {
    */
   readonly main = new ChatSession(
     {
-      syncReadCursor: (conversationId, lastReadSeq) => {
+      // T7 融合视图：host 回调带来源——本机来源维持既有行为（写本机左栏），
+      // 团队来源只写团队切片（id 碰撞隔离：同 id 本机 / 团队各一条互不干扰）。
+      syncReadCursor: (source, conversationId, lastReadSeq) => {
+        if (source !== 'local') {
+          this.team.syncReadCursor(source, conversationId);
+          return;
+        }
         this.conversations = this.conversations.map((conversation) =>
           conversation.id === conversationId
             ? { ...conversation, lastReadSeq, unreadCount: 0 }
             : conversation,
         );
+        // 已读即已处理提及（团队切片同口径：syncReadCursor 一并清提及角标）。
+        this.#forgetMentions(conversationId);
       },
-      syncMemberPreviews: (conversationId, members) => {
+      syncMemberPreviews: (source, conversationId, members) => {
+        if (source !== 'local') return;
         this.#syncMemberPreviews(conversationId, members);
       },
-      noteIncoming: (conversationId, message) => {
+      noteIncoming: (source, conversationId, message) => {
+        if (source !== 'local') {
+          this.team.noteIncoming(source, conversationId, message);
+          return;
+        }
         this.#noteIncoming(conversationId, message);
       },
-      applyRunning: (run) => {
+      applyRunning: (source, run) => {
+        if (source !== 'local') {
+          this.team.applyRunning(source, run);
+          return;
+        }
         this.#applyRunning(run);
       },
-      applyBot: (bot) => {
+      applyBot: (source, bot) => {
+        if (source !== 'local') return;
         this.#applyBotToList(bot);
       },
-      applyConversation: (conversation) => {
+      applyConversation: (source, conversation) => {
+        if (source !== 'local') {
+          this.team.upsertConversation(source, conversation);
+          return true;
+        }
         return this.#upsertConversation(this.#withDirectBot(conversation));
       },
     },
     { attach: false, foreground: true },
   );
+  /**
+   * 团队来源的会话切片（T7 步骤 3）：与 `conversations`（本机左栏）并行，
+   * 侧栏合并视图读取；事件只进对应来源的切片。
+   */
+  readonly team = new TeamChatsState({
+    isViewing: (source, conversationId) => this.isViewingRef({ source, id: conversationId }),
+  });
   conversations = $state<ConversationView[]>([]);
   /**
    * New-project compose: the two-round input at the top of the main area,
@@ -96,6 +135,13 @@ class ChatState {
   composeMemberIds = $state<string[]>([]);
   /** Ids of bots that currently have a running loop, per conversation. */
   runningByConversation = $state<Record<string, string[]>>({});
+  /**
+   * 未读 @ 我提及数（按会话；DEV-146 与团队切片同口径）：web 团队上下文
+   * （T5 同源模式）的团队会话经本机列表渲染，`principal:<自己>` 的提及在这
+   * 里计数并提醒（62.04 §4「人类 @ = 通知」）。非团队上下文恒空记录——
+   * 单用户本机行为不变。侧栏读取渲染 @ 角标；打开会话（markRead）清零。
+   */
+  mentionCounts = $state<Record<string, number>>({});
   /** Group turn state (P05), per conversation. */
   turnByConversation = $state<Record<string, ProjectTurnState>>({});
   /**
@@ -114,6 +160,23 @@ class ChatState {
 
   get currentId(): string | null {
     return this.main.conversationId;
+  }
+
+  /** 当前会话的来源（'local' 或 `team:<serverHash>`）。 */
+  get currentSource(): SourceId {
+    return this.main.source;
+  }
+
+  /** 当前会话的带来源引用（路由 / 选中态的规范表示，T7 §2）。 */
+  get currentRef(): ConversationRef | null {
+    const id = this.main.conversationId;
+    return id === null ? null : { source: this.main.source, id };
+  }
+
+  /** 团队会话此刻是否在用户眼前（工作台盖住时不算，同 isViewing）。 */
+  isViewingRef(ref: ConversationRef): boolean {
+    if (shell.workbenchShown) return false;
+    return this.main.source === ref.source && this.currentId === ref.id;
   }
 
   get replyTo(): ComposerReplyRef | null {
@@ -155,9 +218,15 @@ class ChatState {
     // The session subscribes to message, run, bot, and conversation updates.
     // List-only events stay here.
     this.main.start();
+    // 团队切片（T7）：注册表休眠时恒为空（未配置团队服务器 = 现状）。
+    this.team.start();
+    // 本地缓存同步引擎（T8，62.10）：团队来源连接建立后启动 bootstrap 对账 /
+    // 事件直写 / 重连补拉；无团队来源 / platform 缺失时零副作用（休眠铁律）。
+    teamCacheSync.start();
     core.onEvent('conversation.deleted', (payload) => {
       const data = payload as { id: string };
       this.conversations = this.conversations.filter((c) => c.id !== data.id);
+      this.#forgetMentions(data.id);
       tasks.forgetConversation(data.id);
       if (this.currentId === data.id) this.close();
     });
@@ -259,7 +328,9 @@ class ChatState {
     return 'empty';
   }
 
-  async select(conversationId: string, options: SelectOptions = {}): Promise<void> {
+  async select(target: string | ConversationRef, options: SelectOptions = {}): Promise<void> {
+    const ref = conversationRefOf(target);
+    const conversationId = ref.id;
     const workbenchIntent = shell.workbenchIntent;
     // 委派详情视图是打开时的临时层：显式切换会话即退出（无按会话记忆）。
     delegations.closeDetail();
@@ -269,14 +340,15 @@ class ChatState {
     // A box, not a `let`: the assignment sits in a callback, and control-flow
     // analysis would otherwise keep the local as `null`.
     const cardRedirect: { conversation: ConversationView | null } = { conversation: null };
-    const opened = await this.main.open(conversationId, {
+    const opened = await this.main.open(ref, {
       afterResolved: (conversation) => {
         if (conversation.type === 'card') {
           cardRedirect.conversation = conversation;
           return 'stop';
         }
         this.cancelProjectCompose();
-        this.#upsertConversation(conversation);
+        if (ref.source === 'local') this.#upsertConversation(conversation);
+        else this.team.upsertConversation(ref.source, conversation);
       },
       onReady: async (conversation) => {
         // 工作台视图（D90 §5.1）的唯一退出点。慢 select 期间用户主动打开了工作台：
@@ -288,17 +360,23 @@ class ChatState {
         shell.projectSettingsSection = 'overview';
         board.closeCard();
         // 任务执行过程页按会话记忆：这里只切到（或退出）目标会话的任务页，
-        // 别的会话留下的页面不丢，切回来原地恢复。
-        tasks.enterConversation(conversation.id);
+        // 别的会话留下的页面不丢，切回来原地恢复。团队来源的任务页是重型
+        // 面板（DEV-142），不进本机任务 store。
+        if (ref.source === 'local') tasks.enterConversation(conversation.id);
         // 宽屏设置页（整页视图）开着时选会话即退出设置：通知 / 通讯录 / 搜索深链的
         // 落点要可见，不能被盖在设置页后面。
         shell.closeSettings();
-        saveLastConversationId(globalThis.localStorage ?? null, conversationId);
+        // 启动恢复记忆只记本机会话（团队会话的恢复由融合切片自身承担）。
+        if (ref.source === 'local') {
+          saveLastConversationId(globalThis.localStorage ?? null, conversationId);
+        }
         const messages = this.main.messages;
         for (let i = messages.length - 1; i >= 0; i -= 1) {
-          if (this.#noteLastMessage(conversationId, messages[i]!)) break;
+          if (ref.source === 'local' && this.#noteLastMessage(conversationId, messages[i]!)) break;
         }
-        if (conversation.type !== 'project') await this.#startSparseInterview(conversation);
+        if (ref.source === 'local' && conversation.type !== 'project') {
+          await this.#startSparseInterview(conversation);
+        }
       },
     });
     const redirected = cardRedirect.conversation;
@@ -627,15 +705,50 @@ class ChatState {
 
   // --- messages ---------------------------------------------------------------
 
+  /**
+   * 会话 id 所属来源（T7）：先查团队切片（命中即团队来源），否则本机。
+   * 跨来源 id 碰撞时以「当前打开的来源」优先。
+   */
+  sourceOfConversation(conversationId: string): SourceId {
+    if (this.currentId === conversationId) return this.currentSource;
+    for (const [serverHash, slice] of Object.entries(this.team.slices)) {
+      if (slice.conversations.some((row) => row.id === conversationId)) {
+        return `team:${serverHash}` as SourceId;
+      }
+    }
+    return 'local';
+  }
+
+  /**
+   * 侧栏合并视图的团队行（T7 步骤 3）：各来源切片串接，带来源标记供选中
+   * 路由（`select(ref)`）与「团队」徽标。本机行仍是 `conversations`——
+   * 两条流分开维护（id 碰撞隔离），显示层合并。
+   */
+  get teamConversationRows(): Array<{ source: SourceId; row: TeamConversationRow }> {
+    const rows: Array<{ source: SourceId; row: TeamConversationRow }> = [];
+    for (const [serverHash, slice] of Object.entries(this.team.slices)) {
+      for (const row of slice.conversations) {
+        rows.push({ source: `team:${serverHash}` as SourceId, row });
+      }
+    }
+    return rows;
+  }
+
   /** 撤回一条用户消息（design/02 §撤回与编辑）；失败时 toast，不抛给调用方。 */
   async recall(id: string): Promise<boolean> {
     try {
-      await core.call('messages.recall', { id });
+      await connections.get(this.#recallSourceOf(id)).call('messages.recall', { id });
       return true;
     } catch (error) {
       toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
       return false;
     }
+  }
+
+  /** 撤回按消息所在会话路由（团队消息经团队连接）。 */
+  #recallSourceOf(messageId: string): SourceId {
+    if (this.main.messages.some((message) => message.id === messageId)) return this.currentSource;
+    return 'local';
   }
 
   // --- runs --------------------------------------------------------------------
@@ -722,6 +835,14 @@ class ChatState {
       message.seq,
     );
     this.#noteLastMessage(conversationId, message);
+    // DEV-146 统一口径：web 团队上下文（T5 同源模式经本机列表渲染团队会话，
+    // 「自己是谁」取 teamContext.member）与团队切片同款——仅自己回声静默、
+    // `principal:<自己>` 计提及并提醒（62.04 §4「人类 @ = 通知」）。无主体
+    // 上下文（单用户本机，消息无主体字段）保持「user 一律静默」现行为不变。
+    const selfMemberId = teamContext.member?.id ?? null;
+    const viewing = this.isViewing(conversationId);
+    const verdict = teamMessageArrival(message, selfMemberId);
+    const silent = selfMemberId === null ? isSilentOnArrival(message) : verdict.silent;
     this.conversations = this.conversations.map((conversation) =>
       conversation.id === conversationId
         ? {
@@ -729,12 +850,27 @@ class ChatState {
             lastSeq: Math.max(conversation.lastSeq, message.seq),
             lastMessageAt: message.createdAt,
             unreadCount:
-              this.isViewing(conversation.id) || isSilentOnArrival(message)
-                ? (conversation.unreadCount ?? 0)
-                : (conversation.unreadCount ?? 0) + 1,
+              viewing || silent ? (conversation.unreadCount ?? 0) : (conversation.unreadCount ?? 0) + 1,
           }
         : conversation,
     );
+    // 提及角标与提醒（非查看、未静默时；与 chat-team.noteIncoming 同款守卫）。
+    if (verdict.mentioned && !viewing && !silent) {
+      this.mentionCounts = {
+        ...this.mentionCounts,
+        [conversationId]: (this.mentionCounts[conversationId] ?? 0) + 1,
+      };
+      const row = this.conversations.find((c) => c.id === conversationId) ?? null;
+      notifyTeamMessage('local', row, message);
+    }
+  }
+
+  /** 会话已读 / 消失：未读提及计数一并清除（团队切片 syncReadCursor 同口径）。 */
+  #forgetMentions(conversationId: string): void {
+    if (this.mentionCounts[conversationId] === undefined) return;
+    const next = { ...this.mentionCounts };
+    delete next[conversationId];
+    this.mentionCounts = next;
   }
 
   /**

@@ -22,6 +22,7 @@ import type { SqliteDatabase } from '../infra/db.js';
 import { untrustedBlock } from '../infra/data-boundary.js';
 import type { SecretsService } from '../domain/secrets.js';
 import type { BotsService } from '../domain/bots.js';
+import type { PrincipalDirectory } from '../principal/types.js';
 import type { ConversationsService } from '../domain/conversations.js';
 import type { MessagesService } from '../domain/messages.js';
 import type { JobsService, JobRow } from '../domain/jobs.js';
@@ -163,6 +164,12 @@ export interface ImServiceDeps {
   };
   /** 有效启用集（54 §5：属主插件未启用的绑定对唤醒与转发不可见）。 */
   pluginEnabledForBot: (botId: string, pluginId: string) => boolean;
+  /**
+   * 62.11 C2 主体目录（可选）：入站提醒开直聊时的通知对象
+   * （`ownerForChannel('im', accountId)`，62.07 §3）。缺省 / 无 owner =
+   * 无主直聊（单用户现状）。
+   */
+  principals?: PrincipalDirectory | undefined;
   /** 测试注入：客户端与会话节奏。 */
   openClient?: ((account: ImAccountRecord) => ILinkClient) | undefined;
   backoffMs?: (streak: number) => number;
@@ -560,6 +567,14 @@ export class ImService {
   }
 
   /**
+   * 62.07 §3 / 62.11 C13：该 IM 账号入站提醒的通知对象（管理员指定的主体）。
+   * 无目录 / 未指定 = null（提醒落无主直聊 = 单用户现状）。
+   */
+  #channelOwner(accountId: string): string | null {
+    return this.#deps.principals?.ownerForChannel?.('im', accountId) ?? null;
+  }
+
+  /**
    * 按绑定扇出一条入站：启用集过滤 → 风暴限流 → im_alert 作业 → D111 自动补勾。
    * 同一账号的入站消息可唤醒多个 Bot，幂等键含 botId。
    */
@@ -588,7 +603,11 @@ export class ImService {
       return { notices };
     }
     this.store.setAlertState(binding.accountId, binding.botId, false, [...recent, now]);
-    const conversation = this.#deps.conversations.openDirect(binding.botId).conversation;
+    const channelOwner = this.#channelOwner(binding.accountId);
+    const conversation = this.#deps.conversations.openDirect(
+      binding.botId,
+      channelOwner !== null ? { ownerPrincipalId: channelOwner } : undefined,
+    ).conversation;
     const key = imAlertDedupeKey(binding.accountId, msgId, binding.botId);
     this.#deps.jobs.enqueue({
       type: 'im_alert',
@@ -635,8 +654,13 @@ export class ImService {
     const account = this.store.get(payload.accountId);
     if (account === null) return;
     if (!this.store.bindings(account.id).some((binding) => binding.botId === payload.botId)) return;
+    const owner = this.#channelOwner(account.id);
     const conversationId =
-      job.conversation_id ?? this.#deps.conversations.openDirect(payload.botId).conversation.id;
+      job.conversation_id ??
+      this.#deps.conversations.openDirect(
+        payload.botId,
+        owner !== null ? { ownerPrincipalId: owner } : undefined,
+      ).conversation.id;
     if (!this.#cardExists(conversationId, payload.key)) {
       const card = this.#deps.messages.append({
         conversationId,

@@ -26,6 +26,7 @@ import type { JobRow, JobsService } from '../domain/jobs.js';
 import type { MessagesService } from '../domain/messages.js';
 import type { SecretsService } from '../domain/secrets.js';
 import type { BotsService } from '../domain/bots.js';
+import type { PrincipalDirectory } from '../principal/types.js';
 import { isMailAuthError, mailErrorFields } from './errors.js';
 import { assertMailHost } from './hosts.js';
 import { createImapflowOpener } from './imap.js';
@@ -276,6 +277,12 @@ export interface MailServiceDeps {
   sessionBackoffMs?: (streak: number) => number;
   /** 实例归属解析（P3）；测试 / 无插件环境可省（全部回落无主账号行为）。 */
   instanceOwner?: MailInstanceOwnerPort | undefined;
+  /**
+   * 62.11 C2 主体目录（可选）：入站提醒开直聊时的通知对象
+   * （`ownerForChannel('mail', accountId)`，62.07 §3）。缺省 / 无 owner =
+   * 无主直聊（单用户现状）。
+   */
+  principals?: PrincipalDirectory | undefined;
 }
 
 interface AlertPayload {
@@ -661,10 +668,14 @@ export class MailService {
         const payload = parseAlert(job.payload_json);
         if (payload === null || payload.botId !== fromBotId) continue;
         const key = mailAlertDedupeKey(accountId, payload.uid, toBotId);
+        const owner = this.#channelOwner(accountId);
         this.#deps.jobs.enqueue({
           type: 'mail_alert',
           botId: toBotId,
-          conversationId: this.#deps.conversations.openDirect(toBotId).conversation.id,
+          conversationId: this.#deps.conversations.openDirect(
+            toBotId,
+            owner !== null ? { ownerPrincipalId: owner } : undefined,
+          ).conversation.id,
           payload: { ...payload, botId: toBotId, key },
           priority: job.priority,
           dedupeKey: key,
@@ -755,6 +766,14 @@ export class MailService {
     ].join('\n');
   }
 
+  /**
+   * 62.07 §3 / 62.11 C13：该邮箱账号入站提醒的通知对象（管理员指定的主体）。
+   * 无目录 / 未指定 = null（提醒落无主直聊 = 单用户现状）。
+   */
+  #channelOwner(accountId: string): string | null {
+    return this.#deps.principals?.ownerForChannel?.('mail', accountId) ?? null;
+  }
+
   renderContextLine(message: Message): string {
     if (message.kind !== 'card' || !('mailEvent' in message.content)) return '（邮件记录）';
     const content = message.content;
@@ -778,7 +797,16 @@ export class MailService {
       const targets = bindings.flatMap((binding) => {
         const bot = this.#deps.bots.get(binding.botId);
         if (bot === null || bot.status !== 'active') return [];
-        return [{ binding, conversationId: this.#deps.conversations.openDirect(binding.botId).conversation.id }];
+        const owner = this.#channelOwner(accountId);
+        return [
+          {
+            binding,
+            conversationId: this.#deps.conversations.openDirect(
+              binding.botId,
+              owner !== null ? { ownerPrincipalId: owner } : undefined,
+            ).conversation.id,
+          },
+        ];
       });
       const notices: AppNoticePayload[] = [];
       this.#deps.db.transaction(() => {
@@ -835,8 +863,13 @@ export class MailService {
     const account = this.store.get(payload.accountId);
     if (account === null) return;
     if (!this.store.bindings(account.id).some((binding) => binding.botId === payload.botId)) return;
+    const owner = this.#channelOwner(account.id);
     const conversationId =
-      job.conversation_id ?? this.#deps.conversations.openDirect(payload.botId).conversation.id;
+      job.conversation_id ??
+      this.#deps.conversations.openDirect(
+        payload.botId,
+        owner !== null ? { ownerPrincipalId: owner } : undefined,
+      ).conversation.id;
     // 入队时已经清理过；队列里的旧任务可能是清理前写的，这里再来一遍（幂等）。
     const from = oneLineMailField(payload.from, MAIL_FROM_MAX_CHARS);
     const subject = oneLineMailField(payload.subject, MAIL_SUBJECT_MAX_CHARS);

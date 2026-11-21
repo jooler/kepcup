@@ -37,6 +37,8 @@ describe('0072 composer_drafts migration', () => {
     }>;
     expect(columns.map((column) => column.name)).toEqual([
       'conversation_id',
+      // 0079 主体缝重建：主键改为 (conversation_id, principal_key)，单用户 ''。
+      'principal_key',
       'doc_json',
       'mentions_json',
       'reply_to',

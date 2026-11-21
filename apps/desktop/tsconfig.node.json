@@ -6,7 +6,13 @@
     "moduleResolution": "bundler",
     "lib": ["es2023", "dom"],
     "types": ["node"],
-    "noEmit": true
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      // T8: the driver's exports map lacks a "types" condition (same mapping as
+      // packages/core) — point tsc at the shipped declarations directly.
+      "better-sqlite3-multiple-ciphers": ["node_modules/better-sqlite3-multiple-ciphers/index.d.ts"]
+    }
   },
   "include": [
     "electron.vite.config.ts",

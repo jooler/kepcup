@@ -51,6 +51,20 @@ export interface AccessPromptInfo {
   grants: Grant[];
 }
 
+/**
+ * 62.11 C2：宿主主体目录描述的一个人类主体（显示名 + 可选的一句话备注，备注
+ * 取画像里的职务 / 部门之类）。渲染给模型的上下文用，结构按目录契约本地声明。
+ */
+export interface HumanPrincipalLabel {
+  name: string;
+  note?: string | undefined;
+  /**
+   * 62.09 §1 / 62.11 C13（T6）：该主体在会话中的角色——`conversation_principals.role`。
+   * `'lead'` = 项目负责人（真人）；缺省 = 不标注（发言人标签等场景没有角色）。
+   */
+  role?: 'member' | 'lead' | undefined;
+}
+
 export interface SystemPromptInput {
   /** UI language: controls user-facing output language and setup/interview copy. */
   language?: AppLanguage | undefined;
@@ -67,6 +81,19 @@ export interface SystemPromptInput {
   now: Date;
   /** Project member cards for <conversation_info> (P05); omitted outside projects. */
   members?: BotCard[];
+  /**
+   * 62.11 C2 / 62.05 §4：项目组的人类主体（宿主从 conversation_principals +
+   * 目录收集）。项目组的 `<conversation_info>` 逐个出一行；缺省 / 空 = 不出现
+   * （现状逐字节）。字段名按 core 标识符只用 principal 的约定（渲染文案才是
+   * 「成员」，见 <conversation_info> 的行文案）。
+   */
+  humanPrincipals?: HumanPrincipalLabel[] | undefined;
+  /**
+   * 62.05 §4：本轮正在说话的人类主体（发送主体经目录解析）。驱动恒小的
+   * `<user_identity>` 段（项目组「当前发言人」，直聊「当前与你对话的是 …」）；
+   * 缺省 = 段不出现（现状）。
+   */
+  speaker?: HumanPrincipalLabel | undefined;
   /**
    * Board card chat (D103 §7.1). When set, `<conversation_info>` uses the card
    * branch and `CARD_RULES` is injected. The card text is user-written.
@@ -119,10 +146,28 @@ export interface SystemPromptInput {
    */
   hasSettingsTools?: boolean | undefined;
   /**
+   * 62.11 C8 提示词同步：settings_change 已注册。缺省 = 已注册（现状）；宿主
+   * 工具策略把它拒掉时为 false——设置规则退到只读版（SETTINGS_READ_ONLY_RULE，
+   * 与 ACP 的 unlessTools 门控同一语义），不再点名 settings_change。
+   */
+  hasSettingsChangeTool?: boolean | undefined;
+  /**
+   * 62.11 C8 提示词同步：get_user_profile 已注册。缺省 = 已注册（现状）；宿主
+   * 工具策略把它拒掉时为 false——静态平台规则里点名 get_user_profile 的句子
+   * 整句省略、<user_profile> 的查询引导退到无工具名版本（ACP 路径本来就不写
+   * 死工具名，无需此开关）。
+   */
+  hasProfileLookupTool?: boolean | undefined;
+  /**
    * 管家的对话轮是否注册了工作台工具（`list_todos` / `create_todo` …，与 `deps.workbench` 同源）。
    * 缺省 = 没有：管家规则不带工作台那几条，免得提示词指挥不存在的工具。
    */
   hasWorkbenchTools?: boolean | undefined;
+  /**
+   * T9（62.11 C10 提示词侧）：宿主按 run 提供的 `<host_rules>` 段正文（出卡
+   * 时机等宿主语义）。缺省 / 空串 = 段不出现（现状逐字节）。
+   */
+  hostRules?: string | undefined;
   /**
    * 契约 v0.4：已注册 `call_inkcop_agent`（扩展中心启协作且 Bot 勾选了智能体）。
    * 为真时注入「禁止整轮直通 / 默认不调用」规则。
@@ -627,22 +672,34 @@ function identityAndPersona(bot: Bot): { identity: string; persona: string } {
  * (D92 T1a) renders the lead line from the member card marked `isLead` and
  * marks the lead card; missing parts drop their whole line. No token budget
  * on these lines (K15) — they never go through `truncateToBudget`.
+ * 62.11 C2 / 62.05 §4：项目组再列出人类主体（`humanPrincipals`，一行一人，备注是
+ * 目录 / 画像的一句话）与当前发言人（`speaker`）；两者缺省 = 逐字节现状。
  */
 function conversationInfoLines(
   conversation: Conversation,
   members?: BotCard[],
   selfBotId?: string | null,
   card?: CardPromptContext,
+  humanPrincipals?: HumanPrincipalLabel[],
+  speaker?: HumanPrincipalLabel,
 ): string[] {
   if (conversation.type === 'card' || card !== undefined) {
     return cardInfoLines(card);
   }
   const leadCard = members?.find((member) => member.isLead === true);
   const leadName = leadCard?.name ?? null;
+  // 62.09 §1 双负责人制（62.11 C13，T6）：真人项目负责人 = conversation_principals
+  // 里 role='lead' 的主体。出现时由真人占用「项目负责人」行，Bot 负责人行改标
+  // 「执行负责人」（其 lead-gate 语义不变）；单用户无在册主体 = 两行都维持原状。
+  const humanLead = humanPrincipals?.find((member) => member.role === 'lead');
+  // dm 会话没有 Bot 成员、不产生回合，理论上进不了这里的渲染；显式标注是
+  // 防御性的（62.11 C3 dm 审计：dm 不进任何 Bot 上下文）。
   const convType =
     conversation.type === 'direct'
       ? '单聊（你与用户一对一）'
-      : `项目组${conversation.title ? `「${conversation.title}」` : ''}`;
+      : conversation.type === 'dm'
+        ? '成员间私信（无 Bot 参与）'
+        : `项目组${conversation.title ? `「${conversation.title}」` : ''}`;
   return [
     `对话类型：${convType}`,
     // 项目目标（D92 T1a）：成员理解「归不归我」与自身职责边界的共同依据。
@@ -651,8 +708,11 @@ function conversationInfoLines(
       : []),
     ...(conversation.type === 'project' && leadName !== null
       ? [
-          `项目负责人：${leadName}${selfBotId !== null && leadCard?.id === selfBotId ? '（你）' : ''}`,
+          `${humanLead !== undefined ? '执行负责人' : '项目负责人'}：${leadName}${selfBotId !== null && leadCard?.id === selfBotId ? '（你）' : ''}`,
         ]
+      : []),
+    ...(conversation.type === 'project' && humanLead !== undefined
+      ? [`项目负责人：${humanLead.name}`]
       : []),
     ...(members !== undefined && members.length > 0
       ? [
@@ -662,6 +722,19 @@ function conversationInfoLines(
               `- ${member.name}（${member.id}）：${member.bio || '（无简介）'}；职责：${member.role || '（未填写）'}${member.isLead === true ? ' [负责人]' : ''}`,
           ),
         ]
+      : []),
+    // 项目组的人类主体（62.04 §4：「A（成员）」+ 画像一句话）；只在项目组出现，
+    // 直聊 / dm 传了也不渲染（直聊对象的身份走 <user_identity>）。
+    ...(conversation.type === 'project' && humanPrincipals !== undefined && humanPrincipals.length > 0
+      ? [
+          '人类成员：',
+          ...humanPrincipals.map(
+            (member) => `- ${member.name}（成员）${member.note ? `：${member.note}` : ''}`,
+          ),
+        ]
+      : []),
+    ...(conversation.type === 'project' && speaker !== undefined && speaker.name.length > 0
+      ? [`当前发言人：${speaker.name}`]
       : []),
   ];
 }
@@ -688,6 +761,25 @@ function cardInfoLines(card: CardPromptContext | undefined): string[] {
 
 function currentTimeLine(now: Date, timeZone: string): string {
   return `当前时间：${now.toISOString().replace('T', ' ').slice(0, 19)}（${timeZone}）`;
+}
+
+/**
+ * `<user_identity>`（62.05 §4，62.11 C2）：唯一的新段，恒小（~60 token）。只在
+ * 宿主提供了本轮说话主体（speaker）时出现——单用户无主体目录 = 段不存在（现状）。
+ * 直聊 / 看板卡等「一对一」形态 = 「当前与你对话的是 {名字}{；备注}」（备注取
+ * 目录里的职务 / 部门一句话）；项目组 = 「当前发言人：{名字}」（成员清单在
+ * `<conversation_info>`，不在这里重复）。
+ */
+function userIdentitySection(
+  conversation: Conversation,
+  speaker: HumanPrincipalLabel | undefined,
+): string {
+  if (speaker === undefined || speaker.name.length === 0) return '';
+  const body =
+    conversation.type === 'project'
+      ? `当前发言人：${speaker.name}`
+      : `当前与你对话的是 ${speaker.name}${speaker.note ? `；${speaker.note}` : ''}`;
+  return section('user_identity', body);
 }
 
 /**
@@ -727,7 +819,14 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   const isTurn = input.loop === 'turn';
   const { identity: identityText, persona: personaText } = identityAndPersona(bot);
   const conversationInfo = [
-    ...conversationInfoLines(input.conversation, input.members, bot.id, input.card),
+    ...conversationInfoLines(
+      input.conversation,
+      input.members,
+      bot.id,
+      input.card,
+      input.humanPrincipals,
+      input.speaker,
+    ),
     currentTimeLine(input.now, input.timeZone),
   ].join('\n');
 
@@ -820,7 +919,12 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   // D73 / D91: the app rule follows the app_request_connection tool registration (same source).
   const baseRules = isTurn ? TURN_PLATFORM_RULES : PLATFORM_RULES;
   const platformRules = (() => {
-    let rules = [...baseRules];
+    // 62.11 C8 提示词同步：get_user_profile 被宿主策略拒绝时，静态规则里点名它
+    // 的整句省略（缺省 = 逐字节现状；ACP 版规则本就按实际注入工具门控）。
+    let rules =
+      input.hasProfileLookupTool === false
+        ? baseRules.filter((rule) => !rule.includes('get_user_profile'))
+        : [...baseRules];
     if (input.hasAppRequestTool === true) {
       rules = [...rules, `${rules.length + 1}. ${APP_REQUEST_CONNECTION_RULE}`];
     }
@@ -835,7 +939,12 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
       rules = [...rules, `${rules.length + 1}. ${mailRequestSetupRule(isButler)}`];
     }
     if (input.hasSettingsTools === true) {
-      rules = [...rules, `${rules.length + 1}. ${SETTINGS_RULE}`];
+      // 62.11 C8：settings_change 被宿主策略拒绝时退到只读版规则（ACP 的
+      // unlessTools 门控同一语义）；缺省 = 全量规则（现状逐字节）。
+      rules = [
+        ...rules,
+        `${rules.length + 1}. ${input.hasSettingsChangeTool === false ? SETTINGS_READ_ONLY_RULE : SETTINGS_RULE}`,
+      ];
     }
     if (input.workbenchDispatch === true) {
       rules = [...rules, `${rules.length + 1}. ${WORKBENCH_DISPATCH_RULE}`];
@@ -853,6 +962,9 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
         : '使用用户最近一条消息的语言回复（包括问题、确认语、进度说明、总结与最终回复）。没有用户消息时（例如定时任务或系统触发的一轮），使用简体中文。',
     ),
     section('platform_rules', platformRules.join('\n')),
+    // T9（62.11 C10 提示词侧）：宿主贡献的规则段（如决议卡出卡时机）。缺省 /
+    // 空串 = 整段缺席，输出与从前逐字节一致。
+    section('host_rules', input.hostRules ?? ''),
     // 语音对话模式（53 号修订 v3）：只影响对话轮的回复形态，任务轮不注入。
     section(
       'voice_conversation',
@@ -888,7 +1000,11 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     section('setup_interview', setupSection),
     section('identity', identityText),
     section('persona', personaText),
-    userProfileSection(input.userProfile, USER_PROFILE_LOOKUP_HINT),
+    userProfileSection(
+      input.userProfile,
+      // 62.11 C8：查询工具被策略拒绝时引导里不再点名 get_user_profile。
+      input.hasProfileLookupTool === false ? USER_PROFILE_SUMMARY_NOTE : USER_PROFILE_LOOKUP_HINT,
+    ),
     section('hard_constraints', input.hardConstraints ?? ''),
     section('my_state', input.myState ?? ''),
     section('schedules', input.schedules ?? ''),
@@ -896,6 +1012,9 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     section('watches', input.watches ?? ''),
     section('mail_accounts', input.mailAccounts ?? ''),
     section('relevant_memories', input.relevantMemories ?? ''),
+    // <user_identity>（62.05 §4）：conversation_info 之前的独立小段，说话主体
+    // 未提供时整段缺席（现状逐字节）。
+    userIdentitySection(input.conversation, input.speaker),
     section('conversation_info', conversationInfo),
     section(
       'card_rules',
@@ -966,7 +1085,19 @@ export interface AgentSessionPromptInput {
   bot: Bot;
   conversation: Conversation;
   members?: BotCard[];
+  /**
+   * 62.11 C2 / 62.05 §4：项目组的人类主体（同 SystemPromptInput.humanPrincipals）。
+   * 缺省 = `<conversation_info>` 不出现人类成员行（现状）。
+   */
+  humanPrincipals?: HumanPrincipalLabel[] | undefined;
+  /** 62.05 §4：本轮说话的人类主体（同 SystemPromptInput.speaker）；缺省 = 无段。 */
+  speaker?: HumanPrincipalLabel | undefined;
   card?: CardPromptContext | undefined;
+  /**
+   * T9（62.11 C10 提示词侧）：宿主贡献的 `<host_rules>` 段正文（与内置路径同一
+   * 缝）。缺省 / 空串 = 段不出现（现状逐字节）。
+   */
+  hostRules?: string | undefined;
   tools: AgentPromptTools;
 }
 
@@ -1286,15 +1417,27 @@ export function buildAgentSessionPrompt(input: AgentSessionPromptInput): string 
     ),
     section('tool_policy', buildAgentToolPolicy(tools)),
     section('file_handling', map(agentFileHandling(tools.toolNames))),
+    // T9（62.11 C10 提示词侧）：宿主贡献的规则段；缺省 / 空串 = 段缺席（现状）。
+    section('host_rules', input.hostRules ?? ''),
     section('identity', identity),
     section('persona', persona),
     section(
       'card_rules',
       input.card !== undefined || input.conversation.type === 'card' ? CARD_RULES : '',
     ),
+    // <user_identity>（62.05 §4）：与会话级 <conversation_info> 同侧的恒小段，
+    // 说话主体未提供时整段缺席（现状逐字节）。
+    userIdentitySection(input.conversation, input.speaker),
     section(
       'conversation_info',
-      conversationInfoLines(input.conversation, input.members, bot.id, input.card).join('\n'),
+      conversationInfoLines(
+        input.conversation,
+        input.members,
+        bot.id,
+        input.card,
+        input.humanPrincipals,
+        input.speaker,
+      ).join('\n'),
     ),
   ]
     .filter(Boolean)

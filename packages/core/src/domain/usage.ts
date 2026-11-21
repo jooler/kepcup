@@ -21,6 +21,12 @@ export interface UsageRecordInput {
    */
   capability?: string | null;
   modelEntryId?: string | null;
+  /**
+   * 62.11 C7: the principal the usage row is attributed to. Resolved inside
+   * `record` when omitted — via the injected runs-principal source (the run's
+   * `principal_id`); no run reference = NULL. Explicit null skips the lookup.
+   */
+  principalId?: string | null;
 }
 
 /** One local-day bucket aggregated by SQLite (`localtime`, same zone as the app). */
@@ -69,6 +75,47 @@ export interface UsageBotTotalRow {
   outputTokens: number;
   tokens: number;
   calls: number;
+}
+
+/**
+ * 62.11 C7（T6 team.usage.mine 口径）：一个主体按本地日的用量汇总（纯 SQL
+ * 聚合，只读，不写库、不注册 RPC；团队层据此实现「我的用量」）。
+ */
+export interface PrincipalUsageDay {
+  /** 'YYYY-MM-DD'（created_at 的服务器本地日期，同 usage.summary 的口径）。 */
+  day: string;
+  /** 行数。 */
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  /** SUM；无 cost 的行按 0。 */
+  costUsd: number;
+}
+
+/**
+ * T9（62.03 D137）只读账行游标读取：`usage_ledger` 的一行（含 C7 主体归属）。
+ * 宿主（团队层）以 `rowid` 为游标增量拉取、以 `id`（账行主键）做分摊幂等的
+ * 去重键；core 不解释分摊口径，只保证按 rowid 升序增量可见。
+ */
+export interface UsageLedgerRow {
+  /** SQLite rowid（游标键；单调递增，但删除空洞后不保证连续）。 */
+  rowid: number;
+  /** 账行主键（`use_…`）——宿主分摊幂等的去重键。 */
+  id: string;
+  runId: string;
+  botId: string | null;
+  conversationId: string | null;
+  loopType: LoopType;
+  /** C7 记账时写入的归属主体；null = 系统消耗（单用户形态）。 */
+  principalId: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number | null;
+  createdAt: number;
 }
 
 /** 按工具的任务上下文消耗（内容估算，仅内置任务；不是计费 token）。 */
@@ -124,15 +171,37 @@ export interface RunUsageTotals {
 
 /** Append-only usage ledger (docs/design/14-models-and-browser.md). */
 export class UsageService {
+  /**
+   * Runs-principal source (62.11 C7): `RunsService.principalOf`, attached by
+   * the composition root once both services exist. Usage rows live in main.db
+   * and runs in runs.db, so attribution is resolved at write time instead of
+   * joining across databases. Absent (stripped test setups) = NULL.
+   */
+  #principalSource: ((runId: string) => string | null) | null = null;
+
   constructor(
     private readonly db: SqliteDatabase,
     private readonly clock: Clock,
-  ) {}
+    principalSource?: (runId: string) => string | null,
+  ) {
+    this.#principalSource = principalSource ?? null;
+  }
+
+  /** Late attachment for compositions that build the runs service after this one. */
+  attachPrincipalSource(source: (runId: string) => string | null): void {
+    this.#principalSource = source;
+  }
 
   record(input: UsageRecordInput): void {
+    // 62.11 C7: attribution defaults to the run's principal (explicit null
+    // skips the lookup; no source / no match = NULL, the single-user shape).
+    const principalId =
+      input.principalId !== undefined
+        ? input.principalId
+        : (this.#principalSource?.(input.runId) ?? null);
     this.db
       .prepare(
-        'insert into usage_ledger (id, run_id, bot_id, conversation_id, loop_type, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, capability, model_entry_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'insert into usage_ledger (id, run_id, bot_id, conversation_id, loop_type, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, capability, model_entry_id, principal_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         newId('use'),
@@ -149,6 +218,7 @@ export class UsageService {
         input.costUsd ?? null,
         input.capability ?? null,
         input.modelEntryId ?? null,
+        principalId,
         this.clock.now(),
       );
   }
@@ -246,6 +316,100 @@ export class UsageService {
       contextWindow: resolvedWindow !== null && resolvedWindow > 0 ? resolvedWindow : null,
       cacheHitRate: promptTokens > 0 ? totals.cr / promptTokens : null,
     };
+  }
+
+  /**
+   * 62.11 C13（T6 步骤 7.3）：按主体的只读日汇总——`usage_ledger.principal_id =
+   * principalId` 且 `created_at ∈ [from, to)`，按本地日聚合。`filter.conversationTypes`
+   * 传入时 inner join `conversations` 按 type 过滤（`conversation_id` 为 NULL 的行
+   * 在带 filter 时被排除——它们不属于任何会话域）。纯 SQL 聚合，不写库。
+   */
+  sumByPrincipal(
+    principalId: string,
+    range: { from: number; to: number },
+    filter?: { conversationTypes?: readonly string[] },
+  ): PrincipalUsageDay[] {
+    const hasTypes = filter?.conversationTypes !== undefined && filter.conversationTypes.length > 0;
+    const types = hasTypes ? (filter!.conversationTypes as readonly string[]) : [];
+    // join conversations 时 created_at 两表都有：一律用 u. 限定（本地日口径与
+    // LOCAL_DAY 相同，见 62.11 C7 注释）。
+    const sql = `
+      select date(u.created_at / 1000, 'unixepoch', 'localtime') as day,
+             count(*) as calls,
+             coalesce(sum(u.input_tokens), 0) as inputTokens,
+             coalesce(sum(u.output_tokens), 0) as outputTokens,
+             coalesce(sum(u.cache_read_tokens), 0) as cacheReadTokens,
+             coalesce(sum(u.cache_write_tokens), 0) as cacheWriteTokens,
+             coalesce(sum(u.cost_usd), 0) as costUsd
+        from usage_ledger u
+        ${hasTypes ? 'join conversations c on c.id = u.conversation_id' : ''}
+       where u.principal_id = ? and u.created_at >= ? and u.created_at < ?
+        ${hasTypes ? `and c.type in (${types.map(() => '?').join(', ')})` : ''}
+       group by day
+       order by day`;
+    const rows = this.db
+      .prepare(sql)
+      .all(
+        ...(hasTypes
+          ? [principalId, range.from, range.to, ...types]
+          : [principalId, range.from, range.to]),
+      ) as Array<{
+      day: string;
+      calls: number;
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadTokens: number;
+      cacheWriteTokens: number;
+      costUsd: number;
+    }>;
+    return rows;
+  }
+
+  /**
+   * T9（62.03 D137）只读游标读取：`where rowid > ? order by rowid limit ?`。
+   * 团队层分摊 job 以此增量拉新账行（每批 limit 行，循环到不足一批）；纯
+   * SELECT，不写库、不注册 RPC（APP_METHODS 计数不变）。
+   */
+  ledgerSince(afterRowid: number, limit: number): UsageLedgerRow[] {
+    const rows = this.db
+      .prepare(
+        `select rowid as rowid, id, run_id, bot_id, conversation_id, loop_type, principal_id,
+                input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, created_at
+           from usage_ledger
+          where rowid > ?
+          order by rowid
+          limit ?`,
+      )
+      .all(afterRowid, limit) as Array<{
+      rowid: number;
+      id: string;
+      run_id: string;
+      bot_id: string | null;
+      conversation_id: string | null;
+      loop_type: LoopType;
+      principal_id: string | null;
+      input_tokens: number;
+      output_tokens: number;
+      cache_read_tokens: number;
+      cache_write_tokens: number;
+      cost_usd: number | null;
+      created_at: number;
+    }>;
+    return rows.map((row) => ({
+      rowid: row.rowid,
+      id: row.id,
+      runId: row.run_id,
+      botId: row.bot_id,
+      conversationId: row.conversation_id,
+      loopType: row.loop_type,
+      principalId: row.principal_id,
+      inputTokens: row.input_tokens,
+      outputTokens: row.output_tokens,
+      cacheReadTokens: row.cache_read_tokens,
+      cacheWriteTokens: row.cache_write_tokens,
+      costUsd: row.cost_usd,
+      createdAt: row.created_at,
+    }));
   }
 
   /** Raw entries since a point in time (usage.summary aggregation, P07). */

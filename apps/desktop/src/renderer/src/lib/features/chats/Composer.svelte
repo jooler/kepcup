@@ -22,6 +22,7 @@
   import { getChatSession } from './chat-session-context';
   import { composerRightAction, injectAttachAction, injectContentState, taskDraftKey } from './composer-inject';
   import { contacts } from '$lib/stores/contacts.svelte';
+  import { teamContext } from '$lib/features/team/team-context.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { endpointSupports } from '$lib/features/web-shell/endpoint';
   import { resolveComposerAction } from './key-handling';
@@ -257,8 +258,9 @@
 
   /**
    * @ 提及注册表（suggestion 弹层候选与发送解析共用）：当前项目组成员优先，
-   * 其余活跃 Bot 次之，其他项目组最后；当前会话自己不作候选。单聊同样可用
-   * ——提及非成员 Bot / 项目组是「引用」，不参与项目组路由。
+   * 其余活跃 Bot 次之，团队在册成员（T5，排除自己）与其他项目组最后；当前会话
+   * 自己不作候选。单聊同样可用——提及非成员 Bot / 项目组是「引用」，不参与
+   * 项目组路由。非团队上下文 members 为空数组——候选与现状一致（休眠铁律）。
    */
   const mentionTargets = $derived.by(() =>
     // 任务直注模式：@ 提及（含「选择文件」动作项）整体降级为纯文本。
@@ -270,6 +272,10 @@
           projects: chat.conversations
             .filter((c) => c.type === 'project')
             .map((c) => ({ id: c.id, title: c.title })),
+          // 团队在册成员（T5）：@ 人 = 通知；排除自己（@ 自己没有意义）。消息
+          // 气泡的渲染注册表（MessageBody）不过滤——别人的消息 @ 到我的名字
+          // 也要能着色。
+          members: contacts.members.filter((m) => m.id !== teamContext.member?.id),
           currentConversationId: chatSession.view?.conversation.id ?? null,
           // 单聊里排除当前对话的 Bot 自己（@ 自己没有意义）；项目组的成员是
           // 主力候选，不排除。
@@ -318,29 +324,33 @@
   // Svelte 组件；沿用 lucide 的路径数据保持视觉一致。
 
   const SVG_NS = 'http://www.w3.org/2000/svg';
-  const MENTION_ICON_PATHS: Record<'file' | 'folder' | 'pick-file' | 'project', readonly string[]> =
-    {
-      file: [
-        'M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z',
-        'M14 2v4a2 2 0 0 0 2 2h4',
-      ],
-      folder: [
-        'M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z',
-      ],
-      'pick-file': [
-        'm6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2',
-      ],
-      // lucide `users`：项目组在头像位显示，避免一大块空白。
-      project: [
-        'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2',
-        'M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z',
-        'M22 21v-2a4 4 0 0 0-3-3.87',
-        'M16 3.13a4 4 0 0 1 0 7.75',
-      ],
-    };
+  const MENTION_ICON_PATHS: Record<
+    'file' | 'folder' | 'pick-file' | 'project' | 'member',
+    readonly string[]
+  > = {
+    file: [
+      'M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z',
+      'M14 2v4a2 2 0 0 0 2 2h4',
+    ],
+    folder: [
+      'M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z',
+    ],
+    'pick-file': [
+      'm6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2',
+    ],
+    // lucide `users`：项目组在头像位显示，避免一大块空白。
+    project: [
+      'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2',
+      'M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z',
+      'M22 21v-2a4 4 0 0 0-3-3.87',
+      'M16 3.13a4 4 0 0 1 0 7.75',
+    ],
+    // lucide `user`：团队成员候选（T5）在头像位显示。
+    member: ['M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2', 'M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z'],
+  };
 
   function createMentionIcon(
-    kind: 'file' | 'folder' | 'pick-file' | 'project',
+    kind: 'file' | 'folder' | 'pick-file' | 'project' | 'member',
     className = 'composer-mention-icon',
   ): SVGSVGElement {
     const svg = document.createElementNS(SVG_NS, 'svg');
@@ -564,6 +574,13 @@
               },
             }),
           );
+        } else if (target.kind === 'member') {
+          // 团队成员候选（T5）：头像位放成员图标（无成员头像体系，与项目组同口径）。
+          const iconHost = document.createElement('span');
+          iconHost.className =
+            'flex size-5 shrink-0 items-center justify-center text-muted-foreground';
+          iconHost.append(createMentionIcon('member', 'size-4'));
+          button.append(iconHost);
         } else if (target.kind === 'project') {
           // 项目组没有头像：头像位放群组图标，名称仍与 Bot 名称对齐。
           const iconHost = document.createElement('span');
@@ -586,7 +603,9 @@
             ? t('composer.mentionKindBot')
             : target.kind === 'project'
               ? t('composer.mentionKindProject')
-              : null;
+              : target.kind === 'member'
+                ? t('composer.mentionKindMember')
+                : null;
         if (kindLabel !== null) {
           const badge = document.createElement('span');
           badge.className = 'shrink-0 text-xs text-muted-foreground';
@@ -920,6 +939,9 @@
   });
   $effect(() => {
     // 草稿键：对话按会话 id，任务直注用 `task:<id>`（同库不同键，互不串台）。
+    // T7 融合视图：草稿键保持会话 id（shared-draft 的 RPC 需要真实 id；
+    // composerDrafts 的协作身份 / 附件 RPC 经 setRpcSource 按来源路由）。
+    const conversationSource = chatSession.source;
     const draftsKey = injectMode
       ? injectTaskId === null
         ? null
@@ -930,10 +952,11 @@
     const currentMentionTokens = mentionTokens;
     const currentReply = replyTo;
     if (!injectMode) {
+      composerDrafts.setRpcSource(conversationSource);
       // D119：进入 / 切换会话即上报在线状态（同一会话重复调用幂等）。
-      presence.enter(draftsKey, presenceSource);
+      presence.enter(draftsKey, presenceSource, conversationSource);
       // D120：加载共享草稿并 claim（被占用则转只读镜像）。
-      void sharedDraft.enter(draftsKey, presenceSource);
+      void sharedDraft.enter(draftsKey, presenceSource, conversationSource);
     }
     if (draftsKey !== activeDraftKey) {
       activeDraftKey = draftsKey;

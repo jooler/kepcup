@@ -19,9 +19,19 @@ interface MemoRow {
   deleted_at: number | null;
   group_id: string | null;
   position: number;
+  owner_principal_id: string | null;
 }
 
-export function rowToMemo(row: MemoRow): Memo {
+/**
+ * A memo row plus the ownership column that stays out of the shared RPC shape
+ * (62.11 C13): the owning human principal. Absent / null = the single-user
+ * status quo (ownerless rows carry no key, so the mapped shape is unchanged).
+ */
+export interface StoredMemo extends Memo {
+  ownerPrincipalId?: string | null;
+}
+
+export function rowToMemo(row: MemoRow): StoredMemo {
   return {
     id: row.id,
     body: row.body,
@@ -33,6 +43,7 @@ export function rowToMemo(row: MemoRow): Memo {
     deletedAt: row.deleted_at,
     groupId: row.group_id,
     position: row.position,
+    ...(row.owner_principal_id !== null ? { ownerPrincipalId: row.owner_principal_id } : {}),
   };
 }
 
@@ -42,15 +53,22 @@ interface MemoGroupRow {
   position: number;
   created_at: number;
   updated_at: number;
+  owner_principal_id: string | null;
 }
 
-function rowToMemoGroup(row: MemoGroupRow): MemoGroup {
+/** A memo group row plus its ownership column (62.11 C13; absent = status quo). */
+export interface StoredMemoGroup extends MemoGroup {
+  ownerPrincipalId?: string | null;
+}
+
+function rowToMemoGroup(row: MemoGroupRow): StoredMemoGroup {
   return {
     id: row.id,
     title: row.title,
     position: row.position,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    ...(row.owner_principal_id !== null ? { ownerPrincipalId: row.owner_principal_id } : {}),
   };
 }
 
@@ -63,6 +81,8 @@ export interface InsertMemoInput {
    * 这里只负责落位：新备忘插到所属组的顶部（取组内最小 position 之前）。
    */
   groupId?: string | undefined;
+  /** 62.11 C13：归属主体（调用者）。缺省 / null = 单用户现状（NULL 行）。 */
+  ownerPrincipalId?: string | null | undefined;
 }
 
 export interface UpdateMemoPatch {
@@ -75,6 +95,8 @@ export interface ListMemosFilter {
   query?: string | undefined;
   /** true = 最近删除 (soft-deleted); default = live memos. */
   trashed?: boolean | undefined;
+  /** 62.11 C13：传入时只返回该主体拥有的行；缺省 = 不过滤（单用户现状）。 */
+  ownerPrincipalId?: string | undefined;
 }
 
 /**
@@ -93,7 +115,7 @@ export class MemoStore {
     private readonly clock: Clock,
   ) {}
 
-  insert(input: InsertMemoInput): Memo {
+  insert(input: InsertMemoInput): StoredMemo {
     const id = newId('memo');
     const now = this.clock.now();
     const min = this.db
@@ -105,8 +127,8 @@ export class MemoStore {
     const position = min.m === null ? POSITION_OPTS.step : min.m - POSITION_OPTS.step;
     this.db
       .prepare(
-        `insert into memos (id, body, pinned, source, created_at, updated_at, sort_at, deleted_at, group_id, position)
-         values (?, ?, ?, ?, ?, ?, ?, null, ?, ?)`,
+        `insert into memos (id, body, pinned, source, created_at, updated_at, sort_at, deleted_at, group_id, position, owner_principal_id)
+         values (?, ?, ?, ?, ?, ?, ?, null, ?, ?, ?)`,
       )
       .run(
         id,
@@ -118,6 +140,7 @@ export class MemoStore {
         now,
         input.groupId ?? null,
         position,
+        input.ownerPrincipalId ?? null,
       );
     const memo = this.get(id);
     if (memo === null) throw new Error(`memo ${id} disappeared after insert`);
@@ -125,7 +148,7 @@ export class MemoStore {
   }
 
   /** Any memo by id, trashed or not. */
-  get(id: string): Memo | null {
+  get(id: string): StoredMemo | null {
     const row = this.db.prepare('select * from memos where id = ?').get(id) as MemoRow | undefined;
     return row ? rowToMemo(row) : null;
   }
@@ -135,13 +158,17 @@ export class MemoStore {
    * from the old `sort_at` order so nothing moves until the first drag). Trashed
    * memos: most recently deleted first.
    */
-  list(filter: ListMemosFilter = {}): Memo[] {
+  list(filter: ListMemosFilter = {}): StoredMemo[] {
     const trashed = filter.trashed === true;
     const where = [trashed ? 'deleted_at is not null' : 'deleted_at is null'];
     const params: string[] = [];
     if (filter.query !== undefined && filter.query.trim() !== '') {
       where.push("body like ? escape '\\'");
       params.push(likePattern(filter.query.trim()));
+    }
+    if (filter.ownerPrincipalId !== undefined) {
+      where.push('owner_principal_id = ?');
+      params.push(filter.ownerPrincipalId);
     }
     const order = trashed ? 'deleted_at desc, id desc' : 'pinned desc, position asc, id desc';
     return (
@@ -158,7 +185,7 @@ export class MemoStore {
    * pinned cards float via the `pinned desc` order, so pin toggles never touch
    * the drag position). Null when the memo does not exist.
    */
-  update(id: string, patch: UpdateMemoPatch): Memo | null {
+  update(id: string, patch: UpdateMemoPatch): StoredMemo | null {
     const current = this.get(id);
     if (current === null) return null;
     const pinned = (patch.pinned ?? current.pinned) ? 1 : 0;
@@ -178,7 +205,7 @@ export class MemoStore {
   }
 
   /** Move to 最近删除. Keeps `position` so a restore returns the memo to its place. */
-  softDelete(id: string): Memo | null {
+  softDelete(id: string): StoredMemo | null {
     const changed = this.db
       .prepare('update memos set deleted_at = ? where id = ? and deleted_at is null')
       .run(this.clock.now(), id).changes;
@@ -186,7 +213,7 @@ export class MemoStore {
   }
 
   /** Back from 最近删除. Null when the memo does not exist or is not trashed. */
-  restore(id: string): Memo | null {
+  restore(id: string): StoredMemo | null {
     const changed = this.db
       .prepare('update memos set deleted_at = null where id = ? and deleted_at is not null')
       .run(id).changes;
@@ -203,7 +230,7 @@ export class MemoStore {
   // --- 分组与拖拽（D90 §5.4） -------------------------------------------------
 
   /** One group's live memos in display order (`pinned desc, position asc, id desc`). */
-  listInGroup(groupId: string | null): Memo[] {
+  listInGroup(groupId: string | null): StoredMemo[] {
     return (
       this.db
         .prepare(
@@ -220,7 +247,7 @@ export class MemoStore {
    * Does not touch `updated_at` (a reorder is not a content edit); `changed`
    * is false when the memo already sat in the requested slot.
    */
-  move(id: string, groupId: string | null, beforeId: string | null): { memo: Memo; changed: boolean } | null {
+  move(id: string, groupId: string | null, beforeId: string | null): { memo: StoredMemo; changed: boolean } | null {
     const current = this.get(id);
     if (current === null) return null;
     const placed = placeItem(
@@ -246,14 +273,23 @@ export class MemoStore {
     return memo === null ? null : { memo, changed: placed.changed };
   }
 
-  /** All groups in display order (`position asc`). */
-  listGroups(): MemoGroup[] {
-    return (
-      this.db.prepare('select * from memo_groups order by position asc, id asc').all() as MemoGroupRow[]
-    ).map(rowToMemoGroup);
+  /**
+   * All groups in display order (`position asc`). 62.11 C13：传入主体时只返回
+   * 该主体拥有的组；缺省 = 不过滤（单用户现状）。
+   */
+  listGroups(ownerPrincipalId?: string): StoredMemoGroup[] {
+    const rows =
+      ownerPrincipalId === undefined
+        ? (this.db.prepare('select * from memo_groups order by position asc, id asc').all() as MemoGroupRow[])
+        : (this.db
+            .prepare(
+              'select * from memo_groups where owner_principal_id = ? order by position asc, id asc',
+            )
+            .all(ownerPrincipalId) as MemoGroupRow[]);
+    return rows.map(rowToMemoGroup);
   }
 
-  getGroup(id: string): MemoGroup | null {
+  getGroup(id: string): StoredMemoGroup | null {
     const row = this.db.prepare('select * from memo_groups where id = ?').get(id) as
       | MemoGroupRow
       | undefined;
@@ -261,7 +297,7 @@ export class MemoStore {
   }
 
   /** New groups append at the end. */
-  insertGroup(title: string): MemoGroup {
+  insertGroup(title: string, ownerPrincipalId?: string | null): StoredMemoGroup {
     const id = newId('mmg');
     const now = this.clock.now();
     const max = this.db.prepare('select max(position) as m from memo_groups').get() as {
@@ -269,14 +305,16 @@ export class MemoStore {
     };
     const position = (max.m ?? 0) + POSITION_OPTS.step;
     this.db
-      .prepare('insert into memo_groups (id, title, position, created_at, updated_at) values (?, ?, ?, ?, ?)')
-      .run(id, title, position, now, now);
+      .prepare(
+        'insert into memo_groups (id, title, position, created_at, updated_at, owner_principal_id) values (?, ?, ?, ?, ?, ?)',
+      )
+      .run(id, title, position, now, now, ownerPrincipalId ?? null);
     const group = this.getGroup(id);
     if (group === null) throw new Error(`memo group ${id} disappeared after insert`);
     return group;
   }
 
-  renameGroup(id: string, title: string): MemoGroup | null {
+  renameGroup(id: string, title: string): StoredMemoGroup | null {
     const changed = this.db
       .prepare('update memo_groups set title = ?, updated_at = ? where id = ?')
       .run(title, this.clock.now(), id).changes;
@@ -288,7 +326,7 @@ export class MemoStore {
    * the anchor is missing or is the moved group. Does not touch `updated_at`;
    * `changed` is false when the group already sat in the requested slot.
    */
-  moveGroup(id: string, beforeId: string | null): { group: MemoGroup; changed: boolean } | null {
+  moveGroup(id: string, beforeId: string | null): { group: StoredMemoGroup; changed: boolean } | null {
     if (this.getGroup(id) === null) return null;
     const placed = placeItem(
       this.listGroups().map((group) => ({ id: group.id, position: group.position })),

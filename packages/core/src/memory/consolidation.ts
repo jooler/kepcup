@@ -14,6 +14,7 @@ import {
   type ConsolidationOutput,
 } from './schemas.js';
 import type { MemoryService } from './service.js';
+import type { MemoryStore } from './store.js';
 import { localDateKey } from './local-date.js';
 import { recordLoopUsage, type LoopUsageDeps } from './loop-utils.js';
 import { routeFor, type LlmRouter } from '../agent/llm-router.js';
@@ -144,6 +145,26 @@ function latestOf(
 }
 
 /**
+ * C12 (62.05 §3): a consolidation batch merges only entries of the SAME
+ * source principal (NULL groups with NULL). Mixing principals would launder
+ * one principal's private content into an entry visible in another's
+ * audience; off-batch entries are left active for their own group's next pass.
+ */
+function sameSourceBatch(
+  itemIds: string[],
+  store: MemoryStore,
+): Array<NonNullable<ReturnType<MemoryStore['getItem']>>> {
+  const fetched = itemIds
+    .map((id) => store.getItem(id))
+    .filter((item): item is NonNullable<ReturnType<MemoryStore['getItem']>> =>
+      Boolean(item && item.status === 'active'),
+    );
+  if (fetched.length === 0) return [];
+  const source = fetched[0]!.sourcePrincipalId ?? null;
+  return fetched.filter((item) => (item.sourcePrincipalId ?? null) === source);
+}
+
+/**
  * Merging must not launder constraints away (BR-P07-002): sensitivity and
  * privacy take the strongest value (any sensitive ⇒ sensitive, any private ⇒
  * private), due/valid dates keep the LATEST so a merged commitment never
@@ -160,11 +181,7 @@ async function applyOperations(
     const store = deps.memory.storeFor(botId);
     switch (operation.op) {
       case 'merge': {
-        const items = operation.itemIds
-          .map((id) => store.getItem(id))
-          .filter(
-            (item): item is NonNullable<typeof item> => item !== null && item.status === 'active',
-          );
+        const items = sameSourceBatch(operation.itemIds, store);
         if (items.length < 2) continue;
         for (const item of items) store.supersede(item.id);
         const merged = store.insert({
@@ -175,6 +192,9 @@ async function applyOperations(
           evidence: items.flatMap((item) => item.evidence),
           origin: items[0]!.origin,
           originConversationId: items[0]!.originConversationId,
+          // C12: the merged entry keeps the batch's source principal — merges
+          // never cross that boundary (see sameSourceBatch).
+          sourcePrincipalId: items[0]!.sourcePrincipalId,
           confidence: Math.max(...items.map((item) => item.confidence)),
           sensitivity: items.some((item) => item.sensitivity === 'sensitive')
             ? 'sensitive'
@@ -195,11 +215,7 @@ async function applyOperations(
         break;
       }
       case 'summarize_episodes': {
-        const items = operation.itemIds
-          .map((id) => store.getItem(id))
-          .filter(
-            (item): item is NonNullable<typeof item> => item !== null && item.status === 'active',
-          );
+        const items = sameSourceBatch(operation.itemIds, store);
         if (items.length === 0) continue;
         for (const item of items) store.supersede(item.id);
         const summarized = store.insert({
@@ -210,6 +226,8 @@ async function applyOperations(
           evidence: items.flatMap((item) => item.evidence),
           origin: items[0]!.origin,
           originConversationId: items[0]!.originConversationId,
+          // C12: keep the batch's source principal (no cross-principal merge).
+          sourcePrincipalId: items[0]!.sourcePrincipalId,
           confidence: 0.9,
           sensitivity: items.some((item) => item.sensitivity === 'sensitive')
             ? 'sensitive'

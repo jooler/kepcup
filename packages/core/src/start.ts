@@ -39,6 +39,7 @@ import {
   type AppNoticePayload,
   type Bot,
   type CoreStatus,
+  type PermissionMode,
   type ProviderModel,
   type ShareConsumeInput,
   type ShareConsumeOutput,
@@ -50,6 +51,13 @@ import type {
   DiagnosticsToolRow,
   PreregisteredClientTable,
 } from '@kepcup/shared';
+import { PrincipalOps } from './principal/ops.js';
+import type {
+  HostPromptSectionProvider,
+  HostToolsProvider,
+  PrincipalDirectory,
+  ToolPolicy,
+} from './principal/types.js';
 import { readdirSync } from 'node:fs';
 import { directoryUsage, fileSizeOrNull } from './infra/disk-usage.js';
 import {
@@ -546,6 +554,28 @@ export interface CoreServicesOptions {
    * RemoteHub 走既有路径。
    */
   remote?: RemoteHostOptions;
+  /**
+   * 62.11 主体缝（D138，docs/design/62-team-server/11-core-seams.md）。全部
+   * 可选：不传任何一项 = 单用户运行时行为不变（工具面、提示词、workdir、
+   * 权限、画像 / 记忆注入逐字节现状）。
+   *
+   * - `principals`（C2 主体目录）：发言人标签、`<user_identity>`、项目组人类
+   *   成员行、按主体的画像 / 记忆注入；提供后全局无人值守失效（C14）。
+   * - `toolPolicy`（C8 工具策略）：deny 的工具从最终工具面（内置 / ACP / 子代理 /
+   *   MCP 懒解析）移除，提示词同步。
+   * - `hostTools`（C10 宿主贡献工具）：按 (Bot, 会话, loop) 追加进工具面。
+   * - `hostPromptSection`（T9，C10 提示词侧）：按 run 返回 `<host_rules>` 段
+   *   正文（内置与 ACP 两条提示词路径）；null / 缺省 = 段不出现。
+   * - `workdirRoots`（C9）：workdir 绑定与任务 cwd 只允许在这些根之下；
+   *   `principalOps.provisionWorkdir` 在 roots[0] 建目录。
+   * - `permissionCeiling`（C14）：授权级别上限（超过拒绝设置，如禁 bypass）。
+   */
+  principals?: PrincipalDirectory;
+  toolPolicy?: ToolPolicy;
+  hostTools?: HostToolsProvider;
+  hostPromptSection?: HostPromptSectionProvider;
+  workdirRoots?: string[];
+  permissionCeiling?: PermissionMode;
 }
 
 export interface CoreDomainServices {
@@ -622,6 +652,12 @@ export interface CoreServices {
   /** Null while locked / errored (no business services are constructed). */
   domain: CoreDomainServices | null;
   orchestrator: Orchestrator | null;
+  /**
+   * 62.11 C15 宿主写入口（`principal/ops.ts`）：加人 / 系统消息 / 卡片 / 唤醒
+   * Bot / 建工作目录的进程内 domain API（不注册 RPC）。locked / errored 时为
+   * null（与其它业务服务同口径）。
+   */
+  principalOps: PrincipalOps | null;
   /** D94 分享接收（Share Extension）：null while locked / errored. */
   share: ShareIntakeService | null;
   /** Workdir runtime (P04): binding, leases, checkpoints, git remote. */
@@ -978,6 +1014,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     keystoreKind: 'unavailable',
     domain: null,
     orchestrator: null,
+    principalOps: null,
     share: null,
     workdirRuntime: null,
     environment: null,
@@ -1329,7 +1366,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // W2 外部副作用台账（runs.db tool_effects）：store 供恢复 / RPC，recorder
     // 注入两个工具执行入口（PiEngine、宿主 MCP 桥）。
     const effects = new ToolEffectsStore(runsDb, clock);
-    const usage = new UsageService(mainDb, clock);
+    const usage = new UsageService(mainDb, clock, (runId) => runs.principalOf(runId));
     // 国内厂商媒体网关先建（providers 按能力测试要路由到这里）。
     const media = new MediaService({ settings, secrets, logger, usage });
     // 联网检索网关（docs/design/21-web-search.md）：web_search/web_fetch 工具与
@@ -1532,6 +1569,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       settings,
       clock,
       logger,
+      // 62.11 C14：宿主注入主体目录 = 全局无人值守失效（effective 恒关、写入
+      // FORBIDDEN）。缺省（不传 principals）= 现状。
+      ...(options.principals !== undefined ? { principalsActive: true } : {}),
       publish: (state) => {
         events.emit('unattended.changed', { state });
         events.emit('platform.unattended', { active: state.enabled, until: state.until });
@@ -1541,6 +1581,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       clock,
       logger,
       unattended,
+      // 62.11 C14：授权级别上限（如禁用会脱离沙箱的 bypass）。缺省 = 无上限。
+      ...(options.permissionCeiling !== undefined
+        ? { ceiling: options.permissionCeiling }
+        : {}),
       // Delegated work and board-card chats inherit the level of the
       // conversation they started from (docs/design/13-permissions.md).
       resolveScope: (conversationId) => {
@@ -1610,6 +1654,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       bots,
       grants,
       leases,
+      // 62.11 C9：workdir 根约束（绑定与任务 cwd 只允许根之下）；roots[0] 也是
+      // principalOps.provisionWorkdir 的建目录位置。缺省 = 不限制（现状）。
+      ...(options.workdirRoots !== undefined ? { roots: options.workdirRoots } : {}),
       checkpoints: new CheckpointService({ paths, logger }),
       publish: (event, payload) => events.emit(event, payload as never),
       // P11: binding changes retarget the network rules of open pages at once
@@ -2100,17 +2147,21 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     const workbenchTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
     const workbenchFacade: WorkbenchToolFacade = {
       isButler: (botId) => bots.get(botId)?.systemRole === 'butler',
+      // 62.11 C13：工具的创建 / 读写带当前运行主体的归属（tools 层传入）。
       listTodos: (filter) => todoService!.list(filter),
       getTodo: (id) => todoService!.get(id).todo,
       createTodo: (input) => todoService!.create(input),
-      updateTodo: (id, input) => todoService!.update(id, input),
-      startTodo: (id, actor) => todoService!.start(id, actor),
-      completeTodo: (id) => todoService!.complete(id),
-      cancelTodo: (id) => todoService!.cancel(id),
+      updateTodo: (id, input) =>
+        todoService!.update(id, input, input.ownerPrincipalId ?? null),
+      startTodo: (id, actor, ownerPrincipalId) =>
+        todoService!.start(id, actor, ownerPrincipalId ?? null),
+      completeTodo: (id, ownerPrincipalId) => todoService!.complete(id, 'user', ownerPrincipalId ?? null),
+      cancelTodo: (id, ownerPrincipalId) => todoService!.cancel(id, 'user', ownerPrincipalId ?? null),
       listMemos: (filter) => memoService!.list(filter),
       createMemo: (input) => memoService!.create(input),
-      updateMemo: (id, patch) => memoService!.update(id, patch),
-      deleteMemo: (id) => memoService!.delete(id),
+      updateMemo: (id, patch, ownerPrincipalId) =>
+        memoService!.update(id, patch, ownerPrincipalId ?? null),
+      deleteMemo: (id, ownerPrincipalId) => memoService!.delete(id, ownerPrincipalId ?? null),
       describeWhen: (row) => scheduleService!.describeWhen(row),
       isTainted: (botId, conversationId) => taint.isTainted(botId, conversationId),
       now: () => clock.now(),
@@ -2126,13 +2177,15 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       },
     };
     const scheduleFacade: ScheduleToolFacade = {
+      // 62.11 C13：工具创建的排期带当前运行主体的归属（tools 层传入）。
       createFromWhen: (input) => scheduleService!.createFromWhen(input),
       validateWhen: (when, timezone) => scheduleService!.validateWhen(when, timezone),
       describeWhen: (row) => scheduleService!.describeWhen(row),
       fireabilityWarnings: (row) => scheduleService!.fireabilityWarnings(row),
       listForBotInConversation: (botId, conversationId) =>
         scheduleService!.listForBotInConversation(botId, conversationId),
-      cancelOwn: (botId, scheduleId) => scheduleService!.cancelOwn(botId, scheduleId),
+      cancelOwn: (botId, scheduleId, ownerPrincipalId) =>
+        scheduleService!.cancelOwn(botId, scheduleId, ownerPrincipalId ?? null),
       createOffer: (input) => scheduleService!.createOffer(input),
       contextSection: (botId, conversationId) =>
         scheduleService?.contextSection(botId, conversationId) ?? '',
@@ -2152,11 +2205,12 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       modelOptions: () => handoverHost?.modelOptions() ?? [],
     };
     const watchFacade: OrchestratorWatchFacade = {
+      // 62.11 C13：工具创建的监看带当前运行主体的归属（tools 层传入）。
       create: (input) => watchService!.create(input),
       listForBotInConversation: (botId, conversationId) =>
         watchService!.listForBotInConversation(botId, conversationId),
-      stopOwn: (botId, conversationId, watchId) =>
-        watchService!.stopOwn(botId, conversationId, watchId),
+      stopOwn: (botId, conversationId, watchId, ownerPrincipalId) =>
+        watchService!.stopOwn(botId, conversationId, watchId, ownerPrincipalId ?? null),
       contextSection: (botId, conversationId) =>
         watchService?.contextSection(botId, conversationId) ?? '',
       renderContextLine: (message) =>
@@ -2899,6 +2953,15 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         requestApproval: (identity, kind, payload, options) =>
           approvals.request(identity, kind, payload, options),
       },
+      // 62.11 主体缝（全部缺省 = 现状）：C2 目录（发言人标签 / <user_identity> /
+      // 人类成员行 / 按主体注入）、C8 工具策略、C10 宿主贡献工具与 T9 的
+      // 提示词段缝（<host_rules>，两条提示词路径）。
+      ...(options.principals !== undefined ? { principals: options.principals } : {}),
+      ...(options.toolPolicy !== undefined ? { toolPolicy: options.toolPolicy } : {}),
+      ...(options.hostTools !== undefined ? { hostTools: options.hostTools } : {}),
+      ...(options.hostPromptSection !== undefined
+        ? { hostPromptSection: options.hostPromptSection }
+        : {}),
     });
     // W3（D78）: a user revocation interrupts the affected running tasks (turns are not).
     revocations.on((event) => orchestrator.tasks.interruptForRevocation(event));
@@ -3052,6 +3115,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       requestApproval: (identity, kind, payload, options) =>
         approvals.request(identity, kind, payload, options),
       deliverAlert: (input) => orchestrator.deliverMailAlertToBot(input),
+      // 62.07 §3 / 62.11 C13：入站提醒的通知对象（通道 owner → 对应主体直聊）。
+      ...(options.principals !== undefined ? { principals: options.principals } : {}),
       publishAccount: (account, accountId) =>
         events.emit('mail.account_updated', { accountId, account }),
       publishMessage: (message) =>
@@ -3098,6 +3163,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       jobs,
       taint,
       deliverAlert: (input) => orchestrator.deliverImAlertToBot(input),
+      // 62.07 §3 / 62.11 C13：入站提醒的通知对象（通道 owner → 对应主体直聊）。
+      ...(options.principals !== undefined ? { principals: options.principals } : {}),
       publishAccount: (accountId) => events.emit('im.account_updated', { accountId }),
       publishMessage: (message) =>
         events.emit('message.created', { conversationId: message.conversationId, message }),
@@ -3328,9 +3395,18 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     const handoverConversations = {
       get: (conversationId: string) => conversations.get(conversationId),
       memberBotIds: (conversationId: string) => conversations.memberBotIds(conversationId),
-      directIdFor: (botId: string) => conversations.openDirect(botId).conversation.id,
+      // 62.11 C3: the owner scopes the opened chat per principal (the handover's
+      // source conversation owner); omitted = the single-user chat.
+      directIdFor: (botId: string, ownerPrincipalId?: string | null) =>
+        conversations.openDirect(
+          botId,
+          ownerPrincipalId != null && ownerPrincipalId.length > 0 ? { ownerPrincipalId } : undefined,
+        ).conversation.id,
     };
-    const handover = new HandoverHost({
+    // Explicit annotation: the adapters' `ownerPrincipalOfHandover` closures
+    // capture `handover` (the host owns the answer), which would otherwise make
+    // the initializer self-referential for type inference.
+    const handover: HandoverHost = new HandoverHost({
       db: mainDb,
       logger,
       bots,
@@ -3382,6 +3458,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           },
           conversations: handoverConversations,
           memory: handoverMemory,
+          // 62.11 C3: transferred assets land in the target bot's chat of the
+          // handover's source conversation owner.
+          ownerPrincipalOfHandover: (handoverId) =>
+            handover.ownerPrincipalOfHandover(handoverId),
         }),
         new WatchAdapter({
           watches: {
@@ -3393,6 +3473,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
             allowsLoopback: (conversationId) => watches.allowsLoopback(conversationId),
           },
           conversations: handoverConversations,
+          ownerPrincipalOfHandover: (handoverId) =>
+            handover.ownerPrincipalOfHandover(handoverId),
         }),
         new SkillAdapter({
           skills: {
@@ -3877,6 +3959,19 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       browserProfiles,
     };
     services.orchestrator = orchestrator;
+    // 62.11 C15 宿主写入口（进程内 domain API，不注册 RPC）：加人 / 系统消息 /
+    // 卡片 / 唤醒 Bot / 建并绑定工作目录。
+    services.principalOps = new PrincipalOps({
+      db: mainDb,
+      clock,
+      logger,
+      conversations,
+      messages,
+      publish: (event, payload) => events.emit(event, payload as never),
+      ...(options.principals !== undefined ? { principals: options.principals } : {}),
+      orchestrator,
+      workdirRuntime,
+    });
     // D120 共享草稿：正文进 main.db，租约纯内存；发送复用 orchestrator 的落库 / 路由。
     const collabDrafts = new DraftService({
       db: mainDb,
@@ -3890,6 +3985,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           ...(input.attachmentIds !== undefined ? { attachmentIds: input.attachmentIds } : {}),
           ...(input.voiceMode !== undefined ? { voiceMode: input.voiceMode } : {}),
           ...(input.client !== undefined ? { client: input.client } : {}),
+          // 62.11 C4：草稿桶即发送主体（绑定层以 callerPrincipal 作 key）——
+          // 草稿发出的消息同样归属该主体；单用户桶（''）不带。
+          ...(input.principalKey !== undefined && input.principalKey.length > 0
+            ? { principal: { id: input.principalKey, name: null } }
+            : {}),
           onPersisted,
         }),
     });
@@ -4467,7 +4567,7 @@ function createPlatformMethods(services: CoreServices): Record<string, RpcMethod
     'conversations.kind': {
       input: z.object({ id: z.string().min(1) }),
       output: z.object({
-        type: z.enum(['direct', 'project', 'card']).nullable(),
+        type: z.enum(['direct', 'dm', 'project', 'card']).nullable(),
       }),
       handle: async (input) => {
         const id = (input as { id: string }).id;

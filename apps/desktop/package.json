@@ -39,6 +39,7 @@
     "@tiptap/markdown": "^3.31.4",
     "@tiptap/pm": "^3.31.4",
     "@tiptap/suggestion": "^3.31.4",
+    "better-sqlite3-multiple-ciphers": "13.0.3",
     "bits-ui": "2.19.3",
     "clsx": "2.1.1",
     "electron-updater": "6.8.9",

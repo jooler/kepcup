@@ -15,6 +15,23 @@ ipcRenderer.on('core-port', (event) => {
   window.postMessage({ type: 'core-port', nonce: portNonce }, window.location.origin, event.ports);
 });
 
+// T7 融合视图：团队连接的 MessagePort（主进程 team-bridge 持另一端），与 core-port
+// 同一条 window.postMessage 通道 + 同一个 nonce（防页面伪造：沙箱 iframe 读不到
+// nonce）。载荷多一个 serverHash，渲染层按 `team:${serverHash}` 来源归位；每条
+// team-port 消息都携带**全新的** port（首次 connect / 换账号重连 / 窗口重载补发），
+// 渲染层收到即应替换该来源的旧 transport。
+ipcRenderer.on('team-port', (event, meta) => {
+  window.postMessage(
+    {
+      type: 'team-port',
+      nonce: portNonce,
+      serverHash: (meta as { serverHash?: unknown } | null)?.serverHash,
+    },
+    window.location.origin,
+    event.ports,
+  );
+});
+
 // 窗口衬底材质标记（main/window.ts 的 acrylic 注释）：Win11 22H2+ 主进程经
 // webPreferences.additionalArguments 写进 process.argv，同步可读 —— 渲染层
 // 首帧即可据此把侧栏透明化，不走异步 IPC（否则 startup 会有闪色跳变）。
@@ -52,6 +69,122 @@ const api = {
     /** 对话里 @ 本地文件/文件夹：只返回路径与类型，绝不上传文件字节。 */
     selectLocalPath: (): Promise<{ path: string; kind: 'file' | 'folder' } | null> =>
       ipcRenderer.invoke('dialog:selectLocalPath'),
+    /**
+     * T5 步骤 5「连接团队服务器」（platform.openTeamServer，62.08 §3）：另起一个
+     * 远程模式壳进程加载团队服务器的 web 构建。桌面专属——web 垫片不提供此方法。
+     */
+    openTeamServer: (input: { url: string }): Promise<{ ok: true }> =>
+      ipcRenderer.invoke('platform:openTeamServer', input),
+    /**
+     * T7 融合视图：凭据 / 多账号 / 桥接启停（主进程 team-servers.ts 实现；token
+     * 永不出主进程——任何返回值都不含 token / 密码）。错误约定：reject 的
+     * Error.message 是 `JSON.stringify({code, message, details?})`（code 取 shared
+     * ERROR_CODES；解析失败按通用错误处理）。
+     */
+    teamServers: {
+      list: (): Promise<
+        Array<{
+          serverHash: string;
+          url: string;
+          accounts: Array<{
+            memberId: string;
+            username: string;
+            displayName: string;
+            remembered: boolean;
+          }>;
+          activeMemberId: string | null;
+          status: 'idle' | 'connecting' | 'connected' | 'unauthenticated' | 'error';
+        }>
+      > => ipcRenderer.invoke('platform:teamServers:list'),
+      add: (input: { url: string }): Promise<{ serverHash: string }> =>
+        ipcRenderer.invoke('platform:teamServers:add', input),
+      remove: (input: { serverHash: string }): Promise<{ ok: true }> =>
+        ipcRenderer.invoke('platform:teamServers:remove', input),
+      login: (input: {
+        serverHash: string;
+        username: string;
+        password: string;
+        remember: boolean;
+      }): Promise<{ member: { id: string; displayName: string } }> =>
+        ipcRenderer.invoke('platform:teamServers:login', input),
+      logout: (input: { serverHash: string }): Promise<{ ok: true }> =>
+        ipcRenderer.invoke('platform:teamServers:logout', input),
+      switchAccount: (input: { serverHash: string; memberId: string }): Promise<{ ok: true }> =>
+        ipcRenderer.invoke('platform:teamServers:switchAccount', input),
+      connect: (input: { serverHash: string }): Promise<{ ok: true }> =>
+        ipcRenderer.invoke('platform:teamServers:connect', input),
+      disconnect: (input: { serverHash: string }): Promise<{ ok: true }> =>
+        ipcRenderer.invoke('platform:teamServers:disconnect', input),
+      /** 状态 / 名单变化（主进程推送 ipc 事件 team-servers:changed）；返回解绑函数。 */
+      onChanged: (callback: () => void): (() => void) => {
+        const listener = (): void => callback();
+        ipcRenderer.on('team-servers:changed', listener);
+        return () => {
+          ipcRenderer.removeListener('team-servers:changed', listener);
+        };
+      },
+    },
+    /**
+     * T8 客户端本地缓存（platform.teamCache.*，主进程 team-cache/ 实现）：分区整库
+     * 加密的只读镜像。会话 / 消息视图字段与 team.bootstrap / messages.list 一致
+     * （shared conversationCacheSchema / messageCacheSchema）。错误约定同 teamServers
+     * （reject 的 Error.message 是 JSON 载荷）。web 垫片不提供（web 走 IndexedDB）。
+     */
+    teamCache: {
+      open: (input: { serverHash: string; memberId: string }): Promise<{ ok: true }> =>
+        ipcRenderer.invoke('platform:teamCache:open', input),
+      close: (input: { serverHash: string; memberId: string }): Promise<{ ok: true }> =>
+        ipcRenderer.invoke('platform:teamCache:close', input),
+      putConversations: (input: {
+        serverHash: string;
+        memberId: string;
+        conversations: unknown[];
+        replace?: boolean;
+      }): Promise<{ ok: true }> => ipcRenderer.invoke('platform:teamCache:putConversations', input),
+      putMessages: (input: {
+        serverHash: string;
+        memberId: string;
+        conversationId: string;
+        messages: unknown[];
+        replace?: boolean;
+      }): Promise<{ ok: true }> => ipcRenderer.invoke('platform:teamCache:putMessages', input),
+      getConversations: (input: {
+        serverHash: string;
+        memberId: string;
+      }): Promise<{ conversations: unknown[] }> =>
+        ipcRenderer.invoke('platform:teamCache:getConversations', input),
+      getMessages: (input: {
+        serverHash: string;
+        memberId: string;
+        conversationId: string;
+        limit?: number;
+        beforeSeq?: number;
+      }): Promise<{ messages: unknown[] }> =>
+        ipcRenderer.invoke('platform:teamCache:getMessages', input),
+      putAttachment: (input: {
+        serverHash: string;
+        memberId: string;
+        key: string;
+        bytes: string;
+      }): Promise<{ ok: true }> => ipcRenderer.invoke('platform:teamCache:putAttachment', input),
+      getAttachment: (input: {
+        serverHash: string;
+        memberId: string;
+        key: string;
+      }): Promise<{ bytes: string } | { missing: true }> =>
+        ipcRenderer.invoke('platform:teamCache:getAttachment', input),
+      clearPartition: (input: { serverHash: string; memberId: string }): Promise<{ ok: true }> =>
+        ipcRenderer.invoke('platform:teamCache:clearPartition', input),
+      clearServer: (input: { serverHash: string }): Promise<{ ok: true }> =>
+        ipcRenderer.invoke('platform:teamCache:clearServer', input),
+      usage: (input: {
+        serverHash: string;
+        memberId: string;
+      }): Promise<{ cacheBytes: number | null; attachmentLimitBytes: number }> =>
+        ipcRenderer.invoke('platform:teamCache:usage', input),
+      setAttachmentLimit: (input: { limitBytes: number }): Promise<{ ok: true }> =>
+        ipcRenderer.invoke('platform:teamCache:setAttachmentLimit', input),
+    },
   },
   /**
    * Syncs nativeTheme.themeSource so the macOS vibrancy material follows the
@@ -210,6 +343,11 @@ const api = {
    * deferred the interrupt decision.
    */
   keepWaitingOnUpdate: (): Promise<void> => ipcRenderer.invoke('update:keepWaiting'),
+  /**
+   * 「取消更新」：停下本次下载并跳过该版本（gate 相位守卫：仅 downloading
+   * 有效；跳过版本持久化，更新的版本恢复正常流程）。
+   */
+  cancelUpdateDownload: (): Promise<void> => ipcRenderer.invoke('update:cancelDownload'),
   /**
    * dev/e2e-only seam (DCE'd from packaged builds, same mechanism as the
    * mock-LLM seeding): drives the REAL gate through evaluate() so e2e can

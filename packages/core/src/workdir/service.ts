@@ -6,6 +6,7 @@ import {
   AppError,
   CHECKPOINT_RETENTION_DAYS,
   newId,
+  newUlid,
   type LoopType as SharedLoopType,
   type Workdir,
   type Run,
@@ -51,6 +52,15 @@ export interface WorkdirRuntimeDeps {
    * open have nothing to update, and tools re-send the context on every call).
    */
   onBindingChanged?: (conversationId: string, allowLoopback: boolean) => void;
+  /**
+   * 62.11 C9 workdir root constraint (`CoreServicesOptions.workdirRoots`): when
+   * set, only paths under one of these roots can be bound (`select`) or used
+   * as a task cwd; anything else fails with `PATH_OUT_OF_SCOPE`. The roots are
+   * canonicalized (realpath) once here; member paths are compared segment-wise
+   * so `/a/b` never covers `/a/bc`. Absent / empty = unrestricted (status quo).
+   * The first root is also where {@link provisionWorkdir} creates directories.
+   */
+  roots?: string[];
 }
 
 export interface LeaseTarget {
@@ -141,9 +151,12 @@ export class WorkdirRuntime {
    * the same key join the first instead of releasing + cancelling it.
    */
   readonly #acquiring = new Map<string, { key: string; promise: Promise<LeaseTarget> }>();
+  /** C9: canonicalized root paths (empty = unrestricted). */
+  readonly #roots: readonly string[];
 
   constructor(deps: WorkdirRuntimeDeps) {
     this.#deps = deps;
+    this.#roots = (deps.roots ?? []).map((root) => canonicalPath(root));
   }
 
   // --- lookups ---------------------------------------------------------------
@@ -449,6 +462,32 @@ export class WorkdirRuntime {
   // --- binding -----------------------------------------------------------------
 
   /**
+   * C9: whether the canonical `candidate` sits at or below one of the
+   * configured roots. Segment-wise comparison: `/a/b` must not cover `/a/bc`,
+   * so the prefix is always a root plus a path separator (or the root itself).
+   */
+  #inRoots(candidate: string): boolean {
+    if (this.#roots.length === 0) return true;
+    return this.#roots.some((root) => {
+      if (candidate === root) return true;
+      const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+      return candidate.startsWith(prefix);
+    });
+  }
+
+  /**
+   * C9: throws `PATH_OUT_OF_SCOPE` when workdir roots are configured and
+   * `candidate` is not under any of them (no-op when unrestricted).
+   */
+  assertInRoots(candidate: string): void {
+    if (this.#inRoots(canonicalPath(candidate))) return;
+    throw new AppError(
+      'PATH_OUT_OF_SCOPE',
+      `路径不在允许的工作目录根之下：${candidate}（本环境只允许在配置的 workdir 根目录内选择工作目录）`,
+    );
+  }
+
+  /**
    * Binds the conversation to `dir` (RPC `workdirs.select` and the interview
    * directory card both land here). This is the one place that broadcasts the
    * binding: the renderer's `workdirs.recent` feeds every workdir row
@@ -459,6 +498,9 @@ export class WorkdirRuntime {
   select(conversationId: string, dir: string): Workdir {
     const conv = this.#deps.conversations.getOrThrow(conversationId);
     this.#assertNoActiveRuns(conversationId);
+    // C9: validate the canonical path BEFORE the (row-creating) registration
+    // so an out-of-scope path leaves no workdirs row behind.
+    this.assertInRoots(dir);
     const workdir = this.#deps.workdirs.ensureByPath(dir, this.#deps.paths.home);
     const previousId = conv.workdirId;
     this.#deps.conversations.setWorkdir(conversationId, workdir.id);
@@ -501,6 +543,34 @@ export class WorkdirRuntime {
     const workdir = this.#deps.workdirs.update(workdirId, patch);
     this.#deps.publish('workdir.updated', { workdir });
     return workdir;
+  }
+
+  /**
+   * C15 host write entry (`principalOps.provisionWorkdir`): creates a fresh
+   * directory under the first configured root (`<slug>-<ulid tail>`), binds it
+   * to the conversation and returns it. Throws `INVALID_INPUT` when no roots
+   * are configured (the host must opt in to directory provisioning). The bind
+   * goes through {@link select} — the C9 root check passes by construction.
+   */
+  provisionWorkdir(conversationId: string, name: string): Workdir {
+    const root = this.#roots[0];
+    if (root === undefined) {
+      throw new AppError(
+        'INVALID_INPUT',
+        '本环境没有配置工作目录根（workdirRoots），无法自动创建工作目录',
+      );
+    }
+    // Filesystem-safe slug of the human name, bounded so the tail stays visible.
+    const slug =
+      name
+        .normalize('NFKD')
+        .replace(/[^\p{L}\p{N}]+/gu, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 48)
+        .replace(/-+$/g, '') || 'workdir';
+    const dir = path.join(root, `${slug}-${newUlid().slice(-6)}`);
+    mkdirSync(dir, { recursive: true });
+    return this.select(conversationId, dir);
   }
 
   /** Remove-from-recent cascade (docs/dev/03-data-model.md): records, checkpoints, bindings. */

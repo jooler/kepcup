@@ -48,7 +48,16 @@
   function chainKey(message: Message): string | null {
     if (message.status === 'recalled') return null;
     if (message.kind === 'text') {
-      if (message.senderType === 'user') return 'user';
+      if (message.senderType === 'user') {
+        // 团队上下文（T5）：用户消息按发送主体分组——同一成员的相邻消息连排，
+        // 不同成员（dm / 项目组）断开。单用户消息 senderPrincipalId 为空，键
+        // 保持 'user'，连排行为不变（休眠铁律）。
+        const principal = message.senderPrincipalId;
+        if (principal !== null && principal !== undefined && principal.length > 0) {
+          return `principal:${principal}`;
+        }
+        return 'user';
+      }
       if (message.senderType === 'bot') return `bot:${message.senderBotId ?? ''}`;
       return null;
     }

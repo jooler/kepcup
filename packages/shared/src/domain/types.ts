@@ -1369,7 +1369,7 @@ export type Settings = z.infer<typeof settingsSchema>;
 // Conversation / message / attachment
 // ---------------------------------------------------------------------------
 
-export const conversationTypeSchema = z.enum(['direct', 'project', 'card', 'bot_direct']);
+export const conversationTypeSchema = z.enum(['direct', 'project', 'card', 'bot_direct', 'dm']);
 export type ConversationType = z.infer<typeof conversationTypeSchema>;
 
 /**
@@ -1457,6 +1457,19 @@ export const conversationSchema = z.object({
    * 按会话打开/消息事件继续维护同一字段。
    */
   lastMessageText: z.string().optional(),
+  /**
+   * Owning principal of a `direct` conversation (62.11 C3): the conversation is
+   * scoped to that human principal. Null / absent on single-user installs and
+   * on `dm` / `project` rows (their participants live in
+   * `peerPrincipalIds` / the host's directory, not an owner).
+   */
+  ownerPrincipalId: z.string().nullable().optional(),
+  /**
+   * Principals taking part in a `dm` conversation (62.11 C3), from the
+   * conversation's principal roster (left rows excluded); renderers use it to
+   * show member cards. Absent on every other conversation type.
+   */
+  peerPrincipalIds: z.array(z.string()).optional(),
 });
 export type Conversation = z.infer<typeof conversationSchema>;
 
@@ -1517,7 +1530,7 @@ export const textContentSchema = z.object({
    * `voice`（53 号修订 v2 V2-1）：语音对话模式的用户消息——正文即语音转写文本，
    * 随附音频附件仅为原始录音存档；Bot 回复由客户端自动转语音播报。
    */
-  origin: z.enum(['delegation', 'task', 'widget', 'workbench', 'voice']).optional(),
+  origin: z.enum(['delegation', 'task', 'widget', 'workbench', 'voice', 'avatar']).optional(),
   /**
    * origin = 'workbench'（D90）时：工作台代用户派发事项的可见消息，对应的事项与
    * 执行记录。界面渲染成派发卡；记忆反思不把 source='butler' 的派发当用户原话。
@@ -1581,6 +1594,13 @@ export const textContentSchema = z.object({
    * 不进模型上下文；多端在线时 UI 显示「来自 X」。
    */
   client: collabClientRefSchema.optional(),
+  /**
+   * origin = 'avatar' (62.06 / 62.04 §3): the message was sent on behalf of the
+   * principal by their local avatar bot over the principal's own connection
+   * (`senderType` stays 'user'). `botName` is the avatar bot's display name for
+   * the bubble badge — bot ids are device-local, so only the name travels.
+   */
+  avatar: z.object({ botName: z.string() }).optional(),
   /**
    * Bot 在本轮回答中创建 / 修改的本地文件（消息下方的文件卡列表）。路径是
    * 工具实际写入的绝对路径；渲染层按扩展名选择预览方式，用户点击后在覆盖层
@@ -1777,6 +1797,22 @@ export const cardContentSchema = z.object({
    * 不是代码；渲染端再按 kind 校验一次）。
    */
   present: presentCardSchema.optional(),
+  /**
+   * 62.11 C15 宿主卡片（principalOps.appendCard / updateCard）：宿主自定义的
+   * 卡片载荷（如 T9 的决议卡）。宿主渲染端按 cardType 自行解释；缺省 = 不是
+   * 宿主卡片（updateCard 只认带这个字段的行）。
+   *
+   * cardType `'resolution'`（62.09 决议卡，T9）时 `data` 的结构由
+   * `resolutionCardSchema`（domain/resolution.ts）冻结：决议 id / 标题 / 正文 /
+   * 版本 / 状态 / 快照逐人签署版本。唯一事实来源是团队层 team.db
+   * `project_resolutions`，卡片是它的投影（状态变化经 updateCard 就地刷新）。
+   */
+  hostCard: z
+    .object({
+      text: z.string().optional(),
+      data: z.record(z.string(), z.unknown()),
+    })
+    .optional(),
 });
 export type CardContent = z.infer<typeof cardContentSchema>;
 
@@ -1897,6 +1933,24 @@ export const messageSchema = z.object({
   ownerBotId: z.string().nullable().default(null),
   /** task_event 所属任务（run id）；其余为 null。 */
   taskId: z.string().nullable().default(null),
+  /**
+   * Sending principal of a user message (62.11 C4): the human principal id from
+   * the caller context, snapshotted at send time. Null / absent on single-user
+   * installs and on bot / system messages.
+   */
+  senderPrincipalId: z.string().nullable().optional(),
+  /**
+   * Display-name snapshot of the sending principal (D18 / D19: names stay
+   * readable after the principal is disabled or removed). Present when the
+   * message has a sending principal, regardless of their later state.
+   */
+  senderName: z.string().nullable().optional(),
+  /**
+   * Last content-change time (UTC ms, 62.11 C6): maintained by the
+   * `messages_touch_updated_at` trigger; null on rows never rewritten after the
+   * migration. Incremental pulls compare coalesce(updatedAt, createdAt).
+   */
+  updatedAt: z.number().nullable().optional(),
 });
 export type Message = z.infer<typeof messageSchema>;
 

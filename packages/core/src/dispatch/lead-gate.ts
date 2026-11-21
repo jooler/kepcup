@@ -48,6 +48,12 @@ export interface LeadGateInput {
   leadBotId: string;
   /** The previous replier's verdict, if one was asked; null when there was none. */
   continuation: ContinuationDecision | null;
+  /**
+   * 主体目录（62.11 C2）：渲染路由判断的消息行时把人类发送主体解析成显示名
+   * （负责人网关提示里的人类发言人同样经 C2 出名字，62.04 §4）。未提供（单用户
+   * 宿主）= 「用户」字面量现状。
+   */
+  describePrincipal?: (id: string) => { name: string; note?: string } | null;
   /** Test override of TRIAGE_TIMEOUT_MS (default from the constant). */
   timeoutMs?: number;
 }
@@ -159,6 +165,7 @@ export function leadGate(input: LeadGateInput): Promise<LeadGateDecision> {
         leadBotId: input.leadBotId,
         bots: input.bots,
         messages: input.messages,
+        describePrincipal: input.describePrincipal,
       }),
     parametersSchema: gateParametersSchema,
     schema: gateOutputSchema,
@@ -182,6 +189,7 @@ function buildGateUserMessage(input: {
   leadBotId: string;
   bots: BotsService;
   messages: MessagesService;
+  describePrincipal?: (id: string) => { name: string; note?: string } | null;
 }): string {
   const names = new Map<string, string>();
   for (const bot of input.bots.listActive())
@@ -192,6 +200,8 @@ function buildGateUserMessage(input: {
     botNames: names,
     // 引用回复标注：路由判断也要看得出消息回复的是哪条（图片引用尤其依赖）。
     resolveReplyTarget: (id: string) => input.messages.getById(id),
+    // 62.11 C2：人类发送主体的显示名（未注入 = 「用户」字面量现状）。
+    describePrincipal: input.describePrincipal,
   };
   const render = (messages: Message[]) =>
     messages

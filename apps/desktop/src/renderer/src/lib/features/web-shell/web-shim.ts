@@ -84,6 +84,7 @@ export function installWebShim(version: string): void {
     installUpdateNow: () => Promise.resolve({ ok: false, message: 'desktop-only' }),
     checkForUpdate: () => Promise.resolve({ ok: false, message: 'desktop-only' }),
     keepWaitingOnUpdate: noop,
+    cancelUpdateDownload: noop,
     onUpdateStatus: () => unbind,
   };
 }

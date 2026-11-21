@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { ChevronLeft, ChevronRight, MessageSquare } from '@lucide/svelte';
+  import { ChevronLeft, ChevronRight, MessageSquare, Moon } from '@lucide/svelte';
   import { t } from '$lib/i18n';
+  import { connections } from '$lib/rpc/connections.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { getChatSession } from './chat-session-context';
   import { isSingleBotConversation } from './single-bot-conversation';
@@ -9,6 +10,9 @@
   import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
   import { Button } from '$lib/components/ui/button';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
+  import MemberAvatar from '$lib/features/team/MemberAvatar.svelte';
+  import { teamContext } from '$lib/features/team/team-context.svelte';
+  import { contacts } from '$lib/stores/contacts.svelte';
   import ProjectView from '$lib/features/project/ProjectView.svelte';
   import MessageList from './MessageList.svelte';
   import Composer from './Composer.svelte';
@@ -53,6 +57,20 @@
     return !c.messages.some((m) => m.seq > card.seq && m.senderType === 'user');
   });
   const composerHint = $derived(pathGateClosed ? t('chats.setupPathGateHint') : undefined);
+  /**
+   * dm 会话头（T5，62.04 §3/§7）：dm 没有 Bot——标题是对端成员名（自我会话
+   * 标题「我」）。web 团队端点解析统一走 teamContext.dmPeerView；T7 桌面
+   * 融合视图的团队来源按来源解析（contacts.dmPeerViewOf，含离开态提示）。
+   * 非团队上下文不会出现 dm 会话（名册为空、入口不存在），此分支在现状下不可达。
+   */
+  const dmHeaderSource = $derived(
+    session.source === 'local' ? null : session.source,
+  );
+  const dmHeader = $derived(
+    dmHeaderSource === null
+      ? { ...teamContext.dmPeerView(current?.conversation.peerPrincipalIds ?? null), awayNote: null as string | null }
+      : contacts.dmPeerViewOf(dmHeaderSource, current?.conversation.peerPrincipalIds ?? null),
+  );
   const headerTitle = $derived(
     current === null
       ? ''
@@ -60,7 +78,20 @@
         current.conversation.bot?.name ||
           current.conversation.bot?.id ||
           current.conversation.directBotId ||
+          (current.conversation.type === 'dm' ? dmHeader.title : '') ||
           t('rightPanel.title'),
+  );
+  const isDm = $derived(current?.conversation.type === 'dm');
+  /**
+   * 团队来源的离线只读（T8，62.10 §2）：团队连接断开（offline / reconnecting /
+   * 未认证）时当前会话由缓存提供——输入坞置灰 + 「离线只读」横幅（无离线发送
+   * 队列）。本机来源恒 false（core 单例自管重连，横幅体系不变）。
+   */
+  const teamOffline = $derived(
+    session.source !== 'local' && connections.get(session.source).status !== 'connected',
+  );
+  const composerReadOnly = $derived(
+    current!.conversation.readOnly || pathGateClosed || teamOffline,
   );
   const panelCollapsed = $derived(shell.rightPanelCollapsed);
   // 窄屏（33-narrow-layout）：无右栏分栏，药丸点击开 Bot 详情覆盖层；顶部
@@ -77,7 +108,8 @@
    * 只读（含访谈目录闸门）时不收；上传链路同一份 composerDrafts。
    */
   const fileDropZone = createFileDropZone({
-    enabled: () => current !== null && !(current.conversation.readOnly || pathGateClosed),
+    enabled: () =>
+      current !== null && !(current.conversation.readOnly || pathGateClosed || teamOffline),
     onFiles: (files) => {
       const conversationId = current?.conversation.id;
       if (conversationId !== undefined) composerDrafts.uploadFiles(conversationId, files);
@@ -93,8 +125,8 @@
   只留 12px 呼吸空隙）。snippet 里 current 已由外层分支保证非空。
 -->
 {#snippet chatBody(topInset: number, bannerTopClass: string)}
-  <!-- 浮动提示条（只读 / 确认模式 / 执行失败） -->
-  <ChatBanners topClass={bannerTopClass} />
+  <!-- 浮动提示条（只读 / 团队离线只读 / 确认模式 / 执行失败） -->
+  <ChatBanners topClass={bannerTopClass} teamOffline={teamOffline} />
 
   {#if hasMessages}
     <MessageList {topInset} bottomInset={composerDockHeight} />
@@ -141,8 +173,8 @@
       </div>
     {/if}
     <Composer
-      readOnly={current!.conversation.readOnly || pathGateClosed}
-      readOnlyHint={composerHint}
+      readOnly={composerReadOnly}
+      readOnlyHint={composerHint ?? (teamOffline ? t('team.offlineReadOnlyHint') : undefined)}
       centered={!hasMessages}
     />
   </div>
@@ -210,44 +242,76 @@
           <ChevronLeft class="size-5" aria-hidden="true" />
         </Button>
       {/if}
-      <Button
-        variant="outline"
-        class="app-no-drag h-10 min-w-0 cursor-pointer gap-1.5 rounded-full border-border/25 bg-background py-0 pr-2.5 pl-1.5 text-sm font-medium shadow-xl backdrop-blur dark:border-input/25 dark:bg-background"
-        onclick={panelOverlay ? () => narrowLayout.openBotDetail() : () => shell.toggleRightPanel()}
-        title={panelOverlay
-          ? t('rightPanel.title')
-          : panelCollapsed
-            ? t('chatHeader.expandPanel')
-            : t('chatHeader.collapsePanel')}
-        data-testid="right-panel-toggle"
-      >
-        <BotAvatar
-          botId={current.conversation.directBotId ?? ''}
-          name={headerTitle}
-          avatar={current.conversation.bot?.avatar ?? null}
-          accentColor={current.conversation.bot?.accentColor ?? null}
-          mask={current.conversation.bot?.avatarMask ?? null}
-          padding={current.conversation.bot?.avatarPadding ?? null}
-          class="size-7"
-          fallbackClass="text-[10px]"
-        />
-        <span class="max-w-48 truncate pr-1.5">{headerTitle}</span>
-        {#if panelCollapsed && !panelOverlay}
-          <!-- 展开提示只在 hover 时浮现（参考 Grok），展开态不再显示箭头。
-               外层宽度 0 → 内容宽（6px 间距 + 14px 图标）撑开按钮，-ml-1.5 抵消按钮自身的
-               gap-1.5，未 hover 时按钮宽度与没有提示时完全一致 -->
-          <span
-            class="-ml-1.5 flex w-0 overflow-hidden transition-[width] duration-200 ease-out group-hover/button:w-5"
-          >
-            <ChevronRight
-              class="ml-1.5 size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity duration-200 group-hover/button:opacity-100"
-              aria-hidden="true"
-              data-testid="panel-expand-hint"
-            />
-          </span>
-        {/if}
-      </Button>
-      <PermissionModeMenu conversationId={current.conversation.id} />
+      {#if isDm}
+        <!-- dm 会话头（T5）：无 Bot 头部——对端成员头像 + 名字 + 在线状态点，
+             不可点（右栏是 Bot 详情，dm 没有）。自我会话显示「我」。 -->
+        <span
+          class="app-no-drag flex h-10 min-w-0 cursor-default items-center gap-1.5 rounded-full border-border/25 bg-background py-0 pr-2.5 pl-1.5 text-sm font-medium shadow-xl backdrop-blur dark:border-input/25 dark:bg-background border"
+          data-testid="dm-header"
+        >
+          <MemberAvatar
+            name={dmHeader.title}
+            avatar={dmHeader.avatar}
+            state={dmHeader.state}
+            class="size-7"
+            testId="dm-header-avatar"
+          />
+          <span class="max-w-48 truncate pr-1.5">{headerTitle}</span>
+          <!-- 离开态提示（T7，62.01 S10/S12）：月牙 + 「已离开，消息将积攒待回」；
+               分身开启时显示「将由其分身处理」。 -->
+          {#if dmHeader.state === 'away' && dmHeader.peerId !== null}
+            <span
+              class="flex shrink-0 items-center gap-1 pr-1 text-[10px] font-normal text-amber-600 dark:text-amber-400"
+              data-testid="dm-away-hint"
+              title={dmHeader.awayNote ?? t('team.dmAwayHint')}
+            >
+              <Moon class="size-3" aria-hidden="true" />
+              {dmHeader.awayNote ?? t('team.dmAwayHint')}
+            </span>
+          {/if}
+        </span>
+      {:else}
+        <Button
+          variant="outline"
+          class="app-no-drag h-10 min-w-0 cursor-pointer gap-1.5 rounded-full border-border/25 bg-background py-0 pr-2.5 pl-1.5 text-sm font-medium shadow-xl backdrop-blur dark:border-input/25 dark:bg-background"
+          onclick={panelOverlay
+            ? () => narrowLayout.openBotDetail()
+            : () => shell.toggleRightPanel()}
+          title={panelOverlay
+            ? t('rightPanel.title')
+            : panelCollapsed
+              ? t('chatHeader.expandPanel')
+              : t('chatHeader.collapsePanel')}
+          data-testid="right-panel-toggle"
+        >
+          <BotAvatar
+            botId={current.conversation.directBotId ?? ''}
+            name={headerTitle}
+            avatar={current.conversation.bot?.avatar ?? null}
+            accentColor={current.conversation.bot?.accentColor ?? null}
+            mask={current.conversation.bot?.avatarMask ?? null}
+            padding={current.conversation.bot?.avatarPadding ?? null}
+            class="size-7"
+            fallbackClass="text-[10px]"
+          />
+          <span class="max-w-48 truncate pr-1.5">{headerTitle}</span>
+          {#if panelCollapsed && !panelOverlay}
+            <!-- 展开提示只在 hover 时浮现（参考 Grok），展开态不再显示箭头。
+                 外层宽度 0 → 内容宽（6px 间距 + 14px 图标）撑开按钮，-ml-1.5 抵消按钮自身的
+                 gap-1.5，未 hover 时按钮宽度与没有提示时完全一致 -->
+            <span
+              class="-ml-1.5 flex w-0 overflow-hidden transition-[width] duration-200 ease-out group-hover/button:w-5"
+            >
+              <ChevronRight
+                class="ml-1.5 size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity duration-200 group-hover/button:opacity-100"
+                aria-hidden="true"
+                data-testid="panel-expand-hint"
+              />
+            </span>
+          {/if}
+        </Button>
+        <PermissionModeMenu conversationId={current.conversation.id} />
+      {/if}
     </header>
 
     {@render chatBody(56, 'top-14')}

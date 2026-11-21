@@ -117,6 +117,11 @@ export interface ContinuationInput {
   goal: string | null;
   timeZone: string;
   logger: CoreLogger;
+  /**
+   * 主体目录（62.11 C2）：渲染续接判断的消息行时把人类发送主体解析成显示名。
+   * 未提供（单用户宿主）= 「用户」字面量现状。
+   */
+  describePrincipal?: (id: string) => { name: string; note?: string } | null;
   /** Test override of TRIAGE_TIMEOUT_MS (default from the constant). */
   timeoutMs?: number;
 }
@@ -174,6 +179,7 @@ export function judgeContinuation(input: ContinuationInput): Promise<Continuatio
         botId: input.botId,
         bots: input.bots,
         messages: input.messages,
+        describePrincipal: input.describePrincipal,
       }),
     parametersSchema: continuationParametersSchema,
     schema: continuationOutputSchema,
@@ -195,6 +201,7 @@ function buildContinuationUserMessage(input: {
   botId: string;
   bots: BotsService;
   messages: MessagesService;
+  describePrincipal?: (id: string) => { name: string; note?: string } | null;
 }): string {
   const names = new Map<string, string>();
   for (const bot of input.bots.listActive())
@@ -205,6 +212,8 @@ function buildContinuationUserMessage(input: {
     botNames: names,
     // 引用回复标注：续接判断也要看得出消息回复的是哪条（图片引用尤其依赖）。
     resolveReplyTarget: (id: string) => input.messages.getById(id),
+    // 62.11 C2：人类发送主体的显示名（未注入 = 「用户」字面量现状）。
+    describePrincipal: input.describePrincipal,
   };
   const render = (messages: Message[]) =>
     messages

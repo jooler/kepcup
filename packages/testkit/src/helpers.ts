@@ -72,6 +72,13 @@ export async function createTestStack(
     pluginMarketplace?: CreateTestCoreOptions['pluginMarketplace'];
     /** D104 P1-2 test hook (see CoreServicesOptions.projectorWrap). */
     projectorWrap?: CreateTestCoreOptions['projectorWrap'];
+    /** D138 principal seams (see CreateTestCoreOptions); omit all = single-user. */
+    principals?: CreateTestCoreOptions['principals'];
+    toolPolicy?: CreateTestCoreOptions['toolPolicy'];
+    hostTools?: CreateTestCoreOptions['hostTools'];
+    hostPromptSection?: CreateTestCoreOptions['hostPromptSection'];
+    workdirRoots?: CreateTestCoreOptions['workdirRoots'];
+    permissionCeiling?: CreateTestCoreOptions['permissionCeiling'];
   } = {},
 ): Promise<TestStack> {
   const llm = await startMockLlm();
@@ -125,6 +132,16 @@ export async function createTestStack(
       ? { pluginMarketplace: options.pluginMarketplace }
       : {}),
     ...(options.projectorWrap !== undefined ? { projectorWrap: options.projectorWrap } : {}),
+    ...(options.principals !== undefined ? { principals: options.principals } : {}),
+    ...(options.toolPolicy !== undefined ? { toolPolicy: options.toolPolicy } : {}),
+    ...(options.hostTools !== undefined ? { hostTools: options.hostTools } : {}),
+    ...(options.hostPromptSection !== undefined
+      ? { hostPromptSection: options.hostPromptSection }
+      : {}),
+    ...(options.workdirRoots !== undefined ? { workdirRoots: options.workdirRoots } : {}),
+    ...(options.permissionCeiling !== undefined
+      ? { permissionCeiling: options.permissionCeiling }
+      : {}),
   });
   return {
     core,

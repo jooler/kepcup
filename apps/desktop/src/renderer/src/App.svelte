@@ -3,6 +3,11 @@
   import { Toaster } from 'svelte-sonner';
   import { ModeWatcher, userPrefersMode } from 'mode-watcher';
   import { core } from '$lib/rpc/client.svelte';
+  import { connections } from '$lib/rpc/connections.svelte';
+  import { teamSettings } from '$lib/features/team/team-settings.svelte';
+  import { avatarRuntime } from '$lib/features/team/avatar-runtime.svelte';
+  import { profilePush } from '$lib/features/team/profile-push.svelte';
+  import ProfilePushDialog from '$lib/features/team/ProfilePushDialog.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
@@ -71,6 +76,13 @@
     if (started) return;
     started = true;
     void core.start();
+    // T7 融合视图：多来源连接注册表（web 端点 / 未配置团队服务器时休眠）。
+    connections.start();
+    // T10 分身运行时（桌面端点才注册；web / 未连接休眠——零事件订阅）。
+    avatarRuntime.start();
+    teamSettings.start();
+    // 画像上行（T7）：首次团队连接成功的确认清单（每日至多一次）。
+    profilePush.start();
     updateStore.start();
     appNotices.start();
     // 通知点击 → 打开对应对话（主进程经 ipc 转发）。
@@ -343,6 +355,8 @@
     <!-- 窄屏 toast 改顶部居中（33-narrow-layout）：sonner 单条 toast 默认 356px 宽，
        bottom-right 在手机宽度窗口里会横贯整个底部 tab 栏。 -->
     <Toaster position={narrowLayout.narrow ? 'top-center' : 'bottom-right'} />
+    <!-- T7 画像上行确认清单（仅桌面端点且团队连接建立后打开）。 -->
+    <ProfilePushDialog />
   </div>
 {/snippet}
 

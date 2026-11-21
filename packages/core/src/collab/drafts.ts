@@ -52,6 +52,11 @@ export interface DraftSendInput {
   voiceMode?: boolean;
   /** D121：消息归属（渲染层显示「来自 X」）。 */
   client?: CollabClientRef;
+  /**
+   * 62.11 C5：草稿桶（调用者主体 id；缺省 '' = 单用户桶）。同一会话里不同
+   * 主体互不可见、互不抢租约；行按 (conversation_id, principal_key) 存取。
+   */
+  principalKey?: string;
 }
 
 export interface DraftServiceDeps {
@@ -85,6 +90,33 @@ interface Lease {
 }
 
 const EMPTY_DOC = { type: 'doc' as const, content: [] as unknown[] };
+
+/**
+ * 租约 / 脏标记 / 行的复合键（62.11 C5）：会话 id 不含 \u0000（conv_ ULID），
+ * 用它拼 `${conversationId}\u0000${principalKey}` 即可无损拆分。principalKey
+ * 缺省桶是 ''（单用户），与迁移 0079 的行默认值一致。
+ */
+function draftKey(conversationId: string, principalKey: string | null | undefined): string {
+  return `${conversationId}\u0000${principalKey ?? ''}`;
+}
+
+/** Splits a composite draft key back into its conversation id and bucket. */
+function splitDraftKey(key: string): { conversationId: string; principalKey: string } {
+  const separator = key.indexOf('\u0000');
+  if (separator < 0) return { conversationId: key, principalKey: '' };
+  return {
+    conversationId: key.slice(0, separator),
+    principalKey: key.slice(separator + 1),
+  };
+}
+
+/** The event payload's optional principalKey: present only for a non-empty bucket. */
+function eventPrincipalKey(principalKey: string | null | undefined):
+  | { principalKey: string }
+  | Record<string, never> {
+  const key = principalKey ?? '';
+  return key.length > 0 ? { principalKey: key } : {};
+}
 
 function parseJson<T>(raw: string, fallback: T): T {
   try {
@@ -157,9 +189,14 @@ export class DraftService {
     this.#sweepTimer.unref?.();
   }
 
-  get(conversationId: string): { draft: CollabDraft; lease: CollabLease | null } {
-    this.#expireLease(conversationId);
-    return { draft: this.#read(conversationId), lease: this.#leaseView(conversationId) };
+  /** 草稿与租约读取。`principalKey` 缺省 '' = 单用户桶（62.11 C5）。 */
+  get(
+    conversationId: string,
+    principalKey?: string | null | undefined,
+  ): { draft: CollabDraft; lease: CollabLease | null } {
+    const key = draftKey(conversationId, principalKey);
+    this.#expireLease(key);
+    return { draft: this.#read(key), lease: this.#leaseView(key) };
   }
 
   claim(input: {
@@ -168,11 +205,14 @@ export class DraftService {
     clientName: string;
     connectionId?: string;
     force?: boolean;
+    /** 62.11 C5：草稿桶（缺省 '' = 单用户桶）。 */
+    principalKey?: string;
   }): { draft: CollabDraft; lease: CollabLease } {
+    const key = draftKey(input.conversationId, input.principalKey);
     if (!this.#claimBucket.take(input.clientId)) throw rateLimited();
-    this.#expireLease(input.conversationId);
+    this.#expireLease(key);
     const now = this.#deps.clock.now();
-    const existing = this.#leases.get(input.conversationId);
+    const existing = this.#leases.get(key);
     const connectionId = input.connectionId ?? null;
     const sameClient = existing?.ownerClientId === input.clientId;
     if (existing !== undefined && !sameClient && input.force !== true) {
@@ -195,11 +235,11 @@ export class DraftService {
       existing.ownerClientId !== lease.ownerClientId ||
       existing.ownerConnectionId !== lease.ownerConnectionId ||
       existing.ownerName !== lease.ownerName;
-    this.#leases.set(input.conversationId, lease);
-    if (changed) this.#publishOwner(input.conversationId, lease);
+    this.#leases.set(key, lease);
+    if (changed) this.#publishOwner(key, lease);
     return {
-      draft: this.#read(input.conversationId),
-      lease: this.#leaseView(input.conversationId)!,
+      draft: this.#read(key),
+      lease: this.#leaseView(key)!,
     };
   }
 
@@ -212,10 +252,13 @@ export class DraftService {
     mentions?: string[];
     replyTo?: string | null;
     attachments?: CollabDraftAttachment[];
+    /** 62.11 C5：草稿桶（缺省 '' = 单用户桶）。 */
+    principalKey?: string;
   }): { version: number; updatedAt: number } {
+    const key = draftKey(input.conversationId, input.principalKey);
     if (!this.#updateBucket.take(input.clientId)) throw rateLimited();
-    this.#requireOwner(input.conversationId, input.clientId, input.connectionId);
-    const current = this.#read(input.conversationId);
+    this.#requireOwner(key, input.clientId, input.connectionId);
+    const current = this.#read(key);
     if (input.baseVersion !== current.version) {
       throw new AppError('DRAFT_STALE', '草稿已被更新，请重新加载', {
         version: current.version,
@@ -232,9 +275,9 @@ export class DraftService {
       this.#deps.db
         .prepare(
           `insert into composer_drafts
-             (conversation_id, doc_json, mentions_json, reply_to, attachments_json, version, updated_at)
-           values (?, ?, ?, ?, ?, ?, ?)
-           on conflict(conversation_id) do update set
+             (conversation_id, principal_key, doc_json, mentions_json, reply_to, attachments_json, version, updated_at)
+           values (?, ?, ?, ?, ?, ?, ?, ?)
+           on conflict(conversation_id, principal_key) do update set
              doc_json = excluded.doc_json,
              mentions_json = excluded.mentions_json,
              reply_to = excluded.reply_to,
@@ -244,6 +287,7 @@ export class DraftService {
         )
         .run(
           input.conversationId,
+          input.principalKey ?? '',
           JSON.stringify(doc),
           JSON.stringify(mentions),
           replyTo,
@@ -257,13 +301,20 @@ export class DraftService {
       }
       throw error;
     }
-    this.#renew(input.conversationId);
-    this.#scheduleChanged(input.conversationId, payloadBytes);
+    this.#renew(key);
+    this.#scheduleChanged(key, payloadBytes);
     return { version, updatedAt: now };
   }
 
-  release(input: { conversationId: string; clientId: string; connectionId?: string }): void {
-    const lease = this.#leases.get(input.conversationId);
+  release(input: {
+    conversationId: string;
+    clientId: string;
+    connectionId?: string;
+    /** 62.11 C5：草稿桶（缺省 '' = 单用户桶）。 */
+    principalKey?: string;
+  }): void {
+    const key = draftKey(input.conversationId, input.principalKey);
+    const lease = this.#leases.get(key);
     if (lease === undefined || lease.ownerClientId !== input.clientId) return;
     if (
       input.connectionId !== undefined &&
@@ -272,26 +323,26 @@ export class DraftService {
     ) {
       return;
     }
-    this.#leases.delete(input.conversationId);
-    this.#publishOwner(input.conversationId, null);
+    this.#leases.delete(key);
+    this.#publishOwner(key, null);
   }
 
   /** 连接断开：只释放该连接持有的草稿租约（同设备其他标签页不受影响）。 */
   releaseClientConnection(clientId: string, connectionId: string): void {
-    for (const [conversationId, lease] of [...this.#leases]) {
+    for (const [key, lease] of [...this.#leases]) {
       if (lease.ownerClientId !== clientId) continue;
       if (lease.ownerConnectionId !== null && lease.ownerConnectionId !== connectionId) continue;
-      this.#leases.delete(conversationId);
-      this.#publishOwner(conversationId, null);
+      this.#leases.delete(key);
+      this.#publishOwner(key, null);
     }
   }
 
   /** 端点整体掉线（配对设备）：释放该客户端的全部草稿租约。 */
   releaseClient(clientId: string): void {
-    for (const [conversationId, lease] of [...this.#leases]) {
+    for (const [key, lease] of [...this.#leases]) {
       if (lease.ownerClientId !== clientId) continue;
-      this.#leases.delete(conversationId);
-      this.#publishOwner(conversationId, null);
+      this.#leases.delete(key);
+      this.#publishOwner(key, null);
     }
   }
 
@@ -307,16 +358,19 @@ export class DraftService {
     voiceMode?: boolean;
     /** D121：消息归属（渲染层显示「来自 X」）。 */
     client?: CollabClientRef;
+    /** 62.11 C5：草稿桶（缺省 '' = 单用户桶）；发送只清本桶草稿。 */
+    principalKey?: string;
   }): { message: Message; runId: string | null } {
-    this.#requireOwner(input.conversationId, input.clientId, input.connectionId);
-    const current = this.#read(input.conversationId);
+    const key = draftKey(input.conversationId, input.principalKey);
+    this.#requireOwner(key, input.clientId, input.connectionId);
+    const current = this.#read(key);
     if (input.baseVersion !== current.version) {
       throw new AppError('DRAFT_STALE', '草稿已被更新，请重新加载', {
         version: current.version,
       });
     }
     // 草稿行在消息事务内删除（onPersisted）；路由失败会向外抛，但草稿不会
-    // 留下「消息已落库、草稿还在」的重复发送状态。
+    // 留下「消息已落库、草稿还在」的重复发送状态。只清本主体的桶。
     const result = this.#deps.sendMessage(
       input.conversationId,
       {
@@ -326,14 +380,17 @@ export class DraftService {
         ...(input.attachmentIds !== undefined ? { attachmentIds: input.attachmentIds } : {}),
         ...(input.voiceMode === true ? { voiceMode: true } : {}),
         ...(input.client !== undefined ? { client: input.client } : {}),
+        ...(input.principalKey !== undefined && input.principalKey.length > 0
+          ? { principalKey: input.principalKey }
+          : {}),
       },
-      () => this.#deleteRow(input.conversationId),
+      () => this.#deleteRow(input.conversationId, input.principalKey),
     );
     // 兜底：宿主实现可能没有调用回调（旧注入 / 测试假实现）。
-    this.#deleteRow(input.conversationId);
-    this.#leases.delete(input.conversationId);
+    this.#deleteRow(input.conversationId, input.principalKey);
+    this.#leases.delete(key);
     if (this.#flushTimer !== null) {
-      this.#dirty.delete(input.conversationId);
+      this.#dirty.delete(key);
       if (this.#dirty.size === 0) {
         clearTimeout(this.#flushTimer);
         this.#flushTimer = null;
@@ -342,8 +399,9 @@ export class DraftService {
     this.#deps.publish('collab.draftCleared', {
       conversationId: input.conversationId,
       byClientId: input.clientId,
+      ...eventPrincipalKey(input.principalKey),
     });
-    this.#publishOwner(input.conversationId, null);
+    this.#publishOwner(key, null);
     return result;
   }
 
@@ -354,12 +412,14 @@ export class DraftService {
       this.#flushTimer = null;
     }
     if (this.#dirty.size === 0) return;
-    const conversations = [...this.#dirty];
+    const keys = [...this.#dirty];
     this.#dirty.clear();
-    for (const conversationId of conversations) {
+    for (const key of keys) {
+      const { conversationId, principalKey } = splitDraftKey(key);
       this.#deps.publish('collab.draftChanged', {
         conversationId,
-        draft: this.#read(conversationId),
+        draft: this.#read(key),
+        ...eventPrincipalKey(principalKey),
       });
     }
   }
@@ -380,13 +440,14 @@ export class DraftService {
     this.#updateBucket.clear();
   }
 
-  #read(conversationId: string): CollabDraft {
+  #read(key: string): CollabDraft {
+    const { conversationId, principalKey } = splitDraftKey(key);
     const row = this.#deps.db
       .prepare(
         `select doc_json, mentions_json, reply_to, attachments_json, version, updated_at
-           from composer_drafts where conversation_id = ?`,
+           from composer_drafts where conversation_id = ? and principal_key = ?`,
       )
-      .get(conversationId) as DraftRow | undefined;
+      .get(conversationId, principalKey) as DraftRow | undefined;
     if (row === undefined) {
       return {
         conversationId,
@@ -409,9 +470,9 @@ export class DraftService {
     };
   }
 
-  #requireOwner(conversationId: string, clientId: string, connectionId?: string): Lease {
-    this.#expireLease(conversationId);
-    const lease = this.#leases.get(conversationId);
+  #requireOwner(key: string, clientId: string, connectionId?: string): Lease {
+    this.#expireLease(key);
+    const lease = this.#leases.get(key);
     const ownerError = (): AppError =>
       new AppError(
         'DRAFT_NOT_OWNER',
@@ -435,16 +496,17 @@ export class DraftService {
     return lease;
   }
 
-  #renew(conversationId: string): void {
-    const lease = this.#leases.get(conversationId);
+  #renew(key: string): void {
+    const lease = this.#leases.get(key);
     if (lease === undefined) return;
     lease.expiresAt = this.#deps.clock.now() + COLLAB_DRAFT_LEASE_MS;
   }
 
-  #deleteRow(conversationId: string): void {
+  /** Deletes one bucket's row (62.11 C5): other principals' drafts stay. */
+  #deleteRow(conversationId: string, principalKey?: string | null): void {
     this.#deps.db
-      .prepare('delete from composer_drafts where conversation_id = ?')
-      .run(conversationId);
+      .prepare('delete from composer_drafts where conversation_id = ? and principal_key = ?')
+      .run(conversationId, principalKey ?? '');
   }
 
   #validatePayload(
@@ -473,26 +535,26 @@ export class DraftService {
     return bytes;
   }
 
-  #expireLease(conversationId: string): void {
-    const lease = this.#leases.get(conversationId);
+  #expireLease(key: string): void {
+    const lease = this.#leases.get(key);
     if (lease === undefined) return;
     if (lease.expiresAt > this.#deps.clock.now()) return;
-    this.#leases.delete(conversationId);
-    this.#publishOwner(conversationId, null);
+    this.#leases.delete(key);
+    this.#publishOwner(key, null);
   }
 
   #sweepExpiredLeases(): void {
     if (this.#closed) return;
     const now = this.#deps.clock.now();
-    for (const [conversationId, lease] of this.#leases) {
+    for (const [key, lease] of this.#leases) {
       if (lease.expiresAt > now) continue;
-      this.#leases.delete(conversationId);
-      this.#publishOwner(conversationId, null);
+      this.#leases.delete(key);
+      this.#publishOwner(key, null);
     }
   }
 
-  #leaseView(conversationId: string): CollabLease | null {
-    const lease = this.#leases.get(conversationId);
+  #leaseView(key: string): CollabLease | null {
+    const lease = this.#leases.get(key);
     if (lease === undefined) return null;
     return {
       ownerClientId: lease.ownerClientId,
@@ -502,19 +564,21 @@ export class DraftService {
     };
   }
 
-  #publishOwner(conversationId: string, lease: Lease | null): void {
+  #publishOwner(key: string, lease: Lease | null): void {
     if (this.#closed) return;
+    const { conversationId, principalKey } = splitDraftKey(key);
     this.#deps.publish('collab.draftOwnerChanged', {
       conversationId,
       owner: lease === null ? null : { id: lease.ownerClientId, name: lease.ownerName },
       ownerConnectionId: lease?.ownerConnectionId ?? null,
       expiresAt: lease?.expiresAt ?? null,
+      ...eventPrincipalKey(principalKey),
     });
   }
 
-  #scheduleChanged(conversationId: string, bytes: number): void {
+  #scheduleChanged(key: string, bytes: number): void {
     if (this.#closed) return;
-    this.#dirty.add(conversationId);
+    this.#dirty.add(key);
     // 大草稿降低广播频率：>64KB → 1s，>128KB → 2s；延迟档位变化时重排定时器。
     const delay =
       bytes > COLLAB_DRAFT_HUGE_BYTES

@@ -20,6 +20,10 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      # 闭源组件（apps/team-server）在公开 checkout 只有占位 README：先剪除
+      # lockfile 中指向无 package.json 目录的 importer，保证 frozen install。
+      - name: Prune lockfile importers for absent workspace dirs
+        run: node scripts/prune-lockfile-importers.mjs
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       # Root typecheck builds shared+core first so dependents resolve @kepcup/* dist types.
@@ -39,6 +43,8 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      - name: Prune lockfile importers for absent workspace dirs
+        run: node scripts/prune-lockfile-importers.mjs
       - run: pnpm install --frozen-lockfile
       # sign-connector-index / sign-plugin-index need shared + package-guard dist.
       - run: pnpm --filter @kepcup/shared run build
@@ -81,6 +87,8 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      - name: Prune lockfile importers for absent workspace dirs
+        run: node scripts/prune-lockfile-importers.mjs
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       # End-to-end tests from P01 (docs/dev/05-testing.md, CI matrix).
