@@ -68,8 +68,10 @@ console（闭源）──▶ /api/console/*（HTTP 面）◀──────�
    （`apps/team-server/server/...`）会指向不存在的目录，公开 checkout 编译/测试
    必须不依赖这些路径存在（现有 desktop e2e 的 team-fusion spec 以
    `KEPCUP_TEAM_E2E=1` 门控即为先例）。
-2. **pnpm 命令只在宿主仓根执行**；`apps/team-server/` 里有私有仓自己的
-   pnpm workspace。
+2. **pnpm 安装/测试/构建只在宿主仓根执行**；`apps/team-server/` 里有私有仓自己的
+   pnpm workspace，但依赖由宿主 workspace 解析，不在该 workspace 安装。例外：
+   开发编排 `cd apps/team-server && pnpm dev`（dev.mjs 同时起 server watch 与
+   console vite，bin 从宿主根探测）。
 3. **勿对宿主仓跑 `git clean -x`**（含 `-fdx`）：会删掉整个嵌套私有仓（含 `.git`，
    未推送提交丢失；仓本身可从私有远端重 clone）。
 4. 根 `apps/team-server/README.md` 双仓跟踪，改动需两边各提交一次。

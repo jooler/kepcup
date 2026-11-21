@@ -26,7 +26,7 @@
 
 - `apps/team-server/` 是闭源仓 [jooler/kepcup-team-server](https://github.com/jooler/kepcup-team-server) 的嵌套 clone（挂载根）：`server/` = `@kepcup/team-server`、`console/` = `@kepcup/team-console`，`docs/`、`todo/` 为内部文档。`.gitignore` 整目录忽略 `apps/team-server/`；`README.md`（闭源说明）是私有仓 clone 之前就已提交的**已跟踪文件**——gitignore 不影响已跟踪文件，所以它是公开仓在该路径保留的唯一文件，也不会被当成 gitlink。
 - 闭源改动在该目录内 git 提交/推送（remote 指向私有仓 `main`）；开源改动在仓库根提交。混合改动分别提交，**不要把私有仓内容复制或引用进公开仓文件**（私有仓里的 `apps/team-server/server/...` 路径在公开 checkout 不存在）。
-- 两个包仍在宿主 workspace（`pnpm-workspace.yaml` 显式登记为 `apps/team-server/server|console`，并 `'!apps/team-server'` 排除私有仓根）：`pnpm --filter @kepcup/team-server test`、根 vitest、typecheck 照常使用。**pnpm 命令只在仓库根执行**，不要在 `apps/team-server/` 里跑（那里是私有仓自己的 workspace）。
+- 两个包仍在宿主 workspace（`pnpm-workspace.yaml` 显式登记为 `apps/team-server/server|console`，并 `'!apps/team-server'` 排除私有仓根）：`pnpm --filter @kepcup/team-server test`、根 vitest、typecheck 照常使用。**pnpm 安装/测试/构建只在仓库根执行**，不要在 `apps/team-server/` 里做安装（那里是私有仓自己的 workspace，依赖由宿主 workspace 解析）；唯一例外是开发编排 `cd apps/team-server && pnpm dev`（dev.mjs 同时起 server watch 与 console vite，bin 从宿主根探测）。
 - 根 vitest 的 `team-server` / `team-console` 项目按 `apps/team-server/server/package.json` 存在性条件注册：公开 checkout 自动跳过，私有 clone 就位后自动恢复。公开 CI 在 `pnpm install` 前跑 `scripts/prune-lockfile-importers.mjs` 剪除无 package.json 目录的 lockfile importer。
 - **不要对宿主仓跑 `git clean -x`（含 `-fdx`）**：会把整个嵌套私有仓连同 `.git` 一起删掉（内容可从私有仓重新 clone，但本地未推送提交会丢）。
 - 设计与流程见 [docs/design/63-closed-source-team-server.md](docs/design/63-closed-source-team-server.md)。

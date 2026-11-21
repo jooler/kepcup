@@ -24,11 +24,16 @@
 # 1. clone 开源宿主仓（jooler/kepcup）后，把私有仓嵌套 clone 到挂载根：
 gh repo clone jooler/kepcup-team-server apps/team-server
 
-# 2. 在宿主仓根执行（不要在 apps/team-server 里跑 pnpm——那是私有仓自己的 workspace）：
+# 2. 在宿主仓根执行（依赖安装/测试/构建都在宿主根；apps/team-server 里
+#    只跑开发编排，不做安装）：
 pnpm install
 pnpm --filter @kepcup/team-server test    # 308 个服务端测试
 pnpm --filter @kepcup/team-console build  # 管理台构建 → console/dist/
 pnpm test                                  # 根 vitest 会自动注册 team 项目
+
+# 3. 开发模式（在 apps/team-server 内）：同时起 server（node --watch，8643）
+#    与 console（vite HMR，localhost:5173/console/，/api 代理到 8643）
+cd apps/team-server && pnpm dev
 ```
 
 - 闭源改动：在 `apps/team-server/` 内提交并 `git push`（remote 指向私有仓 `main`）。
