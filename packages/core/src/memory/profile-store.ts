@@ -236,24 +236,6 @@ export class ProfileStore {
     return row.updated_at > card.compiledAt;
   }
 
-  /**
-   * True when the compiled card no longer reflects the entries: it was never
-   * compiled, or any entry changed after the last compilation. Every status is
-   * considered, not just active ones — a retraction / supersede must also make
-   * the card stale, otherwise the removed constraint stays injected. Direct
-   * user edits bump `updated_at`, so no extra column is needed
-   * (docs/design/04-memory.md 画像整理).
-   */
-  cardIsStale(): boolean {
-    const card = this.getCard();
-    const row = this.#db
-      .prepare('select max(updated_at) as updated_at from profile_items')
-      .get() as { updated_at: number | null };
-    if (row.updated_at === null) return false;
-    if (card.compiledAt === null) return true;
-    return row.updated_at > card.compiledAt;
-  }
-
   // --- proposals ---------------------------------------------------------------
 
   insertProposal(
