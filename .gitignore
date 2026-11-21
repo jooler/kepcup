@@ -72,6 +72,8 @@ infra/cloudflare/relay/.wrangler/
 apps/server/web/
 release-server/
 
-# D126 team server：web（渲染层构建产物）不入库；管理台源码在 console/ 子目录
-# 正常入库，其构建产物 console/dist 由全局 dist/ 规则覆盖。
-apps/team-server/web/
+# D126 闭源组件：apps/team-server 是嵌套私有仓（jooler/kepcup-team-server）的
+# 挂载根——server/（团队服务器）+ console/（管理台）+ 文档，整体不入公开仓。
+# README.md 是先于私有仓 clone 提交的已跟踪文件（gitignore 不影响已跟踪文件），
+# 这是公开仓在该路径保留的唯一文件；勿对宿主仓跑 git clean -x（会删嵌套仓）。
+apps/team-server/

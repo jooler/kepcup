@@ -21,3 +21,12 @@
 - `direct` 只能加进 `DIRECT_ITEM_IDS`，新条目默认 `maxMode` 不得为 `direct`。敏感字段（secret / oauth / account）只能由用户在卡片里填，永不出现在 `settings_change.values` 或 Bot 可读快照里。
 - 改设置相关代码后至少跑定向测试：`node scripts/run-tests.mjs run packages/shared/test/unit/settings-catalog.test.ts packages/core/test/unit/settings-item-writes.test.ts packages/core/test/unit/settings-adapters-coverage.test.ts apps/desktop/src/renderer/src/lib/features/settings-card/card-components.test.ts`；涉及 shared 契约先 `pnpm --filter @kepcup/shared build`。
 - 设计细节以 `docs/design/38-conversational-settings.md` 和 `todo/settings-catalog-registry.md` 为准。
+
+## 闭源目录：apps/team-server（嵌套私有仓）
+
+- `apps/team-server/` 是闭源仓 [jooler/kepcup-team-server](https://github.com/jooler/kepcup-team-server) 的嵌套 clone（挂载根）：`server/` = `@kepcup/team-server`、`console/` = `@kepcup/team-console`，`docs/`、`todo/` 为内部文档。公开仓只跟踪 `apps/team-server/README.md`（闭源说明），其余内容由 `.gitignore` 的 `apps/team-server/*` 兜底。
+- 闭源改动在该目录内 git 提交/推送（remote 指向私有仓 `main`）；开源改动在仓库根提交。混合改动分别提交，**不要把私有仓内容复制或引用进公开仓文件**（私有仓里的 `apps/team-server/server/...` 路径在公开 checkout 不存在）。
+- 两个包仍在宿主 workspace（`pnpm-workspace.yaml` 显式登记为 `apps/team-server/server|console`，并 `'!apps/team-server'` 排除私有仓根）：`pnpm --filter @kepcup/team-server test`、根 vitest、typecheck 照常使用。**pnpm 命令只在仓库根执行**，不要在 `apps/team-server/` 里跑（那里是私有仓自己的 workspace）。
+- 根 vitest 的 `team-server` / `team-console` 项目按 `apps/team-server/server/package.json` 存在性条件注册：公开 checkout 自动跳过，私有 clone 就位后自动恢复。公开 CI 在 `pnpm install` 前跑 `scripts/prune-lockfile-importers.mjs` 剪除无 package.json 目录的 lockfile importer。
+- **不要对宿主仓跑 `git clean -x`（含 `-fdx`）**：会把整个嵌套私有仓连同 `.git` 一起删掉（内容可从私有仓重新 clone，但本地未推送提交会丢）。
+- 设计与流程见 [docs/design/63-closed-source-team-server.md](docs/design/63-closed-source-team-server.md)。

@@ -1,10 +1,12 @@
 packages:
   - apps/*
   - packages/*
-  # 闭源组件（D126）：apps/team-server 是嵌套私有仓的挂载根，两个包物理上在
-  # 其子目录里；公开仓 checkout 只有占位 README，pnpm 自动跳过。
+  # 闭源组件（D126 / 63 号设计文档）：apps/team-server 是嵌套私有仓的挂载根，
+  # 两个包物理上在其子目录里；公开仓 checkout 只有占位 README，pnpm 自动跳过。
+  # 排除私有仓根自身的 package.json，避免它被 apps/* 当成宿主 workspace 包。
   - apps/team-server/server
   - apps/team-server/console
+  - '!apps/team-server'
 
 # pi-ai@1.0.2 的传递 peer + pi-coding-agent 精确依赖 8.10.2 与 core 的 ^8.11.2
 # 会把 pi 包分裂成两个实例（双模型目录/双 Agent 类）。统一到 8.11.2 收敛为单实例

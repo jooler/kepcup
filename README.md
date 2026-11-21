@@ -23,6 +23,8 @@ KepCup is an **OpenMind** product.
 
 OpenMind means opening the *thinking*—product intent, the hard problems themselves, and how the modules fit together—not just the source tree. In the AI era, that goes further than "just open code": anyone can rebuild these ideas, or fold them into their own product, with coding models and agents. KepCup is free to use, and the design itself is deliberately reusable.
 
+**One deliberate exception**: the team server (`apps/team-server` — member accounts, team collaboration, admin console) is a **closed-source commercial component**. This repository only carries a stub README at that path; the real code lives in a private repository nested there for development, while the client side (desktop) and the shared contracts stay open. See [docs/design/63-closed-source-team-server.md](docs/design/63-closed-source-team-server.md) and [apps/team-server/README.md](apps/team-server/README.md).
+
 ## What is KepCup
 
 KepCup is an open-source **Personal Agent** in multi-Bot team form. You create Bots, give them permissions and a working directory, and they collaborate with you—and with each other—**without handing your data to a host you do not control**. As a multi-Bot assistant you own end to end, it can stand in for hosted teammate products such as Grok Bot, Muse, or Dot.
