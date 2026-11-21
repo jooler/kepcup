@@ -72,8 +72,6 @@ infra/cloudflare/relay/.wrangler/
 apps/server/web/
 release-server/
 
-# D126 team server：web（渲染层构建产物）与 console（team-console 构建产物）由
-# 服务端托管，均不入库；team-console 自身的 dist 同理。
+# D126 team server：web（渲染层构建产物）不入库；管理台源码在 console/ 子目录
+# 正常入库，其构建产物 console/dist 由全局 dist/ 规则覆盖。
 apps/team-server/web/
-apps/team-server/console/
-apps/team-console/dist/

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -73,25 +73,33 @@ export default defineConfig({
           ...(process.platform === 'win32' ? { testTimeout: 30_000, hookTimeout: 60_000 } : {}),
         },
       },
-      // D126 team server (branch team-server): member auth / team.db store / config
-      // parsing (same temp-dir + memory-keystore test style as the server project).
-      {
-        test: {
-          name: 'team-server',
-          include: ['apps/team-server/test/**/*.test.ts'],
-          // Same as core: Windows is several times slower for scrypt / disk.
-          ...(process.platform === 'win32' ? { testTimeout: 30_000, hookTimeout: 60_000 } : {}),
-        },
-      },
-      // T10-B 管理台（D133）：纯逻辑模块（API 客户端 / 表单校验 / 表格转换）的
-      // node 环境单测。别名让测试直接用 src 源码（与仓库其它项目的 src 直连模式
-      // 一致）；UI 交互验收进 T11 人工清单，这里没有 DOM 环境。
-      {
-        test: {
-          name: 'team-console',
-          include: ['apps/team-console/test/**/*.test.ts'],
-        },
-      },
+      // D126 团队服务器 + 管理台（闭源组件，见 apps/team-server/README.md）：
+      // apps/team-server 是嵌套私有仓的挂载根，公开仓 checkout 只有占位
+      // README——按 server 包 package.json 的存在性条件注册，公开侧自动跳过，
+      // 私有内容 clone 就位后自动恢复。测试风格同 server 项目（临时目录 +
+      // memory keystore）；Windows 与 core 同口径放慢超时。
+      ...(existsSync(new URL('./apps/team-server/server/package.json', import.meta.url))
+        ? [
+            {
+              test: {
+                name: 'team-server',
+                include: ['apps/team-server/server/test/**/*.test.ts'],
+                // Same as core: Windows is several times slower for scrypt / disk.
+                ...(process.platform === 'win32'
+                  ? { testTimeout: 30_000, hookTimeout: 60_000 }
+                  : {}),
+              },
+            },
+            // T10-B 管理台（D133）：纯逻辑模块（API 客户端 / 表单校验 / 表格转换）
+            // 的 node 环境单测；UI 交互验收进 T11 人工清单，这里没有 DOM 环境。
+            {
+              test: {
+                name: 'team-console',
+                include: ['apps/team-server/console/test/**/*.test.ts'],
+              },
+            },
+          ]
+        : []),
       // D73 P3: sub-registry Worker (infra/cloudflare/registry), tested against in-memory SQLite.
       {
         test: { name: 'infra-registry', include: ['infra/cloudflare/registry/test/**/*.test.ts'] },

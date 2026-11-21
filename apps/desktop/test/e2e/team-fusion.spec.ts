@@ -18,7 +18,8 @@ import { rmHomeTolerant } from './helpers/home-cleanup';
  */
 
 const RUN_TEAM_E2E = process.env.KEPCUP_TEAM_E2E === '1';
-const TEAM_SERVER_ROOT = process.env.KEPCUP_TEAM_SERVER_ROOT ?? path.resolve('..', 'team-server');
+const TEAM_SERVER_ROOT =
+  process.env.KEPCUP_TEAM_SERVER_ROOT ?? path.resolve('..', 'team-server', 'server');
 const TEAM_PORT = Number(process.env.KEPCUP_TEAM_E2E_PORT ?? 18643);
 
 test.skip(!RUN_TEAM_E2E, 'T7 融合视图 e2e 属 T11 Mac 清单（KEPCUP_TEAM_E2E=1 时运行）');
@@ -36,7 +37,7 @@ async function startTeamServer(): Promise<TeamServer> {
   const child = spawn(process.execPath, [bin, 'run'], {
     env: {
       ...process.env,
-      // 团队服务器读 KEPCUP_TEAM_DATA_DIR（apps/team-server/src/config.ts 的
+      // 团队服务器读 KEPCUP_TEAM_DATA_DIR（apps/team-server/server/src/config.ts 的
       // --data-dir env 映射；默认 ~/.kepcup-team）：显式指到临时目录，绝不碰
       // 真实数据目录。没有 KEPCUP_TEAM_ADMIN_TOKEN 这类 env——管理员凭据见下。
       KEPCUP_TEAM_DATA_DIR: dataDir,
@@ -55,7 +56,7 @@ async function startTeamServer(): Promise<TeamServer> {
   await ctx.dispose();
   // 管理员建成员（用户名 + 初始密码）走环回 admin API（62.03 §6，D102 模式，
   // /api/admin/*）：Bearer token 是服务器首启写进数据目录的 admin-token 文件
-  //（随机 32B、0600；apps/team-server/src/config.ts ADMIN_TOKEN_FILE），本机
+  //（随机 32B、0600；apps/team-server/server/src/config.ts ADMIN_TOKEN_FILE），本机
   // 发起才被接受。console 面（/api/console/*）要管理员 cookie 会话，脚本化
   // 建成员不用它。
   const adminToken = readFileSync(path.join(dataDir, 'admin-token'), 'utf8').trim();
