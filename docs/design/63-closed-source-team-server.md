@@ -24,12 +24,10 @@ jooler/kepcup（公开仓，本仓）                    jooler/kepcup-team-serv
 ```
 
 私有仓整体 clone 到公开仓的 `apps/team-server/`（真实目录、无 symlink）；两仓共享
-根 `README.md` 的物理文件（同内容、两仓各自提交）。宿主仓 `.gitignore` 规则：
-
-```
-apps/team-server/*
-!apps/team-server/README.md
-```
+根 `README.md` 的物理文件（同内容、两仓各自提交）。宿主仓 `.gitignore` 只有一条
+`apps/team-server/`（整目录忽略）；`README.md` 是在私有仓 clone **之前**就已提交的
+已跟踪文件——gitignore 不影响已跟踪文件，因此它持续被公开仓跟踪，而目录里嵌套
+的 `.git` 也永远不会被宿主仓当成 gitlink（嵌入仓库指针）加进索引。
 
 ## 3. 依赖方向
 
