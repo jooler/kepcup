@@ -201,6 +201,10 @@
 
   const chatSession = getChatSession();
   const isProject = $derived(!injectMode && chatSession.view?.conversation.type === 'project');
+  // 一对一 DM：输入框上方的协作 presence 行（「N 人在此对话」/正在输入）是
+  // 多端协作概念，双人会话里只是噪音——整行不渲染（2026-11）。Bot 直聊与
+  // 项目组保留（多端同开 / 多人协作仍有提示价值）。
+  const oneOnOneDm = $derived(!injectMode && chatSession.view?.conversation.type === 'dm');
   const replyTo = $derived(injectMode ? null : chatSession.replyTo);
   const replyToName = $derived(
     replyTo === null
@@ -2231,7 +2235,7 @@
           onTakeover={() => void sharedDraft.takeover()}
         />
       {/if}
-      {#if otherClients.length > 0}
+      {#if !oneOnOneDm && otherClients.length > 0}
         <ComposerPresenceRow entries={otherClients} />
       {/if}
       <div class="relative flex flex-col">
