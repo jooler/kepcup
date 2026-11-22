@@ -3,7 +3,7 @@
   import { t } from '$lib/i18n';
   import SettingsCatalogFields from './SettingsCatalogFields.svelte';
   import { Button } from '$lib/components/ui/button';
-  import { endpointSupports } from '$lib/features/web-shell/endpoint';
+  import { ENDPOINT_KIND, endpointSupports } from '$lib/features/web-shell/endpoint';
 
   /**
    * 设置页「计算机操控」独立分区（D105 / P-B2，docs/design/52 §6）：开关走设置目录
@@ -14,10 +14,18 @@
    * systemPreferences）与「打开系统设置」深链（`computer:permissions-open`，
    * AX 会触发系统提示，屏幕录制只开面板）。远程端点按 desktop-only 能力置灰
    * （'computer-use'）。
+   *
+   * web 端点（remote）整段不可实现——CuaDriver 与被操控的桌面都在本机，web
+   * 用户更不能远程操控服务器：分区只留标题 + 「需要在 KepCup 客户端使用」
+   * 提示（2026-11-22 反馈），开关与权限面板一并收掉。
    */
 
   type PermissionState = 'granted' | 'not-granted' | 'unknown';
   type Availability = 'checking' | 'available' | 'unavailable';
+
+  /** web 端点：功能整体不适用（不是置灰，是只提示）。 */
+  const webEndpoint = $derived(ENDPOINT_KIND !== 'desktop');
+  const canUseHelper = $derived(endpointSupports('computer-use'));
 
   let accessibility = $state<PermissionState>('unknown');
   let screenRecording = $state<PermissionState>('unknown');
@@ -28,8 +36,6 @@
   let requestingCapture = $state(false);
   let captureError = $state<string | null>(null);
   let opening = $state<'accessibility' | 'screen-recording' | null>(null);
-
-  const canUseHelper = $derived(endpointSupports('computer-use'));
 
   async function refresh(): Promise<void> {
     if (!canUseHelper || !window.kepcup?.computerPermissionStatus) return;
@@ -111,6 +117,15 @@
     <h3 class="text-base font-medium">{t('settings.computerUseSectionTitle')}</h3>
     <p class="mt-1 text-sm text-muted-foreground">{t('settings.computerUseSectionHint')}</p>
   </div>
+  {#if webEndpoint}
+    <!-- web 端点：只提示，不出开关与权限面板（CuaDriver 只存在于本机客户端）。 -->
+    <p
+      class="rounded-lg border border-dashed p-3 text-sm text-muted-foreground"
+      data-testid="computer-use-web-hint"
+    >
+      {t('settings.computerUseWebOnlyHint')}
+    </p>
+  {:else}
   <SettingsCatalogFields itemIds={['computer.control']} />
 
   <div class="space-y-2 rounded-lg border p-3" data-testid="computer-use-permissions">
@@ -226,4 +241,5 @@
       </Button>
     </div>
   </div>
+  {/if}
 </div>

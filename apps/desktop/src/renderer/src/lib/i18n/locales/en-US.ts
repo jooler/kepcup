@@ -655,7 +655,7 @@ export const enUS = {
   'friends.remove': 'Remove friend',
   'friends.removeTitle': 'Remove {name} as a friend?',
   'friends.removeBody':
-    'Both of you leave each other's friend lists and can no longer message each other; existing conversations stay in the chat list.',
+    'Both of you leave each other\'s friend lists and can no longer message each other; existing conversations stay in the chat list.',
   'friends.removeConfirm': 'Remove',
   'friends.removed': 'Removed {name} as a friend',
   'contacts.selfEntry': 'Me (self conversation)',
@@ -2602,6 +2602,8 @@ export const enUS = {
   'settings.computerUseSectionTitle': 'Computer use',
   'settings.computerUseSectionHint':
     'Let bots read and drive native desktop apps in tasks: accessibility-tree first, screenshots and synthetic input as fallback, without stealing focus. First use needs Accessibility & Screen Recording granted to KepCup (macOS only, off by default).',
+  // Web endpoint (remote): CuaDriver and the driven desktop both live on the local machine.
+  'settings.computerUseWebOnlyHint': 'This feature requires the KepCup desktop client',
   'settings.computerUseGranted': 'Granted',
   'settings.computerUseNotGranted': 'Not granted',
   'settings.computerUseUnknown': 'Unknown',
@@ -4379,6 +4381,14 @@ export const enUS = {
   'web.login.invalid': 'Incorrect username or password',
   'web.login.ratelimited': 'Too many attempts, try again later',
   'web.login.error': 'Cannot reach the server, check your connection',
+  // Legal line under the login card (login-card template): links point at the
+  // root static pages /terms.html and /privacy.html (renderer public/, served
+  // same-origin by the relay Worker), opened in a new tab.
+  'web.login.legal.pre': 'By clicking continue, you agree to our',
+  'web.login.legal.terms': 'Terms of Service',
+  'web.login.legal.and': 'and',
+  'web.login.legal.privacy': 'Privacy Policy',
+  'web.login.legal.suffix': '.',
   // T5 team endpoint: admin reset the password; the login gate shows the
   // change-password view first.
   'web.changePassword.title': 'Set a new password',

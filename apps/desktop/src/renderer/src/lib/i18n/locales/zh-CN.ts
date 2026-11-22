@@ -2508,6 +2508,8 @@ export const zhCN = {
   'settings.computerUseSectionTitle': '计算机操控',
   'settings.computerUseSectionHint':
     '让 Bot 在任务中读取并操作本机桌面应用：无障碍树优先，截屏与键鼠兜底，不抢焦点。首次使用需给 KepCup 授予辅助功能与屏幕录制权限（仅 macOS，默认关闭）。',
+  // web 端点（remote）：CuaDriver 与被操控桌面都在本机，功能整体不适用，只提示。
+  'settings.computerUseWebOnlyHint': '此功能需要在 KepCup 客户端使用',
   'settings.computerUseGranted': '已授权',
   'settings.computerUseNotGranted': '未授权',
   'settings.computerUseUnknown': '未知',
@@ -4135,6 +4137,13 @@ export const zhCN = {
   'web.login.invalid': '用户名或密码不正确',
   'web.login.ratelimited': '失败次数过多，稍后再试',
   'web.login.error': '连不上服务器，请检查网络后重试',
+  // 登录卡底部法务行（login-card 模板）：链接指向根目录静态页 /terms.html 与
+  // /privacy.html（renderer public/，relay Worker 同源托管），新标签打开。
+  'web.login.legal.pre': '继续即表示你同意我们的',
+  'web.login.legal.terms': '服务条款',
+  'web.login.legal.and': '与',
+  'web.login.legal.privacy': '隐私政策',
+  'web.login.legal.suffix': '。',
   // T5 团队端点：管理员重置过密码，登录门先进改密视图。
   'web.changePassword.title': '设置新密码',
   'web.changePassword.body': '管理员重置了你的密码，请先设置新密码再进入。',
