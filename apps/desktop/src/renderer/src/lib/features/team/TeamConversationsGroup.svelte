@@ -125,7 +125,7 @@
                 >
                   {#if view.type === 'dm'}
                     {@const peer = contacts.dmPeerViewOf(entry.source, view.peerPrincipalIds)}
-                    <MemberAvatar name={peer.title} avatar={peer.avatar} state={peer.state} class="size-11" />
+                    <MemberAvatar name={peer.title} avatar={peer.avatar} state={peer.state} class="size-12 text-base" />
                   {:else if view.type === 'project'}
                     <ProjectAvatarStack members={view.memberPreviews ?? []} class="size-11" />
                   {:else}
@@ -167,7 +167,7 @@
                   <span class="relative shrink-0">
                     {#if view.type === 'dm'}
                       {@const peer = contacts.dmPeerViewOf(entry.source, view.peerPrincipalIds)}
-                      <MemberAvatar name={peer.title} avatar={peer.avatar} state={peer.state} class="size-11" />
+                      <MemberAvatar name={peer.title} avatar={peer.avatar} state={peer.state} class="size-12 text-base" />
                     {:else if view.type === 'project'}
                       <ProjectAvatarStack members={view.memberPreviews ?? []} class="size-11" />
                     {:else}

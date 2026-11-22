@@ -488,13 +488,14 @@
         </span>
       {:else if row.kind === 'conversation'}
         {#if row.conversation.type === 'dm'}
-          <!-- dm（T5）：对端成员头像 + 状态点；自我会话回落「我」。 -->
+          <!-- dm（T5）：对端成员头像 + 状态点；自我会话显示自己的显示名（2026-11）。
+               text-base 与 Bot 条目首字母同规格。 -->
           {@const peer = teamContext.dmPeerView(row.conversation.peerPrincipalIds)}
           <MemberAvatar
             name={peer.title}
             avatar={peer.avatar}
             state={peer.state}
-            class="size-10"
+            class="size-10 text-base"
           />
         {:else if row.conversation.type === 'project'}
           <Avatar.Root class="size-10">

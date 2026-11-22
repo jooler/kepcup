@@ -213,4 +213,27 @@ describe('团队上下文激活（T5）', () => {
     teamContext.begin();
     expect(h.calls.filter((c) => c.method === 'team.bootstrap').length).toBe(bootstrapCalls);
   });
+
+  it('dmPeerView：对端取显示名，自我会话标题用「我」的显示名（2026-11）', async () => {
+    stubBootstrap();
+    teamContext.begin();
+    await vi.waitFor(() => expect(teamContext.active).toBe(true));
+    const peer = teamContext.dmPeerView(['mbr_self', 'mbr_peer']);
+    expect(peer.title).toBe('乙');
+    expect(peer.peerId).toBe('mbr_peer');
+    // 自我会话（peerPrincipalIds 只含自己）：不再写死「我」文案——标题是
+    // 自己的服务端显示名，头像 / 状态用自己。
+    const self = teamContext.dmPeerView(['mbr_self']);
+    expect(self.peerId).toBeNull();
+    expect(self.title).toBe('甲');
+    expect(self.avatar).toBeNull();
+    expect(self.state).toBe('online');
+    // 没有成员卡（reset 后）：'mbr_self' 解析成对端 id 回落（成员不在名册 →
+    // 标题回落主体 id，不为空）。真正的自我会话分支只在「我」有成员卡时命中。
+    teamContext.reset();
+    const fallback = teamContext.dmPeerView(['mbr_self']);
+    expect(fallback.title).toBe('mbr_self');
+    // peerPrincipalIds 为空 + 无成员卡 → 自我会话分支，回落「我」文案。
+    expect(teamContext.dmPeerView(null).title).toBe('我');
+  });
 });

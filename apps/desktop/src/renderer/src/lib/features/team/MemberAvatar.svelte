@@ -26,17 +26,20 @@
   const away = $derived(state === 'away');
 </script>
 
-<span class="relative inline-flex shrink-0" data-testid={testId}>
+<!-- 尺寸 class 打在外层：内层元素统一 size-full。之前内层同时挂 size-full 与
+     调用方的 size-N，Tailwind 级联里 size-full 压过 size-N，外层又没有尺寸，
+     首字母圆塌缩成内容大小（2026-11 侧栏 dm 条目实测 14×20px）。 -->
+<span class="relative inline-flex shrink-0 {className}" data-testid={testId}>
   {#if avatar}
     <img
       src={avatar}
       alt=""
-      class="size-full rounded-full object-cover {className}"
+      class="size-full rounded-full object-cover"
       draggable="false"
     />
   {:else}
     <span
-      class="flex size-full items-center justify-center rounded-full bg-muted text-muted-foreground {className}"
+      class="flex size-full items-center justify-center rounded-full bg-muted text-muted-foreground"
       aria-hidden="true"
     >
       {initial}

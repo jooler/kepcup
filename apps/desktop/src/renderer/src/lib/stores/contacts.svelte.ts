@@ -115,8 +115,10 @@ class ContactsState {
     const self = this.teamSelfOf(source);
     const peerId = (peerPrincipalIds ?? []).find((id) => id !== self?.id) ?? null;
     if (peerId === null) {
+      // 自我会话：标题用「我」的显示名（2026-11 与真人条目同口径），无成员卡时
+      // 才回落「我」文案。
       return {
-        title: t('team.selfConversation'),
+        title: self?.displayName || t('team.selfConversation'),
         peerId: null,
         avatar: self?.avatar ?? null,
         state: self?.state ?? 'offline',
@@ -144,10 +146,11 @@ class ContactsState {
    */
   async openDm(targetMemberId?: string): Promise<string | null> {
     if (!teamContext.active) return null;
-    // 无参调用（自我会话）发空参数帧：入参 schema 的 optional 字段缺省即合法。
+    // 无参调用（自我会话）发空对象帧：birpc 零参调用在服务端收到 undefined，
+    // strictObject 的 optional 字段不豁免整体 undefined（会 INVALID_INPUT）。
     const result = (await core.callTeam(
       'team.dm.open',
-      targetMemberId === undefined ? undefined : { targetMemberId },
+      targetMemberId === undefined ? {} : { targetMemberId },
     )) as { conversation: Conversation };
     return result.conversation.id;
   }
@@ -164,7 +167,7 @@ class ContactsState {
     try {
       const result = (await conn.callTeam(
         'team.dm.open',
-        targetMemberId === undefined ? undefined : { targetMemberId },
+        targetMemberId === undefined ? {} : { targetMemberId },
       )) as { conversation: Conversation };
       return { source, id: result.conversation.id };
     } catch {

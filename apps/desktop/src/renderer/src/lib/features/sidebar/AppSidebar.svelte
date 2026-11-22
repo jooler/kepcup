@@ -861,7 +861,9 @@
 {/snippet}
 
 <!-- 会话头像（展开/图标两模式共用）：项目组用成员头像堆叠，私聊用 Bot 头像，
-     dm 用对端成员头像（T5；自我会话回落「我」首字母）。 -->
+     dm 用对端成员头像（T5；自我会话显示自己的显示名 / 头像，2026-11）。dm 与
+     Bot 条目同规格：size-12 + text-base 首字母（MemberAvatar 首字母字号由继承
+     传入——尺寸 class 在外层，text-* 会级联到内层字面）。 -->
 {#snippet conversationAvatar(conversation: ConversationView)}
   {#if conversation.type === 'dm'}
     {@const peer = teamContext.dmPeerView(conversation.peerPrincipalIds)}
@@ -869,7 +871,7 @@
       name={peer.title}
       avatar={peer.avatar}
       state={peer.state}
-      class="size-11"
+      class="size-12 text-base"
       testId="conversation-avatar"
     />
   {:else if conversation.type === 'project'}

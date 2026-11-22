@@ -110,6 +110,10 @@ class TeamContextState {
       const result = (await core.callTeam('team.members.list')) as { members: TeamMember[] };
       if (!this.active) return;
       this.members = result.members;
+      // 自己的成员卡一并收敛（updateSelf 改显示名 / 头像后 member.updated 只带
+      // id，名册重拉是唯一事实源；bootstrap 之外不再原地旧值）。
+      const self = this.member?.id !== undefined ? (result.members.find((entry) => entry.id === this.member?.id) ?? null) : null;
+      if (self !== null) this.member = self;
     } catch {
       // 名册拉取失败保留旧快照（断线重连后 onConnected 会再收敛）。
     }
@@ -145,13 +149,14 @@ class TeamContextState {
 
   /**
    * dm 会话的对端视图（T5 步骤 3，侧栏 / 全局搜索 / 会话头共用一份解析）：
-   * `peerPrincipalIds` 排除自己后取名册成员；没有对端 = 自我会话——标题「我」、
-   * 头像与状态用自己。对端不在名册（已禁用 / 名册未到）回落主体 id，标题不为空。
-   * 非团队上下文（member 为 null、名册为空）下 dm 会话本就不存在；真被调用时
-   * 单成员的 peerPrincipalIds 会解析成「我」，无害。
+   * `peerPrincipalIds` 排除自己后取名册成员；没有对端 = 自我会话——标题用
+   * 自己的服务端显示名（2026-11：与真人条目一致，不再写死「我」；没有成员卡
+   * 时才回落「我」文案）。对端不在名册（已禁用 / 名册未到）回落主体 id，标题
+   * 不为空。非团队上下文（member 为 null、名册为空）下 dm 会话本就不存在；
+   * 真被调用时单成员的 peerPrincipalIds 会解析成自我会话，无害。
    */
   dmPeerView(peerPrincipalIds: readonly string[] | null | undefined): {
-    /** 标题：对端成员显示名（快照回落名册 / 主体 id）；自我会话 = 「我」。 */
+    /** 标题：对端成员显示名（快照回落名册 / 主体 id）；自我会话 = 自己的显示名。 */
     title: string;
     /** 对端主体 id；自我会话为 null。 */
     peerId: string | null;
@@ -161,7 +166,7 @@ class TeamContextState {
     const peerId = (peerPrincipalIds ?? []).find((id) => id !== this.member?.id) ?? null;
     if (peerId === null) {
       return {
-        title: t('team.selfConversation'),
+        title: this.member?.displayName || t('team.selfConversation'),
         peerId: null,
         avatar: this.member?.avatar ?? null,
         state: this.member?.state ?? 'offline',

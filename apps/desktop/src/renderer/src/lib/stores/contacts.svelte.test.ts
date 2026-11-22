@@ -155,7 +155,8 @@ describe('通讯录名册', () => {
 /**
  * 团队成员名册（T5）：非团队上下文恒空数组（休眠铁律）；团队上下文下
  * contacts 暴露 teamContext 的名册与 self（数据源在 team-context 统一拉取），
- * openDm 走 team.dm.open 打开（自我会话传空参数帧）。
+ * openDm 走 team.dm.open 打开（自我会话发空对象帧——birpc 零参在服务端收到
+ * undefined，strictObject 会拒，见 2026-11 修复）。
  */
 describe('团队成员名册（T5）', () => {
   const SELF: TeamMember = { id: 'mbr_self', displayName: '甲', state: 'online' };
@@ -186,11 +187,11 @@ describe('团队成员名册（T5）', () => {
     await expect(contacts.openDm('mbr_peer')).resolves.toBe('conv_dm1');
   });
 
-  it('openDm：无目标（自我会话）发空参数帧', async () => {
+  it('openDm：无目标（自我会话）发空对象帧（零参会被服务端 strictObject 拒）', async () => {
     teamContext.active = true;
     state.teamResponder = (method, input) => {
       expect(method).toBe('team.dm.open');
-      expect(input).toBeUndefined();
+      expect(input).toEqual({});
       return { conversation: { id: 'conv_self', type: 'dm' } };
     };
     await expect(contacts.openDm()).resolves.toBe('conv_self');

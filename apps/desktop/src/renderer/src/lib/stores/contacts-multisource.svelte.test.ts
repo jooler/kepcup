@@ -85,7 +85,7 @@ function conversationRow(id: string, type: string, overrides: Record<string, unk
 const TEAM = {
   serverHash: 'h1',
   bootstrap: {
-    member: { id: 'mbr_self', displayName: '我', state: 'online' },
+    member: { id: 'mbr_self', displayName: '沈知微', state: 'online' },
     server: { name: 'Acme 团队', version: '1.0.0' },
     surfaces: { hidden: [] },
     conversations: [],
@@ -93,7 +93,7 @@ const TEAM = {
   },
   members: {
     members: [
-      { id: 'mbr_self', displayName: '我', state: 'online' },
+      { id: 'mbr_self', displayName: '沈知微', state: 'online' },
       { id: 'mbr_peer', displayName: '同事乙', state: 'away', avatarBotName: '管家' },
     ],
   },
@@ -227,9 +227,10 @@ describe('团队来源接入', () => {
     expect(peer.state).toBe('away');
     // 离开态提示带分身名（T6 的 presence avatar 字段）。
     expect(peer.awayNote).toContain('管家');
-    // 自我会话。
+    // 自我会话：标题用「我」的服务端显示名（2026-11 与真人条目同口径）。
     const self = contacts.dmPeerViewOf(source, ['mbr_self']);
     expect(self.peerId).toBeNull();
+    expect(self.title).toBe('沈知微');
   });
 
   it('openTeamDm 经团队连接（team.dm.open），返回带来源的引用', async () => {
