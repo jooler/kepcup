@@ -317,6 +317,15 @@ export const ERROR_CODES = [
   'ALREADY_BLOCKED',
   /** 该成员未被拉黑，无从解除（2026-11）。 */
   'NOT_BLOCKED',
+  // 成员侧 Bot 面（B 方案 member-bots，todo/member-bots）：成员自建 Bot 的
+  // 配额与工作路径边界；其余场景复用 FORBIDDEN / NOT_FOUND / BOT_NOT_VISIBLE。
+  /**
+   * 私有 Bot 数量已达上限（B-6，设置键 max-private-bots）：创建时本人配额满、
+   * 或转交时目标成员配额满，均返回此码。
+   */
+  'BOT_LIMIT_REACHED',
+  /** 工作路径不在允许集合（B-10：管理员启用根 ∪ 本人 workdirs 子树 ∪ 自动分配的 bots 目录）。 */
+  'WORKDIR_NOT_ALLOWED',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

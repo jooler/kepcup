@@ -11,6 +11,7 @@ import {
   teamBootstrapSchema,
   teamEventSchemas,
   teamMemberSchema,
+  teamBotViewSchema,
   teamRpcMethodSchemas,
   teamResolutionViewSchema,
   teamSettingsSchema,
@@ -34,7 +35,7 @@ const APP_METHOD_NAMES_ARE_LITERAL: AppMethodName extends RpcMethodName
   : never = true;
 void APP_METHOD_NAMES_ARE_LITERAL;
 
-const METHOD_COUNT = 27; // README 固定契约清单逐项枚举（P0×5 + P1×6 + 好友层×7+拉黑×2 + P2×5）+ T7 名册读口 roster + 成员自助资料 updateSelf（2026-11 web 个人资料）；名字不得再改动。
+const METHOD_COUNT = 35; // README 固定契约清单逐项枚举（P0×5 + P1×6 + 好友层×7+拉黑×2 + P2×5）+ T7 名册读口 roster + 成员自助资料 updateSelf（2026-11 web 个人资料）+ 成员侧 Bot 面×8（B 方案 member-bots B1）；名字不得再改动。
 const EXPECTED_METHODS = [
   'team.bootstrap',
   'team.members.list',
@@ -63,6 +64,14 @@ const EXPECTED_METHODS = [
   'team.resolutions.approve',
   'team.resolutions.revoke',
   'team.resolutions.withdraw',
+  'team.bots.create',
+  'team.bots.update',
+  'team.bots.delete',
+  'team.bots.transfer',
+  'team.bots.list',
+  'team.bots.workdirOptions',
+  'team.bots.workdirMkdir',
+  'team.bots.modelOptions',
 ];
 
 const MBR = 'mbr_01ARZ3NDEKTSV4RRFFQ69G5FAV';
@@ -488,5 +497,146 @@ describe('team domain schemas', () => {
       teamUsageSummarySchema.safeParse({ directTotal: 1.25, byBot: [] }).success,
     ).toBe(true);
     expect(teamUsageSummarySchema.safeParse({ directTotal: 1, unknown: 1 }).success).toBe(false);
+  });
+});
+
+// --- B 方案 member-bots（B1）：成员侧 Bot 面契约 --------------------------------
+
+describe('member bots plane (B 方案 B1)', () => {
+  const botView = {
+    id: 'bot_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    name: '阿贝',
+    mode: 'private',
+    ownerMemberId: MBR,
+    canEdit: true,
+    canDelete: true,
+    workdirPath: '/srv/team/members/mbr_alice/workdirs/research',
+    setupState: 'ready',
+  };
+
+  it('bot view: strict card, three-way mode, two-state setupState', () => {
+    const view = teamBotViewSchema.parse(botView);
+    expect(view.mode).toBe('private');
+    expect(view.canEdit).toBe(true);
+    // 三档 mode（含管理员共享 restricted）；setupState 只有 interviewing/ready。
+    expect(teamBotViewSchema.safeParse({ ...botView, mode: 'internal' }).success).toBe(false);
+    expect(teamBotViewSchema.safeParse({ ...botView, setupState: 'paused' }).success).toBe(false);
+    // 最小卡：仅必填字段成立；多余字段拒（strict）。
+    const minimal = teamBotViewSchema.parse({
+      id: 'bot_1',
+      name: 'B',
+      mode: 'public',
+      canEdit: false,
+      canDelete: false,
+    });
+    expect(minimal.setupState).toBeUndefined();
+    expect(teamBotViewSchema.safeParse({ ...botView, sneaky: 1 }).success).toBe(false);
+  });
+
+  it('create io: mode closed enum, interview defaults true, profile seed reuses botProfile sub-schemas', () => {
+    const create = teamRpcMethodSchemas['team.bots.create'];
+    expect(create.input.parse({ mode: 'private' })).toEqual({ mode: 'private', interview: true });
+    // mode 只收 private/public（restricted 是管理员档，成员不可建）。
+    expect(create.input.safeParse({ mode: 'restricted' }).success).toBe(false);
+    expect(
+      create.input.safeParse({
+        mode: 'public',
+        name: '客服',
+        workdirPath: '/srv/team/workdirs/shared',
+        profile: { identity: { name: '客服' }, runtime: { model: 'gpt-4o' } },
+      }).success,
+    ).toBe(true);
+    // name ≤120；profile 是 teamBotPatch 的 profile 部分（不含 workdirPath）且外壳 strict。
+    expect(create.input.safeParse({ mode: 'private', name: 'x'.repeat(121) }).success).toBe(false);
+    expect(create.input.safeParse({ mode: 'private', profile: { workdirPath: '/x' } }).success).toBe(
+      false,
+    );
+    expect(create.input.safeParse({ mode: 'private', sneaky: 1 }).success).toBe(false);
+    // 输出统一 { bot: teamBotView }。
+    expect(create.output.safeParse({ bot: botView }).success).toBe(true);
+  });
+
+  it('update / delete / transfer io: patch strict with workdirPath, deleted literal true', () => {
+    const update = teamRpcMethodSchemas['team.bots.update'];
+    expect(
+      update.input.safeParse({
+        botId: 'bot_1',
+        patch: { persona: { personality: '耐心' }, workdirPath: '/srv/team/workdirs/shared' },
+      }).success,
+    ).toBe(true);
+    expect(update.input.safeParse({ botId: 'bot_1', patch: { sneaky: 1 } }).success).toBe(false);
+    const deleted = teamRpcMethodSchemas['team.bots.delete'].output.parse({ deleted: true });
+    expect(deleted).toEqual({ deleted: true });
+    expect(
+      teamRpcMethodSchemas['team.bots.delete'].output.safeParse({ deleted: false }).success,
+    ).toBe(false);
+    expect(
+      teamRpcMethodSchemas['team.bots.transfer'].input.safeParse({ botId: 'bot_1', toMemberId: MBR2 })
+        .success,
+    ).toBe(true);
+    expect(
+      teamRpcMethodSchemas['team.bots.transfer'].output.safeParse({ bot: botView }).success,
+    ).toBe(true);
+  });
+
+  it('workdir / model options and mkdir: source two-way, name ≤80, parentPath optional', () => {
+    const options = teamRpcMethodSchemas['team.bots.workdirOptions'];
+    expect(options.input.parse({})).toEqual({});
+    expect(
+      options.output.safeParse({
+        options: [
+          { path: '/srv/team/workdirs/shared', name: '共享根', source: 'admin' },
+          { path: '/srv/team/members/mbr_alice/workdirs/w1', name: 'w1', source: 'member' },
+        ],
+      }).success,
+    ).toBe(true);
+    expect(
+      options.output.safeParse({ options: [{ path: '/p', name: 'p', source: 'system' }] }).success,
+    ).toBe(false);
+    const mkdir = teamRpcMethodSchemas['team.bots.workdirMkdir'];
+    expect(mkdir.input.safeParse({ name: '新目录' }).success).toBe(true);
+    expect(mkdir.input.safeParse({ name: 'x'.repeat(81) }).success).toBe(false);
+    expect(mkdir.input.safeParse({ name: 'n', parentPath: '/srv/team/members/mbr_alice/workdirs', extra: 1 }).success).toBe(
+      false,
+    );
+    expect(mkdir.output.safeParse({ path: '/srv/team/members/mbr_alice/workdirs/n' }).success).toBe(
+      true,
+    );
+    const models = teamRpcMethodSchemas['team.bots.modelOptions'];
+    expect(models.input.parse({})).toEqual({});
+    expect(models.output.safeParse({ models: [{ id: 'gpt-4o', label: 'GPT-4o' }] }).success).toBe(
+      true,
+    );
+    expect(models.output.safeParse({ models: [{ id: 'gpt-4o' }] }).success).toBe(false);
+  });
+
+  it('bootstrap botCapabilities: additive optional block, absent on legacy payloads', () => {
+    const base = {
+      member: member(),
+      server: { name: 's', version: 'v' },
+      surfaces: { hidden: [] },
+      conversations: [],
+      permissionCeiling: 'auto',
+    };
+    const withCaps = teamBootstrapSchema.parse({
+      ...base,
+      botCapabilities: { canCreatePublicBot: false, privateBotsUsed: 3, privateBotsLimit: 10 },
+    });
+    expect(withCaps.botCapabilities?.privateBotsLimit).toBe(10);
+    // 旧 payload（无该块）仍合法。
+    expect(teamBootstrapSchema.safeParse(base).success).toBe(true);
+    // 块内 strict + 类型收死。
+    expect(
+      teamBootstrapSchema.safeParse({
+        ...base,
+        botCapabilities: { canCreatePublicBot: true, privateBotsUsed: -1, privateBotsLimit: 10 },
+      }).success,
+    ).toBe(false);
+    expect(
+      teamBootstrapSchema.safeParse({
+        ...base,
+        botCapabilities: { canCreatePublicBot: true, privateBotsUsed: 1, extra: 1 },
+      }).success,
+    ).toBe(false);
   });
 });

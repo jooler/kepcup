@@ -1,5 +1,13 @@
 import { z } from 'zod';
-import { conversationSchema, permissionModeSchema } from '../domain/types.js';
+import {
+  botBehaviorSchema,
+  botIdentitySchema,
+  botPersonaSchema,
+  botRoleSchema,
+  botRuntimeSchema,
+  conversationSchema,
+  permissionModeSchema,
+} from '../domain/types.js';
 
 /**
  * Team-layer contracts (62-team-server): the member-facing view the team server
@@ -212,6 +220,95 @@ export const teamFriendsListSchema = z.strictObject({
 });
 export type TeamFriendsList = z.infer<typeof teamFriendsListSchema>;
 
+// --- Member-side bots（B 方案 member-bots，B1 契约冻结）-------------------------
+
+/**
+ * Member-visible bot kind (B 方案 member-bots): a member-created `private` bot
+ * (owner-only editable), a member-created `public` bot (everyone can message,
+ * creator can edit/delete) or an admin-shared `restricted` bot. These are the
+ * visibility-row modes of B-5 as the member plane reports them.
+ */
+export const teamBotModeSchema = z.enum(['private', 'public', 'restricted']);
+export type TeamBotMode = z.infer<typeof teamBotModeSchema>;
+
+/** Setup lifecycle of a member-plane bot: still in the creation interview, or ready. */
+export const teamBotSetupStateSchema = z.enum(['interviewing', 'ready']);
+export type TeamBotSetupState = z.infer<typeof teamBotSetupStateSchema>;
+
+/**
+ * A bot as `team.bots.*` serves it to members (README fixed contract). Edit /
+ * delete rights are pre-computed per caller (B-1: creator for public, owner
+ * for private; console admins always both). Non-owner members never receive
+ * private-bot profile bodies — the view carries identity-level facts only.
+ */
+export const teamBotViewSchema = z.strictObject({
+  /** Bot id (`bot_*`, core ULID). */
+  id: z.string().min(1),
+  /** Display name (identity.name). */
+  name: z.string(),
+  mode: teamBotModeSchema,
+  /** Owning member (`mbr_*`); absent for admin-created shared bots. */
+  ownerMemberId: z.string().min(1).optional(),
+  /** Caller may edit parameters (owner / public creator / console admin). */
+  canEdit: z.boolean(),
+  /** Caller may delete (same rule as edit, B-1). */
+  canDelete: z.boolean(),
+  /** Bound default work path (member-plane options, B-10). */
+  workdirPath: z.string().min(1).optional(),
+  setupState: teamBotSetupStateSchema.optional(),
+});
+export type TeamBotView = z.infer<typeof teamBotViewSchema>;
+
+/**
+ * Profile part of a member-bot write (B-2 全量参数受服务器约束): the core
+ * botProfile sub-schemas reused verbatim, all optional, strict outer shell.
+ * The server validates the values against its enabled model / network /
+ * plugin lists (B2); `runtime.model` etc. constrain to server options.
+ */
+export const teamBotProfilePatchSchema = z.strictObject({
+  identity: botIdentitySchema.optional(),
+  persona: botPersonaSchema.optional(),
+  role: botRoleSchema.optional(),
+  /** Same shape as botProfileSchema.boundaries. */
+  boundaries: z.array(z.string().max(500)).optional(),
+  behavior: botBehaviorSchema.optional(),
+  runtime: botRuntimeSchema.optional(),
+});
+export type TeamBotProfilePatch = z.infer<typeof teamBotProfilePatchSchema>;
+
+/**
+ * Patch for `team.bots.update` and the profile seed for `team.bots.create`:
+ * the profile sub-fields plus the default work path. `workdirPath` must be in
+ * the caller's allowed option set (WORKDIR_NOT_ALLOWED otherwise, B-10).
+ */
+export const teamBotPatchSchema = teamBotProfilePatchSchema.extend({
+  workdirPath: z.string().min(1).optional(),
+});
+export type TeamBotPatch = z.infer<typeof teamBotPatchSchema>;
+
+/**
+ * One selectable work path (`team.bots.workdirOptions`, B-10): admin-enabled
+ * roots (`source:'admin'`) ∪ the member's own workdirs subtree (`source:
+ * 'member'`, mkdir allowed inside). Paths are server-realpath canonical
+ * forms; members never browse the free filesystem.
+ */
+export const teamWorkdirOptionSchema = z.strictObject({
+  path: z.string().min(1),
+  /** Display label (root name or directory name). */
+  name: z.string(),
+  source: z.enum(['admin', 'member']),
+});
+export type TeamWorkdirOption = z.infer<typeof teamWorkdirOptionSchema>;
+
+/** One selectable model (`team.bots.modelOptions`, B-2 server-enabled list). */
+export const teamModelOptionSchema = z.strictObject({
+  /** Model ref as used in `runtime.model`. */
+  id: z.string(),
+  /** Display label. */
+  label: z.string(),
+});
+export type TeamModelOption = z.infer<typeof teamModelOptionSchema>;
+
 // --- Bootstrap ----------------------------------------------------------------
 
 /**
@@ -238,5 +335,21 @@ export const teamBootstrapSchema = z.strictObject({
   conversations: z.array(conversationSchema),
   /** Authorization ceiling (C14): the highest permission mode members may set. */
   permissionCeiling: permissionModeSchema,
+  /**
+   * Member bot capabilities (B 方案 member-bots, additive B1): whether the
+   * caller's groups allow creating public bots (B-1) and the caller's
+   * private-bot quota usage against `max-private-bots` (B-6). Absent on team
+   * servers predating the member bot plane (additive field, old payloads keep
+   * parsing; clients treat absence as "no member bot surface").
+   */
+  botCapabilities: z
+    .strictObject({
+      canCreatePublicBot: z.boolean(),
+      /** Private bots currently owned by the caller. */
+      privateBotsUsed: z.number().int().min(0),
+      /** Server setting `max-private-bots` (default 10); 0 = creation closed. */
+      privateBotsLimit: z.number().int().min(0),
+    })
+    .optional(),
 });
 export type TeamBootstrap = z.infer<typeof teamBootstrapSchema>;

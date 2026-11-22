@@ -2,12 +2,17 @@ import { z } from 'zod';
 import { conversationSchema } from '../domain/types.js';
 import {
   teamBootstrapSchema,
+  teamBotPatchSchema,
+  teamBotProfilePatchSchema,
+  teamBotViewSchema,
   teamFriendRequestViewSchema,
   teamFriendsListSchema,
   teamMemberSchema,
+  teamModelOptionSchema,
   teamSettingsSchema,
   teamUsageRangeSchema,
   teamUsageSummarySchema,
+  teamWorkdirOptionSchema,
 } from './domain.js';
 
 /**
@@ -27,6 +32,13 @@ import {
  * 私有化改由可见性控制（白名单单人 = 该成员的私有 Bot）。三个方法名从固定
  * 契约移除（客户端与服务端同版本发布，旧名打到新服务端按「未归类即拒绝」
  * 返回 FORBIDDEN）。
+ *
+ * 2026-11（B 方案 member-bots，B1）：恢复成员侧 Bot 生命周期——新增
+ * `team.bots.*` 8 方法（create / update / delete / transfer / list /
+ * workdirOptions / workdirMkdir / modelOptions，todo/member-bots README
+ * 「固定契约」）。与 D128v2 下线的 `team.bots.*Private` 旧名无关：旧名仍按
+ * 未归类拒绝；私有 / 公共 Bot 落在既有可见性行上（B-5），配额（B-6）与工作
+ * 路径边界（B-10）由服务端策略执行（实现 B2 落地）。
  */
 
 /**
@@ -77,6 +89,15 @@ export const TEAM_RPC_METHODS = [
   'team.resolutions.approve',
   'team.resolutions.revoke',
   'team.resolutions.withdraw',
+  // 成员侧 Bot 面（B 方案 member-bots B1；实现 B2）
+  'team.bots.create',
+  'team.bots.update',
+  'team.bots.delete',
+  'team.bots.transfer',
+  'team.bots.list',
+  'team.bots.workdirOptions',
+  'team.bots.workdirMkdir',
+  'team.bots.modelOptions',
 ] as const satisfies readonly string[];
 export type TeamRpcMethodName = (typeof TEAM_RPC_METHODS)[number];
 
@@ -401,5 +422,99 @@ export const teamRpcMethodSchemas = {
   'team.resolutions.withdraw': {
     input: z.strictObject({ resolutionId: z.string().min(1), reason: z.string().max(500).optional() }),
     output: teamResolutionViewSchema,
+  },
+
+  // --- 成员侧 Bot 面（B 方案 member-bots，B1 契约冻结；实现 B2）----------------
+
+  /**
+   * Create a bot in the member plane (README fixed contract). `mode:'private'`
+   * counts against the caller's private-bot quota → BOT_LIMIT_REACHED when
+   * full (B-6); `mode:'public'` requires the caller's group permission →
+   * FORBIDDEN otherwise (B-1). `workdirPath` must come from the caller's
+   * option set → WORKDIR_NOT_ALLOWED otherwise (B-10; omitted = the
+   * auto-allocated `members/<mbrId>/bots/<botId>` directory). `interview`
+   * defaults to true: the server starts the core creation interview and the
+   * client completes it via the member-guarded `bots.interview.*` (B-11).
+   */
+  'team.bots.create': {
+    input: z.strictObject({
+      mode: z.enum(['private', 'public']),
+      /** Pre-seeded display name (the interview may still refine it). */
+      name: z.string().min(1).max(120).optional(),
+      workdirPath: z.string().min(1).optional(),
+      /** Start the creation interview after create (default true, B-11). */
+      interview: z.boolean().optional().default(true),
+      /** Profile seed = the teamBotPatch profile sub-fields (B-2). */
+      profile: teamBotProfilePatchSchema.optional(),
+    }),
+    output: z.strictObject({ bot: teamBotViewSchema }),
+  },
+
+  /**
+   * Update a member-plane bot's parameters (B-2 全量参数): only canEdit
+   * callers (owner / public creator / console admin, B-1). Patch fields are
+   * applied shallowly per sub-structure; `workdirPath` re-validated against
+   * the caller's option set.
+   */
+  'team.bots.update': {
+    input: z.strictObject({
+      botId: z.string().min(1),
+      patch: teamBotPatchSchema,
+    }),
+    output: z.strictObject({ bot: teamBotViewSchema }),
+  },
+
+  /** Delete a member-plane bot (canDelete callers only); NOT_FOUND when absent to the caller. */
+  'team.bots.delete': {
+    input: z.strictObject({ botId: z.string().min(1) }),
+    output: z.strictObject({ deleted: z.literal(true) }),
+  },
+
+  /**
+   * Transfer a PRIVATE bot to another active member (B-7: private only, any
+   * active member, directory / memory stay in place; the old owner loses
+   * visibility immediately). The target's quota is checked first →
+   * BOT_LIMIT_REACHED.
+   */
+  'team.bots.transfer': {
+    input: z.strictObject({
+      botId: z.string().min(1),
+      toMemberId: z.string().min(1),
+    }),
+    output: z.strictObject({ bot: teamBotViewSchema }),
+  },
+
+  /**
+   * Bots visible to the caller in the member plane (own private bots, public
+   * bots, admin-shared restricted bots) with per-caller canEdit / canDelete.
+   */
+  'team.bots.list': {
+    input: emptyInput,
+    output: z.strictObject({ bots: z.array(teamBotViewSchema) }),
+  },
+
+  /** The caller's selectable work paths (B-10: admin roots ∪ own workdirs subtree). */
+  'team.bots.workdirOptions': {
+    input: emptyInput,
+    output: z.strictObject({ options: z.array(teamWorkdirOptionSchema) }),
+  },
+
+  /**
+   * Create a directory inside the caller's own workdirs subtree (B-10: the
+   * only member mkdir path; `parentPath` defaults to the subtree root).
+   * Outside the subtree → WORKDIR_NOT_ALLOWED.
+   */
+  'team.bots.workdirMkdir': {
+    input: z.strictObject({
+      name: z.string().min(1).max(80),
+      parentPath: z.string().min(1).optional(),
+    }),
+    output: z.strictObject({ path: z.string() }),
+  },
+
+  /** Models the server enables for member bots (B-2: `runtime.model` values). */
+  'team.bots.modelOptions': {
+    input: emptyInput,
+    output: z.strictObject({ models: z.array(teamModelOptionSchema) }),
   },
 } satisfies Record<TeamRpcMethodName, TeamRpcIo>;

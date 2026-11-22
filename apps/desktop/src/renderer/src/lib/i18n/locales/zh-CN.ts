@@ -3345,6 +3345,8 @@ export const zhCN = {
   'chats.errorCode.FRIEND_REQUEST_DECLINED': '对方拒绝了你的好友申请',
   'chats.errorCode.ALREADY_BLOCKED': '该成员已被拉黑',
   'chats.errorCode.NOT_BLOCKED': '该成员未被拉黑',
+  'chats.errorCode.BOT_LIMIT_REACHED': '私有 Bot 数量已达上限',
+  'chats.errorCode.WORKDIR_NOT_ALLOWED': '工作路径不在允许范围内',
   'mail.intro': '邮箱账号由邮件插件提供：在邮件插件卡上添加账号，一个插件可以添加多个。',
   'mail.add': '添加邮箱',
   'mail.empty': '添加邮箱后，Bot 就能代你收发并处理新邮件。',

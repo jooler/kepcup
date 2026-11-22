@@ -3514,6 +3514,8 @@ export const enUS = {
   'chats.errorCode.FRIEND_REQUEST_DECLINED': 'Your friend request was declined',
   'chats.errorCode.ALREADY_BLOCKED': 'This member is already blocked',
   'chats.errorCode.NOT_BLOCKED': 'This member is not blocked',
+  'chats.errorCode.BOT_LIMIT_REACHED': "You've reached the private Bot limit",
+  'chats.errorCode.WORKDIR_NOT_ALLOWED': 'That work path is not allowed',
   'mail.intro':
     'Mailboxes come from mail plugins: add accounts on a mail plugin card; one plugin can hold several accounts.',
   'mail.add': 'Add mailbox',
