@@ -79,18 +79,37 @@
     return h * 60 + m;
   }
 
-  function quietDraft(entry: SectionSource) {
-    const existing = quietDrafts[entry.key];
-    if (existing !== undefined) return existing;
+  /**
+   * 免打扰草稿按来源懒初始化。模板表达式（{@const draft = quietDraft(entry)}）
+   * 里禁止写 $state（Svelte 5 state_unsafe_mutation），所以 quietDraft 是纯读
+   * 函数：键缺失时回退计算值；真正落键由下方 effect 在来源变化时补齐（effect
+   * 里写 state 合法，渲染前补齐，用户看到的首帧值一致）。
+   */
+  $effect(() => {
+    const missing: Record<string, { enabled: boolean; start: string; end: string }> = {};
+    let hasMissing = false;
+    for (const entry of sources) {
+      if (quietDrafts[entry.key] !== undefined) continue;
+      hasMissing = true;
+      missing[entry.key] = draftOf(entry);
+    }
+    if (hasMissing) quietDrafts = { ...quietDrafts, ...missing };
+  });
+
+  function draftOf(entry: SectionSource): { enabled: boolean; start: string; end: string } {
     const settings = teamSettings.settingsOf(entry.source);
     const quiet = settings?.quietHours;
-    const draft = {
+    return {
       enabled: quiet?.enabled ?? false,
       start: minutesToLabel(quiet?.startMinute ?? 22 * 60),
       end: minutesToLabel(quiet?.endMinute ?? 8 * 60),
     };
-    quietDrafts = { ...quietDrafts, [entry.key]: draft };
-    return draft;
+  }
+
+  function quietDraft(entry: SectionSource) {
+    const existing = quietDrafts[entry.key];
+    if (existing !== undefined) return existing;
+    return draftOf(entry);
   }
 
   async function saveQuietHours(entry: SectionSource): Promise<void> {
