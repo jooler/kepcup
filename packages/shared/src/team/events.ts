@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { teamMemberStateSchema } from './domain.js';
+import { teamFriendRequestViewSchema, teamMemberStateSchema } from './domain.js';
 
 /**
  * Team-layer events (README fixed contract — names must not change). Pushed by
@@ -14,6 +14,15 @@ export const TEAM_EVENT_NAMES = [
   'member.updated',
   'member.disabled',
   'team.avatarRevoked',
+  // D129v2 好友层（仅投递给相关成员——event-policy 按载荷成员过滤）。
+  'friend.requested',
+  'friend.accepted',
+  'friend.declined',
+  'friend.removed',
+  // 拉黑 / 解除拉黑（2026-11）：只投递给操作者本人会话（多标签页同步），
+  // 被拉黑方收不到任何帧（不泄「被拉黑」语义）。
+  'friend.blocked',
+  'friend.unblocked',
 ] as const satisfies readonly string[];
 export type TeamEventName = (typeof TEAM_EVENT_NAMES)[number];
 
@@ -52,4 +61,25 @@ export const teamEventSchemas = {
     botId: z.string().min(1).optional(),
     targetClientId: z.string().min(1).optional(),
   }),
+
+  // --- D129v2 好友层（载荷即完整申请视图；投递按载荷成员定向过滤，不全员扇出）------
+
+  /** 有人向我发来好友申请（只投递给接收人）。 */
+  'friend.requested': z.strictObject({ request: teamFriendRequestViewSchema }),
+  /** 我发出的申请被同意（投递给双方——同意方的其它客户端也要刷新好友栏）。 */
+  'friend.accepted': z.strictObject({ request: teamFriendRequestViewSchema }),
+  /** 我发出的申请被拒绝（只投递给发起人；申请视图带 declined 状态）。 */
+  'friend.declined': z.strictObject({ request: teamFriendRequestViewSchema }),
+  /**
+   * 好友被删除（投递给双方）。`a` / `b` 为规范序（a < b）的两个成员 id——客户端
+   * 取非自身一侧从好友列表移除；既有 dm 会话保留为历史。
+   */
+  'friend.removed': z.strictObject({ a: z.string().min(1), b: z.string().min(1) }),
+  /**
+   * 拉黑 / 解除拉黑（2026-11，只投递给操作者本人——多标签页同步拉黑名单）。
+   * `by` 是操作者（event-gate 按它定向），`memberId` 是被拉黑的目标；被拉黑方
+   * 收不到该事件（服务端不暴露「被拉黑」语义）。
+   */
+  'friend.blocked': z.strictObject({ by: z.string().min(1), memberId: z.string().min(1) }),
+  'friend.unblocked': z.strictObject({ by: z.string().min(1), memberId: z.string().min(1) }),
 } satisfies Record<TeamEventName, z.ZodTypeAny>;

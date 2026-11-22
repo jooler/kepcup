@@ -7,6 +7,7 @@
   import { teamSettings } from '$lib/features/team/team-settings.svelte';
   import { avatarRuntime } from '$lib/features/team/avatar-runtime.svelte';
   import { profilePush } from '$lib/features/team/profile-push.svelte';
+  import { friends } from '$lib/features/team/friends.svelte';
   import ProfilePushDialog from '$lib/features/team/ProfilePushDialog.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
@@ -83,6 +84,8 @@
     teamSettings.start();
     // 画像上行（T7）：首次团队连接成功的确认清单（每日至多一次）。
     profilePush.start();
+    // 好友层（62.04 D129v2）：通讯录好友栏的数据源（个人版 / 未连接休眠）。
+    friends.start();
     updateStore.start();
     appNotices.start();
     // 通知点击 → 打开对应对话（主进程经 ipc 转发）。
@@ -249,7 +252,10 @@
     if (!coreReady || settingsStore.settings === null) return;
     if (core.platform === null) return;
     onboardingChecked = true;
-    if (core.platform.onboardingVisible && settingsStore.settings.onboarding.completed === false) {
+    if (
+      core.platform.onboardingVisible &&
+      settingsStore.settings.onboarding.completed === false
+    ) {
       // 引导接管首启：不自动展开「+」面板（向导本身会创建第一个 Bot）。
       shell.autoOpenStartPanel = false;
       onboarding.show();

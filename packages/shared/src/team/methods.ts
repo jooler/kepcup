@@ -1,7 +1,9 @@
 import { z } from 'zod';
-import { botProfileSchema, botSchema, conversationSchema } from '../domain/types.js';
+import { conversationSchema } from '../domain/types.js';
 import {
   teamBootstrapSchema,
+  teamFriendRequestViewSchema,
+  teamFriendsListSchema,
   teamMemberSchema,
   teamSettingsSchema,
   teamUsageRangeSchema,
@@ -19,6 +21,12 @@ import {
  * implementation lands in the corresponding phase (T4 P0, T6 P1, T9 P2).
  * Shapes are the minimal reasonable inference from the README and the 62
  * design docs — later phases may only ADD optional fields.
+ *
+ * 2026-11 契约修订（D128 修订版）：成员自建私有 Bot（`team.bots.*Private`，
+ * T6 P1）整体下线——服务端 Bot 全部由管理员在 console 创建并初始化，Bot 的
+ * 私有化改由可见性控制（白名单单人 = 该成员的私有 Bot）。三个方法名从固定
+ * 契约移除（客户端与服务端同版本发布，旧名打到新服务端按「未归类即拒绝」
+ * 返回 FORBIDDEN）。
  */
 
 /**
@@ -47,12 +55,22 @@ export const TEAM_RPC_METHODS = [
   'team.presence.setAway',
   'team.profile.push',
   'team.projects.transferLead',
-  'team.bots.createPrivate',
-  'team.bots.updatePrivate',
-  'team.bots.deletePrivate',
   'team.settings.get',
   'team.settings.update',
   'team.usage.mine',
+  // 成员自助资料（2026-11 web 端个人资料：显示名 / 头像的写入口——成员侧
+  // settings.update 是 admin plane 被拒，identity 只能落在成员行上）
+  'team.member.updateSelf',
+  // P1.5 (D129v2 通讯录好友层；私聊准入 = 仅好友)
+  'team.members.search',
+  'team.friends.request',
+  'team.friends.accept',
+  'team.friends.decline',
+  'team.friends.cancel',
+  'team.friends.remove',
+  'team.friends.block',
+  'team.friends.unblock',
+  'team.friends.list',
   // P2 (T9)
   'team.memory.share',
   'team.resolutions.list',
@@ -253,20 +271,6 @@ export const teamRpcMethodSchemas = {
     output: okOutput,
   },
 
-  /** Private bots are self-served (62.03 D128): T6 routes to core bots.create with visibility=private + owner. */
-  'team.bots.createPrivate': {
-    input: z.strictObject({ profile: botProfileSchema }),
-    output: z.strictObject({ bot: botSchema }),
-  },
-  'team.bots.updatePrivate': {
-    input: z.strictObject({ id: z.string().min(1), profile: botProfileSchema }),
-    output: z.strictObject({ bot: botSchema }),
-  },
-  'team.bots.deletePrivate': {
-    input: z.strictObject({ id: z.string().min(1) }),
-    output: okOutput,
-  },
-
   /** Member-domain settings (62.03 §5): read / replace the caller's own settings object. */
   'team.settings.get': { input: emptyInput, output: z.strictObject({ settings: teamSettingsSchema }) },
   'team.settings.update': {
@@ -284,6 +288,84 @@ export const teamRpcMethodSchemas = {
     input: z.strictObject({ range: teamUsageRangeSchema.optional() }).default({}),
     output: teamUsageSummarySchema,
   },
+
+  /**
+   * 成员自助资料（web 端个人资料分区的写入口）：更新 CALLER 自己的显示名 / 头像
+   * （两者至少给一个）。校验口径与 console 的成员编辑一致（trim 后 1..120、无
+   * 控制字符；avatar 为 data URL 或 null 清除，≤200_000 字符）。成功后广播
+   * `member.updated`（名册各方重拉），审计记 member.update-self。
+   */
+  'team.member.updateSelf': {
+    input: z.strictObject({
+      displayName: z.string().min(1).max(120).optional(),
+      avatar: z.string().min(1).max(200_000).nullable().optional(),
+    }),
+    output: z.strictObject({ member: teamMemberSchema }),
+  },
+
+  // --- P1.5 好友层（D129v2；dm 准入随之收窄为仅好友）-----------------------------
+
+  /**
+   * 按用户名 / 显示名搜索成员（加好友入口）。大小写不敏感的子串匹配；结果
+   * 不含凭据，disabled 成员不出（同 team.members.list 口径）。项目组加人等
+   * 「找成员」场景也走这里，通讯录好友栏不再陈列全员。
+   */
+  'team.members.search': {
+    input: z.strictObject({
+      query: z.string().min(1).max(100),
+      limit: z.number().int().min(1).max(50).optional(),
+    }),
+    output: z.strictObject({ members: z.array(teamMemberSchema) }),
+  },
+
+  /**
+   * 发好友申请（按用户名；未知 / disabled 用户名同 dm 口径 NOT_FOUND，不泄
+   * 存在性）。重复申请幂等返回既有 pending；已是好友 → ALREADY_FRIENDS；
+   * 目标已拉黑申请方 → FRIEND_REQUEST_DECLINED（不暴露「被拉黑」语义）。
+   */
+  'team.friends.request': {
+    input: z.strictObject({
+      username: z.string().min(1).max(100),
+      message: z.string().max(200).optional(),
+    }),
+    output: z.strictObject({ request: teamFriendRequestViewSchema }),
+  },
+  /** 同意好友申请（仅接收人）；成功即建 friendship，双方进彼此通讯录。 */
+  'team.friends.accept': {
+    input: z.strictObject({ requestId: z.string().min(1) }),
+    output: okOutput,
+  },
+  /** 拒绝好友申请（仅接收人；申请落 declined，发起人收到通知事件）。 */
+  'team.friends.decline': {
+    input: z.strictObject({ requestId: z.string().min(1) }),
+    output: okOutput,
+  },
+  /** 撤回自己的待处理申请（仅发起人）。 */
+  'team.friends.cancel': {
+    input: z.strictObject({ requestId: z.string().min(1) }),
+    output: okOutput,
+  },
+  /** 删除好友（双向解除；既有 dm 会话保留为历史，自隐藏语义不变）。 */
+  'team.friends.remove': {
+    input: z.strictObject({ memberId: z.string().min(1) }),
+    output: okOutput,
+  },
+  /**
+   * 拉黑成员（2026-11）：既有的好友关系一并解除（双方收 friend.removed），
+   * 两人间待处理申请一并终态；被拉黑方再申请 → FRIEND_REQUEST_DECLINED。
+   * 重复拉黑 → ALREADY_BLOCKED。
+   */
+  'team.friends.block': {
+    input: z.strictObject({ memberId: z.string().min(1) }),
+    output: okOutput,
+  },
+  /** 解除拉黑（未拉黑 → NOT_BLOCKED）。 */
+  'team.friends.unblock': {
+    input: z.strictObject({ memberId: z.string().min(1) }),
+    output: okOutput,
+  },
+  /** 通讯录好友栏数据源：好友（带 presence）+ 待处理申请（incoming / outgoing）+ 已拉黑。 */
+  'team.friends.list': { input: emptyInput, output: teamFriendsListSchema },
 
   // --- P2 (implemented in T9) -------------------------------------------------
 

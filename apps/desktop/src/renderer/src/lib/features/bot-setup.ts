@@ -2,9 +2,7 @@ import { BUILTIN_AGENT_RUNTIME, type Bot, type BotProfile } from '@kepcup/shared
 import { toast } from 'svelte-sonner';
 import { t } from '$lib/i18n';
 import { core } from '$lib/rpc/client.svelte';
-import { connections, type SourceId } from '$lib/rpc/connections.svelte';
 import { chat } from '$lib/stores/chat.svelte';
-import { teamContext } from '$lib/features/team/team-context.svelte';
 import { contacts } from '$lib/stores/contacts.svelte';
 import { shell } from '$lib/stores/shell.svelte';
 import { DEFAULT_AVATAR, presetForName } from '$lib/avatars/presets';
@@ -40,23 +38,12 @@ export function emptyProfile(): BotProfile {
  * 对话，由 Bot 主动提问、根据回答自行完善自己的 Profile（见 core 的
  * setup interview：bots.create interview + bots.interview.start）。
  * 成功后关闭设置弹框（通讯录里的入口在弹框内）。
+ *
+ * 「新建 Bot」恒走本机（D128 修订版）：用户自己的私有 Bot 在自己客户端创建
+ *（bots.create 本机路径）；团队服务器上的 Bot 全部由管理员在 console 创建，
+ * web 团队端点的「新建 Bot」入口随「+」按钮一起移除。
  */
-/**
- * 新建 Bot 的目标来源（T7 步骤 5）：团队上下文（web 团队端点 = teamContext；
- * 桌面融合视图 = 第一个已连接的团队来源）下「新建 Bot」走
- * `team.bots.createPrivate`（私有 Bot，62.03 D128）；共享 Bot 的创建入口
- * 维持 T5 隐藏（bot-create surface）。非团队上下文返回 null（本机路径）。
- */
-export function teamBotCreateSource(): SourceId | null {
-  for (const source of connections.sources()) {
-    if (source !== 'local' && connections.get(source).status === 'connected') return source;
-  }
-  return teamContext.active ? 'local' : null;
-}
-
 export async function createBotConversational(): Promise<Bot | null> {
-  const teamSource = teamBotCreateSource();
-  if (teamSource !== null) return createPrivateTeamBot(teamSource);
   try {
     const created = (await core.call('bots.create', {
       profile: emptyProfile(),
@@ -68,28 +55,6 @@ export async function createBotConversational(): Promise<Bot | null> {
     await Promise.all([contacts.refresh(), chat.refresh()]);
     shell.closeSettings();
     await chat.select(started.conversationId);
-    return created.bot;
-  } catch (error) {
-    toast.error(t('onboarding.createFailed', { reason: String((error as Error).message ?? '') }));
-    return null;
-  }
-}
-
-/**
- * 团队上下文的「新建 Bot」（T7）：team.bots.createPrivate 建私有 Bot，
- * 再经该团队连接开直聊（每 (成员, Bot) 一条）并跳过去。
- */
-async function createPrivateTeamBot(source: SourceId): Promise<Bot | null> {
-  const conn = connections.get(source);
-  try {
-    const created = (await conn.callTeam('team.bots.createPrivate', {
-      profile: emptyProfile(),
-    })) as { bot: Bot };
-    const opened = (await conn.call('conversations.openDirect', {
-      botId: created.bot.id,
-    })) as { conversation: { id: string } };
-    shell.closeSettings();
-    await chat.select({ source, id: opened.conversation.id });
     return created.bot;
   } catch (error) {
     toast.error(t('onboarding.createFailed', { reason: String((error as Error).message ?? '') }));

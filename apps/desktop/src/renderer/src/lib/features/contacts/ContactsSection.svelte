@@ -1,14 +1,29 @@
 <script lang="ts">
-  import { Archive, MessagesSquare, Moon, RotateCcw, Trash2, type LucideIcon } from '@lucide/svelte';
+  import {
+    Archive,
+    Ban,
+    Check,
+    MessagesSquare,
+    Moon,
+    RotateCcw,
+    Search,
+    Trash2,
+    UserMinus,
+    UserPlus,
+    X,
+    type LucideIcon,
+  } from '@lucide/svelte';
   import type { Component } from 'svelte';
-  import { t } from '$lib/i18n';
+  import { errorText, t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
-  import type { Bot, Conversation } from '@kepcup/shared';
+  import type { Bot, Conversation, TeamFriendRequestView, TeamMember } from '@kepcup/shared';
   import { isArchivedConversation } from '@kepcup/shared';
-  import { contacts, type TeamSourceSlice } from '$lib/stores/contacts.svelte';
+  import { contacts } from '$lib/stores/contacts.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { shell } from '$lib/stores/shell.svelte';
   import { teamContext } from '$lib/features/team/team-context.svelte';
+  import { canRequestFriend, friends as friendsStore } from '$lib/features/team/friends.svelte';
+  import type { SourceId } from '$lib/rpc/connections.svelte';
   import MemberAvatar from '$lib/features/team/MemberAvatar.svelte';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import ProjectAvatarStack from '$lib/avatars/ProjectAvatarStack.svelte';
@@ -25,9 +40,11 @@
   } from '$lib/components/ui/dialog';
 
   /**
-   * 设置弹框「通讯录」分组：Bot 名册 + 项目组名册。
-   * 新建不再在这里提供入口——只保留主界面左栏「+」一个入口。
-   * 项目组也在这里留条目：从对话列表移除（归档）后内容全留，可随时恢复。
+   * 设置弹框「通讯录」分组：Bot 名册 + 好友栏（团队上下文）+ 项目组名册。
+   * 好友栏是 D129v2 的微信式通讯录：好友卡 / 搜索用户名加好友 / 好友申请
+   * （同意 / 拒绝 / 撤回；拒绝后可就地拉黑）+ 已拉黑小节；顶部固定「我」
+   * （自我会话）。非团队上下文不渲染。项目组也在这里留条目：从对话列表
+   * 移除（归档）后内容全留，可随时恢复。
    */
   let deleteTarget = $state<Bot | null>(null);
   let deletePreview = $state({
@@ -41,32 +58,137 @@
   const activeProjects = $derived(projects.filter((p) => !isArchivedConversation(p)));
   const archivedProjects = $derived(projects.filter((p) => isArchivedConversation(p)));
 
-  /**
-   * 团队成员名册（T5，62.04 §1）：团队上下文下通讯录长出「成员」栏——顶部
-   * 固定「我」（自我会话），其下每个在册成员一张卡（头像 / 显示名 / 在线
-   * 状态）。点击 → team.dm.open → 打开会话。非团队上下文整栏不渲染。
-   */
+  /** 团队上下文（web 团队端点）的好友栏开关。 */
   const teamActive = $derived(teamContext.active);
   const selfMember = $derived(contacts.self);
-  /** 成员卡（其他成员）：「我」是顶部固定条目，不在卡列表里重复出现。 */
-  const rosterMembers = $derived(
-    contacts.members.filter((member) => member.id !== teamContext.member?.id),
-  );
 
   /**
    * 桌面融合视图的团队名册切片（T7，62.04 §1 双源名册）：每个已融合服务器
-   * 一栏（与 web 端点 teamContext 的成员栏同一呈现，标题带服务器名）。
+   * 一栏（与 web 端点的好友栏同一呈现，标题带服务器名）。
    * 断开时切片 connected=false——栏显示「未连接」占位，不伪造数据。
    */
   const teamSlices = $derived(
     Object.values(contacts.teamSources).sort((a, b) => a.serverHash.localeCompare(b.serverHash)),
   );
 
-  /** 点团队来源的成员卡 → team.dm.open（经该来源连接）→ 打开会话。 */
-  async function openTeamDm(slice: TeamSourceSlice, memberId?: string): Promise<void> {
-    if (!slice.connected) return;
+  // --- 好友搜索与申请（web 本地与融合来源互斥出现，共用一份搜索状态） ---------
+
+  let friendSearchQuery = $state('');
+  let friendSearchSource = $state<SourceId>('local');
+  let friendSearchResults = $state<TeamMember[]>([]);
+  let friendSearching = $state(false);
+
+  async function searchMembers(source: SourceId): Promise<void> {
+    const query = friendSearchQuery.trim();
+    friendSearchSource = source;
+    if (query.length === 0) {
+      friendSearchResults = [];
+      return;
+    }
+    friendSearching = true;
+    try {
+      friendSearchResults = await friendsStore.search(source, query);
+    } finally {
+      friendSearching = false;
+    }
+  }
+
+  async function sendFriendRequest(source: SourceId, member: TeamMember): Promise<void> {
+    const handle = member.username ?? member.id;
+    try {
+      await friendsStore.request(source, handle);
+      toast.success(t('friends.requestSent', { name: member.displayName }));
+    } catch (error) {
+      toast.error(errorText((error as { code?: string }).code, t('friends.requestFailed')));
+    }
+  }
+
+  async function acceptFriend(source: SourceId, requestId: string): Promise<void> {
+    try {
+      await friendsStore.accept(source, requestId);
+      toast.success(t('friends.accepted'));
+    } catch (error) {
+      toast.error(errorText((error as { code?: string }).code, t('friends.actionFailed')));
+    }
+  }
+
+  /**
+   * 已拒绝的申请（2026-11，本会话本地保留）：refresh 后 pending 里已无此条，
+   * 行转为「已拒绝」提示 + 拉黑入口；拉黑成功或对方再次发来申请后移除。
+   */
+  let declinedRequests = $state<Array<{ source: SourceId; requestId: string; member: TeamMember }>>(
+    [],
+  );
+
+  async function declineFriend(source: SourceId, request: TeamFriendRequestView): Promise<void> {
+    try {
+      await friendsStore.decline(source, request.id);
+      // 服务端 refresh 只会把该条移出 incoming，这里本地记住成员快照兜住行展示。
+      declinedRequests = [
+        ...declinedRequests.filter(
+          (entry) => !(entry.source === source && entry.member.id === request.from.id),
+        ),
+        { source, requestId: request.id, member: request.from },
+      ];
+    } catch (error) {
+      toast.error(errorText((error as { code?: string }).code, t('friends.actionFailed')));
+    }
+  }
+
+  /** 拉黑已拒绝的成员：成功后本地行移除（blocked 名单以服务端 refresh 为准）。 */
+  async function blockDeclinedMember(source: SourceId, memberId: string): Promise<void> {
+    try {
+      await friendsStore.block(source, memberId);
+      declinedRequests = declinedRequests.filter(
+        (entry) => !(entry.source === source && entry.member.id === memberId),
+      );
+    } catch (error) {
+      toast.error(errorText((error as { code?: string }).code, t('friends.actionFailed')));
+    }
+  }
+
+  /** 解除拉黑（「已拉黑」小节）；名单随 friend.unblocked 事件 refresh 收敛。 */
+  async function unblockMember(source: SourceId, memberId: string): Promise<void> {
+    try {
+      await friendsStore.unblock(source, memberId);
+    } catch (error) {
+      toast.error(errorText((error as { code?: string }).code, t('friends.actionFailed')));
+    }
+  }
+
+  async function cancelFriendRequest(source: SourceId, requestId: string): Promise<void> {
+    try {
+      await friendsStore.cancel(source, requestId);
+    } catch (error) {
+      toast.error(errorText((error as { code?: string }).code, t('friends.actionFailed')));
+    }
+  }
+
+  /** 删除好友确认（两段式轻确认；既有 dm 保留为历史）。 */
+  let removeFriendTarget = $state<{ source: SourceId; member: TeamMember } | null>(null);
+
+  async function confirmRemoveFriend(): Promise<void> {
+    const target = removeFriendTarget;
+    if (target === null) return;
+    try {
+      await friendsStore.remove(target.source, target.member.id);
+      toast.success(t('friends.removed', { name: target.member.displayName }));
+    } catch (error) {
+      toast.error(errorText((error as { code?: string }).code, t('friends.actionFailed')));
+    } finally {
+      removeFriendTarget = null;
+    }
+  }
+
+  /** 点好友卡 → 打开与该成员的 dm（web 本地与团队来源统一入口）。 */
+  async function openFriendDm(source: SourceId, memberId: string): Promise<void> {
     shell.closeSettings();
-    const ref = await contacts.openTeamDm(`team:${slice.serverHash}` as const, memberId);
+    if (source === 'local') {
+      const conversationId = await contacts.openDm(memberId);
+      if (conversationId !== null) await chat.select(conversationId);
+      return;
+    }
+    const ref = await contacts.openTeamDm(source, memberId);
     if (ref !== null) await chat.select(ref);
   }
 
@@ -80,13 +202,6 @@
   async function openSelfConversation(): Promise<void> {
     shell.closeSettings();
     const conversationId = await contacts.openDm();
-    if (conversationId !== null) await chat.select(conversationId);
-  }
-
-  /** 点成员卡 → 打开与该成员的 dm。 */
-  async function openMemberDm(memberId: string): Promise<void> {
-    shell.closeSettings();
-    const conversationId = await contacts.openDm(memberId);
     if (conversationId !== null) await chat.select(conversationId);
   }
 
@@ -177,6 +292,310 @@
     </Button>
   {/snippet}
 
+  <!-- 成员三态副行（好友卡与搜索结果共用；与旧成员卡同一呈现）。 -->
+  {#snippet memberPresence(member: TeamMember)}
+    {#if member.state === 'offline' && lastSeenLabel(member) !== null}
+      <p class="truncate text-xs text-muted-foreground">{lastSeenLabel(member)}</p>
+    {:else if member.state !== 'offline'}
+      <p class="flex items-center gap-1 truncate text-xs text-muted-foreground">
+        {#if member.state === 'away'}
+          <Moon class="size-3 shrink-0 text-amber-500" aria-hidden="true" />
+        {/if}
+        <span class="truncate">
+          {member.state === 'online' ? t('team.memberOnline') : t('team.memberAway')}
+        </span>
+        {#if member.state === 'away' && member.avatarBotName !== undefined}
+          <span class="truncate">{t('team.awayAvatarHandling', { bot: member.avatarBotName })}</span>
+        {/if}
+      </p>
+    {/if}
+  {/snippet}
+
+  <!-- 好友栏主体（web 本地与融合切片共用）：「我」自聊入口（仅本地）、搜索
+       加好友、待处理申请、好友卡。数据来自 friends store 的同名切片。 -->
+  {#snippet friendsLane(source: SourceId)}
+    {@const slice = friendsStore.sliceOf(source)}
+    {#if selfMember !== null && source === 'local'}
+      <ul class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <li>
+          <button
+            type="button"
+            class="flex w-full items-center gap-3 rounded-xl border p-4 text-left transition-colors hover:bg-accent/40"
+            onclick={() => void openSelfConversation()}
+            data-testid="contacts-self-row"
+          >
+            <MemberAvatar
+              name={selfMember.displayName}
+              avatar={selfMember.avatar ?? null}
+              state={selfMember.state}
+              class="size-10"
+            />
+            <div class="min-w-0">
+              <p class="truncate text-sm font-medium">{selfMember.displayName}</p>
+              <p class="truncate text-xs text-muted-foreground">{t('contacts.selfEntry')}</p>
+            </div>
+          </button>
+        </li>
+      </ul>
+    {/if}
+    <!-- 添加好友：搜索用户名 / 显示名 → 发申请（D129v2 唯一加好友入口）。 -->
+    <div class="flex items-center gap-2" data-testid="friends-search">
+      <input
+        class="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:border-ring"
+        type="text"
+        placeholder={t('friends.searchPlaceholder')}
+        bind:value={friendSearchQuery}
+        onkeydown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            void searchMembers(source);
+          }
+        }}
+        data-testid="friends-search-input"
+      />
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={friendSearching || friendSearchQuery.trim().length === 0}
+        onclick={() => void searchMembers(source)}
+        data-testid="friends-search-submit"
+      >
+        <Search class="size-4" aria-hidden="true" />
+        {t('friends.searchAction')}
+      </Button>
+    </div>
+    {#if friendSearchSource === source && friendSearchResults.length > 0}
+      <ul class="space-y-1.5" data-testid="friends-search-results">
+        {#each friendSearchResults as member (member.id)}
+          <li class="flex items-center gap-3 rounded-lg border p-2">
+            <MemberAvatar
+              name={member.displayName}
+              avatar={member.avatar ?? null}
+              state={member.state}
+              class="size-8"
+            />
+            <div class="min-w-0 flex-1">
+              <p class="truncate text-sm">{member.displayName}</p>
+              {#if member.username !== undefined}
+                <p class="truncate text-xs text-muted-foreground">{member.username}</p>
+              {/if}
+            </div>
+            <!-- 禁用判定与加好友弹框同款（canRequestFriend，切片驱动）：
+                 pending outgoing / 已是好友才禁，拒绝后自动恢复。 -->
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!canRequestFriend(slice, member.id)}
+              onclick={() => void sendFriendRequest(source, member)}
+              data-testid={`friend-request-${member.id}`}
+            >
+              <UserPlus class="size-4" aria-hidden="true" />
+              {t('friends.requestAction')}
+            </Button>
+          </li>
+        {/each}
+      </ul>
+    {:else if friendSearchSource === source && !friendSearching && friendSearchQuery.trim().length > 0}
+      <p class="text-xs text-muted-foreground" data-testid="friends-search-empty">
+        {t('friends.searchEmpty')}
+      </p>
+    {/if}
+    <!-- 待处理申请：收到的（同意 / 拒绝）与发出的（撤回）。本会话已拒绝的
+         申请立即从待处理行收起（转下方「已拒绝」行），不等 refresh 落地。 -->
+    {@const pendingIncoming = (slice?.incoming ?? []).filter(
+      (request) =>
+        !declinedRequests.some(
+          (entry) => entry.source === source && entry.requestId === request.id,
+        ),
+    )}
+    {#if slice !== null && (pendingIncoming.length > 0 || slice.outgoing.length > 0)}
+      <div class="space-y-1.5" data-testid="friends-requests">
+        {#each pendingIncoming as request (request.id)}
+          <div
+            class="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-2"
+            data-testid={`friend-incoming-${request.id}`}
+          >
+            <MemberAvatar
+              name={request.from.displayName}
+              avatar={request.from.avatar ?? null}
+              state={request.from.state}
+              class="size-8"
+            />
+            <p class="min-w-0 flex-1 truncate text-sm">
+              {request.from.displayName}
+              {#if request.message !== undefined}
+                <span class="text-xs text-muted-foreground"> · {request.message}</span>
+              {/if}
+            </p>
+            <Button
+              size="sm"
+              onclick={() => void acceptFriend(source, request.id)}
+              data-testid={`friend-accept-${request.id}`}
+            >
+              <Check class="size-4" aria-hidden="true" />
+              {t('friends.accept')}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onclick={() => void declineFriend(source, request)}
+              data-testid={`friend-decline-${request.id}`}
+            >
+              <X class="size-4" aria-hidden="true" />
+              {t('friends.decline')}
+            </Button>
+          </div>
+        {/each}
+        {#each slice.outgoing as request (request.id)}
+          <div
+            class="flex items-center gap-2 rounded-lg border p-2 opacity-80"
+            data-testid={`friend-outgoing-${request.id}`}
+          >
+            <MemberAvatar
+              name={request.to.displayName}
+              avatar={request.to.avatar ?? null}
+              state={request.to.state}
+              class="size-8"
+            />
+            <p class="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+              {t('friends.outgoingLabel', { name: request.to.displayName })}
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onclick={() => void cancelFriendRequest(source, request.id)}
+              data-testid={`friend-cancel-${request.id}`}
+            >
+              {t('friends.cancelRequest')}
+            </Button>
+          </div>
+        {/each}
+      </div>
+    {/if}
+    <!-- 已拒绝的申请（2026-11，本会话本地保留）：「已拒绝」提示 + 拉黑入口。
+         对方再次发来申请时行让位给上方待处理行；拉黑成功后本地移除。 -->
+    {#if slice !== null}
+      {@const declinedVisible = declinedRequests.filter(
+        (entry) =>
+          entry.source === source &&
+          !slice.incoming.some((request) => request.from.id === entry.member.id),
+      )}
+      {#if declinedVisible.length > 0}
+        <div class="space-y-1.5" data-testid="friends-declined">
+          {#each declinedVisible as entry (entry.member.id)}
+            <div
+              class="flex items-center gap-2 rounded-lg border border-dashed p-2 opacity-75"
+              data-testid={`friend-declined-${entry.member.id}`}
+            >
+              <MemberAvatar
+                name={entry.member.displayName}
+                avatar={entry.member.avatar ?? null}
+                state={entry.member.state}
+                class="size-8"
+              />
+              <p class="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+                {entry.member.displayName}
+                <span class="text-xs"> · {t('friends.declined')}</span>
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onclick={() => void blockDeclinedMember(source, entry.member.id)}
+                data-testid={`friend-block-${entry.member.id}`}
+              >
+                <Ban class="size-4" aria-hidden="true" />
+                {t('friends.block')}
+              </Button>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    {/if}
+    <!-- 好友卡（点开 dm；右上角悬浮删除好友）。 -->
+    {#if slice === null || slice.connected === false}
+      <div
+        class="flex h-16 items-center justify-center text-sm text-muted-foreground"
+        data-testid="friends-disconnected"
+      >
+        {t('team.serverDisconnectedRows')}
+      </div>
+    {:else if slice.friends.length === 0}
+      <div
+        class="flex h-16 items-center justify-center text-sm text-muted-foreground"
+        data-testid="friends-empty"
+      >
+        {t('friends.empty')}
+      </div>
+    {:else}
+      <ul class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {#each slice.friends as member (member.id)}
+          <li class="group relative" data-testid={`friend-card-${member.id}`}>
+            <button
+              type="button"
+              class="flex w-full items-center gap-3 rounded-xl border p-4 text-left transition-colors hover:bg-accent/40"
+              onclick={() => void openFriendDm(source, member.id)}
+              data-testid={`friend-card-open-${member.id}`}
+            >
+              <MemberAvatar
+                name={member.displayName}
+                avatar={member.avatar ?? null}
+                state={member.state}
+                class="size-10"
+              />
+              <div class="min-w-0">
+                <p class="truncate text-sm font-medium">{member.displayName}</p>
+                {@render memberPresence(member)}
+              </div>
+            </button>
+            <button
+              type="button"
+              class="absolute right-2 top-2 flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-50 transition-opacity hover:bg-accent hover:text-foreground hover:opacity-100"
+              onclick={() => (removeFriendTarget = { source, member })}
+              aria-label={t('friends.remove')}
+              title={t('friends.remove')}
+              data-testid={`friend-remove-${member.id}`}
+            >
+              <UserMinus class="size-4" aria-hidden="true" />
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+    <!-- 已拉黑小节（2026-11）：名单来自服务端切片，仅拉黑方可见；
+         「解除拉黑」后名单随 friend.unblocked 事件 refresh 收敛。 -->
+    {#if slice !== null && slice.connected && slice.blocked.length > 0}
+      <div class="space-y-1.5" data-testid="friends-blocked">
+        <p class="text-xs text-muted-foreground">{t('friends.blocked')}</p>
+        <ul class="space-y-1.5">
+          {#each slice.blocked as member (member.id)}
+            <li
+              class="flex items-center gap-3 rounded-lg border border-dashed p-2 opacity-75"
+              data-testid={`friend-blocked-${member.id}`}
+            >
+              <MemberAvatar
+                name={member.displayName}
+                avatar={member.avatar ?? null}
+                state={member.state}
+                class="size-8"
+              />
+              <p class="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+                {member.displayName}
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onclick={() => void unblockMember(source, member.id)}
+                data-testid={`friend-unblock-${member.id}`}
+              >
+                {t('friends.unblock')}
+              </Button>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
+  {/snippet}
+
   <!-- Bot 名册 -->
   <section class="space-y-3" data-testid="contacts-bots-section">
     <h3 class="text-sm font-medium" data-testid="contacts-bots-title">{t('contacts.botsTitle')}</h3>
@@ -248,96 +667,14 @@
     {/if}
   </section>
 
-  <!-- 团队成员名册（T5）：只有团队上下文渲染本栏；非团队端点行为与现状一致。 -->
+  <!-- 好友栏（D129v2，62.04）：只有团队上下文渲染本栏；非团队端点行为与现状
+       一致（通讯录只有 Bot 与项目组两栏）。好友卡 / 搜索加好友 / 好友申请。 -->
   {#if teamActive}
-    <section class="space-y-3" data-testid="contacts-members-section">
-      <h3 class="text-sm font-medium" data-testid="contacts-members-title">
-        {t('contacts.membersTitle', { server: teamContext.serverName })}
+    <section class="space-y-3" data-testid="contacts-friends-section">
+      <h3 class="text-sm font-medium" data-testid="contacts-friends-title">
+        {t('contacts.friendsTitle', { server: teamContext.serverName })}
       </h3>
-      <!-- 顶部固定「我」：点开 = 自我会话（备忘 / 文件中转）。 -->
-      {#if selfMember !== null}
-        <ul class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <li>
-            <button
-              type="button"
-              class="flex w-full items-center gap-3 rounded-xl border p-4 text-left transition-colors hover:bg-accent/40"
-              onclick={() => void openSelfConversation()}
-              data-testid="contacts-self-row"
-            >
-              <MemberAvatar
-                name={selfMember.displayName}
-                avatar={selfMember.avatar ?? null}
-                state={selfMember.state}
-                class="size-10"
-              />
-              <div class="min-w-0">
-                <p class="truncate text-sm font-medium">{selfMember.displayName}</p>
-                <p class="truncate text-xs text-muted-foreground">{t('contacts.selfEntry')}</p>
-              </div>
-            </button>
-          </li>
-        </ul>
-      {/if}
-      {#if rosterMembers.length === 0}
-        <div
-          class="flex h-16 items-center justify-center text-sm text-muted-foreground"
-          data-testid="contacts-members-empty"
-        >
-          {t('contacts.membersEmpty')}
-        </div>
-      {:else}
-        <ul class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {#each rosterMembers as member (member.id)}
-            <li>
-              <button
-                type="button"
-                class="flex w-full items-center gap-3 rounded-xl border p-4 text-left transition-colors hover:bg-accent/40"
-                onclick={() => void openMemberDm(member.id)}
-                data-testid={`member-card-${member.id}`}
-              >
-                <MemberAvatar
-                  name={member.displayName}
-                  avatar={member.avatar ?? null}
-                  state={member.state}
-                  class="size-10"
-                />
-                <div class="min-w-0">
-                  <p class="truncate text-sm font-medium" data-testid="member-card-name">
-                    {member.displayName}
-                  </p>
-                  {#if member.state === 'offline' && lastSeenLabel(member) !== null}
-                    <p class="truncate text-xs text-muted-foreground" data-testid="member-last-seen">
-                      {lastSeenLabel(member)}
-                    </p>
-                  {:else if member.state !== 'offline'}
-                    <!-- 离开态徽标（T7，62.06）：月牙 + 分身提示（分身开启时）。 -->
-                    <p
-                      class="flex items-center gap-1 truncate text-xs text-muted-foreground"
-                      data-testid="member-state"
-                    >
-                      {#if member.state === 'away'}
-                        <Moon
-                          class="size-3 shrink-0 text-amber-500"
-                          aria-hidden="true"
-                          data-testid="member-away-moon"
-                        />
-                      {/if}
-                      <span class="truncate">
-                        {member.state === 'online' ? t('team.memberOnline') : t('team.memberAway')}
-                      </span>
-                      {#if member.state === 'away' && member.avatarBotName !== undefined}
-                        <span class="truncate" data-testid="member-away-avatar-hint">
-                          {t('team.awayAvatarHandling', { bot: member.avatarBotName })}
-                        </span>
-                      {/if}
-                    </p>
-                  {/if}
-                </div>
-              </button>
-            </li>
-          {/each}
-        </ul>
-      {/if}
+      {@render friendsLane('local')}
     </section>
   {/if}
 
@@ -350,62 +687,9 @@
       data-connected={slice.connected ? 'true' : 'false'}
     >
       <h3 class="text-sm font-medium">
-        {t('contacts.membersTitle', { server: slice.serverName || slice.serverHash })}
+        {t('contacts.friendsTitle', { server: slice.serverName || slice.serverHash })}
       </h3>
-      {#if !slice.connected}
-        <div
-          class="flex h-16 items-center justify-center text-sm text-muted-foreground"
-          data-testid={`contacts-team-placeholder-${slice.serverHash}`}
-        >
-          {t('team.serverDisconnectedRows')}
-        </div>
-      {:else}
-        <ul class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {#each slice.members as member (member.id)}
-            {#if member.id !== slice.self?.id}
-              <li>
-                <button
-                  type="button"
-                  class="flex w-full items-center gap-3 rounded-xl border p-4 text-left transition-colors hover:bg-accent/40"
-                  onclick={() => void openTeamDm(slice, member.id)}
-                  data-testid={`team-member-card-${slice.serverHash}-${member.id}`}
-                >
-                  <MemberAvatar
-                    name={member.displayName}
-                    avatar={member.avatar ?? null}
-                    state={member.state}
-                    class="size-10"
-                  />
-                  <div class="min-w-0">
-                    <p class="truncate text-sm font-medium" data-testid="member-card-name">
-                      {member.displayName}
-                    </p>
-                    {#if member.state === 'offline' && member.lastSeenAt !== undefined}
-                      <p class="truncate text-xs text-muted-foreground">
-                        {t('team.lastSeen', { time: new Date(member.lastSeenAt).toLocaleString() })}
-                      </p>
-                    {:else if member.state !== 'offline'}
-                      <p class="flex items-center gap-1 truncate text-xs text-muted-foreground">
-                        {#if member.state === 'away'}
-                          <Moon class="size-3 shrink-0 text-amber-500" aria-hidden="true" />
-                        {/if}
-                        <span class="truncate">
-                          {member.state === 'online' ? t('team.memberOnline') : t('team.memberAway')}
-                        </span>
-                        {#if member.state === 'away' && member.avatarBotName !== undefined}
-                          <span class="truncate">
-                            {t('team.awayAvatarHandling', { bot: member.avatarBotName })}
-                          </span>
-                        {/if}
-                      </p>
-                    {/if}
-                  </div>
-                </button>
-              </li>
-            {/if}
-          {/each}
-        </ul>
-      {/if}
+      {@render friendsLane(`team:${slice.serverHash}` as SourceId)}
     </section>
   {/each}
 
@@ -554,6 +838,39 @@
             {t('contacts.deleteConfirm')}
           </Button>
         {/if}
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
+  <!-- 删除好友确认（微信式移除：好友关系解除，既有 dm 保留为历史）。 -->
+  <Dialog
+    open={removeFriendTarget !== null}
+    onOpenChange={(open) => (removeFriendTarget = open ? removeFriendTarget : null)}
+  >
+    <DialogContent class="max-w-md" data-testid="friend-remove-dialog">
+      <DialogHeader>
+        <DialogTitle>
+          {t('friends.removeTitle', { name: removeFriendTarget?.member.displayName ?? '' })}
+        </DialogTitle>
+      </DialogHeader>
+      <p class="text-sm text-muted-foreground" data-testid="friend-remove-body">
+        {t('friends.removeBody')}
+      </p>
+      <DialogFooter>
+        <Button
+          variant="outline"
+          onclick={() => (removeFriendTarget = null)}
+          data-testid="friend-remove-cancel"
+        >
+          {t('contacts.cancel')}
+        </Button>
+        <Button
+          variant="destructive"
+          onclick={() => void confirmRemoveFriend()}
+          data-testid="friend-remove-confirm"
+        >
+          {t('friends.removeConfirm')}
+        </Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>

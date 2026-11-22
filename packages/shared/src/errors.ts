@@ -297,8 +297,6 @@ export const ERROR_CODES = [
   'BOT_NOT_VISIBLE',
   /** 成员已被禁用（62.03 D127）：登录 / 握手 / 后续调用一律拒绝。 */
   'MEMBER_DISABLED',
-  /** 私有 Bot 数量达到每成员上限（62.03 §8 P1；默认 5，管理台可调）。 */
-  'PRIVATE_BOT_LIMIT',
   /** 仅项目负责人可执行（62.09 §1 双负责人制：真人负责人专属动作，如移出成员、转交）。 */
   'NOT_PROJECT_LEAD',
   /**
@@ -308,6 +306,17 @@ export const ERROR_CODES = [
   'RESOLUTION_STALE',
   /** 决议已锁定不可变更（62.09 §2）：通过后不可修改 / 作废 / 删除，修正只能起新决议。 */
   'RESOLUTION_LOCKED',
+  // 好友层（62.04 D129v2）：dm 准入 = 仅好友；私有 Bot 配额码随 D128v2 下线。
+  /** 非好友之间不能互发 dm（62.04 D129v2：先加好友再聊）。 */
+  'NOT_FRIEND',
+  /** 对方已经是好友，无需重复申请（62.04 D129v2）。 */
+  'ALREADY_FRIENDS',
+  /** 对方拒绝了你的好友申请（2026-11：被拉黑时的对外话术，不暴露拉黑语义）。 */
+  'FRIEND_REQUEST_DECLINED',
+  /** 对方已被你拉黑，无需重复拉黑（2026-11）。 */
+  'ALREADY_BLOCKED',
+  /** 该成员未被拉黑，无从解除（2026-11）。 */
+  'NOT_BLOCKED',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

@@ -24,6 +24,11 @@ export type TeamMemberState = z.infer<typeof teamMemberStateSchema>;
 export const teamMemberSchema = z.strictObject({
   id: z.string().min(1),
   displayName: z.string(),
+  /**
+   * 登录用户名（D129v2 好友层起在 `team.members.search` 结果中携带——它是加好友
+   * 的句柄，不是凭据；通讯录名册 / bootstrap 卡仍不带，避免不必要的暴露面）。
+   */
+  username: z.string().optional(),
   /** Avatar (data URL / uploaded path); absent = unset, null = explicitly cleared. */
   avatar: z.string().nullable().optional(),
   state: teamMemberStateSchema,
@@ -166,6 +171,46 @@ export const teamUsageSummarySchema = z.strictObject({
   platformTotal: z.number().optional(),
 });
 export type TeamUsageSummary = z.infer<typeof teamUsageSummarySchema>;
+
+// --- Friends（D129v2 通讯录好友层）----------------------------------------------
+
+/**
+ * 好友申请状态机：`request → accepted | declined`（接收人处理）或
+ * `request → cancelled`（发起人撤回）；删除好友不走申请（直接移除）。
+ */
+export const teamFriendRequestStateSchema = z.enum(['pending', 'accepted', 'declined', 'cancelled']);
+export type TeamFriendRequestState = z.infer<typeof teamFriendRequestStateSchema>;
+
+/**
+ * 好友申请视图（发起人与接收人各持一份成员卡，双方客户端都能直接渲染）。
+ * 成员卡不带任何凭据（同 team.members.list 口径）。
+ */
+export const teamFriendRequestViewSchema = z.strictObject({
+  id: z.string().min(1),
+  /** 发起人。 */
+  from: teamMemberSchema,
+  /** 接收人。 */
+  to: teamMemberSchema,
+  /** 申请附言（可空，加好友时可选填写）。 */
+  message: z.string().optional(),
+  state: teamFriendRequestStateSchema,
+  createdAt: z.number(),
+  handledAt: z.number().nullable().optional(),
+});
+export type TeamFriendRequestView = z.infer<typeof teamFriendRequestViewSchema>;
+
+/**
+ * `team.friends.list` 的输出——通讯录「好友栏」的数据源。好友带 presence 卡；
+ * incoming / outgoing 是待处理的申请（含对方成员卡）；blocked 是我拉黑的成员
+ *（presence 卡，仅拉黑方可见——被拉黑方对「被拉黑」无感知）。
+ */
+export const teamFriendsListSchema = z.strictObject({
+  friends: z.array(teamMemberSchema),
+  incoming: z.array(teamFriendRequestViewSchema),
+  outgoing: z.array(teamFriendRequestViewSchema),
+  blocked: z.array(teamMemberSchema),
+});
+export type TeamFriendsList = z.infer<typeof teamFriendsListSchema>;
 
 // --- Bootstrap ----------------------------------------------------------------
 

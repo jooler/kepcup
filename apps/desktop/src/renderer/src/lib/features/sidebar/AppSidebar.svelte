@@ -29,6 +29,7 @@
     Server,
     FileUp,
     Moon,
+    UserPlus,
     type LucideIcon,
   } from '@lucide/svelte';
   import { t } from '$lib/i18n';
@@ -40,6 +41,7 @@
   import TeamConversationsGroup from '$lib/features/team/TeamConversationsGroup.svelte';
   import { awayState } from '$lib/features/team/away-state.svelte';
   import MemberAvatar from '$lib/features/team/MemberAvatar.svelte';
+  import AddFriendDialog from '$lib/features/team/AddFriendDialog.svelte';
   import { shell } from '$lib/stores/shell.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { chat, type ConversationView } from '$lib/stores/chat.svelte';
@@ -213,6 +215,8 @@
 
   let plusOpen = $state(false);
   let plusQuery = $state('');
+  /** 「添加好友」弹框（+ 面板入口 → AddFriendDialog，2026-11）。 */
+  let addFriendOpen = $state(false);
   /** D48：从模板导入 Bot（.kepcup-bot.json → 新建 Bot）。 */
   let templateImportOpen = $state(false);
 
@@ -1121,6 +1125,9 @@
         >
           <Search class="size-5" />
         </Button>
+        <!-- 「+」新增面板（D128 曾对 web 团队直连端点整体移除——服务端 Bot /
+             项目组由管理员在 console 创建；2026-11 加好友入口回归，按钮恢复，
+             面板内 bot-create 条目仍按 surfaces 门控隐藏）。 -->
         <Button
           variant="ghost"
           size="icon"
@@ -1378,7 +1385,8 @@
   {#if !narrow && !settingsPage}
     <Sidebar.Footer>
       {#if collapsed}
-        <!-- 图标模式（参考图）：「+」从顶部移到底部，与技能市场、头像竖排。 -->
+        <!-- 图标模式（参考图）：「+」从顶部移到底部，与技能市场、头像竖排。
+             2026-11 与顶部「+」同口径恢复（加好友入口回归，见上）。 -->
         <div class="flex flex-col items-center gap-1 p-1">
           <button
             type="button"
@@ -1641,6 +1649,25 @@
     data-testid="start-chat-search"
   />
   <div class="mt-2 space-y-0.5">
+    <!-- 添加好友（2026-11 web 团队端点回归的 + 面板入口）：搜索成员 → 发申请；
+         非团队上下文不出现（好友层只存在于团队服务器）。 -->
+    {#if teamContext.active}
+      <button
+        type="button"
+        class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
+        onclick={() => {
+          plusOpen = false;
+          plusQuery = '';
+          addFriendOpen = true;
+        }}
+        data-testid="start-chat-add-friend"
+      >
+        <span class="flex size-7 items-center justify-center rounded-full bg-muted">
+          <UserPlus class="size-4" />
+        </span>
+        {t('friends.addFriend')}
+      </button>
+    {/if}
     <!-- 团队端点 surfaces 门控（T5）：bot-create 被拒时隐藏新建入口。 -->
     {#if !teamContext.isTeamHidden('bot-create')}
       <button
@@ -1765,6 +1792,9 @@
     {@render plusPanelBody()}
   </div>
 {/if}
+
+<!-- 添加好友弹框（+ 面板「添加好友」入口；团队上下文才挂载）。 -->
+<AddFriendDialog bind:open={addFriendOpen} />
 
 {#if contextMenu}
   <!-- 条目右键菜单（参考 Grok Bot）：管理操作收在这里 -->

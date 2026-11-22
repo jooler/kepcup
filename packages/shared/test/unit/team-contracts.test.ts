@@ -34,7 +34,7 @@ const APP_METHOD_NAMES_ARE_LITERAL: AppMethodName extends RpcMethodName
   : never = true;
 void APP_METHOD_NAMES_ARE_LITERAL;
 
-const METHOD_COUNT = 20; // README 固定契约清单逐项枚举（P0×5 + P1×9 + P2×5）+ T7 名册读口 roster，名字不得改动。
+const METHOD_COUNT = 27; // README 固定契约清单逐项枚举（P0×5 + P1×6 + 好友层×7+拉黑×2 + P2×5）+ T7 名册读口 roster + 成员自助资料 updateSelf（2026-11 web 个人资料）；名字不得再改动。
 const EXPECTED_METHODS = [
   'team.bootstrap',
   'team.members.list',
@@ -45,12 +45,19 @@ const EXPECTED_METHODS = [
   'team.presence.setAway',
   'team.profile.push',
   'team.projects.transferLead',
-  'team.bots.createPrivate',
-  'team.bots.updatePrivate',
-  'team.bots.deletePrivate',
   'team.settings.get',
   'team.settings.update',
   'team.usage.mine',
+  'team.member.updateSelf',
+  'team.members.search',
+  'team.friends.request',
+  'team.friends.accept',
+  'team.friends.decline',
+  'team.friends.cancel',
+  'team.friends.remove',
+  'team.friends.block',
+  'team.friends.unblock',
+  'team.friends.list',
   'team.memory.share',
   'team.resolutions.list',
   'team.resolutions.approve',
@@ -150,6 +157,24 @@ describe('team rpc method registry', () => {
     ).toBe(false);
   });
 
+  it('member.updateSelf shape: displayName / avatar optional, avatar nullable (2026-11 web profile)', () => {
+    const input = teamRpcMethodSchemas['team.member.updateSelf'].input;
+    expect(input.safeParse({ displayName: '沈知微' }).success).toBe(true);
+    expect(input.safeParse({ avatar: 'data:image/png;base64,AAAA' }).success).toBe(true);
+    expect(input.safeParse({ avatar: null }).success).toBe(true);
+    // 两者都缺省 = 无变更 → 服务端拒，schema 层先按合法透传。
+    expect(input.safeParse({}).success).toBe(true);
+    // strict：未知字段拒绝；越界（>120 名 / >200k 头像）拒绝。
+    expect(input.safeParse({ displayName: '阿李', sneaky: 1 }).success).toBe(false);
+    expect(input.safeParse({ displayName: ''.padStart(121, '字') }).success).toBe(false);
+    expect(input.safeParse({ avatar: 'x'.repeat(200_001) }).success).toBe(false);
+    // 输出是成员卡。
+    expect(
+      teamRpcMethodSchemas['team.member.updateSelf'].output.safeParse({ member: member() })
+        .success,
+    ).toBe(true);
+  });
+
   it('T7 roster shape: card + role, strict, leadMemberId nullable', () => {
     // 输入：只收 conversationId（strict）。
     expect(
@@ -203,6 +228,12 @@ describe('team event registry', () => {
       'member.updated',
       'member.disabled',
       'team.avatarRevoked',
+      'friend.requested',
+      'friend.accepted',
+      'friend.declined',
+      'friend.removed',
+      'friend.blocked',
+      'friend.unblocked',
     ]);
     const core = new Set<string>(Object.keys(rpcEventSchemas));
     for (const name of TEAM_EVENT_NAMES) expect(core.has(name), name).toBe(false);
