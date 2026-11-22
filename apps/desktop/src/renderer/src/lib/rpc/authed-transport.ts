@@ -149,6 +149,13 @@ export class AuthedWsTransport implements RpcTransport {
   #linkState: AuthedLinkState = 'connecting';
   #stateHandlers = new Set<(state: AuthedLinkState) => void>();
   #dataHandler: ((data: unknown) => void) | null = null;
+  /**
+   * handler 注册前到达的入站帧缓冲。发起连接（gate）与绑定 birpc（CoreConnection
+   * #startWeb）分属两条 await 链，WS 升级完成、服务端 attach 即推 `core.status`
+   * 快照，可能早于 birpc 的 onData 注册——直接丢帧的话 App 永远停在「核心服务
+   * 启动中…」（服务端只在 attach 与状态变化时推）。注册时按序重放补收。
+   */
+  #pendingFrames: string[] = [];
   #backoffMs = 1_000;
   #reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   #closed = false;
@@ -185,6 +192,9 @@ export class AuthedWsTransport implements RpcTransport {
   connect(): void {
     if (this.#closed) return;
     if (this.#ws !== null) return;
+    // 缓冲帧属于旧 socket 生命周期：新连接的服务端 attach 会重推最新快照，
+    // 旧帧（可能过期）不跨连接重放。
+    this.#pendingFrames = [];
     this.#setLinkState(this.#linkState === 'unauthenticated' ? 'connecting' : this.#linkState);
     const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
     let ws: WebSocket;
@@ -203,6 +213,11 @@ export class AuthedWsTransport implements RpcTransport {
     ws.onmessage = (event) => {
       this.#lastInboundAt = Date.now();
       if (typeof event.data !== 'string') return;
+      // birpc 未绑定（onData 未注册）先缓冲，注册时重放——不丢 attach 快照帧。
+      if (this.#dataHandler === null) {
+        this.#pendingFrames.push(event.data);
+        return;
+      }
       try {
         this.#dataHandler?.(JSON.parse(event.data));
       } catch {
@@ -265,6 +280,16 @@ export class AuthedWsTransport implements RpcTransport {
 
   onData(handler: (data: unknown) => void): () => void {
     this.#dataHandler = handler;
+    // 重放注册前缓冲的帧（attach 快照竞态补收，见 #pendingFrames 注释）。
+    const pending = this.#pendingFrames;
+    this.#pendingFrames = [];
+    for (const text of pending) {
+      try {
+        handler(JSON.parse(text));
+      } catch {
+        // 服务端不会发非 JSON；坏帧丢弃。
+      }
+    }
     return () => {
       if (this.#dataHandler === handler) this.#dataHandler = null;
     };
