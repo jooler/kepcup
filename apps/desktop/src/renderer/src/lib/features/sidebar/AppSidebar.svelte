@@ -1419,14 +1419,17 @@
             </DropdownMenu.Trigger>
             <DropdownMenu.Content side="top" align="center" class="min-w-40">
               <!-- 连接手机（D96）：拉起配对二维码小窗；未开启远程遥控时小窗
-                   先出「勾选即开启」门槛（见 RemotePairDialog）。 -->
-              <DropdownMenu.Item
-                onclick={() => remotePairing.request()}
-                data-testid="menu-connect-phone"
-              >
-                <Smartphone aria-hidden="true" />
-                {t('menu.connectPhone')}
-              </DropdownMenu.Item>
+                   先出「勾选即开启」门槛（见 RemotePairDialog）。桌面端点专属
+                   ——web 端点本来就在浏览器里，手机访问同一网址即可。 -->
+              {#if ENDPOINT_KIND === 'desktop'}
+                <DropdownMenu.Item
+                  onclick={() => remotePairing.request()}
+                  data-testid="menu-connect-phone"
+                >
+                  <Smartphone aria-hidden="true" />
+                  {t('menu.connectPhone')}
+                </DropdownMenu.Item>
+              {/if}
               <DropdownMenu.Item
                 onclick={() => clientNameDialog.openDialog()}
                 data-testid="menu-device-name"
@@ -1434,18 +1437,21 @@
                 <MonitorSmartphone aria-hidden="true" />
                 {t('menu.deviceName')}
               </DropdownMenu.Item>
-              <!-- 团队服务器（62.08）：设置页 → 远程遥控分区顶部的连接卡。
+              <!-- 团队服务器（62.08）：设置页 → 「团队服务器」独立分区的连接卡。
                    与连接卡同口径：web 端点无 platform.teamServers，不渲染入口。 -->
               {#if ENDPOINT_KIND === 'desktop'}
                 <DropdownMenu.Item
-                  onclick={() => shell.openSettings('remote', 'remote-team-server')}
+                  onclick={() => shell.openSettings('team-server', 'team-server-connection')}
                   data-testid="menu-team-server"
                 >
                   <Server aria-hidden="true" />
                   {t('menu.teamServer')}
                 </DropdownMenu.Item>
               {/if}
+              <!-- 设置离开（62.01 S12）独立成组：上方分割线把它与设备操作隔开
+                   （下方既有分割线隔开导航区；分割线随条目一起条件渲染）。 -->
               {#if awayState.activeSource() !== null}
+                <DropdownMenu.Separator />
                 <DropdownMenu.Item
                   onclick={() => shell.openSettings('team')}
                   data-testid="menu-away"
@@ -1490,14 +1496,17 @@
               </button>
             </DropdownMenu.Trigger>
             <DropdownMenu.Content side="top" align="start" class="min-w-40">
-              <!-- 同图标模式的「连接手机」入口。 -->
-              <DropdownMenu.Item
-                onclick={() => remotePairing.request()}
-                data-testid="menu-connect-phone"
-              >
-                <Smartphone aria-hidden="true" />
-                {t('menu.connectPhone')}
-              </DropdownMenu.Item>
+              <!-- 同图标模式的「连接手机」入口：桌面端点专属（web 在浏览器里，
+                   手机访问同一网址即可）。 -->
+              {#if ENDPOINT_KIND === 'desktop'}
+                <DropdownMenu.Item
+                  onclick={() => remotePairing.request()}
+                  data-testid="menu-connect-phone"
+                >
+                  <Smartphone aria-hidden="true" />
+                  {t('menu.connectPhone')}
+                </DropdownMenu.Item>
+              {/if}
               <DropdownMenu.Item
                 onclick={() => clientNameDialog.openDialog()}
                 data-testid="menu-device-name"
@@ -1505,18 +1514,20 @@
                 <MonitorSmartphone aria-hidden="true" />
                 {t('menu.deviceName')}
               </DropdownMenu.Item>
-              <!-- 团队服务器（62.08）：设置页 → 远程遥控分区顶部的连接卡。
+              <!-- 团队服务器（62.08）：设置页 → 「团队服务器」独立分区的连接卡。
                    与连接卡同口径：web 端点无 platform.teamServers，不渲染入口。 -->
               {#if ENDPOINT_KIND === 'desktop'}
                 <DropdownMenu.Item
-                  onclick={() => shell.openSettings('remote', 'remote-team-server')}
+                  onclick={() => shell.openSettings('team-server', 'team-server-connection')}
                   data-testid="menu-team-server"
                 >
                   <Server aria-hidden="true" />
                   {t('menu.teamServer')}
                 </DropdownMenu.Item>
               {/if}
+              <!-- 同图标模式：设置离开独立成组（上方分割线，见 collapsed 分支）。 -->
               {#if awayState.activeSource() !== null}
+                <DropdownMenu.Separator />
                 <DropdownMenu.Item
                   onclick={() => shell.openSettings('team')}
                   data-testid="menu-away"

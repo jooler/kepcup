@@ -115,6 +115,9 @@ const api = {
         ipcRenderer.invoke('platform:teamServers:connect', input),
       disconnect: (input: { serverHash: string }): Promise<{ ok: true }> =>
         ipcRenderer.invoke('platform:teamServers:disconnect', input),
+      /** 健康检查（whoami 探测）：添加流程第一步，确认服务可用再出现登录表单。 */
+      probe: (input: { url: string }): Promise<{ reachable: boolean; kind: 'team' | 'personal' | 'unknown'; authenticated?: boolean; member?: { id: string; displayName: string } }> =>
+        ipcRenderer.invoke('platform:teamServers:probe', input),
       /** 状态 / 名单变化（主进程推送 ipc 事件 team-servers:changed）；返回解绑函数。 */
       onChanged: (callback: () => void): (() => void) => {
         const listener = (): void => callback();

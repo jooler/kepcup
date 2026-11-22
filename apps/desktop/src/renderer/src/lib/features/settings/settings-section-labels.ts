@@ -53,6 +53,26 @@ const NAV_MERGED_SECTIONS: ReadonlySet<SettingsViewSection> = new Set(['agents']
 const TEAM_SECTION_SOURCE: SettingsSectionSource = { id: 'team', labelKey: 'settings.navTeam' };
 
 /**
+ * 「团队服务器」独立分区（连接远程执行中心 = 远端 KepCup）：**不进**静态清单，
+ * 只在桌面端点（preload 暴露 `platform.teamServers`，web 垫片没有）时由
+ * visibleSectionSources 动态插到「远程遥控」之后。连接服务器是独立的设置
+ * 分组而非远程遥控的子项；桌面休眠快照不变，web 端点不出现该分区。
+ */
+const TEAM_SERVER_SECTION_SOURCE: SettingsSectionSource = {
+  id: 'team-server',
+  labelKey: 'settings.navTeamServer',
+};
+
+/** 桌面 preload 是否暴露团队服务器面（能力探测，node 单测环境恒 false）。 */
+function desktopHasTeamServers(): boolean {
+  if (typeof window === 'undefined') return false;
+  const platform = (
+    window as unknown as { kepcup?: { platform?: { teamServers?: unknown } } }
+  ).kepcup?.platform;
+  return platform?.teamServers != null;
+}
+
+/**
  * 可见分区源：窄屏隐藏「通讯录」「个人资料」（提取为底部 tab，33-narrow-layout）。
  * 团队端点（T5）再叠加 `team.bootstrap.surfaces.hidden` 过滤——被拒绝的设置分区
  * 从导航消失（体验层门控，62.03 §5；方法面由团队服务器按成员策略拒绝兜底）。
@@ -65,6 +85,10 @@ export function visibleSectionSources(narrow: boolean): SettingsSectionSource[] 
   const visible = sources.filter(
     (section) => !NAV_MERGED_SECTIONS.has(section.id) && !isTeamHidden(section.id),
   );
+  if (desktopHasTeamServers()) {
+    const anchor = visible.findIndex((section) => section.id === 'remote');
+    visible.splice(anchor >= 0 ? anchor + 1 : visible.length, 0, TEAM_SERVER_SECTION_SOURCE);
+  }
   if (isTeamSectionAvailable() && !isTeamHidden('team')) {
     const anchor = visible.findIndex((section) => section.id === 'contacts');
     visible.splice(anchor >= 0 ? anchor + 1 : visible.length, 0, TEAM_SECTION_SOURCE);
@@ -76,6 +100,7 @@ export function visibleSectionSources(narrow: boolean): SettingsSectionSource[] 
 export function sectionLabel(id: SettingsViewSection): string {
   const source =
     settingsSectionSources.find((section) => section.id === id) ??
-    (id === 'team' ? TEAM_SECTION_SOURCE : undefined);
+    (id === 'team' ? TEAM_SECTION_SOURCE : undefined) ??
+    (id === 'team-server' ? TEAM_SERVER_SECTION_SOURCE : undefined);
   return source === undefined ? t('settings.title') : t(source.labelKey);
 }

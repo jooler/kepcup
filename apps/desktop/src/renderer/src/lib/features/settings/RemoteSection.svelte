@@ -2,7 +2,6 @@
   import { t } from '$lib/i18n';
   import SettingsCatalogFields from './SettingsCatalogFields.svelte';
   import RemoteDevicesCard from './RemoteDevicesCard.svelte';
-  import TeamServerConnectCard from '$lib/features/team/TeamServerConnectCard.svelte';
   import { Button } from '$lib/components/ui/button';
   import { remotePairing } from '$lib/features/remote/remote-pairing.svelte';
 
@@ -10,7 +9,7 @@
    * 设置页「远程遥控」分区（D96 §3.1）：总开关与中转地址走设置目录的标量条目
    *（`SettingsCatalogFields`，锚点由本页静态写），设备管理是专用卡；「连接手机…」
    * 拉起全局配对二维码小窗（`RemotePairDialog`，托盘入口共用同一实例）。
-   * 「团队服务器」卡（T5）：桌面端点才可见（web 端点无 platform.openTeamServer）。
+   * 「团队服务器」已独立成组（TeamServerSection），不再挂在本分区。
    */
 </script>
 
@@ -37,8 +36,5 @@
   </div>
   <div data-settings-anchor="remote-devices">
     <RemoteDevicesCard />
-  </div>
-  <div data-settings-anchor="remote-team-server">
-    <TeamServerConnectCard />
   </div>
 </div>

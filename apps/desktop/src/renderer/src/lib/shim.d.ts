@@ -84,6 +84,14 @@ declare global {
           switchAccount(input: { serverHash: string; memberId: string }): Promise<{ ok: true }>;
           connect(input: { serverHash: string }): Promise<{ ok: true }>;
           disconnect(input: { serverHash: string }): Promise<{ ok: true }>;
+          probe(input: {
+            url: string;
+          }): Promise<{
+            reachable: boolean;
+            kind: 'team' | 'personal' | 'unknown';
+            authenticated?: boolean;
+            member?: { id: string; displayName: string };
+          }>;
           onChanged(cb: () => void): () => void;
         };
         /**

@@ -2517,6 +2517,11 @@ export const zhCN = {
   // T5：桌面「连接团队服务器」入口（另起远程模式进程窗口；web 端点隐藏）。
   'settings.teamServerTitle': '团队服务器',
   'settings.teamServerHint': '连接团队服务器，在新窗口打开团队版客户端。',
+  // 「团队服务器」独立设置分组（连接远程执行中心；桌面端点动态插入）。
+  'settings.navTeamServer': '团队服务器',
+  'settings.teamServerSectionTitle': '团队服务器',
+  'settings.teamServerSectionHint':
+    '连接团队服务器 = 连接远端的 KepCup：地址通过健康检查、登录成功后，服务端可见的 Bot 与项目组会出现在本窗口。',
   'settings.teamServerPlaceholder': 'https://team.example.com',
   'settings.teamServerConnect': '连接',
   'settings.teamServerConnecting': '连接中…',
@@ -2524,6 +2529,10 @@ export const zhCN = {
   'settings.teamServerInvalidUrl': '地址无效：应为 http(s) 地址，且不能内嵌用户名密码',
   'settings.teamServerFailed': '无法打开团队服务器窗口',
   'settings.teamServerRecent': '最近使用',
+  // 连接流程：先健康检查（whoami 探测），通过后才登记并出现登录表单。
+  'settings.teamServerProbeChecking': '正在检查服务可用性…',
+  'settings.teamServerProbeUnreachable': '无法连接到该地址：请确认服务器已启动、地址与端口正确',
+  'settings.teamServerProbeNotTeamServer': '该地址可达，但不是 KepCup 团队服务器',
   'settings.remoteRevoked': '已撤销「{name}」的遥控权限',
   'settings.remotePairTitle': '连接手机',
   'settings.remotePairHint':
@@ -4253,7 +4262,6 @@ export const zhCN = {
   'team.settingsHint': '离开态、成员域免打扰、个人用量与画像上行。',
   'settings.teamServerHintFusion': '在本窗口融合团队服务器：通讯录与会话列表长出团队条目；关闭后仍可用独立窗口打开。',
   'settings.teamServerAdd': '添加',
-  'settings.teamServerAdding': '添加中…',
   // --- D122 手机原生壳（docs/design/58-mobile-shell.md）------------------------
   'web.shell.disconnect': '断开',
   'web.shell.disconnectHint': '断开并回到 KepCup App 首页',

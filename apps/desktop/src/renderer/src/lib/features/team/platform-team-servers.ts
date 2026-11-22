@@ -25,6 +25,14 @@ export interface TeamServerEntry {
   status: TeamServerStatus;
 }
 
+/** 健康检查结果（whoami 探测分类，主进程 team-servers.probe）。 */
+export interface TeamServerProbeResult {
+  reachable: boolean;
+  kind: 'team' | 'personal' | 'unknown';
+  authenticated?: boolean;
+  member?: { id: string; displayName: string };
+}
+
 export interface TeamServersApi {
   list(): Promise<TeamServerEntry[]>;
   add(input: { url: string }): Promise<{ serverHash: string }>;
@@ -39,6 +47,7 @@ export interface TeamServersApi {
   switchAccount(input: { serverHash: string; memberId: string }): Promise<{ ok: true }>;
   connect(input: { serverHash: string }): Promise<{ ok: true }>;
   disconnect(input: { serverHash: string }): Promise<{ ok: true }>;
+  probe(input: { url: string }): Promise<TeamServerProbeResult>;
   onChanged(cb: () => void): () => void;
 }
 
@@ -71,7 +80,7 @@ export function getTeamServersApi(): TeamServersApi | null {
   const api = platform?.teamServers;
   if (api === null || api === undefined || typeof api !== 'object') return null;
   const candidate = api as Record<string, unknown>;
-  const required = ['list', 'add', 'remove', 'login', 'logout', 'switchAccount', 'connect', 'disconnect', 'onChanged'];
+  const required = ['list', 'add', 'remove', 'login', 'logout', 'switchAccount', 'connect', 'disconnect', 'probe', 'onChanged'];
   return required.every((name) => typeof candidate[name] === 'function')
     ? (candidate as unknown as TeamServersApi)
     : null;

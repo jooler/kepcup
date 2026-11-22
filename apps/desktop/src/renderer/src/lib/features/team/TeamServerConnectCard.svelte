@@ -14,7 +14,8 @@
 
   /**
    * 「团队服务器」管理卡（T7 步骤 4，升级 T5 的连接卡）：已保存服务器列表
-   *（地址 / 状态点 / 活跃账号）、添加、登录（用户名 / 密码 / 记住我）、多账号
+   *（地址 / 状态点 / 活跃账号）、分步添加（地址 → 主进程 whoami 健康检查 →
+   * 通过才登记并出现登录表单）、登录（用户名 / 密码 / 记住我）、多账号
    * 选择器（微信式，62.10 §4）、登出、「在此窗口融合」开关（默认开，本机
    * 偏好按 serverHash 存）、「在独立窗口打开」（T5 远程进程）与移除。
    *
@@ -28,6 +29,9 @@
   let address = $state('');
   let adding = $state(false);
   let addError = $state<'invalid' | 'failed' | null>(null);
+  /** 健康检查结果（添加流程第一步）：失败时不登记，错误与重试就地展示。 */
+  let probing = $state(false);
+  let probeFailed = $state<'unreachable' | 'not-team-server' | null>(null);
 
   /** 登录表单（当前选中的服务器）。 */
   let loginServer = $state<TeamServerEntry | null>(null);
@@ -60,6 +64,11 @@
     await connections.refreshServers();
   }
 
+  /**
+   * 连接流程（分步）：输入地址 → 主进程 whoami 健康检查（可达 + 是团队服务器）
+   * → 通过才登记并直接落到登录表单。检查失败不登记，错误就地展示（点「连接」
+   * 即重试）。登录成功 → requestConnect → 资源经 onSourcesChanged 出现在应用中。
+   */
   async function addServer(): Promise<void> {
     const api = getTeamServersApi();
     if (api === null) return;
@@ -69,17 +78,29 @@
       return;
     }
     addError = null;
+    probeFailed = null;
     adding = true;
+    probing = true;
     try {
+      const result = await api.probe({ url });
+      if (!result.reachable) {
+        probeFailed = 'unreachable';
+        return;
+      }
+      if (result.kind !== 'team') {
+        probeFailed = 'not-team-server';
+        return;
+      }
       const { serverHash } = await api.add({ url });
       await refresh();
-      // 新服务器直接落到登录表单（没有账号时可登录）。
+      // 健康检查通过：新服务器直接落到登录表单（没有账号时可登录）。
       loginServer = connections.serverOf(serverHash);
       address = '';
     } catch (error) {
       addError = 'failed';
       toast.error(errorTextOf(error));
     } finally {
+      probing = false;
       adding = false;
     }
   }
@@ -210,7 +231,7 @@
     <h4 class="text-sm font-medium">{t('settings.teamServerTitle')}</h4>
     <p class="mt-1 text-xs text-muted-foreground">{t('settings.teamServerHintFusion')}</p>
 
-    <!-- 添加服务器 -->
+    <!-- 添加服务器：分步连接（先健康检查，通过才登记并出现登录表单）。 -->
     <form
       class="mt-3 flex items-start gap-2"
       onsubmit={(event) => {
@@ -225,7 +246,10 @@
         spellcheck="false"
         placeholder={t('settings.teamServerPlaceholder')}
         bind:value={address}
-        oninput={() => (addError = null)}
+        oninput={() => {
+          addError = null;
+          probeFailed = null;
+        }}
         data-testid="team-server-address"
       />
       <Button
@@ -234,7 +258,7 @@
         onclick={() => void addServer()}
         data-testid="team-server-connect"
       >
-        {adding ? t('settings.teamServerAdding') : t('settings.teamServerAdd')}
+        {probing ? t('settings.teamServerProbeChecking') : t('settings.teamServerAdd')}
       </Button>
     </form>
     {#if addError === 'invalid'}
@@ -244,6 +268,18 @@
     {:else if addError === 'failed'}
       <p class="mt-2 text-xs text-destructive" data-testid="team-server-error">
         {t('settings.teamServerFailed')}
+      </p>
+    {:else if probing}
+      <p class="mt-2 text-xs text-muted-foreground" data-testid="team-server-probing">
+        {t('settings.teamServerProbeChecking')}
+      </p>
+    {:else if probeFailed === 'unreachable'}
+      <p class="mt-2 text-xs text-destructive" data-testid="team-server-probe-error">
+        {t('settings.teamServerProbeUnreachable')}
+      </p>
+    {:else if probeFailed === 'not-team-server'}
+      <p class="mt-2 text-xs text-destructive" data-testid="team-server-probe-error">
+        {t('settings.teamServerProbeNotTeamServer')}
       </p>
     {/if}
 

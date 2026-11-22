@@ -512,6 +512,26 @@ export const platformTeamServersSwitchAccountInputSchema = z.object({
   memberId: z.string().min(1),
 });
 
+/**
+ * T5 连接流程（健康检查）：添加服务器时先探测 `GET /api/auth/whoami`（主进程
+ * fetch，6s 超时）再登记——「确认服务可用，再出现登录表单」。分类口径与
+ * authed-transport 的 probeServerAuth 一致：401/403 = 团队服务器密码模式未登录；
+ * 200 + member = 已认证（携 token 场景）；404 = 配对模式（headless 个人服务器，
+ * 不是团队服务器）；其它 / 非 JSON = unknown；网络错误 = unreachable。
+ */
+export const platformTeamServersProbeInputSchema = z.object({
+  url: z.string().min(1),
+});
+export const platformTeamServersProbeOutputSchema = z.object({
+  reachable: z.boolean(),
+  /** 'team' = KepCup 团队服务器；'personal' = 配对模式个人服务器；'unknown' = 非 KepCup 服务。 */
+  kind: z.enum(['team', 'personal', 'unknown']),
+  /** kind='team' 且会话有效时 true（whoami 200 + member）。 */
+  authenticated: z.boolean().optional(),
+  member: z.object({ id: z.string().min(1), displayName: z.string() }).optional(),
+});
+export type PlatformTeamServersProbeOutput = z.infer<typeof platformTeamServersProbeOutputSchema>;
+
 // --- T8 客户端本地缓存（62.10 D136 / T8 §2，PLATFORM_RPC_METHODS 契约）--------
 // Desktop-only: the MAIN process owns the encrypted per-partition mirror
 // (<userData>/team-cache/<serverHash>/<memberId>/cache.db, better-sqlite3-
@@ -3467,6 +3487,10 @@ export const rpcMethodSchemas = {
     input: platformTeamServersServerHashInputSchema,
     output: okOutput,
   },
+  'platform.teamServers.probe': {
+    input: platformTeamServersProbeInputSchema,
+    output: platformTeamServersProbeOutputSchema,
+  },
 
   // T8 客户端本地缓存（62.10 D136）：桌面主进程实现（分区整库加密 + 附件 AEAD
   // + LRU）；web 端不实现（渲染层 IndexedDB 适配器同接口），core 不实现。
@@ -4216,6 +4240,7 @@ export const PLATFORM_RPC_METHODS: readonly RpcMethodName[] = [
   'platform.teamServers.switchAccount',
   'platform.teamServers.connect',
   'platform.teamServers.disconnect',
+  'platform.teamServers.probe',
   // T8 客户端本地缓存（62.10 D136）：桌面主进程实现，web / core 不实现。
   'platform.teamCache.open',
   'platform.teamCache.close',

@@ -558,3 +558,59 @@ describe('状态文件权限（0600）', () => {
     expect(raw).not.toContain(token);
   });
 });
+
+describe('健康检查 probe（添加流程第一步）', () => {
+  it('401 + JSON error = 团队服务器、未认证（密码模式）', async () => {
+    harness.fetchMock.mockResolvedValue(jsonResponse(401, { error: 'unauthenticated' }));
+    const result = await harness.host.probe({ url: URL_A });
+    expect(result).toEqual({ reachable: true, kind: 'team', authenticated: false });
+  });
+
+  it('200 + member = 团队服务器、已认证（携 member 回传）', async () => {
+    harness.fetchMock.mockResolvedValue(
+      jsonResponse(200, { member: { id: 'm1', displayName: 'Alice' }, mustChangePassword: false }),
+    );
+    const result = await harness.host.probe({ url: URL_A });
+    expect(result).toEqual({
+      reachable: true,
+      kind: 'team',
+      authenticated: true,
+      member: { id: 'm1', displayName: 'Alice' },
+    });
+  });
+
+  it('404 = 配对模式个人服务器（不是团队服务器）', async () => {
+    harness.fetchMock.mockResolvedValue(jsonResponse(404, { error: 'not found' }));
+    const result = await harness.host.probe({ url: URL_A });
+    expect(result).toEqual({ reachable: true, kind: 'personal' });
+  });
+
+  it('非 JSON 响应（别的 web 服务占着端口）= unknown', async () => {
+    harness.fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      json: () => Promise.reject(new SyntaxError('Unexpected token < in JSON')),
+    } as unknown as Response);
+    const result = await harness.host.probe({ url: URL_A });
+    expect(result).toEqual({ reachable: true, kind: 'unknown' });
+  });
+
+  it('网络错误（不可达）不抛错，按 reachable:false 返回', async () => {
+    harness.fetchMock.mockRejectedValue(new TypeError('fetch failed'));
+    const result = await harness.host.probe({ url: URL_A });
+    expect(result).toEqual({ reachable: false, kind: 'unknown' });
+  });
+
+  it('地址非法直接 INVALID_INPUT（不发起请求）', async () => {
+    await expect(harness.host.probe({ url: 'ftp://x' })).rejects.toThrow();
+    expect(harness.fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('probe 不写状态文件（零副作用——登记仍由 add 负责）', async () => {
+    harness.fetchMock.mockResolvedValue(jsonResponse(401, { error: 'unauthenticated' }));
+    await harness.host.probe({ url: URL_A });
+    const list = await harness.host.list();
+    expect(list).toEqual([]);
+    expect(harness.writeFileCalls).toEqual([]);
+  });
+});

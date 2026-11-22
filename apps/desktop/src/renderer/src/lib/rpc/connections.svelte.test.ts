@@ -201,6 +201,8 @@ describe('团队端口接入与断开', () => {
           teamServers: {
             list: async () => [],
             connect: async () => ({ ok: true as const }),
+            // probe 是 platform.teamServers 面的必备方法（缺了整个面判不可用）。
+            probe: async () => ({ reachable: true, kind: 'team' as const }),
             disconnect,
             add: async () => ({ serverHash: 'x' }),
             remove: async () => ({ ok: true as const }),
@@ -284,6 +286,7 @@ describe('web 端点休眠（融合注册表不激活）', () => {
           teamServers: {
             list,
             connect,
+            probe: async () => ({ reachable: true, kind: 'team' as const }),
             disconnect: async () => ({ ok: true as const }),
             add: async () => ({ serverHash: 'x' }),
             remove: async () => ({ ok: true as const }),
@@ -328,6 +331,7 @@ describe('web 端点休眠（融合注册表不激活）', () => {
           teamServers: {
             list,
             connect,
+            probe: async () => ({ reachable: true, kind: 'team' as const }),
             disconnect: async () => ({ ok: true as const }),
             add: async () => ({ serverHash: 'x' }),
             remove: async () => ({ ok: true as const }),

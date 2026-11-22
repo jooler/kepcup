@@ -3,8 +3,10 @@ import type { ZodType } from 'zod';
 import {
   platformTeamServersAddInputSchema,
   platformTeamServersLoginInputSchema,
+  platformTeamServersProbeInputSchema,
   platformTeamServersServerHashInputSchema,
   platformTeamServersSwitchAccountInputSchema,
+  type PlatformTeamServersProbeOutput,
   type TeamServerEntry,
   type TeamServerStatus,
 } from '@kepcup/shared';
@@ -150,6 +152,9 @@ export function teamServerHash(url: string): string {
   return remoteProfileHash(url);
 }
 
+/** 健康检查超时（添加流程的 whoami 探测；不长期挂死设置界面）。 */
+const PROBE_TIMEOUT_MS = 6_000;
+
 export class TeamServers {
   readonly #deps: TeamServersDeps;
   /** 懒加载的内存态（一旦加载即为唯一事实来源；写穿到磁盘）。 */
@@ -197,6 +202,9 @@ export class TeamServers {
     register('platform:teamServers:disconnect', (_event, input) =>
       this.disconnect(parseJsonInput(platformTeamServersServerHashInputSchema, input)),
     );
+    register('platform:teamServers:probe', (_event, input) =>
+      this.probe(parseJsonInput(platformTeamServersProbeInputSchema, input)),
+    );
   }
 
   /** 窗口（重）加载后补发团队端口（bridge 内部为每条活连接换新 MessagePort）。 */
@@ -239,6 +247,49 @@ export class TeamServers {
       this.#deps.onChanged();
     }
     return { serverHash };
+  }
+
+  /**
+   * 健康检查（添加流程第一步，`GET /api/auth/whoami`，6s 超时）：可达性 + 服务
+   * 身份分类，通过才轮到渲染层登记（add）并出现登录表单。分类口径与
+   * authed-transport 的 probeServerAuth 一致——团队服务器 whoami 只回 200
+   * {member} 或 401 {error}，从不 404：401/403 + JSON = 密码模式未登录；
+   * 200 + member = 已认证；404 = 配对模式（headless 个人服务器，不是团队服务器）；
+   * 非 JSON / 其它状态 = unknown；网络错误按 reachable:false（不抛错——探测结果
+   * 本身就是返回值）。
+   */
+  async probe(input: { url: string }): Promise<PlatformTeamServersProbeOutput> {
+    const url = normalizeTeamServerUrl(input.url);
+    let res: Response;
+    try {
+      res = await this.#deps.fetch(joinServerPath(url, '/api/auth/whoami'), {
+        signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      });
+    } catch {
+      return { reachable: false, kind: 'unknown' };
+    }
+    // 非 JSON 响应（别的 web 服务占着端口）视作不是 KepCup。
+    let body: { member?: unknown; error?: unknown } | null;
+    try {
+      body = (await res.json()) as { member?: unknown; error?: unknown };
+    } catch {
+      body = null;
+    }
+    if (body === null) return { reachable: true, kind: 'unknown' };
+    const member = body.member as { id?: unknown; displayName?: unknown } | undefined;
+    if (res.ok && typeof member?.id === 'string' && typeof member?.displayName === 'string') {
+      return {
+        reachable: true,
+        kind: 'team',
+        authenticated: true,
+        member: { id: member.id, displayName: member.displayName },
+      };
+    }
+    if ((res.status === 401 || res.status === 403) && typeof body.error === 'string') {
+      return { reachable: true, kind: 'team', authenticated: false };
+    }
+    if (res.status === 404) return { reachable: true, kind: 'personal' };
+    return { reachable: true, kind: 'unknown' };
   }
 
   /** 删配置 + 删已存 token + 断开桥接。 */

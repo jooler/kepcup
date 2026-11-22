@@ -22,6 +22,8 @@ export type SettingsSectionId =
   | 'team'
   | 'unattended'
   | 'remote'
+  /** 「团队服务器」独立分区（连接远程执行中心；桌面端点动态插入）。 */
+  | 'team-server'
   | 'environment'
   | 'usage'
   | 'diagnostics'
@@ -61,6 +63,7 @@ const SECTION_FALLBACK_ORDER: ReadonlyArray<
   'team',
   'unattended',
   'remote',
+  'team-server',
   'environment',
   'usage',
   'diagnostics',

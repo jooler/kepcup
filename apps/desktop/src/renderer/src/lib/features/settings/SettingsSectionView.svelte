@@ -11,6 +11,7 @@
   import EnvironmentSection from './EnvironmentSection.svelte';
   import ProfileSection from './ProfileSection.svelte';
   import RemoteSection from './RemoteSection.svelte';
+  import TeamServerSection from './TeamServerSection.svelte';
   import UsageSection from './UsageSection.svelte';
   import WebSearchSection from './WebSearchSection.svelte';
   import BrowserProfilesSection from './BrowserProfilesSection.svelte';
@@ -19,6 +20,7 @@
   import SchedulesSection from './SchedulesSection.svelte';
   import DiagnosticsSection from './DiagnosticsSection.svelte';
   import ExtensionCenterBody from '$lib/features/extension-center/ExtensionCenterBody.svelte';
+  import { ENDPOINT_KIND } from '$lib/features/web-shell/endpoint';
   import type { SettingsPageSection } from './sections';
 
   /**
@@ -41,9 +43,15 @@
     <div data-settings-anchor="appearance">
       <AppearanceSection />
     </div>
-    <div data-settings-anchor="general">
-      <GeneralSection />
-    </div>
+    <!-- web 端点只保留外观（主题 / 语言是渲染层本地设置，mode-watcher 与 i18n
+         均落本地，不依赖 settings.update）：开机自启 / 工作台开关 / 任务 Loop /
+         应用更新都是桌面 OS 能力或 admin plane 的 settings 写（成员侧被团队
+         服务器拒绝），整块不渲染（2026-11 web 端点通用分区精简）。 -->
+    {#if ENDPOINT_KIND === 'desktop'}
+      <div data-settings-anchor="general">
+        <GeneralSection />
+      </div>
+    {/if}
   </div>
 {:else if section === 'hardware'}
   <div data-settings-section="hardware" class="space-y-6">
@@ -102,6 +110,10 @@
 {:else if section === 'remote'}
   <div data-settings-section="remote" class="space-y-6">
     <RemoteSection />
+  </div>
+{:else if section === 'team-server'}
+  <div data-settings-section="team-server">
+    <TeamServerSection />
   </div>
 {:else if section === 'profile'}
   <div data-settings-section="profile">

@@ -2613,6 +2613,12 @@ export const enUS = {
   // window; hidden on web endpoints where platform.openTeamServer is absent).
   'settings.teamServerTitle': 'Team server',
   'settings.teamServerHint': 'Connect to a team server and open the team client in a new window.',
+  // "Team server" standalone settings group (remote execution center; inserted
+  // dynamically on desktop endpoints only).
+  'settings.navTeamServer': 'Team server',
+  'settings.teamServerSectionTitle': 'Team server',
+  'settings.teamServerSectionHint':
+    'Connecting a team server = connecting a remote KepCup: after the health check passes and you sign in, the server-side bots and project groups appear in this window.',
   'settings.teamServerPlaceholder': 'https://team.example.com',
   'settings.teamServerConnect': 'Connect',
   'settings.teamServerConnecting': 'Connecting…',
@@ -2620,6 +2626,11 @@ export const enUS = {
   'settings.teamServerInvalidUrl': 'Invalid address: must be http(s) without embedded credentials',
   'settings.teamServerFailed': 'Could not open the team server window',
   'settings.teamServerRecent': 'Recent',
+  // Connection flow: health check (whoami probe) first; the login form appears
+  // only after the service is confirmed reachable.
+  'settings.teamServerProbeChecking': 'Checking service availability…',
+  'settings.teamServerProbeUnreachable': 'Cannot reach this address: check that the server is running and the address/port are correct',
+  'settings.teamServerProbeNotTeamServer': 'The address is reachable, but it is not a KepCup team server',
   'settings.remoteRevoked': 'Revoked remote access for "{name}"',
   'settings.remotePairTitle': 'Connect phone',
   'settings.remotePairHint':
@@ -4502,7 +4513,6 @@ export const enUS = {
   'team.settingsHint': 'Away state, quiet hours, personal usage, and profile upload.',
   'settings.teamServerHintFusion': 'Fuse the team server into this window: the roster and chat list grow team entries. Turn off to use a separate window instead.',
   'settings.teamServerAdd': 'Add',
-  'settings.teamServerAdding': 'Adding…',
   // --- D122 native mobile shell (docs/design/58-mobile-shell.md) ---------------
   'web.shell.disconnect': 'Disconnect',
   'web.shell.disconnectHint': 'Disconnect and return to the KepCup app home',
