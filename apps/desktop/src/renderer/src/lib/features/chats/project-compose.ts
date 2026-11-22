@@ -62,6 +62,12 @@ export type ComposeEnterAction =
   | { kind: 'alreadySelected'; botId: string }
   /** Create an empty-profile Bot named after the input (lead in round 1, member in round 2). */
   | { kind: 'create'; name: string }
+  /**
+   * Quick create is unavailable (member-bots B4 收尾): on the web team endpoint
+   * core `bots.create` is member-deny, so a typed new name must hint instead of
+   * firing a doomed RPC (`allowQuickCreate: false`).
+   */
+  | { kind: 'createUnavailable'; name: string }
   /** Members round, empty Enter with at least one valid member: create the project. */
   | { kind: 'commit' }
   /** Lead round, empty Enter: ask for a lead first. */
@@ -90,6 +96,13 @@ export function composeEnterAction(input: {
   candidates: readonly ComposeCandidate[];
   /** Arrow-highlighted candidate index; -1 = no arrow selection. */
   highlight: number;
+  /**
+   * Whether typing a new name may quick-create a Bot (member-bots B4 收尾):
+   * false on the web team endpoint — core `bots.create` is member-deny there,
+   * so the 'create' decision degrades to 'createUnavailable' (hint, no RPC).
+   * Defaults to true (local behaviour unchanged).
+   */
+  allowQuickCreate?: boolean;
 }): ComposeEnterAction {
   const picked = input.highlight >= 0 ? input.candidates[input.highlight] : undefined;
   if (picked !== undefined) {
@@ -106,7 +119,7 @@ export function composeEnterAction(input: {
       const lead = same[0];
       return lead !== undefined
         ? { kind: 'selectLead', botId: lead.id }
-        : { kind: 'create', name: text };
+        : quickCreate(input, text);
     }
     const pickedIds = new Set(input.memberIds);
     if (input.leadId !== null) pickedIds.add(input.leadId);
@@ -114,7 +127,7 @@ export function composeEnterAction(input: {
     if (unpicked !== undefined) return { kind: 'add', botId: unpicked.id };
     const already = same.find((bot) => pickedIds.has(bot.id));
     if (already !== undefined) return { kind: 'alreadySelected', botId: already.id };
-    return { kind: 'create', name: text };
+    return quickCreate(input, text);
   }
 
   if (input.phase === 'lead') return { kind: 'needLead' };
@@ -122,6 +135,15 @@ export function composeEnterAction(input: {
     input.bots.some((bot) => bot.id === id),
   ).length;
   return memberCount >= 1 ? { kind: 'commit' } : { kind: 'needMembers' };
+}
+
+function quickCreate(
+  input: { allowQuickCreate?: boolean },
+  name: string,
+): ComposeEnterAction {
+  return input.allowQuickCreate === false
+    ? { kind: 'createUnavailable', name }
+    : { kind: 'create', name };
 }
 
 /**

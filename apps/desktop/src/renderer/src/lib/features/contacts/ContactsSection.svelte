@@ -5,6 +5,7 @@
     Check,
     MessagesSquare,
     Moon,
+    Pencil,
     RotateCcw,
     Search,
     Trash2,
@@ -16,13 +17,22 @@
   import type { Component } from 'svelte';
   import { errorText, t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
-  import type { Bot, Conversation, TeamFriendRequestView, TeamMember } from '@kepcup/shared';
+  import type {
+    Bot,
+    Conversation,
+    TeamBotView,
+    TeamFriendRequestView,
+    TeamMember,
+  } from '@kepcup/shared';
   import { isArchivedConversation } from '@kepcup/shared';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { shell } from '$lib/stores/shell.svelte';
   import { teamContext } from '$lib/features/team/team-context.svelte';
   import { canRequestFriend, friends as friendsStore } from '$lib/features/team/friends.svelte';
+  // 成员面 Bot（B4 子域 B）：store 与编辑框是子域 A 的契约交付物。
+  import { loadTeamBots, teamBotsOf } from '$lib/features/team/team-bots.svelte';
+  import TeamBotEditDialog from '$lib/features/team/TeamBotEditDialog.svelte';
   import type { SourceId } from '$lib/rpc/connections.svelte';
   import MemberAvatar from '$lib/features/team/MemberAvatar.svelte';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
@@ -61,6 +71,25 @@
   /** 团队上下文（web 团队端点）的好友栏开关。 */
   const teamActive = $derived(teamContext.active);
   const selfMember = $derived(contacts.self);
+
+  // --- 成员面 Bot 行操作（B4 子域 B） ------------------------------------------
+  // web 团队端点下本名册即团队服务器的可见 Bot：按 canEdit 接团队编辑入口
+  // （转交 / 删除在 TeamBotEditDialog 内，B-1）；桌面本机名册不在成员面
+  // （切片恒空、teamActive false），本地删除行为零变化。
+  const memberBotViews = $derived(teamActive ? teamBotsOf('local').bots : []);
+  /** 当前打开团队编辑框的 Bot id（null = 关闭）。 */
+  let teamBotEditTarget = $state<string | null>(null);
+
+  // 通讯录可能脱离 AppSidebar 挂载（窄屏 contacts tab / 设置分区视图），
+  // AppSidebar 的加载接线不一定在：这里兜底拉一次，成员面判定自给自足。
+  $effect(() => {
+    if (!teamActive) return;
+    void loadTeamBots('local');
+  });
+
+  function memberBotOf(bot: Bot): TeamBotView | null {
+    return memberBotViews.find((view) => view.id === bot.id) ?? null;
+  }
 
   /**
    * 桌面融合视图的团队名册切片（T7，62.04 §1 双源名册）：每个已融合服务器
@@ -612,6 +641,7 @@
            窄屏视口、出现横向滚动条（33-narrow-layout）。 -->
       <ul class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {#each contacts.bots as bot (bot.id)}
+          {@const teamBot = memberBotOf(bot)}
           <li
             class="flex flex-col gap-3 rounded-xl border p-4 transition-colors hover:bg-accent/40"
             data-testid={`bot-card-${bot.id}`}
@@ -651,8 +681,23 @@
                   `bot-restore-${bot.id}`,
                 )}
               {/if}
-              <!-- 管家（D70）不可删除：不给删除入口。 -->
-              {#if bot.systemRole !== 'butler'}
+              {#if teamBot !== null}
+                <!-- 成员面 Bot（B4 子域 B）：canEdit 才出编辑入口；本机删除流
+                     （deletionPreview + bots.delete）对成员会被服务端拒绝，
+                     转交 / 删除收进 TeamBotEditDialog。 -->
+                {#if teamBot.canEdit}
+                  {@render iconAction(
+                    Pencil,
+                    t('teamBot.editAction'),
+                    () => (teamBotEditTarget = bot.id),
+                    `bot-team-edit-${bot.id}`,
+                  )}
+                {/if}
+              {:else if !teamActive && bot.systemRole !== 'butler'}
+                <!-- 团队端点（web）名单外 / 未决的 Bot 也不给本机删除入口：
+                     core bots.delete 对成员恒拒（B2），出了必失败；本机名册
+                     （teamActive false）行为零变化。 -->
+                <!-- 管家（D70）不可删除：不给删除入口。 -->
                 {@render iconAction(
                   Trash2,
                   t('contacts.delete'),
@@ -841,6 +886,15 @@
       </DialogFooter>
     </DialogContent>
   </Dialog>
+
+  <!-- 团队 Bot 编辑框（B4 子域 B，成员面名册行入口；组件是子域 A 的交付物）。 -->
+  {#if teamBotEditTarget !== null}
+    <TeamBotEditDialog
+      source="local"
+      botId={teamBotEditTarget}
+      onClose={() => (teamBotEditTarget = null)}
+    />
+  {/if}
 
   <!-- 删除好友确认（微信式移除：好友关系解除，既有 dm 保留为历史）。 -->
   <Dialog

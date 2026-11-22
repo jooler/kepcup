@@ -48,6 +48,7 @@ import {
 } from '../features/chats/last-conversation-persist';
 import { isEphemeralApprovalCard } from '../features/approvals/ephemeral-approval';
 import { isSilentOnArrival, mergeUnreadCount, teamMessageArrival } from '../features/chats/unread';
+import { answerSetupPath, startSetupInterview } from '../features/chats/interview-routing';
 import { tasks } from '$lib/stores/tasks.svelte';
 import { isInterimMessage } from '../features/chats/run-status-mute';
 import { shell } from '$lib/stores/shell.svelte';
@@ -374,8 +375,8 @@ class ChatState {
         for (let i = messages.length - 1; i >= 0; i -= 1) {
           if (ref.source === 'local' && this.#noteLastMessage(conversationId, messages[i]!)) break;
         }
-        if (ref.source === 'local' && conversation.type !== 'project') {
-          await this.#startSparseInterview(conversation);
+        if (conversation.type !== 'project') {
+          await this.#startSparseInterview(ref.source, conversation);
         }
       },
     });
@@ -396,12 +397,17 @@ class ChatState {
     await this.main.reloadMembers();
   }
 
-  /** 空画像的新 Bot 第一次打开私聊时，主动发出定位提问。已经问过的不重复发。 */
-  async #startSparseInterview(conversation: ConversationView): Promise<void> {
+  /**
+   * 空画像的新 Bot 第一次打开私聊时，主动发出定位提问。已经问过的不重复发。
+   * 按会话来源路由（member-bots B4）：团队来源的成员访谈会话已由服务端开好，
+   * 会话里已有进行中的 setup 问题时直接渲染作答、不重发 start（重复会被服务
+   * 端拒 INVALID_INPUT，见 interview-routing）。
+   */
+  async #startSparseInterview(source: SourceId, conversation: ConversationView): Promise<void> {
     const bot = conversation.bot;
     if (!bot || bot.setupState !== 'interviewing' || !isSparseBotProfile(bot.profile)) return;
     try {
-      await core.call('bots.interview.start', { id: bot.id });
+      await startSetupInterview(source, bot.id, this.main.messages);
     } catch (error) {
       console.warn('[kepcup] interview start failed', error);
     }
@@ -502,11 +508,12 @@ class ChatState {
 
   /**
    * 访谈目录卡作答（19/D59）：path 为 null 表示「暂不设置」；作答后缓冲的
-   * 首答与目录决定一起投递给 Bot（首个响应 run 开始）。
+   * 首答与目录决定一起投递给 Bot（首个响应 run 开始）。按会话来源路由
+   * （member-bots B4）：团队来源经该来源连接，path 须在其选项集合内。
    */
   async answerSetupPath(conversationId: string, path: string | null): Promise<void> {
     try {
-      await core.call('bots.interview.answerPath', { conversationId, path });
+      await answerSetupPath(this.sourceOfConversation(conversationId), conversationId, path);
     } catch (error) {
       toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
     }

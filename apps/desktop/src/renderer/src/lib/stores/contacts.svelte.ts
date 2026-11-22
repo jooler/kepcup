@@ -5,6 +5,11 @@ import { core } from '$lib/rpc/client.svelte';
 import { connections, serverHashOf, teamSourceId, type SourceId } from '$lib/rpc/connections.svelte';
 import { teamContext } from '$lib/features/team/team-context.svelte';
 import { markTeamSectionSource } from '$lib/features/team/team-availability';
+import {
+  setTeamBotCapabilities,
+  setTeamMemberId,
+  type TeamBotCapabilities,
+} from '$lib/features/team/team-bots.svelte';
 
 /**
  * 一个已融合团队来源的通讯录切片（T7 步骤 3，62.04 §1 双源名册）：成员 / 可见
@@ -338,7 +343,13 @@ class ContactsState {
       const bootstrap = (await conn.callTeam('team.bootstrap')) as {
         member: TeamMember;
         server: { name: string };
+        /** B1 契约的可选字段：旧服务端缺省 → null 降级（member-bots B4）。 */
+        botCapabilities?: TeamBotCapabilities;
       };
+      // 桌面融合来源的成员 Bot 能力面（B4 审查期合并校正：与 team-context 的
+      // web 路径同款）——不写则桌面端建 Bot 对话框降级（无公共档 / 无配额）。
+      setTeamBotCapabilities(source, bootstrap.botCapabilities ?? null);
+      setTeamMemberId(source, bootstrap.member.id);
       const slice: TeamSourceSlice = {
         serverHash,
         serverName: bootstrap.server.name,
@@ -353,6 +364,10 @@ class ContactsState {
       await Promise.all([this.#refreshTeamRoster(serverHash), this.#refreshTeamBots(serverHash)]);
     } catch {
       // 断开 / 未认证：切片转「未连接」占位（保留空骨架，不伪造数据）。
+      // 能力面一并撤空（team-context.reset 的同款语义）；成员 id 置空后
+      // selfMemberIdOf 回落连接自带的 memberId（可能仍是上次登录的值）。
+      setTeamBotCapabilities(source, null);
+      setTeamMemberId(source, null);
       const existing = this.teamSources[serverHash];
       this.teamSources = {
         ...this.teamSources,

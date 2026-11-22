@@ -252,4 +252,27 @@ describe('团队来源接入', () => {
     // 本机名册不受团队 presence 事件影响。
     expect(contacts.members).toEqual([]);
   });
+
+  // 成员 Bot 能力面（member-bots B4 审查期合并校正）：桌面融合来源的
+  // team.bootstrap 消费要写 team-bots store——否则桌面端建 Bot 对话框降级
+  //（无公共档 / 无配额，必修项实证缺口）。
+  it('bootstrap.botCapabilities → team-bots store（桌面融合来源）', async () => {
+    const caps = { canCreatePublicBot: true, privateBotsUsed: 2, privateBotsLimit: 10 };
+    h.teamHandlers['team.bootstrap'] = () => ({ ...TEAM.bootstrap, botCapabilities: caps });
+    attachTeam();
+    await vi.waitFor(() => expect(contacts.teamSources.h1?.connected).toBe(true));
+    const { botCapabilitiesOf, teamBots } = await import('$lib/features/team/team-bots.svelte');
+    expect(botCapabilitiesOf('team:h1')).toEqual(caps);
+    // 成员 id 一并写入（myPrivateBotsOf 的 owner 过滤依赖它）。
+    expect(teamBots.selfMemberIdOf('team:h1')).toBe('mbr_self');
+    teamBots.reset();
+  });
+
+  it('旧服务器缺省 botCapabilities → null 降级（不残留 undefined）', async () => {
+    attachTeam();
+    await vi.waitFor(() => expect(contacts.teamSources.h1?.connected).toBe(true));
+    const { botCapabilitiesOf, teamBots } = await import('$lib/features/team/team-bots.svelte');
+    expect(botCapabilitiesOf('team:h1')).toBe(null);
+    teamBots.reset();
+  });
 });

@@ -5,7 +5,7 @@
   import { Input } from '$lib/components/ui/input';
   import { Button } from '$lib/components/ui/button';
   import { getChatSession } from './chat-session-context';
-  import { core } from '$lib/rpc/client.svelte';
+  import { answerSetupInterview } from './interview-routing';
   import { toast } from 'svelte-sonner';
 
   const session = getChatSession();
@@ -63,7 +63,9 @@
     if (answer.length === 0 || submitting || !interactive || conversationId === undefined) return;
     submitting = true;
     try {
-      await core.call('bots.interview.answer', { conversationId, text: answer });
+      // 按会话来源路由（member-bots B4）：local 经 connections.get('local') 即
+      // core 单例，本机行为不变；团队来源走该来源连接（服务端 owner 判定）。
+      await answerSetupInterview(session.source, conversationId, answer);
     } catch (error) {
       toast.error(t('chats.setupAnswerFailed'), {
         description: error instanceof Error ? error.message : String(error),

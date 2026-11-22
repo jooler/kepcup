@@ -4,6 +4,7 @@ import { t } from '$lib/i18n';
 import { core } from '$lib/rpc/client.svelte';
 import { isTeamHidden, setTeamHiddenSurfaces } from './surface-gate';
 import { markTeamSectionSource } from './team-availability';
+import { setTeamBotCapabilities, setTeamMemberId } from './team-bots.svelte';
 
 /**
  * 团队上下文（T5 步骤 2，62.08 §3 / 62.04 §7）：渲染层与团队服务器会话的
@@ -72,6 +73,9 @@ class TeamContextState {
     this.member = null;
     this.serverName = '';
     this.permissionCeiling = null;
+    // 成员 Bot 面（B4 子域 B）：会话失效即撤空 store 里的能力面与成员 id。
+    setTeamBotCapabilities('local', null);
+    setTeamMemberId('local', null);
     setTeamHiddenSurfaces([]);
     this.members = [];
     markTeamSectionSource('local', false);
@@ -104,6 +108,11 @@ class TeamContextState {
       this.member = bootstrap.member;
       this.serverName = bootstrap.server.name;
       this.permissionCeiling = bootstrap.permissionCeiling;
+      // 成员 Bot 面（B4 子域 B，B1 契约）：bootstrap 带 botCapabilities 才有
+      // 能力值，旧服务端缺省字段按 null 降级（无公共 Bot 入口、不显配额）；
+      // 成员 id 一并写入 store（web 端点 source='local'，连接层拿不到）。
+      setTeamBotCapabilities('local', bootstrap.botCapabilities ?? null);
+      setTeamMemberId('local', bootstrap.member.id);
       setTeamHiddenSurfaces(bootstrap.surfaces.hidden);
       // bootstrap 里的 conversations 是会话视图快照：左栏/通讯录统一走既有
       // conversations.list 路径，这里不落 store。

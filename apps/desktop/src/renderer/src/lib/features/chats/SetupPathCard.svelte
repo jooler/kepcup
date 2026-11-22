@@ -5,12 +5,20 @@
   import { Button } from '$lib/components/ui/button';
   import { chat } from '$lib/stores/chat.svelte';
   import { getChatSession } from './chat-session-context';
+  import { teamContext } from '$lib/features/team/team-context.svelte';
+  import TeamWorkdirPicker from '$lib/features/team/TeamWorkdirPicker.svelte';
 
   /**
    * 初始化访谈的工作目录卡（docs/design/19 D59）：首问作答后由 core 确定性
    * 插入（不经 LLM），闸门在它作答前扣下一切投递。未答态提供「选择目录…」
-   * （原生目录选择器）与「暂不设置」两个出口；已答态与 SetupQuestionCard
-   * 同构——展示首条后续用户消息（setupAnswer 标记）为已答行。
+   * 与「暂不设置」两个出口；已答态与 SetupQuestionCard 同构——展示首条后续
+   * 用户消息（setupAnswer 标记）为已答行。
+   *
+   * 来源路由（member-bots B4）：本机会话走原生目录选择器（现行为不变）；团队
+   * 来源的路径必须落在服务端允许集合内（B-10），改为 TeamWorkdirPicker 的
+   * 选项集选择（answerPath 经 chat 按来源路由，服务端校验越界）。团队判定
+   * 含 web 团队端点（session.source 恒 'local'，但同源 core 就是团队服务器，
+   * 审查修正）——成员本机原生选择器选出的任意路径必被服务端拒。
    */
   let { message }: { message: Message } = $props();
   const session = getChatSession();
@@ -18,6 +26,7 @@
   const question = $derived(
     message.kind === 'system_event' && 'text' in message.content ? message.content.text : '',
   );
+  const isTeamSource = $derived(session.source !== 'local' || teamContext.active);
 
   // 已答判定：目录卡之后的第一条用户文本消息（answerSetupPath 落的
   // setupAnswer 消息 / 用户自由输入都算）。
@@ -52,6 +61,12 @@
     if (path === null) return;
     await submit(path);
   }
+
+  /** 团队来源：选项集选择（TeamWorkdirPicker 内部拉取 / mkdir / 越界提示）。 */
+  async function pickTeamPath(path: string): Promise<void> {
+    if (submitting || !interactive) return;
+    await submit(path);
+  }
 </script>
 
 <div
@@ -72,27 +87,44 @@
       <Check class="size-4 shrink-0 text-primary" aria-hidden="true" />
     </div>
   {:else if interactive}
-    <div class="flex gap-2">
-      <Button
-        size="sm"
-        class="h-9 gap-1.5"
-        disabled={submitting}
-        onclick={() => void pickDirectory()}
-        data-testid="setup-path-pick"
-      >
-        <FolderOpen class="size-4" aria-hidden="true" />
-        {t('chats.setupPathPick')}
-      </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        class="h-9"
-        disabled={submitting}
-        onclick={() => void submit(null)}
-        data-testid="setup-path-skip"
-      >
-        {t('chats.setupPathSkip')}
-      </Button>
-    </div>
+    {#if isTeamSource}
+      <!-- 团队来源：服务端允许集合内选择（B-10），不做自由路径 / 原生选择器。 -->
+      <div class="space-y-2" data-testid="setup-path-team-picker">
+        <TeamWorkdirPicker source={session.source} compact onSelect={(path) => void pickTeamPath(path)} />
+        <Button
+          variant="outline"
+          size="sm"
+          class="h-9"
+          disabled={submitting}
+          onclick={() => void submit(null)}
+          data-testid="setup-path-skip"
+        >
+          {t('chats.setupPathSkip')}
+        </Button>
+      </div>
+    {:else}
+      <div class="flex gap-2">
+        <Button
+          size="sm"
+          class="h-9 gap-1.5"
+          disabled={submitting}
+          onclick={() => void pickDirectory()}
+          data-testid="setup-path-pick"
+        >
+          <FolderOpen class="size-4" aria-hidden="true" />
+          {t('chats.setupPathPick')}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          class="h-9"
+          disabled={submitting}
+          onclick={() => void submit(null)}
+          data-testid="setup-path-skip"
+        >
+          {t('chats.setupPathSkip')}
+        </Button>
+      </div>
+    {/if}
   {/if}
 </div>

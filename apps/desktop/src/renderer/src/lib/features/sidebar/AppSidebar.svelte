@@ -13,6 +13,7 @@
     Settings2,
     BookUser,
     Blocks,
+    Bot,
     Pencil,
     Copy,
     Trash2,
@@ -42,6 +43,17 @@
   import { awayState } from '$lib/features/team/away-state.svelte';
   import MemberAvatar from '$lib/features/team/MemberAvatar.svelte';
   import AddFriendDialog from '$lib/features/team/AddFriendDialog.svelte';
+  // 团队 Bot 面（B4 子域 B）：store 与对话框组件是子域 A 的契约交付物——
+  // loadTeamBots / teamBotsOf 见 team-bots.svelte.ts，三个对话框 props 契约
+  // { source, onClose }（Edit 另带 botId）；项目组流 openTeamProjectCreate +
+  // 挂 TeamProjectCreateDialog（宿主状态在 team-project-create.svelte）。
+  import { loadTeamBots, teamBotsOf } from '$lib/features/team/team-bots.svelte';
+  import TeamCreateBotDialog from '$lib/features/team/TeamCreateBotDialog.svelte';
+  import TeamMyBotsPanel from '$lib/features/team/TeamMyBotsPanel.svelte';
+  import TeamBotEditDialog from '$lib/features/team/TeamBotEditDialog.svelte';
+  import TeamProjectCreateDialog from '$lib/features/team/TeamProjectCreateDialog.svelte';
+  import { openTeamProjectCreate } from '$lib/features/team/team-project-create.svelte';
+  import type { SourceId } from '$lib/rpc/connections.svelte';
   import { shell } from '$lib/stores/shell.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { chat, type ConversationView } from '$lib/stores/chat.svelte';
@@ -98,6 +110,7 @@
   } from './sidebar-activity';
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
   import { sidebarLayout } from './sidebar-layout.svelte';
+  import { botRowMenuAction, teamPlusSource } from './sidebar-team-group.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import * as Tooltip from '$lib/components/ui/tooltip';
 
@@ -403,6 +416,66 @@
   async function openCreateProject(): Promise<void> {
     plusOpen = false;
     chat.beginProjectCompose();
+  }
+
+  // --- 团队分组（B4 子域 B，方案决策 B-4） -------------------------------------
+  // 「+」面板团队分组 / Bot 行 per-bot 菜单：判定逻辑在 sidebar-team-group，
+  // 这里只做 store 接线（团队 Bot 清单与对话框来自子域 A 的契约交付物）。
+
+  /**
+   * 团队分组的目标来源：web 团队端点 = 'local'（同源 core 即团队服务器）；
+   * 桌面融合 = 当前选中会话的团队来源（未连接则隐藏），否则首个已连接团队
+   * 来源；非团队上下文 null——分组整体不渲染，本地条目与顺序零变化。
+   */
+  const teamPlus = $derived(teamPlusSource());
+
+  /** 团队 Bot 对话框（+ 面板入口）：打开时定格来源，选中态变化不影响已开的框。 */
+  let teamBotDialog = $state<{ kind: 'create' | 'myBots'; source: SourceId } | null>(null);
+  /** 团队 Bot 编辑框（右键 per-bot 入口 / 通讯录行入口）。 */
+  let teamBotEditTarget = $state<{ source: SourceId; botId: string } | null>(null);
+
+  // 目标来源出现 / 重连时拉成员面 Bot 清单（右键 per-bot 判定与 A 的对话框
+  // 共用同一份切片；非团队上下文不发起——本机 core 没有 team.bots.* 方法）。
+  // bootstrap 的 botCapabilities / 成员 id 由 team-context 写入 store（B4 B3）。
+  $effect(() => {
+    const source = teamPlus;
+    if (source === null) return;
+    void loadTeamBots(source);
+  });
+
+  /** 右键菜单所在 Bot 行的成员面判定（B-12 per-bot）：本地行零变化。 */
+  const contextBotAction = $derived.by(() => {
+    // 右键行来自 chat.conversations（本机列表）：web 团队端点下同源 core 即
+    // 团队服务器，成员面切片就是 'local'；桌面本机名册从不在成员面里。
+    const slice = teamBotsOf('local');
+    return botRowMenuAction({
+      teamActive: teamContext.active,
+      memberBots: slice.bots,
+      memberBotsResolved: slice.loaded || slice.error !== undefined,
+      botId: contextConversation?.bot?.id ?? null,
+      botActive: contextConversation?.bot?.status === 'active',
+      editSurfaceHidden: teamContext.isTeamHidden('bot-edit'),
+    });
+  });
+
+  function openTeamBotDialog(kind: 'create' | 'myBots', source: SourceId): void {
+    plusOpen = false;
+    plusQuery = '';
+    teamBotDialog = { kind, source };
+  }
+
+  /** 新建团队项目组（B4 子域 B）：A 的项目流宿主（对话框挂在本组件尾部）。 */
+  function openTeamProject(source: SourceId): void {
+    plusOpen = false;
+    plusQuery = '';
+    openTeamProjectCreate(source);
+  }
+
+  function openTeamBotEditFromContext(): void {
+    const action = contextBotAction;
+    closeContextMenu();
+    if (action.kind !== 'teamEdit') return;
+    teamBotEditTarget = { source: 'local', botId: action.bot.id };
   }
 
   /**
@@ -1668,8 +1741,12 @@
         {t('friends.addFriend')}
       </button>
     {/if}
-    <!-- 团队端点 surfaces 门控（T5）：bot-create 被拒时隐藏新建入口。 -->
-    {#if !teamContext.isTeamHidden('bot-create')}
+    <!-- 团队端点 surfaces 门控（T5）+ 成员面让位（member-bots B4 审查修正）：
+         web 团队端点上 core `bots.create` 对成员恒拒（B2 只放开 team.bots.create，
+         bot-create surface 按 B-12 对成员不再隐藏）——本机入口会让位给下方团队
+         分组的「在服务端创建 Bot」，避免出现必拒的重复入口；本机 / 非团队端点
+         行为零变化。 -->
+    {#if !teamContext.active && !teamContext.isTeamHidden('bot-create')}
       <button
         type="button"
         class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
@@ -1710,6 +1787,50 @@
       {t('botTemplate.importEntry')}
     </button>
   </div>
+  <!-- 团队分组（B4 子域 B，方案决策 B-4）：连接团队服务器时出现三条目——在
+       服务端创建 Bot、新建团队项目组、我的私有 Bot；非团队上下文（teamPlus
+       为 null）整体不渲染，上方本地条目与顺序零变化。团队条目独立于本地
+       「新建 Bot」的 bot-create surface 门控（B2 已对成员放开该 surface）。 -->
+  {#if teamPlus !== null}
+    <p class="px-2 pt-2 pb-1 text-[11px] text-muted-foreground" data-testid="start-chat-team-group-title">
+      {t('teamBot.groupSection')}
+    </p>
+    <div class="space-y-0.5" data-testid="start-chat-team-group">
+      <button
+        type="button"
+        class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
+        onclick={() => openTeamBotDialog('create', teamPlus)}
+        data-testid="start-chat-team-create-bot"
+      >
+        <span class="flex size-7 items-center justify-center rounded-full bg-muted">
+          <Server class="size-4" />
+        </span>
+        {t('teamBot.createAction')}
+      </button>
+      <button
+        type="button"
+        class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
+        onclick={() => openTeamProject(teamPlus)}
+        data-testid="start-chat-team-create-project"
+      >
+        <span class="flex size-7 items-center justify-center rounded-full bg-muted">
+          <Users class="size-4" />
+        </span>
+        {t('teamBot.createProjectAction')}
+      </button>
+      <button
+        type="button"
+        class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
+        onclick={() => openTeamBotDialog('myBots', teamPlus)}
+        data-testid="start-chat-team-my-bots"
+      >
+        <span class="flex size-7 items-center justify-center rounded-full bg-muted">
+          <Bot class="size-4" />
+        </span>
+        {t('teamBot.myBots')}
+      </button>
+    </div>
+  {/if}
   {#if plusBots.length > 0}
     <p class="px-2 pt-2 pb-1 text-[11px] text-muted-foreground">{t('contacts.title')}</p>
     <div class="space-y-0.5 pb-1 {narrow ? '' : 'max-h-[300px] overflow-y-auto'}">
@@ -1796,6 +1917,24 @@
 <!-- 添加好友弹框（+ 面板「添加好友」入口；团队上下文才挂载）。 -->
 <AddFriendDialog bind:open={addFriendOpen} />
 
+<!-- 团队 Bot 对话框（B4 子域 B）：+ 面板团队分组与右键 per-bot 编辑入口打开，
+     组件本体是子域 A 的交付物；仅团队上下文入口可达，非团队上下文永不挂载。 -->
+{#if teamBotDialog?.kind === 'create'}
+  <TeamCreateBotDialog source={teamBotDialog.source} onClose={() => (teamBotDialog = null)} />
+{:else if teamBotDialog?.kind === 'myBots'}
+  <TeamMyBotsPanel source={teamBotDialog.source} onClose={() => (teamBotDialog = null)} />
+{/if}
+{#if teamBotEditTarget !== null}
+  <TeamBotEditDialog
+    source={teamBotEditTarget.source}
+    botId={teamBotEditTarget.botId}
+    onClose={() => (teamBotEditTarget = null)}
+  />
+{/if}
+<!-- 团队项目组创建对话框（B4 子域 B 入口 + 子域 A 本体）：宿主状态在
+     team-project-create.svelte，未打开时 Dialog 关闭、零渲染面。 -->
+<TeamProjectCreateDialog />
+
 {#if contextMenu}
   <!-- 条目右键菜单（参考 Grok Bot）：管理操作收在这里 -->
   <button
@@ -1855,7 +1994,16 @@
         openProjectDetail,
         'context-project-settings',
       )}
-    {:else if contextConversation?.bot?.status === 'active' && !teamContext.isTeamHidden('bot-edit')}
+    {:else if contextBotAction.kind === 'teamEdit'}
+      <!-- 成员面 Bot（B4 子域 B，B-12 per-bot 判定）：canEdit 才出编辑入口，
+           转交 / 删除在 TeamBotEditDialog 内；bot-edit surface 不再整体屏蔽。 -->
+      {@render contextItem(
+        Pencil,
+        t('teamBot.editAction'),
+        openTeamBotEditFromContext,
+        'context-edit-team-bot',
+      )}
+    {:else if contextBotAction.kind === 'localRename'}
       {@render contextItem(Pencil, t('sidebar.renameBot'), openRename, 'context-rename-bot')}
     {/if}
     {@render contextItem(
