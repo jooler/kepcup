@@ -19,6 +19,7 @@
   import { updateStore } from '$lib/stores/update.svelte';
   import { appNotices } from '$lib/stores/app-notices.svelte';
   import { onboarding } from '$lib/stores/onboarding.svelte';
+  import { teamContext } from '$lib/features/team/team-context.svelte';
   import { i18n, t } from '$lib/i18n';
   import { shell } from '$lib/stores/shell.svelte';
   import AppSidebar from '$lib/features/sidebar/AppSidebar.svelte';
@@ -252,9 +253,16 @@
     if (!coreReady || settingsStore.settings === null) return;
     if (core.platform === null) return;
     onboardingChecked = true;
+    // 团队成员的完成标记落本地（settings.update 对成员是 admin plane，见
+    // OnboardingWizard.finish）；本地已跳过就不再弹。桌面 / 个人版的标记在
+    // settings 里，不走这条。
+    const localCompleted =
+      teamContext.endpointIsTeam &&
+      globalThis.localStorage?.getItem('kepcup.onboarding.completed') === '1';
     if (
       core.platform.onboardingVisible &&
-      settingsStore.settings.onboarding.completed === false
+      settingsStore.settings.onboarding.completed === false &&
+      !localCompleted
     ) {
       // 引导接管首启：不自动展开「+」面板（向导本身会创建第一个 Bot）。
       shell.autoOpenStartPanel = false;

@@ -10,6 +10,7 @@ import type {
   PermissionModeState,
 } from '@kepcup/shared';
 import { errorText, t } from '$lib/i18n';
+import { teamContext } from '$lib/features/team/team-context.svelte';
 import { core } from '$lib/rpc/client.svelte';
 import { connections, type SourceId } from '$lib/rpc/connections.svelte';
 import { clientIdentity, clientIdentityFor } from '$lib/features/collab/client-identity';
@@ -224,6 +225,12 @@ class PermissionsState {
   }
 
   async refreshUnattended(): Promise<void> {
+    // 团队端点：unattended 模式对成员整体拒绝（C14，T4 方法策略拒掉
+    // `unattended.get`）——不发调用，保持初始未启用态（boot 期裸调用会把
+    // 403 变成 unhandled rejection）。用 endpointIsTeam（同步置位）而非
+    // active（等 bootstrap 才翻转，boot 期竞速漏判）。本地恢复后事件
+    // `unattended.changed` 照常接管。
+    if (teamContext.endpointIsTeam) return;
     this.unattended = (await core.call('unattended.get')) as UnattendedState;
   }
 

@@ -23,6 +23,13 @@ import { markTeamSectionSource } from './team-availability';
 class TeamContextState {
   /** 团队会话已建立（bootstrap 成功）。非团队端点恒 false。 */
   active = $state(false);
+  /**
+   * 团队端点已确认（探测 / 登录响应带 member）——与 begin() 同步置位，不等
+   * bootstrap。`active` 要等 team.bootstrap RPC 成功才翻转，App 首屏 bootstrap
+   * 与之并行竞速：settings / permissions 等 store 需要在首屏就拿到「这是团队
+   * 服务器」的确定答案（跳过 admin-plane 方法），用这个。
+   */
+  endpointIsTeam = $state(false);
   /** 当前成员（团队身份）；自我会话、气泡分侧、@ 候选排除都用它。 */
   member = $state<TeamMember | null>(null);
   /** 团队服务器显示名（通讯录「成员」栏标题等展示用）。 */
@@ -46,6 +53,8 @@ class TeamContextState {
   begin(): void {
     if (this.#started) return;
     this.#started = true;
+    // 同步确认端点身份（不等 bootstrap，见 endpointIsTeam 注释）。
+    this.endpointIsTeam = true;
     // T7：「团队」设置分区在 web 团队端点出现（离开态 / 免打扰 / 用量）。
     markTeamSectionSource('local', true);
     this.#bind();
@@ -59,6 +68,7 @@ class TeamContextState {
    */
   reset(): void {
     this.active = false;
+    this.endpointIsTeam = false;
     this.member = null;
     this.serverName = '';
     this.permissionCeiling = null;

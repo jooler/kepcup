@@ -1358,6 +1358,8 @@ export const zhCN = {
   'settings.profileAvatarRemove': '移除头像',
   'settings.profileAvatarSaved': '头像已更新',
   'settings.profileAvatarRemoved': '已移除头像',
+  // 团队上下文（web 端点）：本机已保存但团队服务器的显示名推送失败（self-profile）。
+  'settings.profileServerSyncFailed': '已保存到本机，但团队服务器上的显示名更新失败',
   'settings.profilePersonaTitle': '用户画像',
   'settings.profileMenuCard': '画像卡片预览',
   'settings.profileNote':

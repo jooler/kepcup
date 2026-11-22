@@ -1411,6 +1411,9 @@ export const enUS = {
   'settings.profileAvatarRemove': 'Remove avatar',
   'settings.profileAvatarSaved': 'Avatar updated',
   'settings.profileAvatarRemoved': 'Avatar removed',
+  // Team context (web endpoint): saved locally but the team-server display name push failed.
+  'settings.profileServerSyncFailed':
+    'Saved locally, but the display name on the team server could not be updated',
   'settings.profilePersonaTitle': 'User persona',
   'settings.profileMenuCard': 'Persona card preview',
   'settings.profileNote':
