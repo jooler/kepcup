@@ -129,7 +129,7 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
       ? {
           titleBarStyle: 'hiddenInset' as const,
           // hiddenInset 默认红绿灯位置是 { x: 12, y: 12 }，整体右移、下移各 4px。
-          trafficLightPosition: { x: 16, y: 16 } as const,
+          trafficLightPosition: { x: 12, y: 12 } as const,
           vibrancy: 'sidebar' as const,
         }
       : {
