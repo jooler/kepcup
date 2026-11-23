@@ -15,7 +15,7 @@ import type {
   SandboxExecResult,
   SandboxPolicy,
 } from './types.js';
-import type { AppPaths } from '../infra/paths.js';
+import { canonicalPath, type AppPaths } from '../infra/paths.js';
 import type { CoreLogger } from '../infra/logger.js';
 
 export interface SrtBackendOptions {
@@ -39,18 +39,35 @@ interface SrtNetworkConfig {
 const LOOPBACK_ENTRIES = new Set(['localhost', '127.0.0.0/8', '0.0.0.0/8', '::1']);
 
 /**
- * Filesystem block for srt (deny-then-allow read model). Exported so the P12
- * enhanced backends reuse the exact same rule layer instead of copying it
- * (docs/dev/phases/P12-windows-and-enhanced-sandbox.md 任务 6).
+ * Filesystem block for srt (allow-by-default reads with deny-then-allow
+ * carve-outs). Exported so the P12 enhanced backends reuse the exact same
+ * rule layer instead of copying it (docs/dev/phases/
+ * P12-windows-and-enhanced-sandbox.md 任务 6).
+ *
+ * D140-2: srt's `getDefaultWritePaths` (sandbox-utils.js) auto-allows its
+ * HOME_CONVENIENCE_WRITE_DIRS — `~/.npm/_logs` and `~/.claude/debug` —
+ * whenever the home is not read-denied. The read side was widened (the home
+ * is no longer denied), so those paths MUST be denied explicitly to keep the
+ * write surface byte-for-byte unchanged: sandboxed commands never write
+ * them. What the sandbox itself needs (stdio, /tmp/claude) is always in
+ * that default list and stays allowed, as before. The mount-based enhanced
+ * backends are unaffected: Podman/WSL never see the host home (their write
+ * surface is the mounts), and for these backends the entries below name
+ * guest-absent paths, which srt skips; Lima mounts the host home at the
+ * same path and needs them exactly like the host srt backend.
  */
 export function srtFilesystemFor(policy: SandboxPolicy): SandboxRuntimeConfig['filesystem'] {
+  const home = canonicalPath(os.homedir());
   return {
     denyRead: policy.denyRead,
-    // srt read model: deny-then-allow. Workspace + caches must stay readable
-    // even though the home directory (their ancestor) is denied.
+    // Read model: allow-by-default, denyRead carves out (data home,
+    // sensitive list, protect globs), allowRead re-opens holes inside those
+    // denies (grants, the workdir, toolchains under the data home).
     allowRead: [...policy.readOnly, ...policy.readWrite],
     allowWrite: policy.readWrite,
-    denyWrite: [],
+    // Read-wide counterweight (see the D140-2 note above): pin srt's home
+    // convenience write paths closed.
+    denyWrite: [path.join(home, '.npm', '_logs'), path.join(home, '.claude', 'debug')],
   };
 }
 

@@ -1,8 +1,6 @@
 import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
-import path from 'node:path';
 
-import { canonicalPath, type AppPaths } from '../infra/paths.js';
+import type { AppPaths } from '../infra/paths.js';
 import { sensitivePaths, readOnlyRoots } from './sensitive-paths.js';
 import type { SandboxNetworkPolicy, SandboxPolicy } from './types.js';
 import { expressibleDomainDirs } from '../workdir/domains.js';
@@ -56,10 +54,15 @@ export interface PolicyInput {
 }
 
 /**
- * Per-command sandbox policy (docs/dev/10-sandbox.md "文件系统规则"): the
- * workspace is read-write, app caches and the temp directory are read-write,
- * system and toolchain directories are read-only, everything else — including
- * the rest of the user home — is denied. Effective grants join the policy for
+ * Per-command sandbox policy (docs/dev/10-sandbox.md "文件系统规则"):
+ * read-wide, write-narrow (D140-2). The workspace is read-write, app caches
+ * and the temp directory are read-write, system and toolchain directories
+ * are read-only, and everything else on the machine is READABLE by default —
+ * the read side is only carved by `denyRead` (the app data directory
+ * `~/.kepcup`, the sensitive credential list, workdir protect-rule globs).
+ * The WRITE side is unchanged: `srtFilesystemFor` pins srt's default
+ * convenience write paths so the writable set stays byte-for-byte what it
+ * was before the read side widened. Effective grants join the policy for
  * every command (docs/design/13-permissions.md "命令行"): write grants into
  * `readWrite`, read grants into `readOnly`; a granted sensitive path is
  * removed from `denyRead`. The bound workdir is read-only without the write
@@ -69,9 +72,9 @@ export interface PolicyInput {
 export function buildSandboxPolicy(input: PolicyInput): SandboxPolicy {
   const { platform, paths, workspacePath, network } = input;
   // The temp directory must NOT be listed here: it is an ancestor of the
-  // data home on macOS (tests) and re-allowing it un-does the home deny in
-  // the sandbox profile. srt redirects TMPDIR to a sandbox-private location
-  // and allows writes there by default.
+  // data home on macOS (tests) and re-allowing it un-does the data-home deny
+  // in the sandbox profile. srt redirects TMPDIR to a sandbox-private
+  // location and allows writes there by default.
   // uv and pycache are app caches too: UV_CACHE_DIR / PYTHONPYCACHEPREFIX
   // already point here. Leaving them out of readWrite made macOS system
   // Python fail `file-write-create` on `{pycache}/opt/...` and exit before
@@ -105,15 +108,16 @@ export function buildSandboxPolicy(input: PolicyInput): SandboxPolicy {
       for (const dir of domainDirs) pushUnique(readWrite, dir);
     }
   }
-  const userHome = canonicalPath(homedir());
-  let denyRead: string[] = [userHome, paths.home, ...sensitivePaths(platform)];
-  if (platform === 'darwin') {
-    // CoreFoundation and the macOS python3 stub read this one-byte encoding
-    // file at startup (`0:0` style). It sits in the denied home; re-allow
-    // that file only — Apple's bsd.sb does the same. Not a credential, and
-    // it does not open the rest of the home or localhost.
-    readOnly.push(path.join(userHome, '.CFUserTextEncoding'));
-  }
+  // D140-2 (read-wide, write-narrow): the user home itself is no longer
+  // read-denied — sandboxed commands may read the whole machine, like the
+  // file tools always could. Reads stay denied exactly for the app data
+  // directory (`paths.home` = ~/.kepcup, the red line that no grant lifts),
+  // the sensitive credential list (the ONLY home read protection left, see
+  // sensitive-paths.ts) and the workdir protect globs joined below. The
+  // write surface is unchanged: srtFilesystemFor explicitly denies srt's
+  // home convenience write paths (~/.npm/_logs, ~/.claude/debug), which srt
+  // auto-allows now that the home is no longer read-denied.
+  let denyRead: string[] = [paths.home, ...sensitivePaths(platform)];
 
   // Installed toolchains (P06) are visible read-only inside the sandbox and
   // their bin dirs lead PATH (docs/dev/phases/P06-environment.md 任务 5).
@@ -147,7 +151,8 @@ export function buildSandboxPolicy(input: PolicyInput): SandboxPolicy {
         readWrite.push(workdir.path);
       }
     } else readOnly.push(workdir.path);
-    // The workdir re-exposes its slice of the denied home; protect-rule globs
+    // The workdir allow re-opens whatever denyRead entry it covers (D140-2:
+    // a workdir rooted inside a sensitive location); its protect-rule globs
     // re-deny inside it (srt read model: deny-then-allow, last match wins).
     denyRead = denyRead.filter(
       (denied) => !(denied === workdir.path || isAncestor(workdir.path, denied)),
@@ -185,12 +190,14 @@ export function buildSandboxPolicy(input: PolicyInput): SandboxPolicy {
   return {
     readWrite,
     readOnly,
-    // The canonical user home is denied wholesale: `paths.home` is the data
-    // directory (~/.kepcup), not the home itself, so without this entry
-    // ~/Documents, shell history and source trees would be readable by
-    // sandboxed commands. Workspaces, caches, toolchains and grants live
-    // underneath it and are re-exposed via readWrite/readOnly (srt's read
-    // model is deny-then-allow, last match wins).
+    // D140-2 read side: the whole machine is readable by default; this list
+    // only carves out the app data directory (`paths.home` = ~/.kepcup, the
+    // never-grantable red line), the sensitive credential locations and the
+    // workdir protect globs pushed above. srt's read model is allow-by-
+    // default with deny-then-allow carve-outs (last match wins), so entries
+    // re-exposed via readWrite/readOnly (grants, the workdir) are removed
+    // from this list above. The write side is byte-for-byte unchanged — see
+    // srtFilesystemFor (backend-srt.ts) for the pinned default write paths.
     denyRead,
     network,
     env,

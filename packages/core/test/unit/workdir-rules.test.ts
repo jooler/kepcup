@@ -132,13 +132,15 @@ describe('workdir policy input', () => {
     expect(readonly.readOnly).toContain(workdirPath);
     expect(readonly.readWrite).not.toContain(workdirPath);
     expect(readonly.denyRead).toContain(`${workdirPath}/**/.env`);
+    // D140-2: without the lease the workdir is still readable (allowRead),
+    // only its protect globs are denied — never a wholesale home deny.
+    expect(readonly.denyRead).not.toContain(workdirPath);
 
     const leased = buildSandboxPolicy({
       ...base,
       workdir: { path: workdirPath, hasLease: true, denyReadGlobs: [] },
     });
     expect(leased.readWrite).toContain(workdirPath);
-    // The workdir under the (denied) user home is re-exposed.
     expect(leased.denyRead).not.toContain(workdirPath);
   });
 

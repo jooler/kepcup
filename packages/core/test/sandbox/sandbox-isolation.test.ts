@@ -1,5 +1,4 @@
-import { mkdirSync, mkdtempSync, existsSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
+import { mkdirSync, mkdtempSync, existsSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -19,6 +18,15 @@ import { SANDBOX_CURL_REACHED, sandboxCurlReachToken } from './curl-reach.js';
  * (P02 entries). Real sandboxing is exercised; skipped on platforms without
  * srt support (docs/dev/05-testing.md "CI 矩阵" — Ubuntu additionally needs
  * kernel.apparmor_restrict_unprivileged_userns=0).
+ *
+ * D140-2 (read-wide, write-narrow): the user home is readable inside the
+ * sandbox — only the app data directory, the sensitive credential list and
+ * workdir protect globs stay unread, and the write surface is unchanged
+ * (srt's default convenience write paths are denied explicitly). These
+ * cases exercise the srt backend directly; the enhanced mount-based
+ * backends (Podman/WSL) never project the host home into the guest, so the
+ * read widening does not apply to them and their behavior is unchanged —
+ * only Lima (same-path home mount + in-VM srt) shares this rule layer.
  */
 const supported = process.platform === 'darwin' || process.platform === 'linux';
 const d = supported ? describe : describe.skip;
@@ -112,34 +120,97 @@ d('sandbox escape cases (P02 安全用例集)', () => {
     expect(readDenied(dbResult), dbResult.stderr).toBe(true);
   });
 
-  it('denies reading arbitrary locations of the user home from inside the sandbox', { timeout: TIMEOUT }, async () => {
+  it('reads the user home and sibling checkouts, but not the sensitive list (D140-2)', { timeout: TIMEOUT }, async () => {
     workspace();
-    // Listing the real user home must fail with a read denial (BR-P02-001 /
-    // BR-P02-004): the data home being denied does not imply home isolation.
+    // D140-2 read-wide: listing the real user home now succeeds — the read
+    // side is the whole machine minus the data home, the sensitive list and
+    // protect globs (this replaces the BR-P02-001/004 wholesale home deny).
     const ls = await bash('ls "$HOME"');
-    if (linux) {
-      // The home is an empty tmpfs; only the ancestors of paths re-allowed for
-      // reading (srt's own seccomp helper, which may live under the home) remain.
-      const helper = createRequire(import.meta.url).resolve('@anthropic-ai/sandbox-runtime');
-      const leaked = readdirSync(os.homedir()).filter(
-        (entry) =>
-          ls.stdout.split('\n').includes(entry) &&
-          !helper.startsWith(path.join(os.homedir(), entry) + path.sep),
-      );
-      expect(leaked, `ls "$HOME" must not list the real home: ${ls.stdout}`).toEqual([]);
-    } else {
-      expect(ls.exitCode, `ls "$HOME" should be denied: ${ls.stderr}`).not.toBe(0);
-      expect(readDenied(ls), `expected a sandbox denial for the user home: ${ls.stderr}`).toBe(true);
-    }
+    expect(ls.exitCode, `ls "$HOME" should succeed: ${ls.stderr}`).toBe(0);
 
-    // A non-sensitive, existing file directly under the home is equally denied.
+    // Non-sensitive dotfiles directly under the home are readable now.
     const probeFiles = ['.gitconfig', '.zshrc', '.bashrc', '.vimrc', '.profile']
       .map((name) => path.join(os.homedir(), name))
       .filter((p) => existsSync(p) && statSync(p).isFile());
     for (const probe of probeFiles) {
       const result = await bash(`cat "${probe}"`);
-      expect(result.exitCode, `${probe} should be unreadable: ${result.stderr}`).not.toBe(0);
-      expect(result.stdout, `${probe} content must not leak`).toBe('');
+      expect(result.exitCode, `${probe} should be readable: ${result.stderr}`).toBe(0);
+    }
+
+    // A checkout NEXT TO the workspace tree (another repository) is readable
+    // too — that is the point of the widening (cross-repo reference work).
+    const sibling = mkdtempSync(path.join(os.tmpdir(), 'kepcup-sibling-repo-'));
+    try {
+      writeFileSync(path.join(sibling, 'README.txt'), 'sibling-repo-content');
+      const result = await bash(`cat "${path.join(sibling, 'README.txt')}"`);
+      expect(result.exitCode, `sibling checkout should be readable: ${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain('sibling-repo-content');
+    } finally {
+      rmSync(sibling, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps workdir protect-rule files unreadable inside the sandbox (D140-2)', { timeout: TIMEOUT }, async () => {
+    workspace();
+    const workdirPath = mkdtempSync(path.join(os.tmpdir(), 'kepcup-workdir-'));
+    try {
+      writeFileSync(path.join(workdirPath, '.env'), 'SECRET=1');
+      const policy = buildSandboxPolicy({
+        platform: process.platform,
+        paths: resolvePaths(home),
+        workspacePath: workspace(),
+        network: { mode: 'open', allowDomains: [] },
+        workdir: {
+          path: workdirPath,
+          hasLease: true,
+          denyReadGlobs: [path.join(workdirPath, '.env'), path.join(workdirPath, '**', '.env')],
+        },
+      });
+      const denied = await backend.exec({
+        command: `cat "${path.join(workdirPath, '.env')}"`,
+        cwd: workdirPath,
+        policy,
+        timeoutMs: 30_000,
+      });
+      expect(denied.exitCode, `workdir .env should be unreadable: ${denied.stderr}`).not.toBe(0);
+      expect(readDenied(denied), `expected a sandbox denial for the protect glob: ${denied.stderr}`).toBe(true);
+      // Ordinary files in the same workdir stay readable.
+      writeFileSync(path.join(workdirPath, 'src.txt'), 'ok');
+      const plain = await backend.exec({
+        command: `cat "${path.join(workdirPath, 'src.txt')}"`,
+        cwd: workdirPath,
+        policy,
+        timeoutMs: 30_000,
+      });
+      expect(plain.exitCode, plain.stderr).toBe(0);
+      expect(plain.stdout).toContain('ok');
+    } finally {
+      rmSync(workdirPath, { recursive: true, force: true });
+    }
+  });
+
+  it('blocks writing srt default convenience paths (~/.npm/_logs, ~/.claude/debug)', { timeout: TIMEOUT }, async () => {
+    workspace();
+    // D140-2: srt auto-allows these two home paths once the home is not
+    // read-denied; srtFilesystemFor denies them explicitly so the write
+    // surface stays byte-for-byte unchanged.
+    const npmLogs = path.join(os.homedir(), '.npm', '_logs');
+    const claudeDebug = path.join(os.homedir(), '.claude', 'debug');
+    for (const [dir, probe] of [
+      [npmLogs, path.join(npmLogs, 'kepcup-sandbox-probe')],
+      [claudeDebug, path.join(claudeDebug, 'kepcup-sandbox-probe')],
+    ] as const) {
+      try {
+        const result = await bash(`mkdir -p "${dir}" && touch "${probe}"`);
+        expect(result.exitCode, `writing ${probe} should fail: ${result.stderr}`).not.toBe(0);
+        // Host outcome is the source of truth on Linux (tmpfs masking): the
+        // probe file must not exist even when the deny hid a missing parent.
+        expect(existsSync(probe)).toBe(false);
+      } finally {
+        // If the deny ever regresses, `touch` lands in the REAL user home —
+        // never leave the probe behind there.
+        rmSync(probe, { force: true });
+      }
     }
   });
 

@@ -9,6 +9,12 @@ import { expandTilde } from '../infra/paths.js';
  * "默认可访问范围"). P03 may turn most denials into grantable requests; the
  * data directory (`~/.kepcup`) is handled separately and is never
  * grantable, so it is not part of this list.
+ *
+ * D140-2 (read-wide sandbox): the user home is no longer denied wholesale,
+ * so this list is the ONLY thing standing between a sandboxed command and
+ * the sensitive spots of the home — next to the never-grantable data
+ * directory and the workdir protect globs. The list only ever grows; every
+ * entry must be a credential location (never a plain config file).
  */
 
 /** `~`-relative entries, shared by every platform. Files are allowed too. */
@@ -24,6 +30,13 @@ const COMMON = [
   '~/.netrc',
   '~/.git-credentials',
   '~/.npmrc',
+  '~/.pypirc',
+  '~/.pgpass',
+  '~/.gem/credentials',
+  // Cargo's credential store: current cargo writes credentials.toml, the
+  // legacy `credentials` spelling is still read for compatibility.
+  '~/.cargo/credentials',
+  '~/.cargo/credentials.toml',
   '~/.config/op',
   '~/.config/1password',
 ];
@@ -35,8 +48,11 @@ const LINUX = ['~/.local/share/keyrings'];
 export function sensitivePaths(platform: string = process.platform): string[] {
   const extra = platform === 'darwin' ? DARWIN : platform === 'linux' ? LINUX : [];
   const candidates = [...COMMON, ...extra].map((entry) => expandTilde(entry));
-  // Files that commonly do not exist would never match anyway; keep the list
-  // cheap by filtering out missing locations at build time.
+  // Keep the list cheap by filtering out missing locations at build time.
+  // D140-2: this stays sound with the home readable — the policy is rebuilt
+  // per command, so a credential file created after this build is denied from
+  // the next command on; and a sandboxed command cannot create one itself
+  // (writes outside the workspace/caches are denied in every model).
   return candidates.filter((p) => existsSync(p));
 }
 
