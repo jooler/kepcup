@@ -1049,19 +1049,21 @@ export class ToolGateway {
       }
     }
     // D75：对话轮 / 子代理不占住 mailbox 等卡；只读 run（对话轮、writes:false 任务、
-    // 只读子代理）不放开外网——需要联网由对话轮派一个写任务。
+    // 只读子代理）不放开外网——需要联网由对话轮派一个写任务。对话轮 / 子代理的专用
+    // 拒绝放在只读分支**之前**（`writeDenial` 对轮恒非空，后置会让轮拿到带 ask_user
+    // 指引的通用只读文案；与 `egressCheck` 的轮 / 子代理分支同序）。
     const readOnlyReason = this.writeDenial(identity);
     const unattendedOn = this.#deps.unattended.effective?.().enabled === true;
-    if (readOnlyReason !== null) {
-      throw new AppError(
-        'RUN_READ_ONLY',
-        `${readOnlyReason}。只读执行不能申请网络授权：需要联网请用 ask_user 说明缘由，由对话轮派一个写任务，在任务里调用 request_network`,
-      );
-    }
     if ((identity.loopType === 'turn' || identity.loopType === 'subagent') && !unattendedOn) {
       throw new AppError(
         'RUN_READ_ONLY',
         '本对话读取过连接应用的数据，沙箱命令的外部网络已被切断；对话轮不等待网络授权确认，请用 start_task 派一个任务，在任务里调用 request_network 申请',
+      );
+    }
+    if (readOnlyReason !== null) {
+      throw new AppError(
+        'RUN_READ_ONLY',
+        `${readOnlyReason}。只读执行不能申请网络授权：需要联网请用 ask_user 说明缘由，由对话轮派一个写任务，在任务里调用 request_network`,
       );
     }
     const joined =
