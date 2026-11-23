@@ -45,7 +45,14 @@ export class MemoryDbManager {
       path: dbPath,
       key: deriveKey(this.#deps.masterKey, memoryDbKeyInfo(botId)),
     });
-    runMemoryMigrations(db);
+    try {
+      runMemoryMigrations(db);
+    } catch (error) {
+      // A refused (newer-schema) or broken migration must not leak the
+      // connection: every access would otherwise open another one.
+      db.close();
+      throw error;
+    }
     const store = new MemoryStore({ db, clock: this.#deps.clock, logger: this.#deps.logger });
     store.setBot(botId);
     this.#open.set(botId, store);

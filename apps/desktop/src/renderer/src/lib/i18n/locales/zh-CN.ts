@@ -5,6 +5,7 @@ export const zhCN = {
   'shell.coreStarting': '核心服务启动中…',
   'shell.coreFailed': '核心服务未能启动',
   'shell.coreFailedHint': '连续多次启动失败已停止重试。请查看日志目录了解原因。',
+  'shell.coreErrorHint': '请按下方提示处理后重新启动应用。',
   'shell.logsHint': '日志目录：{path}',
   'shell.rightPanelHide': '收起右栏',
   'sidebar.chatsEmpty': '还没有对话，点右上角「+」开始',

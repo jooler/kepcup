@@ -47,6 +47,7 @@ function runOf(
     loopType: 'turn',
     failureDismissed: false,
     setup: null,
+    continuedFromRunIds: [],
     createdAt: 1,
     startedAt: 1,
     endedAt: null,
@@ -232,6 +233,88 @@ describe('message and run events stay on the current conversation', () => {
     });
     expect(chat.current?.activeRuns).toEqual([]);
     expect(chat.current?.failedRun?.id).toBe('run-1');
+
+    // A newer turn of another Bot does not clear the banner …
+    emit('run.status', {
+      run: runOf({
+        id: 'run-other-bot',
+        status: 'completed',
+        conversationId: 'c1',
+        botId: 'bot_other',
+        createdAt: 2,
+      }),
+    });
+    expect(chat.current?.failedRun?.id).toBe('run-1');
+    // A completed turn with the same createdAt cannot be proven newer: keep it.
+    emit('run.status', {
+      run: runOf({ id: 'run-same-ms', status: 'completed', conversationId: 'c1', createdAt: 1 }),
+    });
+    expect(chat.current?.failedRun?.id).toBe('run-1');
+    // … a newer completed turn of the same Bot does (e.g. the retry succeeded).
+    emit('run.status', {
+      run: runOf({ id: 'run-2', status: 'completed', conversationId: 'c1', createdAt: 2 }),
+    });
+    expect(chat.current?.failedRun).toBeNull();
+  });
+
+  it('a completed wake-up turn does not clear a failed task setup card', async () => {
+    await chat.select('c1');
+    const setup = {
+      kind: 'agent' as const,
+      agentId: 'codex-acp',
+      reason: 'auth_required' as const,
+    };
+    emit('run.status', {
+      run: runOf({
+        id: 'task-1',
+        loopType: 'task',
+        status: 'failed',
+        conversationId: 'c1',
+        setup,
+        createdAt: 1,
+      }),
+    });
+    expect(chat.current?.failedRun?.id).toBe('task-1');
+    // D75 §7.5: the turn a task failure wakes reports the failure; it must not
+    // dismiss the setup card (only the task retrying it does).
+    emit('run.status', {
+      run: runOf({ id: 'wake-turn', status: 'completed', conversationId: 'c1', createdAt: 2 }),
+    });
+    expect(chat.current?.failedRun?.id).toBe('task-1');
+  });
+
+  it('a newer dismissed failure clears the older banner; a cancelled follow-up does not', async () => {
+    await chat.select('c1');
+    emit('run.status', {
+      run: runOf({ id: 'old-failure', status: 'failed', conversationId: 'c1', createdAt: 1 }),
+    });
+    // A cancelled follow-up never answered the failed message: keep retry.
+    emit('run.status', {
+      run: runOf({ id: 'cancelled', status: 'cancelled', conversationId: 'c1', createdAt: 2 }),
+    });
+    expect(chat.current?.failedRun?.id).toBe('old-failure');
+    // A newer failure closed elsewhere makes the older one obsolete.
+    emit('run.status', {
+      run: runOf({
+        id: 'newer-failure',
+        status: 'failed',
+        conversationId: 'c1',
+        createdAt: 3,
+        failureDismissed: true,
+      }),
+    });
+    expect(chat.current?.failedRun).toBeNull();
+  });
+
+  it('an older failed event arriving late does not replace the newer banner', async () => {
+    await chat.select('c1');
+    emit('run.status', {
+      run: runOf({ id: 'newer-failure', status: 'failed', conversationId: 'c1', createdAt: 5 }),
+    });
+    emit('run.status', {
+      run: runOf({ id: 'older-failure', status: 'failed', conversationId: 'c1', createdAt: 3 }),
+    });
+    expect(chat.current?.failedRun?.id).toBe('newer-failure');
   });
 });
 

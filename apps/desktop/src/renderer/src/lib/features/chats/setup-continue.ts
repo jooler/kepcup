@@ -17,10 +17,13 @@ export function stepAutoContinue(
 }
 
 /**
- * 打开会话时恢复的失败 run（`runs.list` 新→旧）：普通失败照旧取最近一条未
- * 关闭的；已标 `failureDismissed` 的（用户关过横幅，落在 error_json）和本会话
- * 内存里关掉的都跳过。带 setup 的失败只有在它之后没有更新的同 Bot 对话轮时
- * 才恢复——已被后续 run 接手的旧失败不再出现可续跑的设置卡（审查 HIGH #1）。
+ * 打开会话时恢复的失败 run（`runs.list` 新→旧）：取最近一条未关闭的失败；
+ * 已标 `failureDismissed` 的（用户关过横幅，落在 error_json）和本会话内存里
+ * 关掉的都跳过。已被后续同 Bot 对话轮接手的旧失败不再恢复——失败横幅与可
+ * 续跑的设置卡都只描述「对话当前」的状态（审查 HIGH #1）：用户后来又发了
+ * 消息且拿到了回复（或重试成功）时，几天前的旧失败不该每次打开都重新弹出来。
+ * 运行中 / 被取消 / 被中断的后续对话轮不算接手（旧消息仍未回答，保留重试
+ * 入口）；但更新的失败已被用户关闭时，更早的失败也不再冒出来。
  */
 export function restoredFailedRun(
   runs: readonly Run[],
@@ -35,15 +38,36 @@ export function restoredFailedRun(
   );
   if (index === -1) return null;
   const failed = runs[index]!;
-  if (failed.setup === null) return failed;
   const newer = runs.slice(0, index);
-  // D75 §7.5: a task's setup failure is superseded by the task retrying it
-  // (its failure wakes a turn, which must not hide the setup card).
-  const superseded =
-    failed.loopType === 'task'
-      ? newer.some((run) => run.continuedFromRunIds.includes(failed.id))
-      : newer.some((run) => run.loopType === 'turn' && run.botId === failed.botId);
+  const superseded = newer.some((run) =>
+    supersedesFailure(failed, run, run.failureDismissed === true || dismissed.has(run.id)),
+  );
   return superseded ? null : failed;
+}
+
+/**
+ * 一个更新的 run 是否让 `failed` 不再是对话当前需要重试的失败。恢复（打开
+ * 会话）与实时事件共用：
+ *
+ * - task：只有任务自己重试它（`continuedFromRunIds`）才算接手。失败唤醒的
+ *   对话轮不能收掉设置卡（D75 §7.5）。
+ * - turn：同 Bot 更新的对话轮**已完成**（用户拿到了回复 / 重试成功），或它
+ *   自己也失败且已被用户关闭。running / cancelled / interrupted 的后续轮没有
+ *   回答旧消息，保留旧横幅的重试入口。
+ */
+export function supersedesFailure(
+  failed: Pick<Run, 'id' | 'botId' | 'loopType'>,
+  run: Pick<Run, 'botId' | 'loopType' | 'status' | 'continuedFromRunIds'>,
+  failureHidden = false,
+): boolean {
+  if (failed.loopType === 'task') {
+    return run.continuedFromRunIds.includes(failed.id);
+  }
+  return (
+    run.loopType === 'turn' &&
+    run.botId === failed.botId &&
+    (run.status === 'completed' || (run.status === 'failed' && failureHidden))
+  );
 }
 
 /**

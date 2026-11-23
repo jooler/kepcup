@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3-multiple-ciphers';
 import { afterEach, describe, expect, it } from 'vitest';
+import { AppError } from '@kepcup/shared';
 import { runMigrations } from '../../src/infra/migrate.js';
 
 const tempDirs: string[] = [];
@@ -69,6 +70,51 @@ describe('runMigrations', () => {
       ['0003_create_b.sql', 'CREATE TABLE b (id INTEGER PRIMARY KEY);'],
     ]);
     expect(() => runMigrations(db, migrationsDir)).toThrowError(/contiguous/);
+    db.close();
+  });
+
+  it('refuses a database created by a newer build instead of running stale SQL', () => {
+    const { db, migrationsDir } = makeTempDb('test.db', [
+      ['0001_create_a.sql', 'CREATE TABLE a (id INTEGER PRIMARY KEY);'],
+      ['0002_create_b.sql', 'CREATE TABLE b (id INTEGER PRIMARY KEY);'],
+    ]);
+    db.pragma('user_version = 3');
+    let error: unknown;
+    try {
+      runMigrations(db, migrationsDir);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(AppError);
+    expect(error).toMatchObject({
+      code: 'MIGRATION_FAILED',
+      details: { currentVersion: 3, targetVersion: 2 },
+    });
+    expect((error as Error).message).toContain('此数据库由更新版本的 KepCup 写入');
+    // The refusal leaves the database untouched (no migration is attempted).
+    expect(db.pragma('user_version', { simple: true })).toBe(3);
+    db.close();
+  });
+
+  it('reports missing migration files separately from a newer database', () => {
+    const { db, migrationsDir } = makeTempDb('test.db', []);
+    // A fresh database with no files is a no-op (nothing to apply) …
+    expect(runMigrations(db, migrationsDir)).toEqual([]);
+    // … but an existing database must not be misreported as "newer build".
+    db.pragma('user_version = 1');
+    let error: unknown;
+    try {
+      runMigrations(db, migrationsDir);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(AppError);
+    expect(error).toMatchObject({
+      code: 'MIGRATION_FAILED',
+      details: { currentVersion: 1, targetVersion: 0 },
+    });
+    expect((error as Error).message).toContain('迁移文件缺失');
+    expect(db.pragma('user_version', { simple: true })).toBe(1);
     db.close();
   });
 

@@ -46,7 +46,9 @@ export function readUserVersion(db: SqliteDatabase): number {
 /**
  * Applies `NNNN_name.sql` files from `dir` in order, tracking progress in
  * `PRAGMA user_version`. Idempotent: files at or below the current version
- * are skipped. Version numbers must be contiguous starting at 1.
+ * are skipped. Version numbers must be contiguous starting at 1. A database
+ * whose `user_version` is above the newest file (written by a newer client)
+ * is refused with MIGRATION_FAILED instead of being used with stale SQL.
  *
  * A file whose first line is exactly `-- kepcup:foreign-keys=off` runs with
  * `PRAGMA foreign_keys = OFF` (toggled outside the transaction) and must
@@ -77,6 +79,29 @@ export function runMigrations(
   });
 
   const currentVersion = db.pragma('user_version', { simple: true }) as number;
+  if (files.length === 0) {
+    if (currentVersion > 0) {
+      throw new AppError(
+        'MIGRATION_FAILED',
+        `迁移文件缺失或安装不完整（数据库版本 ${currentVersion}，迁移目录为空）。请重新安装或升级应用后再打开。`,
+        { currentVersion, targetVersion: 0 },
+      );
+    }
+    return [];
+  }
+  // A database stamped by a newer build is not forward-compatible: older code
+  // keeps querying columns/tables that the new migrations renamed or rebuilt
+  // (e.g. profile_card / composer_drafts), which only surfaces later as
+  // cryptic runtime errors like "no such column: id". Refuse this database
+  // with an actionable message instead of opening a half-working data home.
+  const targetVersion = files[files.length - 1]!.version;
+  if (currentVersion > targetVersion) {
+    throw new AppError(
+      'MIGRATION_FAILED',
+      `此数据库由更新版本的 KepCup 写入（数据库版本 ${currentVersion}，当前版本最高支持 ${targetVersion}），当前版本无法安全读写。请升级到更新版本后再打开。`,
+      { currentVersion, targetVersion },
+    );
+  }
   const applied: AppliedMigration[] = [];
 
   for (const file of files) {

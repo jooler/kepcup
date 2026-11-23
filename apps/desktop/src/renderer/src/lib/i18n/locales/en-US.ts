@@ -6,6 +6,7 @@ export const enUS = {
   'shell.coreFailed': 'Core service failed to start',
   'shell.coreFailedHint':
     'Multiple consecutive start attempts failed, so retries have stopped. Check the logs directory for details.',
+  'shell.coreErrorHint': 'Fix the issue below, then restart the app.',
   'shell.logsHint': 'Logs directory: {path}',
   'shell.rightPanelHide': 'Hide right panel',
   'sidebar.chatsEmpty': 'No conversations yet. Click + in the top right to start.',

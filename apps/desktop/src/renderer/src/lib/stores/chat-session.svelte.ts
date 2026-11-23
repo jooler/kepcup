@@ -13,7 +13,11 @@ import { teamCacheSync } from '../features/team/cache-sync.svelte';
 import { permissions } from '$lib/stores/permissions.svelte';
 import { agentsStore } from '$lib/stores/agents.svelte';
 import { sendGateRequirement } from '../features/chats/send-gate';
-import { restoredFailedRun, showsFailure } from '../features/chats/setup-continue';
+import {
+  restoredFailedRun,
+  showsFailure,
+  supersedesFailure,
+} from '../features/chats/setup-continue';
 import { settingCardOf } from '../features/settings-card/setting-card-model';
 import { tasks } from '$lib/stores/tasks.svelte';
 import { activeRunsOf } from '../features/tasks/task-view';
@@ -765,15 +769,30 @@ export class ChatSession {
       view.activeRuns = view.activeRuns.filter((item) => item.run.id !== run.id);
     }
     const failureHidden = run.failureDismissed === true || this.#dismissedFailedRunIds.has(run.id);
-    if (run.status === 'failed' && !failureHidden && view.failedRun?.id !== run.id) {
+    const failed = run.status === 'failed' && showsFailure(run) && !failureHidden;
+    if (failed && view.failedRun?.id !== run.id) {
       logFailedRun(run);
     }
-    view.failedRun =
-      run.status === 'failed' && showsFailure(run) && !failureHidden
-        ? run
-        : view.failedRun?.id === run.id
-          ? null
-          : view.failedRun;
+    // 与打开会话时的恢复判定共用 supersedesFailure：只让更新的失败顶掉旧横幅
+    // （项目组里较早创建、较晚结算的失败不能覆盖更新的）；同 Bot 更晚的对话轮
+    // 完成后旧失败不再是当前状态，更新的失败已被关闭时也不让更早的冒出来。
+    // 运行中 / 取消 / 中断的后续轮不算接手（旧消息仍未回答）。
+    const replacesFailure =
+      failed &&
+      (view.failedRun === null ||
+        view.failedRun.id === run.id ||
+        run.createdAt >= view.failedRun.createdAt);
+    if (replacesFailure) {
+      view.failedRun = run;
+    } else if (view.failedRun?.id === run.id) {
+      view.failedRun = null;
+    } else if (
+      view.failedRun !== null &&
+      run.createdAt > view.failedRun.createdAt &&
+      supersedesFailure(view.failedRun, run, failureHidden)
+    ) {
+      view.failedRun = null;
+    }
   }
 
   #applyProgress(

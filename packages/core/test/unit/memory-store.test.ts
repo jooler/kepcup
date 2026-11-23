@@ -346,4 +346,27 @@ describe('memory store (memory.db 领域层)', () => {
     }
     expect(failed).toBe(true);
   });
+
+  it('refuses a memory.db written by a newer build and opens no pooled store', () => {
+    const key = randomBytes(32);
+    const manager = newManager(key);
+    const botId = 'bot_newer_memory';
+    manager.for(botId);
+    manager.closeBot(botId);
+
+    const dbPath = path.join(dir, 'bots', botId, 'memory.db');
+    const bumped = openDatabase({
+      path: dbPath,
+      key: deriveKey(key, memoryDbKeyInfo(botId)),
+    });
+    bumped.pragma('user_version = 999');
+    closeDatabase(bumped);
+
+    expect(() => manager.for(botId)).toThrow(/更新版本的 KepCup/);
+    // The failed open is closed and never enters the pool; a retry behaves the
+    // same instead of accumulating hidden connections.
+    expect(() => manager.for(botId)).toThrow(/更新版本的 KepCup/);
+    expect(manager.openCount).toBe(0);
+    manager.closeAll();
+  });
 });

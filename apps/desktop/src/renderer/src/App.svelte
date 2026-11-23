@@ -285,6 +285,14 @@
         <main class="flex min-h-0 min-w-0 flex-1 flex-col">
           {#if core.coreStatus?.status === 'locked'}
             <LockedPage reason={core.coreStatus.reason} />
+          {:else if core.coreStatus?.status === 'error'}
+            <!-- 启动失败（迁移拒绝、钥匙串错误等）：reason 是 core 已本地化的
+                 可读原因，必须展示——否则打包版只剩「启动中…」永远转圈。 -->
+            <CoreErrorPage
+              reason={core.coreStatus.reason}
+              hint={t('shell.coreErrorHint')}
+              testid="core-status-error"
+            />
           {:else if !coreReady}
             <PlaceholderPage title={t('shell.coreStarting')} message="" testid="core-starting" />
           {:else}
@@ -299,6 +307,12 @@
           <main class="flex min-h-0 min-w-0 flex-1 flex-col">
             {#if core.coreStatus?.status === 'locked'}
               <LockedPage reason={core.coreStatus.reason} />
+            {:else if core.coreStatus?.status === 'error'}
+              <CoreErrorPage
+                reason={core.coreStatus.reason}
+                hint={t('shell.coreErrorHint')}
+                testid="core-status-error"
+              />
             {:else if !coreReady}
               <PlaceholderPage title={t('shell.coreStarting')} message="" testid="core-starting" />
             {:else}
