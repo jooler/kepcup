@@ -23,6 +23,41 @@ import type { SettingsService } from '../domain/settings.js';
 /** 污点期间的外发确认写进审计的 action（无人值守自动批准时尤其重要）。 */
 export const EGRESS_TAINTED_AUDIT_ACTION = 'egress_tainted';
 
+/**
+ * D140-3：`egress_allows.scope` 里网络放行行的编码（scope 列无 CHECK，不加迁移）：
+ *
+ * - `all`：本对话（沿用 D73 的行——其他外发通道选「本对话内」写入的就是它，网络放行也读它）。
+ * - `task:<runId>`：本任务（到该 run 结束，由 `expireNetworkForRun` 清理）。
+ * - `once:<runId>`：仅一次（网关在下一条命令启动前 `consumeOnceNetwork` 删除）。
+ *
+ * 申请时带了主机限制的行在 scope 末尾追加 `|<host1>,<host2>`（主机名经过网关校验，
+ * 只含 `a-z0-9*.-`，不含分隔符）。`cmd:<sha256>` 行（D73 bash「相同命令」，W3 后已无
+ * 写入方）不是网络放行，解析时忽略。
+ */
+export type NetworkAllowScope = 'all' | { command: string } | { task: string } | { once: string };
+
+/** Parsed network-allow row: `kind` + the run a task/once row belongs to + optional hosts. */
+interface ParsedNetworkScope {
+  kind: 'all' | 'task' | 'once';
+  runId: string | null;
+  hosts: string[] | null;
+}
+
+function parseNetworkScope(scope: string): ParsedNetworkScope | null {
+  const [head, hostList] = scope.split('|', 2) as [string, string | undefined];
+  const hosts =
+    hostList !== undefined
+      ? hostList
+          .split(',')
+          .map((host) => host.trim())
+          .filter((host) => host.length > 0)
+      : null;
+  if (head === 'all') return { kind: 'all', runId: null, hosts };
+  if (head.startsWith('task:')) return { kind: 'task', runId: head.slice(5), hosts };
+  if (head.startsWith('once:')) return { kind: 'once', runId: head.slice(5), hosts };
+  return null;
+}
+
 export interface TaintState {
   /** 本次污点首次置位的时间（毫秒）。 */
   firstAt: number;
@@ -148,6 +183,105 @@ export class TaintService {
     if (channel !== 'bash') return false;
     const commandScope = `cmd:${createHash('sha256').update(target).digest('hex')}`;
     return rows.some((row) => row.scope === commandScope);
+  }
+
+  /**
+   * D140-3：写入一条网络放行（`request_network` 卡批准后由网关调用）。`scope` 按所选
+   * 时长：`conversation` 沿用 `all` 行（同时也放行其他外发通道，与 D73「本对话内一直
+   * 允许」同义）；`task` / `once` 编码 runId，只对该 run 生效。`hosts` 非空时该放行限定
+   * 为主机白名单（追加在 scope 里，见 {@link NetworkAllowScope}）。`expiresAt` 由调用方
+   * 给出（批准时刻的污点窗口），这里再向该对话当前的污点窗口夹紧——放行不越过任何污点
+   * 窗口；`mark()`（应用数据再次读取）仍会清空全部行（D73 语义保留）。
+   */
+  allowNetwork(
+    identity: { runId: string; conversationId: string | null },
+    scope: 'once' | 'task' | 'conversation',
+    hosts: readonly string[],
+    expiresAt: number,
+  ): void {
+    const conversationId = identity.conversationId;
+    if (conversationId === null) return;
+    const base = scope === 'conversation' ? 'all' : `${scope}:${identity.runId}`;
+    const scopeValue = hosts.length > 0 ? `${base}|${hosts.join(',')}` : base;
+    const window = this.conversationState(conversationId);
+    const effective = window === null ? expiresAt : Math.min(expiresAt, window.expiresAt);
+    this.#deps.db
+      .prepare(
+        `insert into egress_allows (conversation_id, scope, expires_at) values (?, ?, ?)
+         on conflict(conversation_id, scope) do update set
+           expires_at = max(egress_allows.expires_at, excluded.expires_at)`,
+      )
+      .run(conversationId, scopeValue, effective);
+  }
+
+  /**
+   * D140-3：该 run 此刻可用的网络放行，null = 未允许。命中行：`all`（含其他外发通道
+   * 写入的「本对话内」）、`task:<runId>`、`once:<runId>`，均未过期。多行命中时合并：
+   * 任一行不限主机 → 不带 `hosts`（放开全部外网）；否则 `hosts` 为各行主机的并集。
+   * 不含主机信息的旧行（`cmd:`）忽略。
+   */
+  networkAllowed(
+    identity: { runId: string; conversationId: string | null },
+    now: number = this.#deps.clock.now(),
+  ): { hosts?: string[] } | null {
+    const conversationId = identity.conversationId;
+    if (conversationId === null) return null;
+    const rows = this.#deps.db
+      .prepare('select scope from egress_allows where conversation_id = ? and expires_at > ?')
+      .all(conversationId, now) as Array<{ scope: string }>;
+    let open = false;
+    const hosts = new Set<string>();
+    for (const row of rows) {
+      const parsed = parseNetworkScope(row.scope);
+      if (parsed === null) continue;
+      if (parsed.kind !== 'all' && parsed.runId !== identity.runId) continue;
+      if (parsed.hosts === null) {
+        open = true;
+      } else {
+        for (const host of parsed.hosts) hosts.add(host);
+      }
+    }
+    if (!open && hosts.size === 0) return null;
+    return open ? {} : { hosts: [...hosts] };
+  }
+
+  /**
+   * D140-3：消费「仅一次」的网络放行——网关在下一条命令启动前调用（`once:<runId>` 行
+   * 只对一条命令有效）。删除该 run 的全部 once 行（不同主机集合的多次批准一并消费，
+   * 安全侧：用过的放行不得继续可用）。
+   */
+  consumeOnceNetwork(identity: { runId: string; conversationId: string | null }): void {
+    const conversationId = identity.conversationId;
+    if (conversationId === null) return;
+    const rows = this.#deps.db
+      .prepare('select scope from egress_allows where conversation_id = ?')
+      .all(conversationId) as Array<{ scope: string }>;
+    const del = this.#deps.db.prepare(
+      'delete from egress_allows where conversation_id = ? and scope = ?',
+    );
+    for (const row of rows) {
+      const parsed = parseNetworkScope(row.scope);
+      if (parsed !== null && parsed.kind === 'once' && parsed.runId === identity.runId) {
+        del.run(conversationId, row.scope);
+      }
+    }
+  }
+
+  /**
+   * D140-3：run 终态清理——`task:<runId>` / `once:<runId>` 的网络放行随该 run 结束失效
+   * （编排器在 `expireForRun` 的同一位置调用）。`all` 行是对话级的，不在这里动。
+   */
+  expireNetworkForRun(runId: string): void {
+    const rows = this.#deps.db
+      .prepare("select conversation_id, scope from egress_allows where scope like 'task:%' or scope like 'once:%'")
+      .all() as Array<{ conversation_id: string; scope: string }>;
+    const del = this.#deps.db.prepare(
+      'delete from egress_allows where conversation_id = ? and scope = ?',
+    );
+    for (const row of rows) {
+      const parsed = parseNetworkScope(row.scope);
+      if (parsed !== null && parsed.runId === runId) del.run(row.conversation_id, row.scope);
+    }
   }
 
   /**

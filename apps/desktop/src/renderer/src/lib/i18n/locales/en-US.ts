@@ -1305,6 +1305,8 @@ export const enUS = {
   'approvals.egress.channel.bash': 'Sandbox command',
   'approvals.egress.channel.git_remote': 'Git remote',
   'approvals.egress.channel.watch': 'Web watch',
+  // D140-3: the request_network authorization card's channel.
+  'approvals.egress.channel.network': 'External network',
   'approvals.egress.target': 'Egress content',
   'approvals.egress.since': 'App data read since',
   'approvals.egress.allowOnce': 'Allow once',

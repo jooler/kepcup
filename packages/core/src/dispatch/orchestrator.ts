@@ -162,6 +162,7 @@ import type { SettingsService } from '../domain/settings.js';
 import type { SecretsService } from '../domain/secrets.js';
 import type { ApprovalsService } from '../permissions/approvals.js';
 import type { GrantsService } from '../permissions/grants.js';
+import type { TaintService } from '../apps/taint.js';
 import type { WorkdirRuntime } from '../workdir/service.js';
 import type { TaskClaimRegistry } from '../workdir/claims.js';
 import type { SandboxBackend } from '../sandbox/types.js';
@@ -416,6 +417,11 @@ export interface OrchestratorDeps {
   secrets: SecretsService;
   approvals: ApprovalsService;
   grants: GrantsService;
+  /**
+   * D140-3：污点网络放行的 run 终态清理（`task:` / `once:` 行随 run 结束失效）。
+   * 接在 `grants.expireForRun` 的同一位置调用；缺省 / null = 无网络放行可清理（部分单测）。
+   */
+  taint?: Pick<TaintService, 'expireNetworkForRun'> | null | undefined;
   workdirs: WorkdirRuntime;
   /** D123 §5: shared in-memory task claims (gateway + TaskHost). */
   claims?: TaskClaimRegistry | undefined;
@@ -930,6 +936,8 @@ export class Orchestrator {
       userHomeOf: (identity) => executionUserHomeOf(identity),
       onSettled: (run, executorActive) => {
         deps.grants.expireForRun(run.id);
+        // D140-3：task / once 的网络放行随 run 结束失效（与 once 授权同位置）。
+        deps.taint?.expireNetworkForRun(run.id);
         deps.approvals.cancelPendingForRun(run.id);
         // D93 P3: spilled tool outputs live only as long as the run.
         this.#clearToolOutputSpill(run.id, run.botId, run.conversationId);
@@ -2654,6 +2662,7 @@ export class Orchestrator {
     this.#deps.approvals.cancelAllPending();
     for (const run of runs) {
       this.#deps.grants.expireForRun(run.id);
+      this.#deps.taint?.expireNetworkForRun(run.id);
       if (run.conversationId === null) continue;
       if (this.#deps.conversations.get(run.conversationId) === null) continue;
       const message = this.#deps.messages.append({
@@ -6599,6 +6608,8 @@ export class Orchestrator {
       // Once-grants die with the run; pending approvals (if any survived)
       // must not dangle.
       this.#deps.grants.expireForRun(runId);
+      // D140-3：task / once 的网络放行随 run 结束失效（与 once 授权同位置）。
+      this.#deps.taint?.expireNetworkForRun(runId);
       this.#deps.approvals.cancelPendingForRun(runId);
       this.#clearToolOutputSpill(runId, run.botId, run.conversationId);
     }

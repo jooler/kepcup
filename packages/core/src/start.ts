@@ -2846,6 +2846,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       secrets,
       approvals,
       grants,
+      // D140-3：task / once 网络放行的 run 终态清理。
+      taint,
       workdirs: workdirRuntime,
       sandbox,
       clock,

@@ -295,6 +295,13 @@ function spillOption(spill: ToolOutputSpill | undefined): WrapOptions | undefine
 /** srt violation lines: `cat(x) deny(1) file-read-data /path`. */
 const VIOLATION_PATH_PATTERN = /\bfile-(read|write)(?:-data|-metadata|-create)?\s+(.+)$/;
 
+/**
+ * D140-3: srt network violation lines — `deny network-outbound host:port …` /
+ * `deny http-request …`. A hit means the taint cut (mode none / a host-scoped
+ * allowlist) blocked the command's outbound traffic, not a file rule.
+ */
+const NETWORK_VIOLATION_PATTERN = /\bdeny (?:network-outbound|http-request)\b/;
+
 export interface SandboxViolationAccess {
   path: string;
   mode: 'read' | 'write';
@@ -497,6 +504,11 @@ export function buildCodingTools(
             `\n[被沙箱拦截 ${result.violations.length} 次，示例]\n${samples.join('\n')}`,
           ];
           const blocked = extractViolationAccesses(result.violations);
+          if (result.violations.some((v) => NETWORK_VIOLATION_PATTERN.test(v.line))) {
+            notes.push(
+              '[提示] 外部网络被污点保护切断。需要联网请调用 request_network（仅这一次 / 本任务内 / 本对话内），批准后重试。',
+            );
+          }
           if (blocked.length > 0) {
             // D123 ④: the step-0 write refusals of `gateway.checkPath` (write
             // domain, another task's claim, a read-only run) are fail-closed and

@@ -1631,6 +1631,8 @@ const EGRESS_CHANNEL_LABELS: Record<string, string> = {
   bash: '执行命令',
   git_remote: 'git 远程操作',
   watch: '网页监看',
+  /** D140-3：request_network 的网络授权卡（折叠记录 / 审计摘要一行）。 */
+  network: '外部网络',
 };
 
 /** Channel of a tainted approval for the audit: egress cards carry it, `command` / `git_remote` are fixed. */

@@ -124,9 +124,22 @@ export interface GatewayDeps {
   gitRemoteGrants?: Pick<GitRemoteGrants, 'find' | 'create'> | undefined;
   /**
    * D73 P2 污点外发控制（design 29 §8.3）：应用数据读取后置位；外发通道（web_fetch / web_search /
-   * 浏览器 / 非只读 MCP 工具 / 沙箱 bash / git_remote）据此降级为逐次确认。缺省 = 不做污点控制。
+   * 浏览器 / 非只读 MCP 工具 / git_remote）据此降级为逐次确认；沙箱 bash 的外网被**切断**
+   * （D140-3：断网模型，`request_network` 批准后经 `allowNetwork` / `networkAllowed` 放开）。
+   * 缺省 = 不做污点控制。
    */
-  taint?: Pick<TaintService, 'mark' | 'guard' | 'egressAllowed' | 'allowEgress'> | undefined;
+  taint?:
+    | Pick<
+        TaintService,
+        | 'mark'
+        | 'guard'
+        | 'egressAllowed'
+        | 'allowEgress'
+        | 'allowNetwork'
+        | 'networkAllowed'
+        | 'consumeOnceNetwork'
+      >
+    | undefined;
   platform?: string;
   homeDir?: string;
   /** DI overrides for tests / future policy evolution. */
@@ -240,6 +253,32 @@ export interface GatewayExecRequest {
 }
 
 export type GatewayExecResult = SandboxExecResult & { policyApplied: boolean };
+
+/** D140-3: host cap of one `request_network` application (card + allowlist stay legible). */
+const NETWORK_HOSTS_MAX = 16;
+
+/**
+ * D140-3: normalize / validate `request_network` hosts — bare domain names only
+ * (lowercase letters, digits, `-`, `.`, leading `*.`), no scheme / path / port and
+ * none of the `,` / `|` used by the `egress_allows.scope` encoding. Invalid input
+ * throws `INVALID_INPUT` (the model fixes the list and retries).
+ */
+function normalizeNetworkHosts(hosts: readonly string[] | undefined): string[] {
+  if (hosts === undefined) return [];
+  const normalized: string[] = [];
+  for (const raw of hosts.slice(0, NETWORK_HOSTS_MAX)) {
+    const host = raw.trim().toLowerCase();
+    if (host.length === 0) continue;
+    if (host.length > 253 || !/^[a-z0-9*.-]+$/.test(host) || host.includes('..')) {
+      throw new AppError(
+        'INVALID_INPUT',
+        `hosts 里包含非法主机名：${raw}（只允许域名，可含 *. 前缀；不要带协议、路径或端口）`,
+      );
+    }
+    if (!normalized.includes(host)) normalized.push(host);
+  }
+  return normalized;
+}
 
 /** Case-insensitive comparison on filesystems that need it. */
 function normalizeForCompare(p: string, platform: string): string {
@@ -971,6 +1010,106 @@ export class ToolGateway {
   }
 
   /**
+   * D140-3 `request_network`：污点期断网后申请放开外网（`tools/index.ts` 的同名工具是
+   * 唯一调用方）。无污点，或已有放行（`all` / `task:<runId>` / `once:<runId>`，且放行的
+   * 主机覆盖本次申请的主机）→ `already`，不弹卡。否则弹**一张** `egress` 卡（channel
+   * `network`、时长 once / task / conversation），批准按所选时长写放行行（有效期夹紧在
+   * 批准时刻的污点窗口内；`mark()` 仍会清空），拒绝抛 `APPROVAL_DENIED`。对话轮 / 子
+   * 代理 / 只读 run 不等待审批（`RUN_READ_ONLY`，与 `egressCheck` 现状一致）。无人值守
+   * 按现状 `egress` 语义自动批准：没有用户时长，按 `once` 写入（只放开一条命令），审计
+   * 走 `egress_tainted`（`approval_auto` 路径已带 channel `network`）。
+   */
+  async requestNetworkAccess(
+    identity: RunIdentity,
+    input: { hosts?: string[] | undefined; reason: string },
+    options: { signal?: AbortSignal | undefined } = {},
+  ): Promise<{
+    already: boolean;
+    duration: ApprovalDuration | null;
+    hosts: string[];
+    autoApproved: boolean;
+  }> {
+    const taint = this.taintOf(identity);
+    const taintService = this.#deps.taint;
+    if (taint === null || taintService === undefined) {
+      return { already: true, duration: null, hosts: [], autoApproved: false };
+    }
+    const hosts = normalizeNetworkHosts(input.hosts);
+    const existing = taintService.networkAllowed(identity);
+    if (existing !== null) {
+      const covered =
+        existing.hosts === undefined || hosts.every((host) => existing.hosts!.includes(host));
+      if (covered) {
+        return {
+          already: true,
+          duration: null,
+          hosts: existing.hosts ?? [],
+          autoApproved: false,
+        };
+      }
+    }
+    // D75：对话轮 / 子代理不占住 mailbox 等卡；只读 run（对话轮、writes:false 任务、
+    // 只读子代理）不放开外网——需要联网由对话轮派一个写任务。
+    const readOnlyReason = this.writeDenial(identity);
+    const unattendedOn = this.#deps.unattended.effective?.().enabled === true;
+    if (readOnlyReason !== null) {
+      throw new AppError(
+        'RUN_READ_ONLY',
+        `${readOnlyReason}。只读执行不能申请网络授权：需要联网请用 ask_user 说明缘由，由对话轮派一个写任务，在任务里调用 request_network`,
+      );
+    }
+    if ((identity.loopType === 'turn' || identity.loopType === 'subagent') && !unattendedOn) {
+      throw new AppError(
+        'RUN_READ_ONLY',
+        '本对话读取过连接应用的数据，沙箱命令的外部网络已被切断；对话轮不等待网络授权确认，请用 start_task 派一个任务，在任务里调用 request_network 申请',
+      );
+    }
+    const joined =
+      hosts.length > 0 ? hosts.map((host) => this.#deps.secrets.redact(host)).join('、') : '任意外部主机';
+    const target =
+      joined.length > EGRESS_TARGET_MAX_CHARS
+        ? `${joined.slice(0, EGRESS_TARGET_MAX_CHARS)}…（已截断）`
+        : joined;
+    const outcome = await this.#deps.approvals.request(
+      identity,
+      'egress',
+      {
+        channel: 'network',
+        target,
+        summary:
+          input.reason.length > 0 ? `网络授权：${input.reason}` : '网络授权申请（污点期外网已被切断）',
+        taintedSince: taint.firstAt,
+        durations: ['once', 'task', 'conversation'],
+      },
+      { ...(options.signal !== undefined ? { signal: options.signal } : {}) },
+    );
+    if (outcome.decision !== 'approved') {
+      throw new AppError('APPROVAL_DENIED', '用户拒绝或取消了网络授权请求');
+    }
+    // decide() 把不在卡片时长里的选择降级为 once；无人值守自动批准没有用户时长
+    // （decision 为 null），同样按 once 写——只放开一条命令。
+    const picked = outcome.approval.decision?.duration;
+    const duration: ApprovalDuration =
+      picked === 'task' || picked === 'conversation' ? picked : 'once';
+    taintService.allowNetwork(identity, duration, hosts, taint.expiresAt);
+    this.#deps.logger.info(
+      {
+        conversationId: identity.conversationId,
+        runId: identity.runId,
+        duration,
+        hostCount: hosts.length,
+      },
+      'network allow created',
+    );
+    return {
+      already: false,
+      duration,
+      hosts,
+      autoApproved: outcome.approval.autoApproved === true,
+    };
+  }
+
+  /**
    * Runs a command. Sandbox available: per-command policy (with the effective
    * grants) and sandboxed execution. Sandbox unavailable: confirm mode —
    * allowlisted read-only commands run directly, everything else needs a
@@ -1009,28 +1148,59 @@ export class ToolGateway {
       policyEnv.PATH = `${toolchainPrefix}${this.#platform === 'win32' ? ';' : ':'}${process.env.PATH ?? ''}`;
       this.#deps.environment?.noteToolchainUse();
     }
+    // D140-3（污点 = 断网）：对话处于污点期时，沙箱命令的外网被切断（保留 localhost /
+    // 开发服务器），不再逐命令弹 `egress` 卡。模型需要联网时调用 `request_network`，
+    // 批准后这里按放行行放开：不限主机 → 恢复 Bot 自己的网络策略；限定主机 →
+    // `allowlist`（主机白名单）。Bot 策略为 `none` 时即使批准了也不放开（用户在 Bot
+    // 配置里的显式收紧不被授权卡覆盖）。已知限制：srt 的网络配置是全局单例，不同
+    // 网络策略的命令不能并发（切换会先 drain 在途命令）。
+    const taint = this.taintOf(identity);
+    const taintService = this.#deps.taint;
+    const networkAllow =
+      taint !== null && taintService !== undefined ? taintService.networkAllowed(identity) : null;
+    let effectiveNetwork: SandboxNetworkPolicy;
+    if (taint === null || networkAllow !== null) {
+      effectiveNetwork = {
+        ...req.network,
+        allowLocalhost: workdir !== null,
+        allowedPorts: workdir?.allowedPorts ?? undefined,
+      };
+      if (
+        networkAllow !== null &&
+        networkAllow.hosts !== undefined &&
+        networkAllow.hosts.length > 0 &&
+        req.network.mode !== 'none'
+      ) {
+        effectiveNetwork = {
+          mode: 'allowlist',
+          allowDomains: [...networkAllow.hosts],
+          allowLocalhost: workdir !== null,
+          allowedPorts: workdir?.allowedPorts ?? undefined,
+        };
+      }
+    } else {
+      effectiveNetwork = {
+        mode: 'none',
+        allowDomains: [],
+        allowLocalhost: workdir !== null,
+        allowedPorts: workdir?.allowedPorts ?? undefined,
+      };
+    }
+    // `once` 的网络放行只对一条命令有效：命中即在此消费（安全侧——与 once 授权并入
+    // 沙箱策略即消费同口径，即使这条命令本身不联网也不保留）。
+    if (taint !== null && networkAllow !== null) taintService?.consumeOnceNetwork(identity);
     // 完全控制（docs/design/13-permissions.md「权限级别」）：跳过审批并脱离沙箱。
-    // 两条不变量不受影响：只读 run 仍只读；Bot 的网络策略不是 open 时保留沙箱
-    // （否则 allowlist / none 会失效）。灾难命令与数据目录由下面的执行入口硬拒。
+    // 三条不变量不受影响：只读 run 仍只读；Bot 的网络策略不是 open 时保留沙箱
+    // （否则 allowlist / none 会失效）；污点期不得脱离沙箱联网（D140-3：断网只能由
+    // `request_network` 的放行解开，沙箱外执行绕不开它）——污点期一律不进 bypass，
+    // 沙箱可用走沙箱断网，沙箱不可用降级到逐条确认（每条命令仍有确认卡）。灾难命令
+    // 与数据目录由下面的执行入口硬拒。
     if (
       this.#deps.permissionMode?.isBypass(identity.conversationId) === true &&
       readOnlyReason === null &&
+      taint === null &&
       (!availability.available || req.network.mode === 'open')
     ) {
-      // 污点期间的沙箱外执行不走 per-command `egress` 卡（完全控制不弹卡），
-      // 这里补一条 `egress_tainted` 审计，Bot 详情的污点外发汇总才不失明（D73 P2）。
-      if (this.taintOf(identity) !== null) {
-        const redacted = this.#deps.secrets.redact(req.command);
-        this.audit(identity, 'egress_tainted', {
-          channel: 'bash',
-          target:
-            redacted.length > EGRESS_TARGET_MAX_CHARS
-              ? `${redacted.slice(0, EGRESS_TARGET_MAX_CHARS)}…（已截断）`
-              : redacted,
-          approved: true,
-          via: 'bypass',
-        });
-      }
       return this.#executeUnsandboxedApproved(
         identity,
         req,
@@ -1040,23 +1210,6 @@ export class ToolGateway {
       );
     }
     if (availability.available) {
-      // D73 P2 (design 29 §8.3): while tainted, a sandboxed command with the network
-      // open is a per-command confirmation (`egress`, channel bash) — `allowlist` / `none`
-      // policies keep the original rules (the sandbox itself bounds egress there).
-      // Commands the BUILT-IN read-only allowlist vouches for (ls / cat / grep …: no
-      // network) are not a channel and stay unconfirmed; user-added entries are not
-      // proven read-only (`npm test` may fetch) and get the card (review P1).
-      if (
-        req.network.mode === 'open' &&
-        this.taintOf(identity) !== null &&
-        !(await this.#builtinExempt(identity, req.command, cwd, policyEnv))
-      ) {
-        await this.egressCheck(
-          identity,
-          { channel: 'bash', target: req.command, summary: '沙箱命令（Bot 网络策略为开放）' },
-          { signal: req.signal },
-        );
-      }
       // Effective = conversation grants + once grants this tool call owns or
       // may claim (unclaimed request_access pre-authorizations); once grants
       // owned by a parallel call of the same run are not visible here (D75).
@@ -1072,11 +1225,7 @@ export class ToolGateway {
         platform: this.#platform,
         paths: this.#deps.paths,
         workspacePath: workspace,
-        network: {
-          ...req.network,
-          allowLocalhost: workdir !== null,
-          allowedPorts: workdir?.allowedPorts ?? undefined,
-        },
+        network: effectiveNetwork,
         grants,
         workdir:
           workdir !== null
@@ -1213,17 +1362,6 @@ export class ToolGateway {
       if (risk !== null) return { exempt: false, custom, reason: risk };
     }
     return { exempt: true, custom };
-  }
-
-  /** Exempt by BUILT-IN entries only (the taint gate's exemption). */
-  async #builtinExempt(
-    identity: RunIdentity,
-    command: string,
-    cwd: string,
-    policyEnv: Record<string, string>,
-  ): Promise<boolean> {
-    const verdict = await this.#exemptVerdict(identity, command, cwd, policyEnv);
-    return verdict.exempt && !verdict.custom;
   }
 
   /** Directories the Bot can write: their PATH entries never serve exempt commands. */

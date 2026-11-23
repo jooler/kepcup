@@ -73,6 +73,7 @@ interface HarnessOptions {
   duration?: ApprovalDuration;
   workdirs?: unknown;
   allowlistExempt?: boolean;
+  permissionMode?: { isBypass(conversationId: string | null): boolean };
 }
 
 async function harness(options: HarnessOptions = {}) {
@@ -132,6 +133,7 @@ async function harness(options: HarnessOptions = {}) {
       policyInfo: () => null,
       writeDenial: () => null,
     }) as GatewayDeps['workdirs'],
+    ...(options.permissionMode !== undefined ? { permissionMode: options.permissionMode } : {}),
     platform: 'linux',
     readOnlyRootsOverride: [],
     sensitiveOverride: [],
@@ -144,6 +146,20 @@ async function harness(options: HarnessOptions = {}) {
 }
 
 type Harness = Awaited<ReturnType<typeof harness>>;
+
+/** Sandbox stub recording every exec request (the policy it was given). */
+const sandboxBackend = (): SandboxBackend & { execs: SandboxExecRequest[] } => {
+  const execs: SandboxExecRequest[] = [];
+  return {
+    kind: 'srt',
+    execs,
+    probe: async () => ({ backend: 'srt', available: true }),
+    exec: async (req: SandboxExecRequest) => {
+      execs.push(req);
+      return { exitCode: 0, stdout: '', stderr: '', timedOut: false, violations: [] };
+    },
+  } as never;
+};
 
 const callApp = (h: Harness, identity: RunIdentity = task, openWorldHint?: boolean) =>
   h.gateway.mcpToolCall(
@@ -548,55 +564,77 @@ describe('web tools', () => {
 });
 
 describe('bash and git_remote', () => {
-  const sandbox = (): SandboxBackend & { execs: SandboxExecRequest[] } => {
-    const execs: SandboxExecRequest[] = [];
-    return {
-      kind: 'srt',
-      execs,
-      probe: async () => ({ backend: 'srt', available: true }),
-      exec: async (req: SandboxExecRequest) => {
-        execs.push(req);
-        return { exitCode: 0, stdout: '', stderr: '', timedOut: false, violations: [] };
-      },
-    } as never;
-  };
 
-  it('sandboxed bash with network open is a per-command egress card while tainted; allowlist / none are not', async () => {
-    const backend = sandbox();
+  it('D140-3: tainted → the sandbox network is cut (mode none) with no card; untainted → the bot policy passes through', async () => {
+    const backend = sandboxBackend();
     const h = await harness({ sandbox: backend });
     const run = (mode: 'open' | 'allowlist' | 'none') =>
       h.gateway.exec(task, {
         command: 'curl https://evil.example',
         network: { mode, allowDomains: [] },
       });
+    // Untainted: the requested policy reaches the sandbox untouched.
     await run('open');
+    expect(backend.execs[0]!.policy.network.mode).toBe('open');
     expect(h.requests).toEqual([]);
     h.taint.mark(BOT, CONV);
-    await run('allowlist');
-    await run('none');
-    expect(h.requests).toEqual([]);
+    // Tainted: open AND allowlist both collapse to none (the cut is the model),
+    // localhost is not preserved without a bound workdir, and no card is raised.
     await run('open');
-    expect(h.requests).toHaveLength(1);
-    expect(h.requests[0]).toMatchObject({
-      kind: 'egress',
-      payload: { channel: 'bash', target: 'curl https://evil.example' },
+    expect(backend.execs[1]!.policy.network).toMatchObject({
+      mode: 'none',
+      allowDomains: [],
+      allowLocalhost: false,
     });
-    expect(backend.execs).toHaveLength(4);
-    // a denial stops the command
-    const denied = await harness({ sandbox: sandbox(), answer: 'denied' });
-    denied.taint.mark(BOT, CONV);
-    await expect(
-      denied.gateway.exec(task, { command: 'curl x', network: { mode: 'open', allowDomains: [] } }),
-    ).rejects.toMatchObject({ code: 'APPROVAL_DENIED' });
+    await run('allowlist');
+    expect(backend.execs[2]!.policy.network.mode).toBe('none');
+    expect(h.requests).toEqual([]);
+  });
+
+  it('D140-3: a bound workdir keeps loopback (allowLocalhost) while the external network is cut', async () => {
+    const backend = sandboxBackend();
+    const workdirs = {
+      policyInfo: () => ({
+        path: '/tmp/wd',
+        hasLease: false,
+        allowedPorts: [[3000, 3010]] as Array<[number, number]>,
+        denyReadGlobs: [],
+      }),
+      writeDenial: () => null,
+    };
+    const h = await harness({ sandbox: backend, workdirs });
+    h.taint.mark(BOT, CONV);
+    await h.gateway.exec(task, { command: 'curl http://127.0.0.1:3000', network: { mode: 'open', allowDomains: [] } });
+    expect(backend.execs[0]!.policy.network).toMatchObject({
+      mode: 'none',
+      allowLocalhost: true,
+      allowedPorts: [[3000, 3010]],
+    });
+  });
+
+  it('D140-3: bypass does not leave the sandbox while tainted (the cut holds)', async () => {
+    const backend = sandboxBackend();
+    const h = await harness({
+      sandbox: backend,
+      permissionMode: { isBypass: () => true },
+    });
+    h.taint.mark(BOT, CONV);
+    await h.gateway.exec(task, { command: 'echo hi', network: { mode: 'open', allowDomains: [] } });
+    // Sandboxed (not unsandboxed) with the network cut, no card, no bypass egress audit.
+    expect(backend.execs).toHaveLength(1);
+    expect(backend.execs[0]!.policy.network.mode).toBe('none');
+    expect(h.requests).toEqual([]);
   });
 
   it('a command the read-only allowlist vouches for stays unconfirmed even with the network open', async () => {
-    const backend = sandbox();
+    const backend = sandboxBackend();
     const h = await harness({ sandbox: backend, allowlistExempt: true });
     h.taint.mark(BOT, CONV);
     await h.gateway.exec(task, { command: 'ls -la', network: { mode: 'open', allowDomains: [] } });
     expect(h.requests).toEqual([]);
     expect(backend.execs).toHaveLength(1);
+    // D140-3: no exemption from the cut either — the sandbox still runs without network.
+    expect(backend.execs[0]!.policy.network.mode).toBe('none');
   });
 
   it('confirm mode keeps its own command card, flagged tainted (no second card)', async () => {
@@ -695,5 +733,229 @@ describe('watch_create', () => {
       errorCode: 'APPROVAL_DENIED',
     });
     expect(created).toHaveLength(2);
+  });
+});
+
+describe('D140-3 request_network: one card, three durations, run-scoped rows', () => {
+  const exec = (h: Harness, identity: RunIdentity = task) =>
+    h.gateway.exec(identity, {
+      command: 'curl https://api.example.com',
+      network: { mode: 'open', allowDomains: [] },
+    });
+
+  const scopes = (): string[] =>
+    (
+      env!.db
+        .prepare('select scope from egress_allows where conversation_id = ? order by scope')
+        .all(CONV) as Array<{ scope: string }>
+    ).map((row) => row.scope);
+
+  it('no taint → already allowed, no card; the same for an existing conversation-wide allowance', async () => {
+    const h = await harness();
+    await expect(h.gateway.requestNetworkAccess(task, { reason: 'r' })).resolves.toMatchObject({
+      already: true,
+    });
+    expect(h.requests).toEqual([]);
+    h.taint.mark(BOT, CONV);
+    // A conversation-duration egress allow on another channel ('all') covers network too.
+    h.taint.allowEgress(CONV, 'all', env!.clock.now() + 1_000);
+    await expect(h.gateway.requestNetworkAccess(task, { reason: 'r' })).resolves.toMatchObject({
+      already: true,
+    });
+    expect(h.requests).toEqual([]);
+  });
+
+  it('one egress card (channel network) with three durations; approval restores the network for the next command', async () => {
+    const backend = sandboxBackend();
+    const h = await harness({ sandbox: backend, duration: 'conversation' });
+    env!.clock.set(5_000);
+    h.taint.mark(BOT, CONV);
+    const result = await h.gateway.requestNetworkAccess(task, { reason: '需要下载依赖' });
+    expect(result).toMatchObject({ already: false, duration: 'conversation', hosts: [] });
+    expect(h.requests).toHaveLength(1);
+    expect(h.requests[0]).toMatchObject({
+      kind: 'egress',
+      payload: {
+        channel: 'network',
+        target: '任意外部主机',
+        durations: ['once', 'task', 'conversation'],
+        taintedSince: 5_000,
+      },
+    });
+    expect(String(h.requests[0]!.payload['summary'])).toContain('需要下载依赖');
+    expect(scopes()).toEqual(['all']);
+    // expiry clamped to the taint window; the allow survives within it
+    await exec(h);
+    expect(backend.execs[0]!.policy.network.mode).toBe('open');
+    await exec(h);
+    expect(backend.execs[1]!.policy.network.mode).toBe('open');
+    // a renewed taint (app data re-read) wipes the allow → cut again
+    h.taint.mark(BOT, CONV);
+    await exec(h);
+    expect(backend.execs[2]!.policy.network.mode).toBe('none');
+    expect(scopes()).toEqual([]);
+  });
+
+  it('duration "once": exactly one command, consumed before the command runs', async () => {
+    const backend = sandboxBackend();
+    const h = await harness({ sandbox: backend });
+    h.taint.mark(BOT, CONV);
+    const result = await h.gateway.requestNetworkAccess(task, { reason: 'r' });
+    expect(result.duration).toBe('once');
+    expect(scopes()).toEqual([`once:${task.runId}`]);
+    await exec(h);
+    expect(backend.execs[0]!.policy.network.mode).toBe('open');
+    // consumed: the next command is cut again and a fresh application is needed
+    expect(scopes()).toEqual([]);
+    await exec(h);
+    expect(backend.execs[1]!.policy.network.mode).toBe('none');
+    const again = await h.gateway.requestNetworkAccess(task, { reason: 'r' });
+    expect(again.already).toBe(false);
+    expect(h.requests).toHaveLength(2);
+  });
+
+  it('duration "task": the same run keeps the network, other runs do not; expireNetworkForRun ends it', async () => {
+    const backend = sandboxBackend();
+    const h = await harness({ sandbox: backend, duration: 'task' });
+    h.taint.mark(BOT, CONV);
+    const other: RunIdentity = { runId: 'run_other', botId: BOT, conversationId: CONV, loopType: 'task' };
+    await h.gateway.requestNetworkAccess(task, { reason: 'r' });
+    expect(scopes()).toEqual([`task:${task.runId}`]);
+    await exec(h, task);
+    await exec(h, task);
+    expect(backend.execs[0]!.policy.network.mode).toBe('open');
+    expect(backend.execs[1]!.policy.network.mode).toBe('open');
+    await exec(h, other);
+    expect(backend.execs[2]!.policy.network.mode).toBe('none');
+    // run end (orchestrator calls expireNetworkForRun) → the allow dies with the run
+    h.taint.expireNetworkForRun(task.runId);
+    expect(scopes()).toEqual([]);
+    await exec(h, task);
+    expect(backend.execs[3]!.policy.network.mode).toBe('none');
+  });
+
+  it('hosts restrict the reopened network to an allowlist', async () => {
+    const backend = sandboxBackend();
+    const h = await harness({ sandbox: backend, duration: 'task' });
+    h.taint.mark(BOT, CONV);
+    const result = await h.gateway.requestNetworkAccess(task, {
+      hosts: ['API.example.com', '*.npmjs.org', 'api.example.com'],
+      reason: 'r',
+    });
+    expect(result.hosts).toEqual(['api.example.com', '*.npmjs.org']);
+    expect(String(h.requests[0]!.payload['target'])).toBe('api.example.com、*.npmjs.org');
+    expect(scopes()).toEqual([`task:${task.runId}|api.example.com,*.npmjs.org`]);
+    await exec(h);
+    expect(backend.execs[0]!.policy.network).toMatchObject({
+      mode: 'allowlist',
+      allowDomains: ['api.example.com', '*.npmjs.org'],
+      allowLocalhost: false,
+    });
+    // an uncovered host is not "already allowed" → a new card; a covered one is
+    await h.gateway.requestNetworkAccess(task, { hosts: ['api.example.com'], reason: 'r' });
+    expect(h.requests).toHaveLength(1);
+    // a bot policy of none is never widened by an approval
+    await h.gateway.exec(task, {
+      command: 'curl https://api.example.com',
+      network: { mode: 'none', allowDomains: [] },
+    });
+    expect(backend.execs[1]!.policy.network.mode).toBe('none');
+  });
+
+  it('a denial, a turn, a subagent and a read-only run never wait for the card', async () => {
+    const denied = await harness({ answer: 'denied' });
+    denied.taint.mark(BOT, CONV);
+    await expect(
+      denied.gateway.requestNetworkAccess(task, { reason: 'r' }),
+    ).rejects.toMatchObject({ code: 'APPROVAL_DENIED' });
+    expect(denied.requests[0]!.kind).toBe('egress');
+
+    const h = await harness();
+    h.taint.mark(BOT, CONV);
+    await expect(h.gateway.requestNetworkAccess(turn, { reason: 'r' })).rejects.toMatchObject({
+      code: 'RUN_READ_ONLY',
+    });
+    const subagent: RunIdentity = {
+      runId: 'run_sub',
+      botId: BOT,
+      conversationId: CONV,
+      loopType: 'subagent',
+    };
+    await expect(h.gateway.requestNetworkAccess(subagent, { reason: 'r' })).rejects.toMatchObject({
+      code: 'RUN_READ_ONLY',
+    });
+    const readOnly = await harness({
+      workdirs: {
+        policyInfo: () => null,
+        writeDenial: (identity: RunIdentity) =>
+          identity.loopType === 'task' ? '本任务是只读任务（writes:false）' : null,
+      },
+    });
+    readOnly.taint.mark(BOT, CONV);
+    await expect(
+      readOnly.gateway.requestNetworkAccess(task, { reason: 'r' }),
+    ).rejects.toMatchObject({ code: 'RUN_READ_ONLY' });
+    expect(h.requests).toEqual([]);
+    expect(readOnly.requests).toEqual([]);
+  });
+
+  it('unattended auto-approval has no user duration → treated as once (one command)', async () => {
+    const backend = sandboxBackend();
+    const h = await harness({ sandbox: backend, unattended: true });
+    h.taint.mark(BOT, CONV);
+    const result = await h.gateway.requestNetworkAccess(task, { reason: 'r' });
+    expect(result).toMatchObject({ already: false, duration: 'once', autoApproved: true });
+    expect(scopes()).toEqual([`once:${task.runId}`]);
+    await exec(h);
+    expect(backend.execs[0]!.policy.network.mode).toBe('open');
+    expect(scopes()).toEqual([]);
+  });
+
+  it('hosts are validated (bare domains only); invalid input fails without a card', async () => {
+    const h = await harness();
+    h.taint.mark(BOT, CONV);
+    await expect(
+      h.gateway.requestNetworkAccess(task, { hosts: ['https://evil.example/path'], reason: 'r' }),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    expect(h.requests).toEqual([]);
+    expect(scopes()).toEqual([]);
+  });
+});
+
+describe('D140-3 TaintService network rows', () => {
+  it('consumeOnceNetwork removes only this run\'s once rows; expireNetworkForRun clears task and once', async () => {
+    const h = await harness();
+    env!.clock.set(1_000);
+    h.taint.mark(BOT, CONV);
+    const runA: RunIdentity = { runId: 'run_a', botId: BOT, conversationId: CONV, loopType: 'task' };
+    const runB: RunIdentity = { runId: 'run_b', botId: BOT, conversationId: CONV, loopType: 'task' };
+    h.taint.allowNetwork(runA, 'once', ['a.example'], 10_000);
+    h.taint.allowNetwork(runA, 'task', ['c.example'], 10_000);
+    h.taint.allowNetwork(runB, 'once', [], 10_000);
+    h.taint.allowNetwork(runB, 'task', ['b.example'], 10_000);
+    // host-scoped rows of one run union; an unrestricted once row opens everything
+    expect(h.taint.networkAllowed(runA)).toEqual({ hosts: ['a.example', 'c.example'] });
+    expect(h.taint.networkAllowed(runB)).toEqual({});
+    h.taint.consumeOnceNetwork(runA);
+    expect(h.taint.networkAllowed(runA)).toEqual({ hosts: ['c.example'] });
+    h.taint.consumeOnceNetwork(runB);
+    expect(h.taint.networkAllowed(runB)).toEqual({ hosts: ['b.example'] });
+    h.taint.expireNetworkForRun(runA.runId);
+    expect(h.taint.networkAllowed(runA)).toBeNull();
+    expect(h.taint.networkAllowed(runB)).toEqual({ hosts: ['b.example'] });
+    h.taint.expireNetworkForRun(runB.runId);
+    expect(h.taint.networkAllowed(runB)).toBeNull();
+    // rows never outlive the taint window even without consumption
+    h.taint.allowNetwork(runA, 'task', [], 999_999_999);
+    expect(h.taint.networkAllowed(runA, 1_000 + APP_TAINT_TTL_MS + 1)).toBeNull();
+  });
+
+  it('a "conversation" egress allow on another channel (all row) also opens the network', async () => {
+    const h = await harness();
+    env!.clock.set(1_000);
+    h.taint.mark(BOT, CONV);
+    h.taint.allowEgress(CONV, 'all', env!.clock.now() + 60_000);
+    const anyRun: RunIdentity = { runId: 'run_x', botId: BOT, conversationId: CONV, loopType: 'task' };
+    expect(h.taint.networkAllowed(anyRun)).toEqual({});
   });
 });

@@ -1249,6 +1249,8 @@ export const zhCN = {
   'approvals.egress.channel.bash': '沙箱命令',
   'approvals.egress.channel.git_remote': 'git 远程',
   'approvals.egress.channel.watch': '网页监看',
+  // D140-3：request_network 的网络授权卡通道。
+  'approvals.egress.channel.network': '外部网络',
   'approvals.egress.target': '外发内容',
   'approvals.egress.since': '读取应用数据自',
   'approvals.egress.allowOnce': '允许一次',

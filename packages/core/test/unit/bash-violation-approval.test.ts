@@ -102,4 +102,17 @@ describe('sandbox violations request access in a task', () => {
     expect(result.content).toContain('request_access');
     expect(result.content).not.toContain('用户已允许');
   });
+
+  it('a network violation line points at request_network (D140-3), with no path card', async () => {
+    const { bash, requested, ctx } = toolsFor('task', 1, [
+      { line: 'deny network-outbound api.example.com:443 (proxy deny: not allowed by network policy)' },
+      { line: 'deny http-request GET https://api.example.com/x (proxy deny: not allowed by network policy)' },
+    ]);
+    const result = await executeToolSafely(bash, { command: 'curl https://api.example.com' }, ctx);
+    // Network lines are not file paths: no access batch, only the request_network hint.
+    expect(requested).toEqual([]);
+    expect(result.content).toContain('request_network');
+    expect(result.content).toContain('外部网络被污点保护切断');
+    expect(result.content).not.toContain('request_access');
+  });
 });

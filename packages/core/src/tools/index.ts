@@ -840,6 +840,71 @@ export function buildResponseTools(input: {
     },
   };
 
+  const requestNetwork: ToolDefinition<{ hosts?: string[]; reason: string }> = {
+    name: 'request_network',
+    description:
+      '当前对话处于污点保护期，沙箱命令的外部网络已被切断（本机端口不受影响）。需要联网时调用本工具申请：批准后按所选时长（仅这一次 / 本任务内 / 本对话内）放开外网；hosts 填要访问的主机（省略 = 任意主机）。任务里每张卡只弹一次；不要为绕过限制改用其他工具。',
+    parameters: Type.Object({
+      hosts: Type.Optional(
+        Type.Array(Type.String(), {
+          maxItems: 16,
+          description: '要访问的外部主机（域名，可含 *. 前缀；省略 = 任意主机）',
+        }),
+      ),
+      reason: Type.String({ description: '申请原因，会展示给用户' }),
+    }),
+    execute: async (params, ctx) => {
+      if (identity.conversationId === null || identity.botId === null) {
+        return {
+          ok: false,
+          content: '当前执行没有对话上下文，无法申请网络授权',
+          errorCode: 'INVALID_INPUT',
+        };
+      }
+      try {
+        const result = await gateway.requestNetworkAccess(
+          identity,
+          { hosts: params.hosts, reason: params.reason },
+          { signal: ctx.signal },
+        );
+        if (result.already) {
+          return {
+            ok: true,
+            content:
+              '本对话的外部网络已在此前批准的授权范围内，无需再次申请；直接重试需要联网的命令即可。',
+          };
+        }
+        const hold =
+          result.duration === 'task'
+            ? '本任务内有效'
+            : result.duration === 'conversation'
+              ? '本对话内有效（污点窗口内）'
+              : '仅对下一条命令有效';
+        const scope = result.hosts.length > 0 ? `（主机：${result.hosts.join('、')}）` : '';
+        return {
+          ok: true,
+          content: `用户已批准外部网络访问${scope}；${hold}。请重新执行需要联网的命令。`,
+        };
+      } catch (error) {
+        if (error instanceof AppError && error.code === 'APPROVAL_DENIED') {
+          return {
+            ok: false,
+            content:
+              '用户拒绝或取消了网络授权请求。不要反复重试；调整做法（离线完成，或询问用户）。',
+            errorCode: 'APPROVAL_DENIED',
+          };
+        }
+        if (error instanceof AppError && error.code === 'RUN_READ_ONLY') {
+          return { ok: false, content: error.message, errorCode: 'RUN_READ_ONLY' };
+        }
+        if (error instanceof AppError && error.code === 'INVALID_INPUT') {
+          return { ok: false, content: error.message, errorCode: 'INVALID_INPUT' };
+        }
+        throw error;
+      }
+    },
+  };
+
   const requestUnsandboxed: ToolDefinition<{
     command: string;
     cwd?: string;
@@ -1474,6 +1539,8 @@ export function buildResponseTools(input: {
     getRun,
     getRunSteps,
     requestAccess,
+    // D140-3：污点期断网后的网络授权申请（任务面；对话轮 / 只读 run 在网关直接拒绝）。
+    requestNetwork,
     requestUnsandboxed,
     acquireWorkdirWrite,
     gitRemote,
