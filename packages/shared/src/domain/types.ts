@@ -2222,6 +2222,13 @@ export const setupRequirementSchema = z.discriminatedUnion('kind', [
 ]);
 export type SetupRequirement = z.infer<typeof setupRequirementSchema>;
 
+/**
+ * D140-4 任务隔离方式。首期只有 `worktree`（内置引擎、opt-in）；
+ * 扩展枚举需同步 runs 迁移的 `task_isolation` 语义（NULL = 未隔离）。
+ */
+export const runIsolationSchema = z.enum(['worktree']);
+export type RunIsolation = z.infer<typeof runIsolationSchema>;
+
 export const runSchema = z.object({
   id: z.string(),
   botId: z.string().nullable(),
@@ -2296,6 +2303,16 @@ export const runSchema = z.object({
    * 非任务 run 与宿主自己派的任务（未声明）为 null。
    */
   taskCapabilities: z.array(z.string()).nullable().default(null),
+  /**
+   * D140-4 worktree 隔离：`isolation: 'worktree'` = 任务在 workdir 同级
+   * `.worktree/` 下的 git worktree 里执行（detached HEAD）。非 worktree 任务为
+   * null。读路径把列里的坏值归一为 null（只认 'worktree'）。
+   */
+  isolation: runIsolationSchema.nullable().default(null),
+  /** worktree 根（`<workdir 父目录>/.worktree/<basename>-<runId 后 8 位>`）；非 worktree 任务为 null。 */
+  worktreePath: z.string().nullable().default(null),
+  /** 创建起点（`git stash create` 的 oid，无改动时为 HEAD）；应用到工作目录时作为三方合并 base。 */
+  worktreeBase: z.string().nullable().default(null),
   /**
    * 任务失败自动重试（TASK_AUTO_RETRY_DELAYS_MS）：已执行的自动重试次数；
    * 非任务 run 与从未自动重试过的任务为缺省 0。等待重试的任务仍为 `queued`。
@@ -2477,17 +2494,26 @@ export type AuditEntry = z.infer<typeof auditEntrySchema>;
 export const grantAccessSchema = z.enum(['read', 'write']);
 export type GrantAccess = z.infer<typeof grantAccessSchema>;
 
-export const grantDurationSchema = z.enum(['once', 'conversation']);
+/**
+ * Grant durations. `task` (D140 §1.2) scopes a grant to the remainder of one
+ * run: effective across that run's tool calls, expires when the `runs` row
+ * reaches a terminal status, and never covers a sub run (a sub run is a new
+ * run that needs its own grant). Extending this enum rebuilds the `grants`
+ * table (closed CHECK) and touches `grants.listEffective` / `expireForRun` /
+ * `revokeByUser` — extend with care.
+ */
+export const grantDurationSchema = z.enum(['once', 'task', 'conversation']);
 export type GrantDuration = z.infer<typeof grantDurationSchema>;
 
 /**
- * 审批时长（D73 P1，design 29 §8.1）：`bot` = 对该 Bot 总是允许。只用于
+ * 审批时长（D73 P1，design 29 §8.1）：`bot` = 对该 Bot 总是允许。用于
  * `ApprovalDecision.duration` 与 `mcp_tool` / `egress` 的 `payload.durations`；`grants` 表与
- * `agent_tool` 仍用 `grantDurationSchema`（不要直接扩展它）。P0 只定义并导出，
- * 尚未接入审批流程。`command` 仅 `egress` 出现（污点外发，D73 P2 后续）：本对话内
- * **完全相同的命令**（bash 通道）不再逐次确认。
+ * `agent_tool` 用 `grantDurationSchema`。`task`（D140 §1.2）= 本任务内允许：有效期到
+ * 该 run 结束（`runs` 行终态），跨该 run 的多次工具调用有效，不跨任务 / 接续 /
+ * 子 run（子 run 是新 run，需要自己的授权）。`command` 仅 `egress` 出现（污点外发，
+ * D73 P2）：本对话内**完全相同的命令**（bash 通道）不再逐次确认。
  */
-export const approvalDurationSchema = z.enum(['once', 'conversation', 'bot', 'command']);
+export const approvalDurationSchema = z.enum(['once', 'task', 'conversation', 'bot', 'command']);
 export type ApprovalDuration = z.infer<typeof approvalDurationSchema>;
 
 /**
@@ -2534,6 +2560,12 @@ export const approvalKindSchema = z.enum([
    * （type / paste / set_value）不进审批卡明文。
    */
   'computer_control',
+  /**
+   * worktree 任务结束后的「应用到工作目录」卡（D140 §3.6）：非阻塞、留对话，
+   * 任务结算后仍可决定。批准 = 宿主以三方合并把 worktree 改动写回用户工作目录；
+   * 冲突 / 拒绝则保留 worktree。**无人值守永不自动批准**（写用户主工作区）。
+   */
+  'worktree_apply',
 ]);
 export type ApprovalKind = z.infer<typeof approvalKindSchema>;
 
@@ -2598,14 +2630,25 @@ export const approvalStatusSchema = z.enum([
 ]);
 export type ApprovalStatus = z.infer<typeof approvalStatusSchema>;
 
-/** Payload of an `access` approval (path authorization request). */
+/**
+ * Payload of an `access` approval (path authorization request). D140 §1.2:
+ * a sandboxed command blocked on several paths raises **one** card —
+ * `paths` lists every `{path, access}` pair and the decision grants each
+ * path separately. `path` / `access` (single pair) stay for historical rows
+ * and single-path requests; new multi-path cards carry `paths` and
+ * `durations: ['once', 'task', 'conversation']`.
+ */
 export const accessApprovalPayloadSchema = z.object({
-  path: z.string(),
-  access: grantAccessSchema,
+  /** Historical rows / single-path requests. */
+  path: z.string().optional(),
+  access: grantAccessSchema.optional(),
+  paths: z.array(z.object({ path: z.string(), access: grantAccessSchema })).optional(),
   /** Why the bot needs it (file tools fill a default wording). */
   reason: z.string().default(''),
   /** Sensitive location — the card shows a prominent warning. */
   sensitive: z.boolean().default(false),
+  /** Card-offered durations; absent = the `once`-only default. */
+  durations: z.array(approvalDurationSchema).optional(),
 });
 export type AccessApprovalPayload = z.infer<typeof accessApprovalPayloadSchema>;
 
@@ -2741,6 +2784,8 @@ export const egressChannelSchema = z.enum([
   'git_remote',
   /** 网页监看（`watch_create`）：创建时立即、之后每个间隔都用 Bot 的浏览器资料访问该 URL。 */
   'watch',
+  /** D140-3：`request_network` 工具的网络授权卡（污点期外网被切断后申请放开）。 */
+  'network',
 ]);
 export type EgressChannel = z.infer<typeof egressChannelSchema>;
 
@@ -3947,6 +3992,14 @@ export const taskResultViewSchema = z.object({
 });
 export type TaskResultView = z.infer<typeof taskResultViewSchema>;
 
+/**
+ * D140-4 worktree 应用状态：`none`（非 worktree 任务 / 未结算）→ `pending`（任务
+ * 结算、`worktree_apply` 卡待决定）→ `applied`（已合并回工作目录，worktree 已删）
+ * / `conflict`（三方合并冲突，worktree 保留）/ `kept`（拒绝 / 超时，worktree 保留）。
+ */
+export const taskApplyStateSchema = z.enum(['none', 'pending', 'applied', 'conflict', 'kept']);
+export type TaskApplyState = z.infer<typeof taskApplyStateSchema>;
+
 /** Projection of a task run for its card and the status line (`task.updated`, `tasks.get`). */
 export const taskViewSchema = z.object({
   taskId: z.string(),
@@ -3975,8 +4028,19 @@ export const taskViewSchema = z.object({
       }),
     )
     .default([]),
-  /** Where it works: the bound workdir or the bot's workspace. */
-  cwdKind: z.enum(['workdir', 'workspace']).nullable(),
+  /** Where it works: the bound workdir, the bot's workspace, or a D140 worktree. */
+  cwdKind: z.enum(['workdir', 'workspace', 'worktree']).nullable(),
+  /**
+   * D140-4：worktree 任务的执行根（Run.worktreePath 的投影）。Optional：填充点在
+   * dispatch/tasks.ts 的 view()（W4/W5 接线），缺省 = 非 worktree 任务。
+   */
+  worktreePath: z.string().nullable().optional(),
+  /**
+   * D140-4：worktree 改动「应用到工作目录」的生命周期（applyState 卡流转，W5 接线）。
+   * `pending` = 任务结算、等用户决定；`applied` = 已合并回工作目录；`conflict` = 三方
+   * 合并冲突、worktree 保留；`kept` = 用户拒绝 / 超时保留 worktree。缺省视为 `none`。
+   */
+  applyState: taskApplyStateSchema.optional(),
   /** Why a submitted task waits (等写入租约 / 等并发额度 / 等智能体并发额度 …). */
   queueReason: z.string().nullable(),
   awaitingInput: z.boolean(),

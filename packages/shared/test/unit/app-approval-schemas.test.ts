@@ -43,7 +43,7 @@ describe('mcpToolApprovalPayloadSchema', () => {
 });
 
 describe('durations', () => {
-  it('ApprovalDecision and approvals.decide accept bot; grants keep once | conversation', () => {
+  it('ApprovalDecision and approvals.decide accept bot; grants keep once | task | conversation', () => {
     expect(approvalDecisionSchema.parse({ duration: 'bot' })).toEqual({ duration: 'bot' });
     expect(
       approvalsDecideInputSchema.parse({ id: 'a', approve: true, duration: 'bot' }).duration,
@@ -51,7 +51,7 @@ describe('durations', () => {
     expect(() =>
       approvalsDecideInputSchema.parse({ id: 'a', approve: true, duration: 'x' }),
     ).toThrow();
-    expect(grantDurationSchema.options).toEqual(['once', 'conversation']);
+    expect(grantDurationSchema.options).toEqual(['once', 'task', 'conversation']);
   });
 });
 

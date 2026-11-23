@@ -86,6 +86,18 @@ export const ERROR_CODES = [
   'WORKDIR_MISSING',
   'WORKDIR_SWITCH_BLOCKED',
   'GIT_CLI_MISSING',
+  // worktree 隔离（D140，todo/agent-autonomy-and-parallel-tasks.md §3.6）
+  /** worktree 创建失败：git 不可用 / workdir 不是 git 仓库 / 目标路径冲突等原因在 message。 */
+  'WORKTREE_CREATE_FAILED',
+  /** worktree 改动以三方合并应用回工作目录时冲突：worktree 保留，冲突文件列表在 details。 */
+  'WORKTREE_APPLY_CONFLICT',
+  /** 任务没有 worktree（isolation 非 worktree）或 worktree 已被回收。 */
+  'WORKTREE_NOT_AVAILABLE',
+  /**
+   * 污点期外网被切断（D140-3）：工具结果用（对应 `request_network`），提示模型先申请
+   * 网络授权再重试。
+   */
+  'NETWORK_BLOCKED',
   // environment (P06)
   'ENV_ITEM_UNKNOWN',
   'ENV_ITEM_UNSUPPORTED_PLATFORM',

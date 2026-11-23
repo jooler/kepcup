@@ -51,6 +51,10 @@ const ALL_KINDS = [
   'butler_proposal',
   'agent_tool',
   'egress',
+  'mail_send',
+  'bot_handover',
+  'computer_control',
+  'worktree_apply',
 ];
 
 function insertApproval(db: SqliteDatabase, id: string, kind: string, status = 'pending'): void {

@@ -183,9 +183,10 @@ export const MCP_TOOLS_PER_SERVER_MAX = 64;
 export const APP_TOOL_NAME_MAX = 50;
 /**
  * 污点外发控制（D73 P2，design 29 §8.3）：(Bot, 对话) 读取过连接应用数据后的污点时长；
- * 每次成功读取续期。
+ * 每次成功读取续期。D140-3 起为 60 分钟滑动（污点期改为切断外网而非逐命令弹卡，
+ * 见 `request_network`）。
  */
-export const APP_TAINT_TTL_MS = 24 * 60 * 60_000;
+export const APP_TAINT_TTL_MS = 60 * 60_000;
 /** 污点外发卡片的外发内容全文上限（字符；超出截断并注明）。 */
 export const EGRESS_TARGET_MAX_CHARS = 20_000;
 /** 提示词 `<available_apps>` 最多列出的未连接目录应用数。 */
@@ -710,11 +711,11 @@ export const TASK_IDLE_STOP_AFTER = 6;
 export const TASK_IDLE_WINDOW_CALLS = 12;
 
 /** Max simultaneously running tasks per conversation (§2.2); more wait as `queued` (submitted). */
-export const TASK_CONCURRENCY_PER_CONVERSATION = 3;
+export const TASK_CONCURRENCY_PER_CONVERSATION = 6;
 /** Max simultaneously running tasks across all conversations (§2.2). */
 export const TASK_CONCURRENCY_GLOBAL = 8;
 /** Max tasks one supervisor turn may start (§4.1, counted by `origin_run_id`). */
-export const TASK_START_MAX_PER_TURN = 2;
+export const TASK_START_MAX_PER_TURN = 4;
 /** Wall-clock cap of one task (§3.2 reaper): a running task over it is forced to `failed`. */
 export const TASK_MAX_WALL_MS = 4 * 60 * 60_000;
 /**
@@ -902,3 +903,28 @@ export const TASK_PEER_WAIT_TTL_MAX_MS = 120 * 60_000;
 export const TASK_PEER_WAIT_RESULT_MAX_CHARS = 4000;
 /** 单次 `claim` 的路径模式数上限（设计 §5）。 */
 export const TASK_CLAIM_PATHS_MAX = 16;
+
+// --- Agent 自主性与任务并行（D140，todo/agent-autonomy-and-parallel-tasks.md） ---
+/**
+ * worktree 隔离根目录名：workdir 的同级 `<workdir 父目录>/.worktree/`（每个任务一个
+ * `git worktree`，D140-4）。首次创建时写入内容为 `*` 的 .gitignore 并置 0700。
+ */
+export const WORKTREE_DIR_NAME = '.worktree';
+/**
+ * workdir 根下的忽略文件复制清单（gitignore 语法，D140-4）：创建 worktree 时把列出的
+ * 被忽略文件复制进去（只复制存在且非符号链接的，不覆盖已有文件）。
+ */
+export const WORKTREE_INCLUDE_FILE = '.worktreeinclude';
+/**
+ * 孤儿 worktree 回收期：每日 reaper 扫 `.worktree/` 下无对应非终态任务、且 mtime 超过
+ * 该时长的目录（先确认不是任何 workdir 的已注册挂载才删除）。
+ */
+export const WORKTREE_RETENTION_MS = 7 * 24 * 60 * 60_000;
+/** worktree 路径长度上限：超过视为创建失败（WORKTREE_CREATE_FAILED），不截断。 */
+export const WORKTREE_PATH_MAX = 200;
+/**
+ * 单个 run 的文件级自动认领上限（D140-1）：任务经网关的文件写入首次触及某路径时登记
+ * 认领；超过该数量后不再登记新路径（其余任务仍会得到 WRITE_CLAIMED 之外的实际写入
+ * 冲突由结算时改动交集兜底）。只防清单无界增长，不是正常流控值。
+ */
+export const TASK_AUTO_CLAIM_MAX = 5000;

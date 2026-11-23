@@ -9,7 +9,7 @@ import type { SettingsService } from '../domain/settings.js';
  * 污点外发控制的状态（D73 P2，design 29 §8.3 / §12）。
  *
  * Bot 在某对话里**成功读取过连接应用（目录连接）的数据**后，该 (Bot, 对话) 进入污点状态，
- * 持续 {@link APP_TAINT_TTL_MS}（24 小时），每次成功读取续期。按 (Bot, 对话) 计而不按 run
+ * 持续 {@link APP_TAINT_TTL_MS}（60 分钟滑动，D140-3），每次成功读取续期。按 (Bot, 对话) 计而不按 run
  * 计：`runs.retry` 的新 run、该对话后续的对话轮与任务（D75）自然共用同一行，无法绕过。
  *
  * 来源只有目录连接的应用工具（`app_*`，`wrapMcpTool` 在成功返回后置位）；自定义 MCP 工具

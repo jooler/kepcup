@@ -5,6 +5,7 @@ import {
   runStepSchema,
   type LoopType,
   type Run,
+  type RunIsolation,
   type RunStatus,
   type RunStep,
   type SetupRequirement,
@@ -39,6 +40,9 @@ interface RunRow {
   task_cwd: string | null;
   task_write_domains: string | null;
   task_capabilities: string | null;
+  task_isolation: string | null;
+  task_worktree_path: string | null;
+  task_worktree_base: string | null;
   task_retry_attempts: number;
   task_retry_at: number | null;
   origin_run_id: string | null;
@@ -186,6 +190,11 @@ function rowToRun(row: RunRow): Run {
     taskWriteDomains: writeDomains.domains,
     ...(writeDomains.corrupt ? { taskWriteDomainsCorrupt: true } : {}),
     taskCapabilities: parseCapabilities(row.task_capabilities),
+    // D140: a bad isolation value reads as null (fail-open to "not isolated";
+    // W5's gateway branch treats only 'worktree' specially).
+    isolation: row.task_isolation === 'worktree' ? 'worktree' : null,
+    worktreePath: row.task_worktree_path,
+    worktreeBase: row.task_worktree_base,
     taskRetryAttempts: row.task_retry_attempts,
     taskRetryAt: row.task_retry_at,
     originRunId: row.origin_run_id,
@@ -246,6 +255,18 @@ export class RunsService {
     taskWriteDomains?: string[] | null;
     /** D91: external capability ids the task declared (`start_task.capabilities`); omitted = none. */
     taskCapabilities?: string[] | null;
+    /**
+     * D140-4 worktree isolation. `worktreePath` / `worktreeBase` are written by
+     * the host right after the worktree is created (W5 wires start_task); a row
+     * created before that step stores nulls.
+     *
+     * TODO(W4/W5): TaskView's `worktreePath` / `applyState` are filled in
+     * dispatch/tasks.ts `view()` — wiring belongs to those waves, not W0;
+     * consumers must treat missing as null / 'none'.
+     */
+    isolation?: RunIsolation | null;
+    worktreePath?: string | null;
+    worktreeBase?: string | null;
     /** The supervisor turn that started the task. */
     originRunId?: string | null;
     /** Replay sources (`start_task({continues_task_id})`, D56). */
@@ -278,7 +299,7 @@ export class RunsService {
           : null;
     this.db
       .prepare(
-        'insert into runs (id, bot_id, conversation_id, loop_type, status, trigger_reason, trigger_message_ids_json, episode_id, episode_hop, parent_run_id, provider, model, engine, task_title, task_writes, task_cwd, task_write_domains, task_capabilities, origin_run_id, continued_from_run_ids_json, trigger_parts_json, retry_of_run_id, principal_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'insert into runs (id, bot_id, conversation_id, loop_type, status, trigger_reason, trigger_message_ids_json, episode_id, episode_hop, parent_run_id, provider, model, engine, task_title, task_writes, task_cwd, task_write_domains, task_capabilities, task_isolation, task_worktree_path, task_worktree_base, origin_run_id, continued_from_run_ids_json, trigger_parts_json, retry_of_run_id, principal_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         id,
@@ -311,6 +332,9 @@ export class RunsService {
           input.taskCapabilities.length > 0
           ? JSON.stringify(input.taskCapabilities)
           : null,
+        input.isolation ?? null,
+        input.isolation === 'worktree' ? (input.worktreePath ?? null) : null,
+        input.isolation === 'worktree' ? (input.worktreeBase ?? null) : null,
         input.originRunId ?? null,
         input.continuedFromRunIds !== undefined && input.continuedFromRunIds.length > 0
           ? JSON.stringify(input.continuedFromRunIds)
