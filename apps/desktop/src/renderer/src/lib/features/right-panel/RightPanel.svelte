@@ -784,7 +784,9 @@
                             >{t(
                               grant.duration === 'once'
                                 ? 'rightPanel.grantOnce'
-                                : 'rightPanel.grantConversation',
+                                : grant.duration === 'task'
+                                  ? 'rightPanel.grantTask'
+                                  : 'rightPanel.grantConversation',
                             )}</span
                           >
                           <Button

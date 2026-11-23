@@ -687,43 +687,27 @@ export class ApprovalsService {
       }
       keptLead = leadBotId;
     }
-    // D73 duration degradation: a wider choice is honoured only where the card
-    // offered it (`payload.durations`). `bot` ("always for this bot") exists for
-    // `mcp_tool` and `git_remote`; `command` (egress: the same bash command again) only for
-    // `egress`; `grants` and `agent_tool` never see anything but
-    // once | conversation. An unavailable choice degrades to「仅这一次」.
-    if (duration === 'bot' || duration === 'conversation' || duration === 'command') {
-      if (
-        (approval.kind === 'agent_tool' ||
-          approval.kind === 'mcp_tool' ||
-          // D73 P2: egress cards offer「允许一次 / 拒绝」plus the payload's
-          // durations (conversation / bash-same-command) where the gateway offered them.
-          approval.kind === 'egress' ||
-          // git_remote 卡按 gateway 提供的 durations（仅这一次 / 本对话内 / 对该 Bot）。
-          approval.kind === 'git_remote' ||
-          // D105 computer_control 卡同 git_remote：三档由 payload.durations 提供。
-          approval.kind === 'computer_control') &&
-        !offeredDurations(approval.payload).includes(duration)
-      ) {
+    // D73 duration degradation + D140 §3.5: a wider choice is honoured only
+    // for kinds that support it **and** only where the card offered it
+    // (`payload.durations`). `bot` ("always for this bot") exists for
+    // `mcp_tool` / `git_remote` / `computer_control`; `command` (egress: the
+    // same bash command again) only for `egress`; `task` (D140 §1.2「本任务内
+    // 允许」) for `access` / `agent_tool` / `egress`. An unavailable choice
+    // degrades to「仅这一次」— never an error (the card is gone either way).
+    if (duration !== undefined && duration !== 'once') {
+      const allowed = DURATION_ALLOWED_FOR[approval.kind];
+      if (allowed === undefined || !allowed.includes(duration)) {
         duration = 'once';
-      } else if (
-        duration === 'bot' &&
-        approval.kind !== 'mcp_tool' &&
-        approval.kind !== 'git_remote' &&
-        approval.kind !== 'computer_control'
-      ) {
-        duration = 'once';
-      } else if (duration === 'command' && approval.kind !== 'egress') {
+      } else if (approval.kind === 'access') {
+        // Legacy single-path access cards (and historical rows) never carried
+        // `payload.durations`: their「本对话内」stays valid. `task` is new
+        // (D140): only a card that offered it may record it.
+        if (duration === 'task' && !offeredDurations(approval.payload).includes('task')) {
+          duration = 'once';
+        }
+      } else if (!offeredDurations(approval.payload).includes(duration)) {
         duration = 'once';
       }
-    }
-    if (
-      approval.kind === 'access' &&
-      approve &&
-      duration !== 'once' &&
-      duration !== 'conversation'
-    ) {
-      throw new AppError('INVALID_INPUT', '缺少授权有效期（once / conversation）');
     }
     const now = this.#deps.clock.now();
     let decision: ApprovalDecision | null =
@@ -1050,8 +1034,9 @@ export class ApprovalsService {
       case 'access': {
         const payload = accessApprovalPayloadSchema.safeParse(approval.payload);
         if (!payload.success) return '访问授权请求';
-        const verb = payload.data.access === 'write' ? '写入' : '读取';
-        return `${botName} 申请${verb} ${payload.data.path}`;
+        const target = accessTargetText(payload.data);
+        const verb = accessVerbText(payload.data);
+        return `${botName} 申请${verb} ${target}`;
       }
       case 'unsandboxed':
         return `${botName} 申请在沙箱外执行命令：${String(approval.payload['command'] ?? '')}`;
@@ -1149,8 +1134,10 @@ export class ApprovalsService {
       approval.botId !== null ? (this.#deps.bots.get(approval.botId)?.name ?? approval.botId) : '';
     if (approval.kind === 'access') {
       const parsed = accessApprovalPayloadSchema.safeParse(approval.payload);
-      const verb = parsed.success ? (parsed.data.access === 'write' ? '写入' : '读取') : '访问';
-      const target = parsed.success ? parsed.data.path : String(approval.payload['path'] ?? '');
+      const verb = parsed.success ? accessVerbText(parsed.data) : '访问';
+      const target = parsed.success
+        ? accessTargetText(parsed.data)
+        : String(approval.payload['path'] ?? '');
       const actor = botName.length > 0 ? `${botName} ` : '';
       switch (approval.status) {
         case 'pending':
@@ -1162,7 +1149,9 @@ export class ApprovalsService {
               ? `（${autoModeWord(approval)}自动批准，仅这一次）`
               : duration === 'conversation'
                 ? '（本对话内一直允许）'
-                : '（仅这一次）';
+                : duration === 'task'
+                  ? '（本任务内一直允许）'
+                  : '（仅这一次）';
           return `[系统] 用户允许${actor}${verb} ${target}${suffix}`;
         }
         case 'denied':
@@ -1282,9 +1271,11 @@ export class ApprovalsService {
               ? `（${autoShortWord(approval)}自动批准）`
               : approval.decision?.duration === 'conversation'
                 ? '（本对话内一直允许）'
-                : approval.decision?.duration === 'command'
-                  ? '（本对话内相同命令）'
-                  : '（仅这一次）';
+                : approval.decision?.duration === 'task'
+                  ? '（本任务内一直允许）'
+                  : approval.decision?.duration === 'command'
+                    ? '（本对话内相同命令）'
+                    : '（仅这一次）';
           return `[系统] 用户允许${actor}${label}${suffix}`;
         }
         case 'denied':
@@ -1307,7 +1298,9 @@ export class ApprovalsService {
               ? `（${autoModeWord(approval)}自动批准，仅这一次）`
               : approval.decision?.duration === 'conversation'
                 ? '（本对话内一直允许）'
-                : '（仅这一次）';
+                : approval.decision?.duration === 'task'
+                  ? '（本任务内一直允许）'
+                  : '（仅这一次）';
           return `[系统] 用户允许${actor}${label}${suffix}`;
         }
         case 'denied':
@@ -1666,6 +1659,37 @@ function egressTargetOf(kind: ApprovalKind, payload: Record<string, unknown>): s
     return `git ${String(payload['operation'] ?? '')} ${args}`.trim();
   }
   return String(payload['command'] ?? '');
+}
+
+/**
+ * Target text of an access payload (D140 §1.2): a multi-path card summarizes
+ * as「N 个路径（首路径…）」; single-path rows (and historical ones) keep the
+ * bare path.
+ */
+function accessTargetText(data: {
+  path?: string | undefined;
+  paths?: Array<{ path: string; access: 'read' | 'write' }> | undefined;
+}): string {
+  const paths = data.paths ?? [];
+  if (paths.length > 1) return `${paths.length} 个路径（${paths[0]!.path}…）`;
+  if (paths.length === 1) return paths[0]!.path;
+  return data.path ?? '';
+}
+
+/** Verb of an access payload: a multi-path card mixes modes, so「访问」. */
+function accessVerbText(data: {
+  access?: 'read' | 'write' | undefined;
+  paths?: Array<{ path: string; access: 'read' | 'write' }> | undefined;
+}): string {
+  const accesses = new Set<'read' | 'write' | undefined>([
+    ...(data.paths ?? []).map((entry) => entry.access),
+    data.access,
+  ]);
+  return accesses.size > 1 || accesses.has(undefined)
+    ? '访问'
+    : accesses.has('write')
+      ? '写入'
+      : '读取';
 }
 
 /**
@@ -2064,6 +2088,21 @@ function offeredDurations(payload: Record<string, unknown>): ApprovalDuration[] 
   const parsed = approvalDurationSchema.array().safeParse(payload['durations']);
   return parsed.success ? parsed.data : ['once'];
 }
+
+/**
+ * D140 §3.5: durations each approval kind may record. A choice outside the
+ * table (or one the card never offered — `payload.durations`) degrades to
+ * `once` in `decide()`. Kinds absent here (butler proposals, mail, …) have no
+ * duration choice at all.
+ */
+const DURATION_ALLOWED_FOR: Partial<Record<ApprovalKind, ApprovalDuration[]>> = {
+  access: ['once', 'task', 'conversation'],
+  agent_tool: ['once', 'task', 'conversation'],
+  egress: ['once', 'task', 'conversation', 'command'],
+  mcp_tool: ['once', 'conversation', 'bot'],
+  git_remote: ['once', 'conversation', 'bot'],
+  computer_control: ['once', 'conversation', 'bot'],
+};
 
 /** App-connection identity of an `mcp_tool` payload, for audit entries (D73). */
 function mcpConnectionAudit(payload: Record<string, unknown>): Record<string, string> {

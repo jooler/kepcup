@@ -9,6 +9,7 @@ import {
   EGRESS_TARGET_MAX_CHARS,
   type ApprovalDuration,
   type EgressChannel,
+  type GrantDuration,
 } from '@kepcup/shared';
 
 import { isInsidePath, readOnlyRoots, sensitivePaths } from '../sandbox/sensitive-paths.js';
@@ -715,6 +716,9 @@ export class ToolGateway {
    * writes of a read-only run). Denials surface as APPROVAL_DENIED so the bot
    * can adjust.
    *
+   * Single-path wrapper around `ensurePathAccessBatch` (D140 §3.5): the
+   * semantics are the historical ones.
+   *
    * A「仅这一次」grant created here is consumed by the current tool call
    * (D75); `preauthorize` (request_access) leaves it for the next tool call
    * that uses it instead — still bounded by GRANT_ABSOLUTE_TTL_MS.
@@ -726,92 +730,166 @@ export class ToolGateway {
     reason: string,
     options: { signal?: AbortSignal; preauthorize?: boolean } = {},
   ): Promise<string> {
-    const decision = this.checkPath(identity, inputPath, mode);
-    if (decision.kind === 'allowed') return decision.resolvedPath;
-    if (decision.kind === 'forbidden') {
-      throw new AppError(
-        decision.claimed === true
-          ? 'WRITE_CLAIMED'
-          : decision.outOfDomain === true
-            ? 'WRITE_OUT_OF_DOMAIN'
-            : decision.readOnlyRun === true
-              ? 'RUN_READ_ONLY'
-              : 'PATH_OUT_OF_SCOPE',
-        `${decision.reason}：${inputPath}`,
-      );
-    }
-    // Workdir writes go through the write lease, not an access approval
-    // (docs/design/08-workdir.md "并发：写入租约") — acquire, then re-check.
-    if (decision.kind === 'needs_lease') {
-      await this.#deps.workdirs.ensureWriteLease(identity, decision.resolvedPath, {
-        signal: options.signal,
-        reason,
+    const outcome = await this.ensurePathAccessBatch(
+      identity,
+      [{ path: inputPath, mode, reason }],
+      options,
+    );
+    if (outcome.resolved.length > 0) return outcome.resolved[0]!;
+    const first = outcome.denied[0]!;
+    throw new AppError('APPROVAL_DENIED', first.reason, {
+      expired: first.expired,
+      approvalId: outcome.approvalId,
+    });
+  }
+
+  /**
+   * Batch variant of `ensurePathAccess` (D140 §3.5): every grantable item of
+   * one command shares **one** access card — `paths` lists each
+   * `{path, access}` pair and one decision grants them all with the same
+   * duration. `forbidden` items keep the per-item semantics (throw —
+   * RUN_READ_ONLY / WRITE_OUT_OF_DOMAIN / WRITE_CLAIMED / PATH_OUT_OF_SCOPE)
+   * and `needs_lease` items still take the write lease one by one (never a
+   * card). Resolved paths come back as they may now be touched; a refused or
+   * cancelled card denies every requested path (its `reason` is the
+   * APPROVAL_DENIED message naming the path), so the tool can tell the model
+   * per path.
+   */
+  async ensurePathAccessBatch(
+    identity: RunIdentity,
+    items: Array<{ path: string; mode: 'read' | 'write'; reason: string }>,
+    options: { signal?: AbortSignal; preauthorize?: boolean } = {},
+  ): Promise<{
+    resolved: string[];
+    denied: Array<{ path: string; reason: string; expired: boolean }>;
+    /** The approval that decided the card (set once one was raised). */
+    approvalId?: string;
+    /** The duration the user picked (once / task / conversation). */
+    duration?: GrantDuration;
+  }> {
+    const resolved: string[] = [];
+    const grantable: Array<{
+      resolvedPath: string;
+      mode: 'read' | 'write';
+      sensitive: boolean;
+    }> = [];
+    const reasons: string[] = [];
+    for (const item of items) {
+      const decision = this.checkPath(identity, item.path, item.mode);
+      if (decision.kind === 'allowed') {
+        resolved.push(decision.resolvedPath);
+        continue;
+      }
+      if (decision.kind === 'forbidden') {
+        throw new AppError(
+          decision.claimed === true
+            ? 'WRITE_CLAIMED'
+            : decision.outOfDomain === true
+              ? 'WRITE_OUT_OF_DOMAIN'
+              : decision.readOnlyRun === true
+                ? 'RUN_READ_ONLY'
+                : 'PATH_OUT_OF_SCOPE',
+          `${decision.reason}：${item.path}`,
+        );
+      }
+      // Workdir writes go through the write lease, not an access approval
+      // (docs/design/08-workdir.md "并发：写入租约") — acquire, then re-check.
+      if (decision.kind === 'needs_lease') {
+        await this.#deps.workdirs.ensureWriteLease(identity, decision.resolvedPath, {
+          signal: options.signal,
+          reason: item.reason,
+        });
+        const after = this.checkPath(identity, decision.resolvedPath, item.mode);
+        if (after.kind === 'allowed') {
+          resolved.push(after.resolvedPath);
+          continue;
+        }
+        throw new AppError('PATH_OUT_OF_SCOPE', `写入仍被拒绝：${item.path}`);
+      }
+      // D75 §2.1 / §7.3 (审查 M4): a supervisor turn never waits for an access
+      // approval — that would hold the (bot, conversation) mailbox until the
+      // user decides. It fails fast; reading outside the authorized range is a
+      // task's work (request_access inside the task).
+      if (identity.loopType === 'turn') {
+        throw new AppError(
+          'PATH_OUT_OF_SCOPE',
+          `${decision.reason}：${item.path}。对话轮不申请访问授权：需要读取它请用 start_task 派一个任务，在任务里读取（必要时先用 request_access 申请）。`,
+        );
+      }
+      grantable.push({
+        resolvedPath: decision.resolvedPath,
+        mode: item.mode,
+        sensitive: decision.sensitive,
       });
-      const after = this.checkPath(identity, decision.resolvedPath, mode);
-      if (after.kind === 'allowed') return after.resolvedPath;
-      throw new AppError('PATH_OUT_OF_SCOPE', `${'写入仍被拒绝'}：${inputPath}`);
+      if (!reasons.includes(item.reason)) reasons.push(item.reason);
     }
-    // D75 §2.1 / §7.3 (审查 M4): a supervisor turn never waits for an access
-    // approval — that would hold the (bot, conversation) mailbox until the
-    // user decides. It fails fast; reading outside the authorized range is a
-    // task's work (request_access inside the task).
-    if (identity.loopType === 'turn') {
-      throw new AppError(
-        'PATH_OUT_OF_SCOPE',
-        `${decision.reason}：${inputPath}。对话轮不申请访问授权：需要读取它请用 start_task 派一个任务，在任务里读取（必要时先用 request_access 申请）。`,
-      );
-    }
+    if (grantable.length === 0) return { resolved, denied: [] };
     // BR-P03-002: a broad grant (e.g. the user home) would silently cover
-    // sensitive locations downstream, so the card must warn whenever the
+    // sensitive locations downstream, so the card must warn whenever a
     // requested path is or covers one — the user approves them knowingly.
     const norm = (p: string) => normalizeForCompare(p, this.#platform);
-    const coversSensitive = this.#sensitive.some((sensitive) =>
-      isInsidePath(norm(sensitive), norm(decision.resolvedPath)),
+    const sensitive = grantable.some(
+      (item) =>
+        item.sensitive ||
+        this.#sensitive.some((dir) => isInsidePath(norm(dir), norm(item.resolvedPath))),
     );
     const outcome = await this.#deps.approvals.request(
       identity,
       'access',
       {
-        path: decision.resolvedPath,
-        access: mode,
-        reason,
-        sensitive: decision.sensitive || coversSensitive,
+        paths: grantable.map((item) => ({ path: item.resolvedPath, access: item.mode })),
+        reason: reasons.join('；'),
+        sensitive,
+        durations: ['once', 'task', 'conversation'],
       },
       { ...(options.signal !== undefined ? { signal: options.signal } : {}) },
     );
     if (outcome.decision !== 'approved') {
       const expired = outcome.expired === true;
-      throw new AppError(
-        'APPROVAL_DENIED',
-        expired
-          ? `等待用户授权超时（${Math.round(APPROVAL_TTL_MS / 60_000)} 分钟），无法访问该路径；任务未被阻塞，请调整做法或稍后重试`
-          : '用户拒绝或审批已取消，无法访问该路径',
-        { expired, approvalId: outcome.approval.id },
-      );
+      const denial = expired
+        ? `等待用户授权超时（${Math.round(APPROVAL_TTL_MS / 60_000)} 分钟），无法访问该路径；任务未被阻塞，请调整做法或稍后重试`
+        : '用户拒绝或审批已取消，无法访问该路径';
+      return {
+        resolved,
+        denied: grantable.map((item) => ({
+          path: item.resolvedPath,
+          reason: `${denial}：${item.resolvedPath}`,
+          expired,
+        })),
+        approvalId: outcome.approval.id,
+      };
     }
-    // `grants` only ever see once | conversation (decide() confines `bot` to mcp_tool cards).
-    const duration =
-      outcome.approval.decision?.duration === 'conversation' ? 'conversation' : 'once';
-    const grant = this.#deps.grants.create({
-      botId: identity.botId ?? '',
-      conversationId: identity.conversationId ?? '',
-      path: decision.resolvedPath,
-      access: mode,
-      duration,
-      runId: identity.runId,
-      approvalId: outcome.approval.id,
-    });
-    this.#deps.logger.info(
-      { grantId: grant.id, path: decision.resolvedPath, duration },
-      'grant created',
-    );
-    if (options.preauthorize !== true) this.#deps.grants.noteOnceUse(grant);
+    // decide() confines access cards to once | task | conversation.
+    const picked = outcome.approval.decision?.duration;
+    const duration: GrantDuration =
+      picked === 'conversation' || picked === 'task' ? picked : 'once';
+    for (const item of grantable) {
+      const grant = this.#deps.grants.create({
+        botId: identity.botId ?? '',
+        conversationId: identity.conversationId ?? '',
+        path: item.resolvedPath,
+        access: item.mode,
+        duration,
+        runId: identity.runId,
+        approvalId: outcome.approval.id,
+      });
+      this.#deps.logger.info(
+        { grantId: grant.id, path: item.resolvedPath, duration },
+        'grant created',
+      );
+      if (options.preauthorize !== true) this.#deps.grants.noteOnceUse(grant);
+    }
     const conversationId = identity.conversationId ?? '';
     this.#deps.approvals.publishEvent('grant.changed', {
       conversationId,
       grants: this.#deps.grants.listActive(conversationId),
     });
-    return decision.resolvedPath;
+    return {
+      resolved: [...resolved, ...grantable.map((item) => item.resolvedPath)],
+      denied: [],
+      approvalId: outcome.approval.id,
+      duration,
+    };
   }
 
   /**

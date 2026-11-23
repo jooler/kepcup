@@ -600,8 +600,9 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
       kind: mode,
       access: mode,
       locations: asked.map((entry) => entry.target),
-      // An uncertain target cannot be granted for the conversation (review #9).
-      durations: escapes ? ['once'] : ['once', 'conversation'],
+      // An uncertain target cannot be granted beyond this one request (review #9);
+      // otherwise the card offers the D140 §1.2 task duration as well.
+      durations: escapes ? ['once'] : ['once', 'task', 'conversation'],
       reason: `${
         escapes
           ? `${first.reason}；真实写入目标可能与显示的路径不同（该智能体只为越出其沙箱的写入发请求）`
@@ -1007,9 +1008,11 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
   }
 
   /**
-   * 路径类批准记为 access 授权——「本对话内」到对话结束，同一路径的后续请求
-   * 经网关授权直接放行。D75（D37 收紧）：「仅这一次」= 单次工具调用，批准本
-   * 身即回答了这一条权限请求，不落授权（否则后续请求会被它放行）。
+   * 路径类批准记为 access 授权——「本对话内」到对话结束，「本任务内」(D140
+   * §1.2) 到该 run 结束，同一路径的后续请求经网关授权直接放行。D75（D37 收
+   * 紧）：「仅这一次」= 单次工具调用，批准本身即回答了这一条权限请求，不落授
+   * 权（否则后续请求会被它放行）。`bot` / `command` 只存在于 mcp_tool / egress
+   * 卡（decide()），这里不是合法的路径授权时长。
    */
   #grant(
     identity: RunIdentity,
@@ -1018,9 +1021,10 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
     approval: { id: string; decision: { duration?: GrantDuration | 'bot' | 'command' } | null },
   ): void {
     if (identity.botId === null || identity.conversationId === null) return;
-    // `bot` only exists on mcp_tool cards (decide()); a path grant is once | conversation.
-    if (approval.decision?.duration !== 'conversation') return;
-    const duration: GrantDuration = 'conversation';
+    // A path grant is once (nothing recorded) | task | conversation.
+    const picked = approval.decision?.duration;
+    if (picked !== 'task' && picked !== 'conversation') return;
+    const duration: GrantDuration = picked;
     for (const location of locations) {
       this.#deps.grants.create({
         botId: identity.botId,

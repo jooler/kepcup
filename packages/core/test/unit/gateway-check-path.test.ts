@@ -39,6 +39,12 @@ function makeGateway(platform = 'linux'): ToolGateway {
       hasEffectiveGrant: () => null,
       // D75: a grant hit marks once-grant use (consumed with the tool call).
       noteOnceUse: () => {},
+      // D140 §3.5: the batch flow records one grant per approved path.
+      create: ((input: { path: string; access: string; duration: string }) => {
+        grantCreates.push(input);
+        return { id: `grt_${grantCreates.length}` };
+      }) as unknown as GatewayDeps['grants']['create'],
+      listActive: () => [],
     } as unknown as GatewayDeps['grants'],
     allowlist: {
       match: () => ({ exempt: false, reason: 'stub' }),
@@ -88,6 +94,9 @@ let lastApprovalsStub: {
   request: (identity: unknown, kind: string, payload: Record<string, unknown>) => Promise<unknown>;
 };
 
+/** Grant rows the most recently built gateway's stub created (reset per test). */
+const grantCreates: Array<{ path: string; access: string; duration: string }> = [];
+
 /** Replaces the approvals stub on the most recently built gateway. */
 function patchApprovals(
   impl: (
@@ -109,6 +118,7 @@ beforeEach(() => {
   mkdirSync(sensitiveDir, { recursive: true });
   mkdirSync(toolchainDir, { recursive: true });
   writeFileSync(path.join(toolchainDir, 'bin.txt'), 'tool');
+  grantCreates.length = 0;
   gateway = makeGateway();
 });
 
@@ -303,5 +313,119 @@ describe('ToolGateway.checkPath', () => {
       'read',
     );
     expect(decision.kind).toBe('forbidden');
+  });
+});
+
+describe('ToolGateway.ensurePathAccessBatch (D140 §3.5 multi-path card + task duration)', () => {
+  /** Grantable write targets outside the workspace / data home / roots. */
+  function outsidePaths(names: string[]): string[] {
+    return names.map((name) => path.join(path.dirname(userHome), 'batch', name));
+  }
+
+  it('one command blocked on three paths raises ONE card; approval grants each path with the chosen duration', async () => {
+    mkdirSync(workspaceOf(), { recursive: true });
+    const gw = makeGateway();
+    const targets = outsidePaths(['a.txt', 'b.txt', 'c.txt']);
+    const requests: Array<{ kind: string; payload: Record<string, unknown> }> = [];
+    const events: string[] = [];
+    (lastApprovalsStub as unknown as Record<string, unknown>).publishEvent = (name: string) => {
+      events.push(name);
+    };
+    patchApprovals(async (_identity, kind, payload) => {
+      requests.push({ kind, payload });
+      return { approval: { id: 'apr_batch', decision: { duration: 'task' } }, decision: 'approved' };
+    });
+    const items = targets.map((target) => ({
+      path: target,
+      mode: 'write' as const,
+      reason: '执行 bash 需要访问该路径',
+    }));
+    const outcome = await gw.ensurePathAccessBatch(identity, items);
+    // A single card listing every path…
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.kind).toBe('access');
+    const resolved = items.map((item) => gw.checkPath(identity, item.path, 'write').resolvedPath);
+    expect(requests[0]!.payload['paths']).toEqual(
+      resolved.map((p) => ({ path: p, access: 'write' })),
+    );
+    expect(requests[0]!.payload['durations']).toEqual(['once', 'task', 'conversation']);
+    // …and one grant per path, all with the chosen duration…
+    expect(grantCreates.map((g) => [g.path, g.access, g.duration])).toEqual(
+      resolved.map((p) => [p, 'write', 'task']),
+    );
+    // …plus a single grant.changed event and every path resolved.
+    expect(events).toEqual(['grant.changed']);
+    expect(outcome.resolved).toEqual(resolved);
+    expect(outcome.duration).toBe('task');
+    expect(outcome.denied).toEqual([]);
+  });
+
+  it('a refused card denies every requested path (per-path reasons); the single-path wrapper throws APPROVAL_DENIED', async () => {
+    mkdirSync(workspaceOf(), { recursive: true });
+    const gw = makeGateway();
+    const targets = outsidePaths(['x.txt', 'y.txt']);
+    patchApprovals(async () => ({
+      approval: { id: 'apr_no', decision: null },
+      decision: 'denied',
+    }));
+    const items = targets.map((target) => ({
+      path: target,
+      mode: 'write' as const,
+      reason: '执行 bash 需要访问该路径',
+    }));
+    const outcome = await gw.ensurePathAccessBatch(identity, items);
+    expect(outcome.resolved).toEqual([]);
+    expect(grantCreates).toEqual([]);
+    expect(outcome.denied).toHaveLength(2);
+    for (const denial of outcome.denied) {
+      expect(denial.expired).toBe(false);
+      expect(denial.reason).toContain('用户拒绝或审批已取消');
+      expect(denial.reason).toContain(denial.path);
+    }
+    // The wrapper keeps the historical single-path semantics: throw.
+    await expect(gw.ensurePathAccess(identity, targets[0]!, 'write', '测试')).rejects.toMatchObject({
+      code: 'APPROVAL_DENIED',
+    });
+  });
+
+  it('the single-path wrapper still resolves and records a conversation grant (paths form, one entry)', async () => {
+    mkdirSync(workspaceOf(), { recursive: true });
+    const gw = makeGateway();
+    const target = outsidePaths(['single.txt'])[0]!;
+    const requests: Array<Record<string, unknown>> = [];
+    patchApprovals(async (_identity, _kind, payload) => {
+      requests.push(payload);
+      return {
+        approval: { id: 'apr_one', decision: { duration: 'conversation' } },
+        decision: 'approved',
+      };
+    });
+    const resolved = await gw.ensurePathAccess(identity, target, 'write', '测试');
+    expect(resolved).toBe(gw.checkPath(identity, target, 'write').resolvedPath);
+    // New cards always carry the paths form (one entry) + the three durations.
+    expect(requests[0]!['paths']).toEqual([
+      { path: resolved, access: 'write' },
+    ]);
+    expect(requests[0]!['durations']).toEqual(['once', 'task', 'conversation']);
+    expect(grantCreates).toEqual([
+      expect.objectContaining({ path: resolved, access: 'write', duration: 'conversation' }),
+    ]);
+  });
+
+  it('a turn never raises a card — the batch fails fast like the single path did (D75 审查 M4)', async () => {
+    mkdirSync(workspaceOf(), { recursive: true });
+    const gw = makeGateway();
+    // A sensitive read is grantable (the only read a turn could ask about).
+    const target = path.join(sensitiveDir, 'id_ed25519');
+    let cards = 0;
+    patchApprovals(async () => {
+      cards += 1;
+      return { approval: { id: 'apr_never', decision: null }, decision: 'denied' };
+    });
+    const turnIdentity = { ...identity, loopType: 'turn' as const };
+    await expect(
+      gw.ensurePathAccessBatch(turnIdentity, [{ path: target, mode: 'read', reason: '测试' }]),
+    ).rejects.toMatchObject({ code: 'PATH_OUT_OF_SCOPE' });
+    expect(cards).toBe(0);
   });
 });

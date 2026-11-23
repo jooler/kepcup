@@ -228,7 +228,7 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
       kind: 'write',
       access: 'write',
       locations: [path.join(realpathSync(outside), 'x.txt')],
-      durations: ['once', 'conversation'],
+      durations: ['once', 'task', 'conversation'],
     });
     // The task parks in waiting_approval like a built-in run; the card is its.
     const task = await waitFor(

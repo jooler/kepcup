@@ -208,6 +208,75 @@ describe('GrantsService「仅这一次」= 单次工具调用 (D75 §7.3)', () =
   });
 });
 
+describe('GrantsService「本任务内允许」task duration (D140 §1.2)', () => {
+  it('a task grant lasts its whole run: every tool call of it, never another run, and it dies with the run', async () => {
+    const grants = new GrantsService({ db: grantsDb() as never, clock: systemClock });
+    const task = grants.create({
+      botId: 'bot_1',
+      conversationId: 'conv_1',
+      path: '/tmp/task-scope',
+      access: 'write',
+      duration: 'task',
+      runId: 'run_1',
+    });
+    // Use inside a tool call never consumes it (unlike a once grant)…
+    await runInToolCall(async () => {
+      grants.noteOnceUse(task);
+      expect(grants.listEffective(run1).map((g) => g.id)).toEqual([task.id]);
+    });
+    // …and a later call of the same run still sees it.
+    await runInToolCall(async () => {
+      expect(grants.listEffective(run1).map((g) => g.id)).toEqual([task.id]);
+    });
+    expect(grants.listEffective(run1).map((g) => g.id)).toEqual([task.id]);
+    // A different run — a sub run or the next task — never inherits it.
+    expect(grants.listEffective({ ...run1, runId: 'run_2' })).toEqual([]);
+    // Run end revokes it (expireForRun covers once and task).
+    expect(grants.expireForRun('run_1')).toBe(1);
+    expect(grants.listEffective(run1)).toEqual([]);
+    expect(grants.get(task.id)?.revokedAt).not.toBeNull();
+  });
+
+  it('revoking a task grant interrupts only that run (revokeByUser carries the runId)', () => {
+    const events: Array<Record<string, unknown>> = [];
+    const grants = new GrantsService({
+      db: grantsDb() as never,
+      clock: systemClock,
+      revocations: {
+        emit: (event) => {
+          events.push(event as unknown as Record<string, unknown>);
+          return 0;
+        },
+      } as never,
+    });
+    const task = grants.create({
+      botId: 'bot_1',
+      conversationId: 'conv_1',
+      path: '/tmp/task-revoke',
+      access: 'write',
+      duration: 'task',
+      runId: 'run_9',
+    });
+    const { interruptedTasks } = grants.revokeByUser(task.id);
+    expect(interruptedTasks).toBe(0);
+    expect(events).toEqual([
+      { scope: 'path', conversationId: 'conv_1', botIds: ['bot_1'], runId: 'run_9' },
+    ]);
+    // A conversation grant revocation stays conversation-wide (no runId).
+    events.length = 0;
+    const conv = grants.create({
+      botId: 'bot_1',
+      conversationId: 'conv_1',
+      path: '/tmp/conv-revoke',
+      access: 'write',
+      duration: 'conversation',
+      runId: 'run_9',
+    });
+    grants.revokeByUser(conv.id);
+    expect(events).toEqual([{ scope: 'path', conversationId: 'conv_1', botIds: ['bot_1'] }]);
+  });
+});
+
 describe('AllowlistService seed sync', () => {
   it('inserts missing built-ins without re-enabling a user-disabled row', () => {
     const db = new Database(':memory:');

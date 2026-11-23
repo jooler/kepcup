@@ -309,6 +309,99 @@ describe('access approvals for file tools (P03)', () => {
     expect(finalApproval).toBeDefined();
   }, 180_000);
 
+  it('a task-duration access grant covers the rest of its run and dies with it (D140 §1.2)', async () => {
+    const { core, llm } = await start();
+    const bot = await makeBot(core, '小任');
+    const conv = await openDirect(core, bot.id);
+    const dir = fsMkdtemp();
+    writeFileSync(path.join(dir, 'task.txt'), 't0');
+
+    // Run 1: the first write raises the card; approving「本任务内」lets the
+    // second write of the SAME run pass without a new card.
+    llm.script(
+      'mock-main',
+      inTask(
+        [
+          step().replyToolCall('write', { path: `${dir}/task.txt`, content: 't1' }),
+          step().replyToolCall('write', { path: `${dir}/task.txt`, content: 't2' }),
+          step().replyText('任务内两次都写完'),
+        ],
+        'RELAY-TASK-1',
+      ),
+    );
+    await sendBatch(core, conv.id, ['写两次']);
+    const approval = await pendingApproval(core, conv.id);
+    expect(approval.kind).toBe('access');
+    // New cards offer the three durations (D140 §3.5).
+    expect(approval.payload['durations']).toEqual(['once', 'task', 'conversation']);
+    await core.rpc.call('approvals.decide', { id: approval.id, approve: true, duration: 'task' });
+    await waitForRelay(core, conv.id, 'RELAY-TASK-1');
+    const run1 = await latestTask(core, conv.id);
+    const writes1 = (await stepsOf(core, run1.id)).filter(
+      (s) => s.type === 'tool_result' && s.payload['toolName'] === 'write',
+    );
+    expect(writes1.map((s) => s.payload['ok'])).toEqual([true, true]);
+    expect(readFileSync(path.join(dir, 'task.txt'), 'utf8')).toBe('t2');
+    // Exactly one access approval this run — the second write rode on the task
+    // grant (whose duration is asserted by the gateway unit tests; the row
+    // itself dies with the run, so it cannot be listed here race-free).
+    const listed1 = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {
+      approvals: Approval[];
+    };
+    const run1Cards = listed1.approvals.filter((a) => a.kind === 'access');
+    expect(run1Cards).toHaveLength(1);
+    expect(run1Cards[0]!.decision?.duration).toBe('task');
+    // And nothing outlives the run: no active grants remain afterwards.
+    const grants1 = (await core.rpc.call('grants.list', { conversationId: conv.id })) as {
+      grants: unknown[];
+    };
+    expect(grants1.grants).toEqual([]);
+
+    // Run 2 (a new task run): the task grant died with run 1 → a fresh card.
+    llm.script(
+      'mock-main',
+      inTask(
+        [
+          step().replyToolCall('write', { path: `${dir}/task.txt`, content: 't3' }),
+          step().replyText('新任务要重新申请'),
+        ],
+        'RELAY-TASK-2',
+      ),
+    );
+    await sendBatch(core, conv.id, ['再写一次']);
+    const second = await pendingApproval(core, conv.id);
+    expect(second.kind).toBe('access');
+    expect(second.id).not.toBe(approval.id);
+    await core.rpc.call('approvals.decide', { id: second.id, approve: false });
+    await waitForRelay(core, conv.id, 'RELAY-TASK-2');
+  }, 180_000);
+
+  it('an access card records task only when it offered it — a legacy card degrades to once (D140 §3.5)', async () => {
+    const { core } = await start();
+    const bot = await makeBot(core, '小旧');
+    const conv = await openDirect(core, bot.id);
+    const approvals = core.services.domain!.approvals;
+    const identity = {
+      runId: 'run_legacy_task',
+      botId: bot.id,
+      conversationId: conv.id,
+      loopType: 'task',
+    } as const;
+    // Legacy-shaped card: single path, no `durations` offered.
+    const waiting = approvals.request(
+      identity,
+      'access',
+      { path: '/tmp/legacy-task-path', access: 'write', reason: '旧卡' },
+      {},
+    );
+    const approval = await pendingApproval(core, conv.id);
+    expect(approval.payload['durations']).toBeUndefined();
+    await core.rpc.call('approvals.decide', { id: approval.id, approve: true, duration: 'task' });
+    const outcome = await waiting;
+    expect(outcome.decision).toBe('approved');
+    expect(outcome.approval.decision?.duration).toBe('once');
+  }, 60_000);
+
   it('cancels pending approvals when the run is cancelled and on restart', async () => {
     const home = await mkdtempP03();
     const keystore = createMemoryKeystore();
