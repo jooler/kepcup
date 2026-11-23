@@ -245,7 +245,7 @@ CREATE TABLE plugin_items (
 
 事件：`plugins.changed { ids }`（渲染端刷新全部投影视图；各服务原有的 `skills.changed` / `apps.catalog_changed` 照发）、`plugins.marketplace.updated`。新增错误码（`shared/errors.ts`）：`PLUGIN_INVALID`、`PLUGIN_INCOMPATIBLE`、`PLUGIN_CONFLICT`、`PLUGIN_MANAGED`（对插件管理项的单项删除 / 结构改写，§7）。
 
-**设置目录**（按 AGENTS.md「设置：只走设置目录」）：两条都是顶层标量，用 `store: { kind: 'settings', generic: true }` + `card: 'field-editor'`，不改 core 适配器与卡片——`plugins.updates`（`pluginAutoCheckUpdates` 开关，`write('confirm')`）与 `plugins.marketplace`（`pluginMarketplaceUrl` + `pluginMarketplacePublicKey`，`write('user-only')`——generic 条目的目录测试要求 `widensPermission === false`，`user-only` 本身已保证 Bot 不能写值）。两条的深链都指向扩展中心「已安装」页签（`surface: 'extension-center'`，页内静态 `data-settings-anchor`），不新增设置页分区。键用顶层平铺名（目录的 `path` 只指到 settings 顶层键，不用 `plugins.marketplace.url` 这类嵌套写法）。`settingGroupSchema` 新增 `plugins` 分组（shared 契约变更，先 `pnpm --filter @kepcup/shared build`），设置页入口一行 `SettingsCatalogFields itemIds={[...]}`。Bot 工具：`plugin_search`、`plugin_request_install`（§6.3）。RPC schema 进 `packages/shared/src/rpc/methods.ts` 的 `rpcMethodSchemas` 与 `APP_RPC_METHODS`。
+**设置目录**（按 AGENTS.md「设置：只走设置目录」）：两条都是顶层标量，用 `store: { kind: 'settings', generic: true }` + `card: 'field-editor'`，不改 core 适配器与卡片——`plugins.updates`（`pluginAutoCheckUpdates` 开关，`write('confirm')`）与 `plugins.marketplace`（`pluginMarketplaceUrl` + `pluginMarketplacePublicKey`，`write('user-only')`——generic 条目的目录测试要求 `widensPermission === false`，`user-only` 本身已保证 Bot 不能写值）。两条的深链都指向扩展中心「设置」页签（`surface: 'extension-center'` + `section: 'settings'`，页内静态 `data-settings-anchor`；设置并页后插件设置分区收编为该页签，见 §15.5）。键用顶层平铺名（目录的 `path` 只指到 settings 顶层键，不用 `plugins.marketplace.url` 这类嵌套写法）。`settingGroupSchema` 新增 `plugins` 分组（shared 契约变更，先 `pnpm --filter @kepcup/shared build`），设置页入口一行 `SettingsCatalogFields itemIds={[...]}`。Bot 工具：`plugin_search`、`plugin_request_install`（§6.3）。RPC schema 进 `packages/shared/src/rpc/methods.ts` 的 `rpcMethodSchemas` 与 `APP_RPC_METHODS`。
 
 ## 9. UI（扩展中心改版）
 
@@ -474,7 +474,9 @@ P0 拆成两步：先用「第三方式」的插件把管线跑通，再动已�
 
 ### 15.5 扩展中心现状与安装引导
 
-- 页签收敛为 `['market', 'installed']`（设计 29 §16.1 的七页签表作废）：已安装 = 插件卡网格
+- 页签收敛为 `['market', 'installed', 'settings']`（设计 29 §16.1 的七页签表作废；2026-10-31
+  设置并页后最右增设「设置」页签，收编原设置「插件」分区，旧设置深链 `plugins` 改开本页签，
+  扩展中心整体成为宽屏设置页的伪分区 `extension-center`）：已安装 = 插件卡网格
   （类别是筛选条件；`instanceCounts` 参与计数，纯实例插件可被筛出）+ 网格末尾两张**系统卡**
   （本机应用协作 / 本机自建连接——系统能力不是插件，无插件菜单）；`localCollab` 旧深链解析为
   installed + 系统卡聚焦。
