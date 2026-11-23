@@ -552,10 +552,22 @@ taskWorktree?: { path: string; gitCommonDir: string /* <workdir>/.git */; gitWor
 - **遗留**：渲染端 `APPROVAL_DURATION_LABEL_KEYS` 缺 `task` 键 → desktop typecheck 预期破坏，W2 修复；TaskView 字段填充与 `runs.update` 写点留 W4/W5。
 
 ### W1
-（待填）
+
+- **提交**：`feat(core): D140 W1——沙箱读宽写窄（D140-2）：去整主目录禁读 + 显式 denyWrite 锁死 srt 默认便利写路径`（含 5 个设计/dev 文档修订，单独并入本提交）。
+- **改动**：`sandbox/policy.ts` denyRead 去 `userHome`（`paths.home` 保留，红线）；删 `.CFUserTextEncoding` 重开；`backend-srt.ts` denyWrite 显式 `~/.npm/_logs`、`~/.claude/debug`（对照 srt 0.0.78 `HOME_CONVENIENCE_WRITE_DIRS` 恰两条，无第三条）；`backend-container.ts` 删同源 carve-out；`sensitive-paths.ts` 补 4+1 个纯凭证文件（`~/.pypirc`、`~/.pgpass`、`~/.gem/credentials`、`~/.cargo/credentials` + 审查补的现代拼写 `~/.cargo/credentials.toml`）；测试断言全部换新语义；文档五处（设计 10/13/06、P02、02-architecture）。
+- **验证**：定向 66 用例 + 真沙箱 `sandbox-isolation.test.ts` 12 用例全绿（`~/.zshrc` 可读、`~/.ssh/*` 与 `<dataHome>/main.db` 与 workdir `.env` 禁读、区外写与 `~/.npm/_logs` 写失败）；排雷 gateway/wsl 等额外 7 文件全绿；core typecheck 通过。
+- **审查**：独立审查代理独立推演 srt `generateReadRules`/`lateReadDenyFilters`（deny→allow→嵌套 deny 重发射）确认 workdir 保护 globs 与嵌套凭证 deny 仍生效；修正 3 处（中：补 `~/.cargo/credentials.toml`——现代 cargo 凭证拼写，只加 legacy 会漏；低：真沙箱探针 finally 清理防回归污染宿主 home；低：P02 文档 51 行旧读模型残留表述）。
+- **自选决策**：① denyWrite home 展开用 `canonicalPath(homedir())`（与原 userHome 同拼写，srt 双侧归一收敛）。② 增强后端删 `.CFUserTextEncoding` carve-out（读宽后为死代码）。③ 敏感清单只收纯凭证文件，配置类（`.gitconfig`、`.m2/settings.xml` 等）不加、列入报告备查。④ Podman/WSL 挂载式读宽不适用（guest 内自有 home 前后一致），注释与文档写明。
+- **遗留**：Linux 分支（bwrap）新用例已写好但本机只验 macOS；W6 全量时 CI 矩阵复核。
 
 ### W2
-（待填）
+
+- **提交**：`feat(core): D140 W2——多路径 access 卡 + task 审批时长（ensurePathAccessBatch、decide 时长表、grants/桥接 task 语义、渲染端三档）`。
+- **改动**：§3.5 全部——网关 `ensurePathAccessBatch`（一张卡、逐路径 grant、一次 grant.changed，`ensurePathAccess` 改单路径封装）；`decide()` 的 `DURATION_ALLOWED_FOR` 表 + 降级规则；`grants.ts` task 语义（listEffective 看 runId、expireForRun 含 task、revokeByUser 带 runId）；permission-bridge 三档 + task 落 grant；coding-tools 收集全部 needs_grant 一次批量；渲染端 access/agent_tool 三档按钮+键盘、多路径显示、折叠摘要、RightPanel 时长文案、i18n 双语；e2e approvals.spec 键盘序号同步。
+- **验证**：core/shared 十文件 143 用例 + 渲染端 approvals/i18n 45 用例全绿（主代理复跑合并 188 用例全绿）；core/desktop typecheck 通过（desktop 0 错误，4 个 svelte-check 警告为另一 feature 既有）；e2e approvals.spec 3/3 passed（需先重建 core/desktop 产物——run-tests.mjs 跑不到 Playwright spec，用 `pnpm --filter @kepcup/desktop exec playwright test` 直跑）。
+- **审查**：修正 2 处（中：旧 access 卡（无 durations）渲染端回退两档 `['once','conversation']`，否则历史 conversation 批准的折叠记录会错显「仅这一次」；低：durationHint 改通用文案，避免对两档旧卡的错误键盘指引）。逐条核对契约无其他缺陷；确认无 kind 放宽、egress 弹卡未动（W3）、单路径封装调用点全不破坏。
+- **自选决策**：① batch 返回值附 `approvalId`/`duration`（封装还原旧错误 details、coding-tools 生成准确时长提示）。② access 的 `conversation` 不校验 offered（旧卡兼容，spec 只要求 task 校验）。③ 表外 kind 非 once 时长从静默接受改为降级 once（收紧）。④ 多路径卡 reason 去重 `；` 连接。⑤ 拒绝文案内嵌路径（单路径封装抛错与旧格式同构）。
+- **遗留**：computer_control 卡键盘按 3（bot）无响应为 W2 之前既有缺口，未顺手修（记入备查）。
 
 ### W3
 （待填）

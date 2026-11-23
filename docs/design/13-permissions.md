@@ -18,6 +18,8 @@
 | `~/.ssh`、系统钥匙串、`~/.aws`、`~/.config/gh` 等敏感位置 | 需授权，授权卡片醒目警告 |
 | `~/.kepcup`（应用数据目录） | 永远不可授权 |
 
+- **D140-2 修订（沙箱读侧对齐）**：沙箱内命令同样**可读整机**（用户主目录其余部分、其他检出直接可读），只禁读应用数据目录、敏感凭证清单与 workdir 保护规则；写入范围不变（越界写入与敏感读取仍按授权处理）。见 [10-sandbox.md](10-sandbox.md#文件系统规则)。
+
 - **仓库控制文件**（`.git/config`、`config.worktree`、`.git/modules/*/config`、任何 `hooks/` 下的文件、`info/attributes`（含子模块的），以及会把 git 指向别的仓库的文件：`.git` 指针文件本身、`commondir`、`worktrees/<名>/gitdir`、`objects/info/alternates`）：即使在 workspace / 持有租约的 workdir 内，文件工具写入也需授权（卡片按敏感位置醒目警告）。git 会按这些文件执行程序（fsmonitor、diff / filter 驱动、hooks）或改读别的仓库，而只读白名单里的 git 命令在逐条确认模式下不经确认、在沙箱外运行（审查修复，DEV-028）。读取不受影响。
 - **宿主页面的例外**：宿主自己往 `<workspace>/.attachments/` 复制附件（`get_attachment` 的二进制分支、D94 分享附件的 workspace 副本）不经模型授权——字节与文件名都来自宿主，不是模型给的路径。例外只覆盖 `<workspace>/.attachments/` 目录本身（`checkHostCopyPath`）：`hostDir` 被符号链接指到别处、或文件有指向 workspace 外的硬链接时一律拒绝。D94 的分享副本物化在上下文组装时由宿主发起，同样走这个例外——只读 run（对话轮、只读任务）也能拿到副本路径。
 

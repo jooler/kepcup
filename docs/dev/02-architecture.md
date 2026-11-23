@@ -250,7 +250,7 @@ interface SandboxPolicy {
 }
 ```
 
-策略由 `sandbox/policy.ts` 根据执行身份、workspace、workdir（及写入租约）、有效授权、Profile 的网络配置生成，每条命令重新生成。
+策略由 `sandbox/policy.ts` 根据执行身份、workspace、workdir（及写入租约）、有效授权、Profile 的网络配置生成，每条命令重新生成。**D140-2（读宽写窄）**：`denyRead` 只含应用数据目录、敏感凭证清单（`sandbox/sensitive-paths.ts`，主目录读保护的唯一防线）与 workdir 保护规则 globs——沙箱可读整机；写入范围不变，`backend-srt.ts` 的 `srtFilesystemFor` 显式 `denyWrite` srt 默认便利写路径（`~/.npm/_logs`、`~/.claude/debug`）。Podman/WSL 为挂载式（宿主路径不进 guest），读宽不适用；Lima 复用同一规则层。
 
 ### 调度（`scheduler/scheduler.ts`）
 
