@@ -113,8 +113,7 @@ function rewriteGitPointer(worktreePath: string, content: string): void {
     try {
       writeFileSync(pointer, content);
       return;
-    } catch (error) {
-      lastError = error;
+    } catch {
       try {
         unlock();
         rmSync(pointer);
