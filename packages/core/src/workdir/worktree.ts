@@ -152,43 +152,79 @@ export function readWorktreeMeta(worktreePath: string): {
   gitCommonDir: string;
   gitWorktreeMeta: string;
 } | null {
+  const inspected = inspectWorktreeMeta(worktreePath);
+  return inspected.ok ? inspected.meta : null;
+}
+
+type WorktreeMetaResult =
+  | { ok: true; meta: { gitCommonDir: string; gitWorktreeMeta: string } }
+  | { ok: false; reason: string };
+
+/**
+ * Same checks as `readWorktreeMeta`, with a reason when they fail. Used to
+ * surface Windows path-spelling mismatches after `git worktree add` instead of
+ * a bare "unreadable" message.
+ */
+function inspectWorktreeMeta(worktreePath: string): WorktreeMetaResult {
   const pointer = path.join(worktreePath, '.git');
   let stat;
   try {
     stat = lstatSync(pointer);
-  } catch {
-    return null;
+  } catch (error) {
+    return {
+      ok: false,
+      reason: `pointer missing (${error instanceof Error ? error.message : String(error)})`,
+    };
   }
   // A real directory is a main checkout, not a linked worktree.
   // Git for Windows may present the pointer as a symlink to a file.
-  if (!stat.isFile() && !stat.isSymbolicLink()) return null;
+  if (!stat.isFile() && !stat.isSymbolicLink()) {
+    return { ok: false, reason: `pointer is ${stat.isDirectory() ? 'a directory' : 'not a file'}` };
+  }
   let content: string;
   try {
-    content = readFileSync(pointer, 'utf8').replace(/^\uFEFF/, '').replaceAll('\r\n', '\n');
-  } catch {
-    return null;
+    content = normalizeGitText(readFileSync(pointer, 'utf8'));
+  } catch (error) {
+    return {
+      ok: false,
+      reason: `pointer unreadable (${error instanceof Error ? error.message : String(error)})`,
+    };
   }
   const match = /^gitdir:\s*(.+)$/m.exec(content);
-  if (match === null) return null;
+  if (match === null) {
+    return { ok: false, reason: `not a gitdir pointer: ${JSON.stringify(content.slice(0, 400))}` };
+  }
   const raw = match[1]!.trim().replace(/^["']|["']$/g, '');
-  if (raw.length === 0) return null;
+  if (raw.length === 0) return { ok: false, reason: 'gitdir pointer path is empty' };
   const metaDir = canonicalPath(path.isAbsolute(raw) ? raw : path.resolve(worktreePath, raw));
   // `<common>/worktrees/<name>` is the only shape a linked worktree has.
-  if (path.basename(path.dirname(metaDir)) !== 'worktrees') return null;
+  if (!isWorktreesMetaDir(metaDir)) {
+    return { ok: false, reason: `gitdir is not a worktrees meta dir: ${metaDir}` };
+  }
   try {
-    if (!statSync(metaDir).isDirectory()) return null;
-  } catch {
-    return null;
+    if (!statSync(metaDir).isDirectory()) {
+      return { ok: false, reason: `worktrees meta dir is not a directory: ${metaDir}` };
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      reason: `worktrees meta dir missing (${metaDir}): ${error instanceof Error ? error.message : String(error)}`,
+    };
   }
   const structuralCommon = canonicalPath(path.dirname(path.dirname(metaDir)));
   let common = structuralCommon;
   try {
-    const commondir = readFileSync(path.join(metaDir, 'commondir'), 'utf8').trim();
+    const commondir = firstGitPathLine(readFileSync(path.join(metaDir, 'commondir'), 'utf8'));
     if (commondir.length > 0) {
       const resolved = canonicalPath(
         path.isAbsolute(commondir) ? commondir : path.join(metaDir, commondir),
       );
-      if (!sameCanonicalPath(resolved, structuralCommon)) return null;
+      if (!sameCanonicalPath(resolved, structuralCommon)) {
+        return {
+          ok: false,
+          reason: `commondir mismatch: ${resolved} vs ${structuralCommon}`,
+        };
+      }
       common = resolved;
     }
   } catch {
@@ -198,32 +234,85 @@ export function readWorktreeMeta(worktreePath: string): {
   // (the file would have to exist outside the sandbox).
   let backlink: string;
   try {
-    backlink = readFileSync(path.join(metaDir, 'gitdir'), 'utf8').trim();
-  } catch {
-    return null;
+    backlink = firstGitPathLine(readFileSync(path.join(metaDir, 'gitdir'), 'utf8'));
+  } catch (error) {
+    return {
+      ok: false,
+      reason: `gitdir backlink missing: ${error instanceof Error ? error.message : String(error)}`,
+    };
   }
-  if (backlink.length === 0) return null;
+  if (backlink.length === 0) return { ok: false, reason: 'gitdir backlink is empty' };
   const expected = canonicalPath(pointer);
   const named = canonicalPath(path.isAbsolute(backlink) ? backlink : path.resolve(metaDir, backlink));
-  if (!sameCanonicalPath(named, expected)) return null;
-  return { gitCommonDir: common, gitWorktreeMeta: metaDir };
+  if (!sameCanonicalPath(named, expected)) {
+    return { ok: false, reason: `gitdir backlink mismatch: ${named} vs ${expected}` };
+  }
+  return { ok: true, meta: { gitCommonDir: common, gitWorktreeMeta: metaDir } };
 }
 
-/** Path equality after canonicalPath; Windows compares case-insensitively. */
+/** BOM / CRLF / surrounding quotes, first non-empty line (git metadata files). */
+function normalizeGitText(content: string): string {
+  return content.replace(/^\uFEFF/, '').replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+}
+
+function firstGitPathLine(content: string): string {
+  for (const line of normalizeGitText(content).split('\n')) {
+    const trimmed = line.trim().replace(/^["']|["']$/g, '');
+    if (trimmed.length > 0) return trimmed;
+  }
+  return '';
+}
+
+/** True when `metaDir` is `<common>/worktrees/<name>` (Windows: case-insensitive). */
+function isWorktreesMetaDir(metaDir: string): boolean {
+  const name = path.basename(path.dirname(metaDir));
+  if (name === 'worktrees') return true;
+  return process.platform === 'win32' && name.toLowerCase() === 'worktrees';
+}
+
+/**
+ * Path equality after canonicalPath. Windows also treats drive letters as
+ * case-insensitive, strips `\\?\` / `\\?\UNC\` prefixes from
+ * GetFinalPathNameByHandle, and expands 8.3 short names (`RUNNER~1` vs
+ * `runneradmin`) via `realpathSync.native`.
+ */
 function sameCanonicalPath(left: string, right: string): boolean {
   if (left === right) return true;
   if (process.platform !== 'win32') return false;
-  const norm = (value: string) => value.replaceAll('\\', '/').toLowerCase();
-  return norm(left) === norm(right);
+  const norm = (value: string) => stripWinLongPathPrefix(value).toLowerCase();
+  if (norm(left) === norm(right)) return true;
+  try {
+    const expand = (value: string): string => {
+      try {
+        return realpathSync.native(value);
+      } catch {
+        return realpathSync(value);
+      }
+    };
+    return norm(expand(left)) === norm(expand(right));
+  } catch {
+    return false;
+  }
+}
+
+/** `\\?\C:\...` → `C:/...`; `\\?\UNC\server\share\...` → `//server/share/...`. */
+function stripWinLongPathPrefix(value: string): string {
+  let normalized = value.replaceAll('\\', '/');
+  const lower = normalized.toLowerCase();
+  if (lower.startsWith('//?/unc/')) return '//' + normalized.slice('//?/unc/'.length);
+  if (lower.startsWith('//?/')) return normalized.slice(4);
+  return normalized;
 }
 
 function worktreePointerError(worktreePath: string): string {
+  const inspected = inspectWorktreeMeta(worktreePath);
+  if (inspected.ok) return 'worktree .git pointer became readable';
   const pointer = path.join(worktreePath, '.git');
   try {
     const stat = lstatSync(pointer);
     const kind = stat.isFile() ? 'file' : stat.isDirectory() ? 'directory' : stat.isSymbolicLink() ? 'symlink' : 'other';
     const content = stat.isFile() || stat.isSymbolicLink() ? readFileSync(pointer, 'utf8').slice(0, 400) : '';
-    return `worktree .git pointer unreadable (${kind}): ${JSON.stringify(content)}`;
+    return `worktree .git pointer unreadable (${kind}): ${JSON.stringify(content)} — ${inspected.reason}`;
   } catch (error) {
     return `worktree .git pointer missing (${error instanceof Error ? error.message : String(error)})`;
   }

@@ -181,11 +181,12 @@ describe('分区库：加密与密钥', () => {
     cache.putConversations({ serverHash: HASH, memberId: MEMBER, conversations: [convFixture('c1')] });
     const paths = partitionPathsOf(dir, HASH, MEMBER);
     // 主库文件与 WAL 同时打烂（只烂主库时 WAL 恢复机制会救回已提交数据——那是
-    // SQLite 的正常行为，不算损坏场景）。
+    // SQLite 的正常行为，不算损坏场景）。Windows 不能覆盖仍被打开的 -shm /
+    // -wal，所以先关闭再写垃圾。
+    cache.closeAll();
     writeFileSync(paths.dbFile, Buffer.from('not a sqlite file at all'.repeat(40)));
     writeFileSync(paths.dbFile + '-wal', Buffer.from('wal garbage'.repeat(64)));
     writeFileSync(paths.dbFile + '-shm', Buffer.from('shm garbage'.repeat(64)));
-    cache.closeAll();
     const cache2 = service();
     const read = cache2.getConversations({ serverHash: HASH, memberId: MEMBER });
     expect(read.conversations).toEqual([]);

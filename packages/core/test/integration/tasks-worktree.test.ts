@@ -554,21 +554,44 @@ describeIsolation('D140-4 worktree isolation', () => {
     expect(retried.taskCwd).toBe(workdir);
     expect(retried.worktreePath).toBeNull();
     // The retry can finish before the first poll sees `running`: accept the
-    // terminal state too (the tree path is what this case checks).
-    const retriedRun = await waitFor(
-      () => {
-        const run = runOf(stack, retried.id);
-        return run.worktreePath !== null &&
-          (run.status === 'running' ||
-            run.status === 'completed' ||
+    // terminal state too (the tree path is what this case checks). A failed
+    // create leaves worktreePath null — still return so the assertion below
+    // can surface `run.error` instead of timing out.
+    let lastRetryState = 'not polled';
+    let retriedRun: Run;
+    try {
+      retriedRun = await waitFor(
+        () => {
+          const run = runOf(stack, retried.id);
+          lastRetryState = `status=${run.status} path=${run.worktreePath} error=${run.error ?? ''} cwd=${run.taskCwd}`;
+          if (
+            run.worktreePath !== null &&
+            (run.status === 'running' ||
+              run.status === 'completed' ||
+              run.status === 'failed' ||
+              run.status === 'interrupted' ||
+              run.status === 'cancelled')
+          ) {
+            return run;
+          }
+          if (
             run.status === 'failed' ||
             run.status === 'interrupted' ||
-            run.status === 'cancelled')
-          ? run
-          : null;
-      },
-      { label: 'retried worktree task started', timeoutMs: 30_000 },
-    );
+            run.status === 'cancelled'
+          ) {
+            return run;
+          }
+          return null;
+        },
+        { label: 'retried worktree task started', timeoutMs: 30_000 },
+      );
+    } catch (error) {
+      throw new Error(`retried worktree task started (${lastRetryState})`, { cause: error });
+    }
+    expect(
+      retriedRun.worktreePath,
+      `retry did not create a tree (status=${retriedRun.status}, error=${retriedRun.error ?? ''}, cwd=${retriedRun.taskCwd})`,
+    ).not.toBeNull();
     expect(retriedRun.worktreePath).not.toBe(firstRun.worktreePath);
     expect(path.dirname(retriedRun.worktreePath!)).toBe(path.dirname(firstRun.worktreePath!));
     expect(existsSync(firstRun.worktreePath!)).toBe(true);
