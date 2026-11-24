@@ -682,7 +682,7 @@
                     {/if}
                   </div>
                 {:else if entry.kind === 'toolGroup'}
-                  <TaskRunToolGroup tools={entry.tools} {active} />
+                  <TaskRunToolGroup tools={entry.tools} {active} {taskId} />
                 {:else if entry.kind === 'steer'}
                   <div class="flex justify-end" data-testid="task-run-steer">
                     <div class="max-w-[85%] rounded-2xl bg-muted px-3 py-2 text-sm">

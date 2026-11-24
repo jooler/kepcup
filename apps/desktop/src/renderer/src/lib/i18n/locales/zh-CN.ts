@@ -1764,6 +1764,8 @@ export const zhCN = {
   'task.run.thinking': '思考',
   'task.run.copy': '复制',
   'task.run.copied': '已复制',
+  'task.run.stop': '停止',
+  'task.run.stopHint': '终止当前命令并取消任务',
   'task.run.action.read': '读取',
   'task.run.action.write': '写入',
   'task.run.action.edit': '编辑',

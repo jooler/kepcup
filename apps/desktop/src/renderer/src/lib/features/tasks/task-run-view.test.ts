@@ -309,7 +309,21 @@ describe('buildTaskRunTimeline', () => {
     expect(source).toContain("import TaskRunToolGroup from './TaskRunToolGroup.svelte';");
     expect(source).toContain('const renderEntries = $derived(groupTaskRunEntries(entries));');
     expect(source).toContain('data-testid="task-run-thinking"');
-    expect(source).toContain('<TaskRunToolGroup tools={entry.tools} {active} />');
+    expect(source).toContain('<TaskRunToolGroup tools={entry.tools} {active} {taskId} />');
+  });
+
+  it('运行中的 shell 命令卡右上角提供停止（源码契约锁接线）', () => {
+    const card = readFileSync(new URL('./TaskRunToolCard.svelte', import.meta.url), 'utf8');
+    // 停止只给还在执行（result === null 且任务 active）的 shell 命令。
+    expect(card).toContain('task-run-tool-stop');
+    expect(card).toContain('{#if stoppable}');
+    expect(card).toContain(
+      'const stoppable = $derived(taskId !== undefined && isShell && entry.result === null && active);',
+    );
+    // 停止 = 取消任务（runs.cancel 终止命令进程树），与任务卡同一条路径。
+    expect(card).toContain('await tasks.cancel(taskId);');
+    const group = readFileSync(new URL('./TaskRunToolGroup.svelte', import.meta.url), 'utf8');
+    expect(group).toContain('<TaskRunToolCard entry={tool} {active} {taskId} />');
   });
 });
 

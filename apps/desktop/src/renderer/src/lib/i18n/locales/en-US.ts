@@ -1821,6 +1821,8 @@ export const enUS = {
   'task.run.thinking': 'Thinking',
   'task.run.copy': 'Copy',
   'task.run.copied': 'Copied',
+  'task.run.stop': 'Stop',
+  'task.run.stopHint': 'Kill the running command and cancel the task',
   'task.run.action.read': 'Read',
   'task.run.action.write': 'Wrote',
   'task.run.action.edit': 'Edited',
