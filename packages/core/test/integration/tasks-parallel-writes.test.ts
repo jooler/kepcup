@@ -8,7 +8,6 @@ import {
   openDirect,
   step,
   waitFor,
-  type MockChatRequest,
   type TestStack,
 } from '@kepcup/testkit';
 import type { Run } from '@kepcup/shared';
@@ -48,9 +47,6 @@ function host(stack: TestStack) {
 function runtime(stack: TestStack) {
   return stack.core.services.workdirRuntime!;
 }
-
-const isTaskRequest = (marker: string) => (req: MockChatRequest) =>
-  req.lastUserText().includes('<task_brief') && req.lastUserText().includes(marker);
 
 function turnIdentity(botId: string, conversationId: string, runId = 'run_turn_1'): RunIdentity {
   return { runId, botId, conversationId, loopType: 'turn' };
