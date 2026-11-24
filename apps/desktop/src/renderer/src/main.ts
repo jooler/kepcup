@@ -5,6 +5,8 @@ import WidgetWindowApp from '$lib/features/widgets/WidgetWindowApp.svelte';
 import { isWidgetWindowLocation } from '$lib/features/widgets/widget-window-mode';
 import { core } from '$lib/rpc/client.svelte';
 import { setupWindowControlsOverlay } from '$lib/features/shell/window-controls-overlay';
+import { CHAT_DISPLAY_TOGGLE_KEYS } from '$lib/features/chats/chat-display';
+import { chatDisplay } from '$lib/features/chats/chat-display.svelte';
 
 // macOS 毛玻璃（app.css「vibrancy」块）：主进程对 darwin 窗口开了 vibrancy，
 // 渲染层据此把 html/body 透明、侧栏改半透明。必须在 mount 前打标，首帧即生效。
@@ -30,6 +32,9 @@ if (__KEPCUP_TEST_HOOKS__) {
   (
     window as unknown as { __kepcupRpc: (method: string, input?: unknown) => Promise<unknown> }
   ).__kepcupRpc = (method, input) => core.call(method, input);
+  // 对话信息展示：通知 / 回执 / 日程等默认隐藏。e2e 要断言这些气泡，
+  // 在测试钩子里全部打开（打包产物里这段会被 DCE 掉）。
+  for (const key of CHAT_DISPLAY_TOGGLE_KEYS) chatDisplay.set(key, true);
 }
 
 // 组件「在新窗口打开」（widget-window.md §4.4）：`?kcWindow=widget` 的页面在挂载点
