@@ -516,14 +516,18 @@ test('narrow layout: deep links in detail, Esc layering, focus containment, layo
     expect(chatBoxAfterOpen.width).toBeGreaterThanOrEqual(355);
     await panel.locator('[data-testid="right-panel-hide"]').click();
     await expect(panel).toHaveCount(0);
-    // 窗口拉到足够宽：药丸切换并排右栏，覆盖层不出现。
+    // 侧栏若仍是 420，1280 窗口的对话可用宽过不了退出线，会继续走覆盖抽屉，
+    // 遮罩会挡住药丸。恢复默认侧栏宽后再拉宽：药丸切换并排右栏。
+    await page.evaluate(() => localStorage.removeItem('kepcup.sidebar.width'));
     await resizeWindow(app, 1280, 840);
+    await page.reload();
+    await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('[data-testid="narrow-shell"]')).toHaveCount(0);
     await page.locator('[data-testid="right-panel-toggle"]').click();
     await expect(page.locator('[data-testid="right-panel"]')).toBeVisible();
     await expect(overlay).toHaveCount(0);
     await page.locator('[data-testid="right-panel-toggle"]').click();
     await expect(page.locator('[data-testid="right-panel"]')).toHaveCount(0);
-    await page.evaluate(() => localStorage.removeItem('kepcup.sidebar.width'));
 
     // --- 审查 #6：在覆盖层里移除 Bot → 覆盖层收起，不留空壳 -------------------------
     await resizeWindow(app, 375, 812);
