@@ -1,7 +1,7 @@
 # D140 Agent 自主性与任务并行（含 worktree 隔离）：执行方案
 
 > 设计依据：[13-permissions](../docs/design/13-permissions.md)、[10-sandbox](../docs/design/10-sandbox.md)、[08-workdir](../docs/design/08-workdir.md)、[30-supervisor-and-tasks](../docs/design/30-supervisor-and-tasks.md) §5/§9.1、[59-parallel-tasks-and-coordination](../docs/design/59-parallel-tasks-and-coordination.md)、[28-external-agents-acp](../docs/design/28-external-agents-acp.md)。本文与设计冲突处，以本文 §1 的 D140 修订为准（§1.1 逐条列出被修订的既有决策）；其余仍以设计为准。
-> 状态：待执行。
+> 状态：**已执行**（2026-11-24，W0–W6 全部完成；提交与逐波记录见 §10）。
 > 决策号：**D140**（公共决策表下一个空号；D139 属闭源团队服务器，不要复用）。
 
 ## 0. 给执行代理的规则（必读）
@@ -530,6 +530,10 @@ taskWorktree?: { path: string; gitCommonDir: string /* <workdir>/.git */; gitWor
 7. **ACP 不受断网影响**：外部智能体的沙箱网络由它自己控制，宿主只能逐请求批准；污点期 ACP 任务仍会看到逐请求卡。文档在 Bot 详情标注。
 8. **`task` 授权不覆盖子代理**：子 run 是新 run，需要自己的授权（与 `once` 现状一致）。子代理因此可能重复弹卡。
 9. **读宽后沙箱能看到整机**（敏感清单除外）：这是 D140-2 的明确取舍，与文件工具现状一致；Bot 详情与设计文档要写清。
+10. **worktree 任务没有 `run_changes`**：影子快照窗口要求 `task_cwd` 在主 workdir 内，隔离任务必然跳过（DEV-153 ①）。改动记录以「应用到工作目录」卡的 `files` / 增删行与 `task.applyState` 为准，任务详情页的改动列表对它为空。
+11. **「应用」只回流 tracked 与未忽略的未跟踪文件**：补丁经 `git add -A -N` 生成并尊重 `.gitignore`，隔离目录里产出的忽略文件（构建产物、`node_modules` 等）不会回到工作目录，树被删除 / 回收时一并丢弃（DEV-153 ②）。
+12. **`applyState` 是进程内推导**：重启后 surviving 树 = `kept`（冲突也退化为 kept），缺失树 = `applied`（因此被 reaper 回收的树会误显示 applied）；结算卡是事实来源。重启时未决定的卡按「待确认审批 → cancelled」取消、树保留，可在终端里手动合并；不做「重启后重新出卡」（DEV-153 ③④）。
+13. **自动重试复用原树、建树不取主 workdir 租约**：任务失败自动重试是同一个 run 重新入队，`#startTask` 复用仍有效的树（保留半成品）；只有用户 `runs.retry`（新 run）建新树并把 `task_cwd` 重算为主 workdir。建树（`stash create`）不取主目录租约（共享租约不排除写任务，独占会违背并行契约），同一时刻有主目录写任务时起点快照可能含它写到一半的内容（DEV-153 ⑤⑥）。
 
 ## 9. 文档回写清单
 
@@ -580,7 +584,7 @@ taskWorktree?: { path: string; gitCommonDir: string /* <workdir>/.git */; gitWor
 
 ### W4
 
-- **提交**：`feat(core): D140 W4——写任务默认并行：共享写租约 + 文件级自动认领 + per-run 影子快照`。
+- **提交**：`feat(core): D140 W4——写任务默认并行：共享写租约 + 文件级自动认领 + per-run 影子快照`（`a2cfa5d3`）+ 实施记录 `5205fc5e`。混合文件的既有 team 改动经逐 hunk 分离，提交内零泄漏（`git show a2cfa5d3` 无 team 标识）；D140-only 树经 core typecheck 与 65 用例验证可独立构建。
 - **改动**：§3.3 全部——`LeaseService` 多持有者 + shared 两态冲突规则（共享×共享=并存）、promotion 重写（稳定 seq、waiter 占位到 grant/cancel、cancel 后补 promote，顺带修复 release 漏删 `#byRun` 与同键双 waiter 死锁）；`WorkdirRuntime` ensureWriteLease shared 透传、revokeLease 新语义（优先停本对话内置共享任务、回退仅独占）、`beginTaskWindow`/`releaseRun`（先快照后释放、按 run/workdir 串行、重试合并窗口）；`claims.ts` 跨对话 denial + `autoClaim`（5000 封顶）；tasks.ts 删 `#domainBlocker` 与「等写域」、wait_for_task 守卫删除；orchestrator 内置写任务 `shared:true`；gateway write 段 `writeClaimDenial` 跨对话 + `noteFileWritten`；coding-tools/tools 写入成功后自动认领；system-prompt/tasks-segment/task-tools 文案；TaskRunView 改动文件区（+/~/-、interleaved、reverted）；i18n 双语；共享 `taskChangesSchema` files 变体。
 - **验证**：core 15 文件 158 用例全绿（含新增 `tasks-parallel-writes.test.ts` 8 例、`task-claims-registry.test.ts` 3 例）；渲染端 5 文件 76 用例全绿；core/desktop typecheck 通过。
 - **审查**：独立审查修正 11 处，其中 3 个高危并发缺陷——① 影子窗口并发 release 会在他人 after-snapshot 前释放租约（改按 run 串行 + 窗口关闭 promise 化 + try/finally）；② auto-retry 重入拿到「即将被释放」的租约（ensureWriteLease 等在设计中的 release、窗口身份校验）；③ 已结束并行任务的写入被后来任务冒领（窗口 otherFiles 交接 + workdir 串行关闭，删 `WorkdirsService.listChanges`）。另有中危：auto-retry 覆盖首轮文件清单（改合并 upsert）、revokeLease 可能停掉其他对话的共享任务（回退仅独占）、promotion/FIFO 重写；低危：interleaved 跨 workdir 误标、claimedPaths「等」误报、测试前缀串匹配导致的偶发超时、过时注释与死代码、e2e workdirs.spec 的「等写域」旧断言重写为并行场景。
@@ -588,7 +592,28 @@ taskWorktree?: { path: string; gitCommonDir: string /* <workdir>/.git */; gitWor
 - **遗留**：bash/浏览器下载/外部智能体写入不认领（已知限制 1，结算 span-diff 兜底）；denial 逐条 glob 最坏 5000 条约 10ms（未做索引，常态无感）；e2e workdirs.spec 重写后未在本机执行（需 Electron 打包产物，逻辑与 158 例集成覆盖同构）。
 
 ### W5
-（待填）
+- **提交**：`feat(core): D140 W5——worktree 隔离：start_task isolation、双根沙箱、worktree_apply 应用卡、孤儿回收`（`d9baf9fa`）。**偏差**：§6 建议「分三个提交便于审查」，实际按「A 段（创建/沙箱/网关/exec cwd）/ B 段（上下文/任务面/retry/continuation）/ C 段（结算/应用卡/reaper）」**三段独立审查、单提交**——三段的改动在同一批文件内交织，按文件切分无法得到各自可构建的提交；D140-only 树经 core typecheck 与 18 用例验证可独立构建。
+- **改动**：§3.6 全部——新 `workdir/worktree.ts`（位置 `<workdir 父>/.worktree/<basename>-<runId 后 8 位>/`、`.gitignore`(`*`)+0700、`stash create` 起点含未提交改动、`.worktreeinclude` 走 git 的 gitignore 引擎、失败清理 + `WORKTREE_CREATE_FAILED`；摘要 / `--no-renames` 补丁 / 私有索引副本三方合并 / 还原点 / 孤儿回收）；`sandbox/policy.ts` 双根（树根 + `<common>/worktrees/<name>` + `<common>/objects` 可写、主 workdir 只读、protect globs 随树根重锚、`.worktree` home 对绑定 workdir 的所有 run 读禁、read-only 子代理可读树）；`gateway/index.ts` worktree 分支（数据目录硬拒 → protect → 租约 → git 控制文件）、相对路径基准、exec cwd、`#untrustedRoots`；`workdir/service.ts` `#leaseTarget`（树根独占）/`policyInfo.cwd`/`promptSection({root})`/`gitRemote` 拒绝/C9 收窄到本 root 的树；`dispatch/tasks.ts` isolation 校验与落库/view 填充/retry 重建/续接不继承；`dispatch/orchestrator.ts` 建树 + 独占租约 + 结算卡 + 批准回调 + 崩溃恢复；`approvals.ts` `NEVER_AUTO_DECIDED`+`SURVIVES_RUN`；`start.ts` 装配 + 启动 sweep + 每日 reaper（`worktree_reaped` 审计）；`task-tools.ts` 参数与描述；渲染端 ApprovalCard/TaskCard/TaskRunView + i18n 双语；shared `worktreeApplyApprovalPayloadSchema`。
+- **验证（主代理复跑）**：core 10 文件 176 用例全绿（含 4 个新增 worktree 测试文件与真 srt 用例）；渲染端/回归 15 文件 161 用例全绿；core/desktop typecheck 通过；D140-only 树 core typecheck + 18 用例全绿。
+- **审查（A 段：创建/租约/沙箱双根/网关 path/exec cwd）**：修正 14 处，**高危 2**：① `.git` 指针文件位于沙箱可写的树内，任务可改写 `gitdir:` 把任意目录（含 `~/.kepcup`）顶进沙箱 readWrite——改为结构化校验（meta 必须 `<common>/worktrees/<name>`、`gitdir` 回指本树），无效即失去写挂载；② worktree 任务写主 workdir 会走 `needs_lease` 取租约、顶掉树租约并破坏「主目录只读」——改为网关直接 forbidden + `#leaseTarget` 拒绝。中危：worktree 分支先做数据目录硬拒（否则树落在数据目录内会先放行）；`.worktreeinclude` 复制的符号链接可写到树外（目标 lstat 检测 + realpath 校验）；还原点「备份失败却记不存在」会在回滚时删用户文件（改 restore/delete/skip 三态）；已存在 `.worktree` 目录不再 chmod/写 ignore；reaper 不跟随符号链接；`.worktree` home 对其他 run 读禁（否则树内 `.env` 副本绕过 protect）；C9 只放行本 root 的树（兄弟 root 不可选）；复用旧树前校验指针；默认挂载式后端（WSL/Podman/Lima）`WORKTREE_NOT_AVAILABLE`；路径 canonical 化；DEV-152 表述如实化（`objects/info/alternates` 残余风险）。
+- **自选决策**：① 增强后端选「强制走 srt」；② applyState = 进程内 Map（512 上限）+ 推导兜底，跨重启退化如实记 DEV-153；③ 建树时机在 `#startTask`（落库后、取租约前），失败以 `WORKTREE_CREATE_FAILED` 结算；④ `.worktreeinclude` 完全交给 git 的 gitignore 引擎；⑤ 「有改动」判定用 `git diff <base> --numstat`（base 已含用户改动，`status --porcelain` 会把用户既有改动算成任务产出）。
+- **遗留 / 偏差**：`DEV-152`（worktree 沙箱需放行共享对象库）、`DEV-153`（worktree 无 run_changes / 忽略文件不回流 / applyState 进程内推导 / 自动重试复用原树 / 建树不取主 workdir 租约 / 「有改动」判定口径）；worktree 只支持内置引擎 + srt；应用卡无 TTL；reaper 依赖命名形态、未注册 workdir 的 home 不扫描。
+
+- **审查（B/C 段：上下文注入 / 任务面 / retry · continuation / 结算卡 / 批准回调 / reaper / 渲染端）**：逐条核对 §3.6 与 §6 W5 验收 6–10、§0.9 红线，direct 修正 15 处。**高危 1**：`git apply --3way` 隐含 `--index`，用户工作区只要有未暂存改动就报 `does not match index`——树的起点本就含用户的未提交改动，合同里「三方合并」按字面实现在最常见的 dirty 工作区里必然退化成假冲突（任务改了 A 处、用户改了 B 处也拒绝）。改法：把用户工作区当前 dirty / 未跟踪 / 已删除的**被触路径**物化进一份**私有索引副本**（`hash-object --no-filters` + `update-index --cacheinfo` + `--refresh`），`GIT_INDEX_FILE=<副本> git apply --3way`（「ours」= 磁盘真实内容，用户真实索引从不被改写）；补丁改 `--no-renames`（rename = delete+add，使补丁路径集 = 还原点路径集 = 合并路径集，用户改过一侧时如实冲突而非半写）。**中危**：① `summary()` / `apply()` 的 `git add -A -N` 返回值未检查——失败（索引锁 / 树索引损坏）会静默把未跟踪文件从摘要与补丁里丢掉；改为摘要返回 null（kept、不出卡）、应用直接失败。② 合并成功但 `worktrees.remove` 失败被当成应用失败（卡片 failed、状态 kept，改动其实已落地）；拆开清理与合并，清理失败只记日志并按 applied 收尾（reaper 兜底）。③ `runs.retry` 把旧树的路径原样写进新 run 的 `task_cwd`（新树是 `#startTask` 才建的）；改为 worktree 任务重试时把 `task_cwd` 重算为主 workdir（无可用 workdir 则 null），并补测试钉住「新树 base = 重试时的 HEAD」。**低危**：① `void this.#applyWorktree(...)` 无 `.catch`（回调内异常会成未处理 rejection，卡片停在 approved）；② 结算卡在 `submitNonBlocking` 前就置 `pending`（提交失败会永久 pending 且无卡）；③ 租约获取失败一律按「工作目录忙」提示（workdir 消失 / 对话已删被误报）；④ reaper 审计用 `record()` + 伪造 run id（改 `recordSystem`，并让启动 sweep 的 catch 走 `warnQuietly` 防关库后日志抛错）；⑤ `CoreServices.worktrees` 声明并初始化为 null 但**从未赋值**（永远 null；改在 `services.workdirRuntime` 旁赋值，重启/审计用例由此可测）；⑥ patch / restore-point 临时文件用可预测名字（`writeFileSync` 跟随预先埋好的符号链接），改 `mkdtempSync` 私有目录；⑦ 结算态 `TaskCard` 对已结束任务仍显示「需要你确认后，这个任务才能继续」（SURVIVES_RUN 的后置卡），改为只在活动任务上显示；⑧ 冲突决策把 git 的 `reason` 丢掉（非冲突型拒绝也报「三方合并冲突」）；⑨ 死代码 `RunsService.listWorktreeTasks()`、`runs.create` 的 W4/W5 TODO 注释、`task-tools` 的 isolation 描述语病；⑩ 抵抗「排队中把 Bot 切成外部智能体」的绕过：`#startTask` 的 worktree 段复查当前引擎（执行器读的是 Bot 当前引擎而非行上的 `engine`），不再让 ACP 进树；⑪ 结算后换绑工作目录再批准旧卡：`#applyWorktree` 先核对当前绑定与卡上的目标，不一致即如实拒绝（原实现会在租约解析里报「该路径不涉及 workdir 或 workspace」）。
+- **审查验证**：`tasks-worktree.test.ts` 新增 3 例（workdir 被写占用时批准 → 卡 failed 含「稍后重试」、工作区无改动、树保留、写任务不中断；结算后换绑工作目录再批准 → 如实拒绝且树保留；同 home 重启 → 崩溃任务 interrupted + applyState kept + 无卡、超期孤儿被启动 sweep 回收且写 `worktree_reaped` 审计、非孤儿树保留）；`worktree-service.test.ts` 新增 2 例（未暂存编辑的三方合并成功且真实索引零改动、用户删除被任务修改的文件 → 冲突且保持删除）；retry 用例加「新树 base = 当时 HEAD、重试行 `task_cwd` = 主 workdir」。定向：core 7 文件 87 用例 + worktree 单测 18 例 + 相邻 tasks/workdirs/claims/auto-retry/parallel-writes 51 例全绿；渲染端 10 文件 111 例全绿；core / desktop typecheck 通过。
+- **审查结论**：无人值守三条自动决策路径（`request` / `submitNonBlocking` / TTL）全部被 `NEVER_AUTO_DECIDED` 挡住（后置卡无 TTL，实测无人值守下 `autoApproved=false` 且保持 pending）；冲突恢复经「用户删除/任务修改」「同文件同行」「新建文件 + 冲突」三例验证工作区逐字节还原、真实索引零改动；`applyState` 重启推导为 kept/`applied` 兜底（已记 DEV-153 与 §8.12）。偏差与实现事实见 DEV-153、§8 第 10–13 条。
 
 ### W6
-（待填）
+
+- **设计回写**：9 篇设计文档（`docs/design/` 的 README 决策表 + 02 / 06 / 08 / 10 / 13 / 28 / 30 / 59）。README 决策表新增 D140 一行（四条决策 + 配套 + 非目标 + 已知限制）并同步各篇索引摘要；30 §9.1 标题与正文改为「D140-4 修订：worktree 隔离作为 opt-in 实施」、四条理由逐条标注处置（①部分推翻并接受 ②双根/重锚已改造 ③git diff + 私有索引三方合并替换检查点 ④`.worktreeinclude` + 如实告知），保留「仍非默认方案」；59 §3/§5/§6/§7 改为共享两态 + 认领跨对话 + 并行默认；13 补 `task` 时长、多路径卡、worktree 默认可写与 `worktree_apply` 永不自动批准；10 补 worktree 双根与 DEV-152 残余风险；08 补共享租约/认领/worktree 位置与 apply；28 标明 ACP 不参与断网与 worktree；02 / 06 同步。
+- **全量回归（两次，2026-11-24）**：
+  - 第一次 912 文件 / 9899 用例：**5 文件 / 6 例失败**。逐个定性均为 D140 语义变更后的测试侧问题（无实现缺陷）：① `taint-egress` 的 bound-workdir 用例 fixture 缺 `worktree` 字段（生产实现必返回 `null`，只有测试 `as` 绕过类型）；② `gateway-allowlist-hardening` 的 taint stub 缺 `networkAllowed` 等新方法（且断言仍是旧「逐命令弹卡」语义，已按无沙箱降级路径写明）；③ `capability-mounting-tasks` 靠「等写域」制造排队，D140-1 已删除该排队——改用 `providerConcurrency:1` 的真实排队；④ `project-chat` 的 group-bound workdir 互斥断言按 D140-1 改写为「并行 + 跨对话文件认领 `WRITE_CLAIMED`」；⑤ 同文件 removing-member 用例等 `approval.created`，W2 后 access 卡 payload 变 `{paths:[…]}`，事件谓词兼容 `paths` 与历史单路径；⑥ `create-core` 的 runs 迁移计数硬编码 17，改为从迁移目录推导（runs 0018 / main 0083）。
+  - 第二次 912 文件 / 9899 用例：**908 文件通过 / 9854 例通过 / 44 skipped / 1 例失败**——`permission-bridge.test.ts` 的一条**纯同步断言**用例在满载并发下 5s 超时（无 await、无可阻塞路径）；单跑 3 次均 30/30 绿，判定为负载抖动而非回归（按 AGENTS.md 只单跑复核，不再连续全量）。基线（2026-11-22）895 文件 / 9616 例全绿；本次 +17 文件 / +238 用例均为 D140 新增。
+- **真实沙箱验证（macOS srt）**：`sandbox-isolation` 12 例（读宽：dotfile / 同级仓库可读，`~/.ssh`、`main.db`、workdir `.env` 禁读，区外写与 `~/.npm/_logs` 写失败；网络 none/allowlist 切断、open 可达、loopback 按设置保留）、`worktree-sandbox` 1 例（树内 `git status/diff/commit` 成功、`.git/config` 与树内 `.env` 仍禁写、主检出 HEAD 不变）、`toolchain-sandbox` 全绿。污点断网的策略面由 `taint-egress` 的 `policy.network.mode==='none'` 断言覆盖，与上面的真 srt 网络模式共同构成证据。
+- **偏差 / 实现事实（如实记录）**：
+  1. **worktree 与增强后端**：执行方案 §8 第 6 条括注「Lima 外的 Podman/WSL 挂载式」易被读成 Lima 可用；实现对所有挂载式后端（WSL / Podman / Lima）一律 `WORKTREE_NOT_AVAILABLE` 或强制默认 srt，设计文档按代码事实写。
+  2. **多路径 access 卡范围**：批量合卡只发生在沙箱 bash 的多路径违规（`coding-tools`）；`request_access` 与文件工具仍单路径（契约如此，文档不宣称可批量）。
+  3. **worktree 在 srt 不可用**：代码允许退回逐条确认模式（只拒绝挂载式后端），「强制 srt」的简写已在设计文档注明该降级路径。
+  4. **`worktree` 任务不写 `run_changes`**（影子窗口要求 taskCwd 在主 workdir 内）→ DEV-153。
+  5. **单提交**：W5 未按 §6 建议拆三个提交（三段改动在文件内交织），改为三段独立审查 + 单提交，D140-only 树已验证可独立构建。
+- **遗留**：W1 的 Linux bwrap 分支真沙箱用例本机只验 macOS；`permission-bridge` 全量下的负载抖动如需可加测试超时或减少并行 worker（未做，非 D140 引入）；`packages/core/dist` 为本机未跟踪旧产物，与本次无关。
