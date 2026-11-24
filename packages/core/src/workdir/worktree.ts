@@ -160,16 +160,17 @@ export function readWorktreeMeta(worktreePath: string): {
     return null;
   }
   // A real directory is a main checkout, not a linked worktree.
-  if (!stat.isFile()) return null;
+  // Git for Windows may present the pointer as a symlink to a file.
+  if (!stat.isFile() && !stat.isSymbolicLink()) return null;
   let content: string;
   try {
-    content = readFileSync(pointer, 'utf8');
+    content = readFileSync(pointer, 'utf8').replace(/^\uFEFF/, '').replaceAll('\r\n', '\n');
   } catch {
     return null;
   }
   const match = /^gitdir:\s*(.+)$/m.exec(content);
   if (match === null) return null;
-  const raw = match[1]!.trim();
+  const raw = match[1]!.trim().replace(/^["']|["']$/g, '');
   if (raw.length === 0) return null;
   const metaDir = canonicalPath(path.isAbsolute(raw) ? raw : path.resolve(worktreePath, raw));
   // `<common>/worktrees/<name>` is the only shape a linked worktree has.
@@ -187,7 +188,7 @@ export function readWorktreeMeta(worktreePath: string): {
       const resolved = canonicalPath(
         path.isAbsolute(commondir) ? commondir : path.join(metaDir, commondir),
       );
-      if (resolved !== structuralCommon) return null;
+      if (!sameCanonicalPath(resolved, structuralCommon)) return null;
       common = resolved;
     }
   } catch {
@@ -204,8 +205,28 @@ export function readWorktreeMeta(worktreePath: string): {
   if (backlink.length === 0) return null;
   const expected = canonicalPath(pointer);
   const named = canonicalPath(path.isAbsolute(backlink) ? backlink : path.resolve(metaDir, backlink));
-  if (named !== expected) return null;
+  if (!sameCanonicalPath(named, expected)) return null;
   return { gitCommonDir: common, gitWorktreeMeta: metaDir };
+}
+
+/** Path equality after canonicalPath; Windows compares case-insensitively. */
+function sameCanonicalPath(left: string, right: string): boolean {
+  if (left === right) return true;
+  if (process.platform !== 'win32') return false;
+  const norm = (value: string) => value.replaceAll('\\', '/').toLowerCase();
+  return norm(left) === norm(right);
+}
+
+function worktreePointerError(worktreePath: string): string {
+  const pointer = path.join(worktreePath, '.git');
+  try {
+    const stat = lstatSync(pointer);
+    const kind = stat.isFile() ? 'file' : stat.isDirectory() ? 'directory' : stat.isSymbolicLink() ? 'symlink' : 'other';
+    const content = stat.isFile() || stat.isSymbolicLink() ? readFileSync(pointer, 'utf8').slice(0, 400) : '';
+    return `worktree .git pointer unreadable (${kind}): ${JSON.stringify(content)}`;
+  } catch (error) {
+    return `worktree .git pointer missing (${error instanceof Error ? error.message : String(error)})`;
+  }
 }
 
 /** Runs git without a shell; stdout/stderr are captured (bounded). */
@@ -342,7 +363,9 @@ export class WorktreeService {
     let meta: { gitCommonDir: string; gitWorktreeMeta: string } | null;
     try {
       meta = readWorktreeMeta(target);
-      if (meta === null) throw new Error('worktree .git pointer missing');
+      if (meta === null) {
+        throw new Error(worktreePointerError(target));
+      }
       const copied = this.#copyIncludes(workdirPath, target);
       const info: WorktreeInfo = {
         path: target,

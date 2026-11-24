@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { t } from '$lib/i18n';
 
 /**
  * 团队上下文（T5 步骤 2）的休眠与激活状态机：
@@ -234,6 +235,6 @@ describe('团队上下文激活（T5）', () => {
     const fallback = teamContext.dmPeerView(['mbr_self']);
     expect(fallback.title).toBe('mbr_self');
     // peerPrincipalIds 为空 + 无成员卡 → 自我会话分支，回落「我」文案。
-    expect(teamContext.dmPeerView(null).title).toBe('我');
+    expect(teamContext.dmPeerView(null).title).toBe(t('team.selfConversation'));
   });
 });

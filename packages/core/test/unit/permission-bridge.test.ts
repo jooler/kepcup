@@ -638,7 +638,7 @@ describe('AgentPermissionBridge decisions', () => {
     requested.length = 0;
     grantCalls.length = 0;
     answer = 'approved';
-    const outside = '/outside-task-dir/x.txt';
+    const outside = canonicalPath('/outside-task-dir/x.txt');
     //「本任务内」: one grant per location, scoped to this run.
     decidedDuration = 'task';
     expect(

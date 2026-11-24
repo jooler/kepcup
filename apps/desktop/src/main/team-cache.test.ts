@@ -96,12 +96,14 @@ function serviceDeps(dir: string, overrides: { now?: () => number } = {}) {
 }
 
 let dir: string;
+const caches: TeamCacheService[] = [];
 
 beforeEach(() => {
   dir = mkdtempSync(path.join(tmpdir(), 'kepcup-team-cache-'));
 });
 
 afterEach(() => {
+  for (const cache of caches.splice(0)) cache.closeAll();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -109,8 +111,13 @@ const HASH = 'a1b2c3d4e5f60718';
 const MEMBER = 'mbr_aaa';
 const MEMBER2 = 'mbr_bbb';
 
+function track(cache: TeamCacheService): TeamCacheService {
+  caches.push(cache);
+  return cache;
+}
+
 function service(): TeamCacheService {
-  return new TeamCacheService(serviceDeps(dir));
+  return track(new TeamCacheService(serviceDeps(dir)));
 }
 
 // --- 用例 -----------------------------------------------------------------
@@ -143,8 +150,10 @@ describe('分区库：加密与密钥', () => {
     );
     expect(plain.toString('utf8')).toBe('penked-secret-bytes');
 
-    const mode = statSync(paths.keyFile).mode & 0o777;
-    expect(mode).toBe(0o600);
+    if (process.platform !== 'win32') {
+      const mode = statSync(paths.keyFile).mode & 0o777;
+      expect(mode).toBe(0o600);
+    }
   });
 
   it('错密钥（key.bin 被换）打不开 → 删除重建空库不崩', async () => {
@@ -160,6 +169,7 @@ describe('分区库：加密与密钥', () => {
     const { writeFileSync } = await import('node:fs');
     writeFileSync(paths.keyFile, sealed, { mode: 0o600 });
 
+    cache.closeAll();
     const cache2 = service();
     cache2.putConversations({ serverHash: HASH, memberId: MEMBER, conversations: [convFixture('c2')] });
     const read = cache2.getConversations({ serverHash: HASH, memberId: MEMBER });
@@ -175,6 +185,7 @@ describe('分区库：加密与密钥', () => {
     writeFileSync(paths.dbFile, Buffer.from('not a sqlite file at all'.repeat(40)));
     writeFileSync(paths.dbFile + '-wal', Buffer.from('wal garbage'.repeat(64)));
     writeFileSync(paths.dbFile + '-shm', Buffer.from('shm garbage'.repeat(64)));
+    cache.closeAll();
     const cache2 = service();
     const read = cache2.getConversations({ serverHash: HASH, memberId: MEMBER });
     expect(read.conversations).toEqual([]);
@@ -197,12 +208,13 @@ describe('分区库：加密与密钥', () => {
     raw.pragma(`key="x'${key.toString('hex')}'"`);
     raw.pragma(`user_version = ${99}`);
     raw.close();
+    cache.closeAll();
     const cache2 = service();
     expect(cache2.getConversations({ serverHash: HASH, memberId: MEMBER }).conversations).toEqual([]);
   });
 
   it('safeStorage 不可用 → open 拒绝（缓存整体禁用；不做明文兜底）', () => {
-    const cache = new TeamCacheService({
+    const cache = track(new TeamCacheService({
       baseDir: () => dir,
       safeStorage: unavailableSafeStorage,
     });
@@ -217,6 +229,7 @@ describe('分区库：加密与密钥', () => {
     cache.putConversations({ serverHash: HASH, memberId: MEMBER, conversations: [convFixture('c1')] });
     const paths = partitionPathsOf(dir, HASH, MEMBER);
     rmSync(paths.keyFile);
+    cache.closeAll();
     const cache2 = service();
     expect(cache2.getConversations({ serverHash: HASH, memberId: MEMBER }).conversations).toEqual([]);
     expect(cache2.getConversations({ serverHash: HASH, memberId: MEMBER }).conversations).toEqual([]);
@@ -355,7 +368,7 @@ describe('put/get 往返与 replace 对账', () => {
 describe('附件 LRU 与用量', () => {
   it('LRU：小上限淘汰最久未用；get 触碰保活；clearPartition/clearServer', () => {
     let clock = 0;
-    const cache = new TeamCacheService({ ...serviceDeps(dir), now: () => (clock += 1) });
+    const cache = track(new TeamCacheService({ ...serviceDeps(dir), now: () => (clock += 1) });
     cache.setAttachmentLimit({ limitBytes: 120 });
     const b64 = (size: number): string => Buffer.alloc(size, 1).toString('base64');
     cache.putAttachment({ serverHash: HASH, memberId: MEMBER, key: 'a', bytes: b64(50) });
@@ -502,6 +515,7 @@ describe('分区重建不外溢（T8 审查补齐）', () => {
     // 打烂 A 的库（主库 + WAL）→ 重建。
     writeFileSync(pathsA.dbFile, Buffer.from('corrupt'.repeat(64)));
     writeFileSync(pathsA.dbFile + '-wal', Buffer.from('wal garbage'.repeat(64)));
+    cache.closeAll();
     const cache2 = service();
     expect(cache2.getConversations({ serverHash: HASH, memberId: MEMBER }).conversations).toEqual([]);
     expect(cache2.getConversations({ serverHash: HASH, memberId: MEMBER2 }).conversations).toHaveLength(1);
@@ -515,7 +529,7 @@ describe('分区重建不外溢（T8 审查补齐）', () => {
 
   it('LRU 淘汰只动当前分区：A 超限淘汰不触碰 B 的附件', () => {
     let clock = 0;
-    const cache = new TeamCacheService({ ...serviceDeps(dir), now: () => (clock += 1) });
+    const cache = track(new TeamCacheService({ ...serviceDeps(dir), now: () => (clock += 1) });
     cache.setAttachmentLimit({ limitBytes: 120 });
     const b64 = (size: number): string => Buffer.alloc(size, 1).toString('base64');
     // B 先放一个附件（accessed_at 更早）。

@@ -155,8 +155,12 @@ d('D140-4 worktree in the real sandbox', () => {
     expect(diff.exitCode, violations(diff)).toBe(0);
 
     // git add / commit write objects + .git/worktrees/<name>/{index,HEAD,logs}.
+    // Add the file we just wrote rather than `git add -A`: on Linux the
+    // deny-read protect rule over `.env` can present that path as a
+    // non-regular file, and `git add -A` then fails with "can only add
+    // regular files, symbolic links or git-directories".
     const commit = await run(
-      'git add -A && git -c user.name=task -c user.email=task@localhost commit -q -m "task commit" && git log -1 --format=%s',
+      'git add sandbox-made.txt && git -c user.name=task -c user.email=task@localhost commit -q -m "task commit" && git log -1 --format=%s',
     );
     expect(commit.exitCode, `${violations(commit)}\n${commit.stderr}`).toBe(0);
     expect(commit.stdout.trim()).toBe('task commit');

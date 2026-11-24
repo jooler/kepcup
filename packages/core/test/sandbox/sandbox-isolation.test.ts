@@ -43,6 +43,7 @@ function readDenied(result: SandboxExecResult): boolean {
   return (
     result.violations.some((v) => v.line.includes('file-read')) ||
     result.stderr.includes('Operation not permitted') ||
+    result.stderr.includes('Permission denied') ||
     (linux && result.stderr.includes('No such file or directory'))
   );
 }

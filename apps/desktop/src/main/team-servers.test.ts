@@ -631,12 +631,15 @@ describe('状态文件权限（0600）', () => {
     try {
       const target = path.join(dir, 'team-servers.json');
       await writeTeamServersState(target, '{"version":1,"servers":{}}\n');
-      expect(statSync(target).mode & 0o777).toBe(0o600);
-      // 既有文件被放宽过权限（如用户手工 chmod）：覆写后强制收回 0600。
-      chmodSync(target, 0o644);
-      expect(statSync(target).mode & 0o777).toBe(0o644);
-      await writeTeamServersState(target, '{"version":1,"servers":{}}\n');
-      expect(statSync(target).mode & 0o777).toBe(0o600);
+      // Windows 不保留 POSIX 文件模式；只在 Unix 上断言 0600。
+      if (process.platform !== 'win32') {
+        expect(statSync(target).mode & 0o777).toBe(0o600);
+        // 既有文件被放宽过权限（如用户手工 chmod）：覆写后强制收回 0600。
+        chmodSync(target, 0o644);
+        expect(statSync(target).mode & 0o777).toBe(0o644);
+        await writeTeamServersState(target, '{"version":1,"servers":{}}\n');
+        expect(statSync(target).mode & 0o777).toBe(0o600);
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -645,8 +648,10 @@ describe('状态文件权限（0600）', () => {
   it('经 TeamServers 的持久化路径（生产注入同款）落盘即 0600，且无明文 token', async () => {
     const { serverHash } = await harness.host.add({ url: URL_A });
     const token = await loginOk(harness, serverHash, { id: 'm1', displayName: 'Alice' }, 'alice');
-    const mode = statSync(harness.statePath).mode & 0o777;
-    expect(mode).toBe(0o600);
+    if (process.platform !== 'win32') {
+      const mode = statSync(harness.statePath).mode & 0o777;
+      expect(mode).toBe(0o600);
+    }
     const raw = readFileSync(harness.statePath, 'utf8');
     expect(raw).not.toContain(token);
   });

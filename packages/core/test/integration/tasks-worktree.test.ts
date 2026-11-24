@@ -134,7 +134,13 @@ async function waitWorktreeApply(
   );
 }
 
-describe('D140-4 worktree isolation', () => {
+// Worktree isolation is srt-only; Windows desktop uses the WSL sandbox
+// backend, which refuses isolation with WORKTREE_NOT_AVAILABLE. The happy-path
+// suite below is skipped there; a dedicated case covers the refusal.
+const worktreeIsolationSupported = process.platform !== 'win32';
+const describeIsolation = worktreeIsolationSupported ? describe : describe.skip;
+
+describeIsolation('D140-4 worktree isolation', () => {
   it('start_task isolation creates a sibling tree from the working state and executes there', async () => {
     const stack = await start();
     const { core, llm } = stack;
@@ -779,5 +785,33 @@ describe('D140-4 worktree isolation', () => {
     // No half-created tree is left next to the plain directory.
     const home = path.join(path.dirname(plain), '.worktree');
     expect(existsSync(home) ? existsSync(`${home}/${path.basename(plain)}`) : false).toBe(false);
+  }, 60_000);
+});
+
+const describeNonSrt = process.platform === 'win32' ? describe : describe.skip;
+
+describeNonSrt('D140-4 worktree isolation (non-srt backend)', () => {
+  it('refuses isolation when the sandbox backend is not srt', async () => {
+    const stack = await start();
+    const { core } = stack;
+    const bot = await makeBot(core, '校验');
+    const conv = await openDirect(core, bot.id);
+    await bindWorkdir(stack, conv.id, makeRepo());
+    const failed = host(stack).start(turnIdentity(bot.id, conv.id), {
+      title: '隔离',
+      instruction: 'TASK-WT-WIN',
+      sourceMessageIds: [],
+      writes: true,
+      isolation: 'worktree',
+    });
+    const run = await waitFor(
+      () => {
+        const current = runOf(stack, failed.taskId);
+        return current.status === 'failed' ? current : null;
+      },
+      { label: 'non-srt worktree task failed', timeoutMs: 30_000 },
+    );
+    expect(run.error ?? '').toContain('WORKTREE_NOT_AVAILABLE');
+    expect(run.worktreePath).toBeNull();
   }, 60_000);
 });
