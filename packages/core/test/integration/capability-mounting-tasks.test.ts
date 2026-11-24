@@ -359,12 +359,21 @@ describe('D91 P1: tasks mount only the capabilities they declare', () => {
 
   it('a queued task no longer mounts a capability the bot dropped while it waited', async () => {
     const { stack, core, llm, bot, conv, host } = await start([ALPHA, BETA]);
+    // D140-1 removed the built-in whole-root write-lease queue (write tasks of
+    // one cwd now run in parallel), so the real remaining queue is a
+    // concurrency slot. One mock-provider slot: q1 holds it, q2 stays
+    // submitted until it frees — the same "waited, then launched" shape.
+    await core.rpc.call('settings.update', {
+      providerConcurrency: { default: 4, 'custom:mock': 1 },
+    });
     const held = step().expect(isTaskRequest('TASK-Q1')).hold().replyText('RESULT-Q1');
+    // The script matches by predicate, not order: pin the turn replies to the
+    // turn lane so a waiting task request can never claim one.
     llm.script('mock-main', [
       held,
-      step().replyText('ok'),
+      step().inTurn().replyText('ok'),
       step().expect(isTaskRequest('TASK-Q2')).replyText('RESULT-Q2'),
-      step().replyText('ok'),
+      step().inTurn().replyText('ok'),
     ]);
     const turn = turnIdentity(bot.id, conv.id);
     const w1 = host.start(turn, {
@@ -381,10 +390,19 @@ describe('D91 P1: tasks mount only the capabilities they declare', () => {
       capabilities: ['mcp:alpha', 'mcp:beta'],
     });
     expect(w2.state).toBe('submitted');
+    // Pins the queue cause: the model slot, not the removed write lease (the
+    // write-lease wait reason is transient — a shared lease is granted at
+    // once, then the launched task parks on the provider slot).
+    await waitFor(
+      () =>
+        (host.view(w2.taskId)?.queueReason ?? '').includes('并发额度') ? true : null,
+      { label: 'q2 waits for the model slot' },
+    );
+    expect(runsOf(stack).getOrThrow(w2.taskId).status).toBe('queued');
     await waitFor(() => (llm.requestsFor('mock-main').length >= 1 ? true : null), {
       label: 'w1 request held',
     });
-    // The user unticks alpha while q2 waits for the write lease.
+    // The user unticks alpha while q2 waits for the model slot.
     const fresh = (await core.rpc.call('bots.get', { id: bot.id })) as {
       bot: { profile: typeof bot.profile };
     };
@@ -395,7 +413,7 @@ describe('D91 P1: tasks mount only the capabilities they declare', () => {
         runtime: { ...fresh.bot.profile.runtime, mcp_server_ids: ['beta'] },
       },
     });
-    // Dropping a server interrupts the bot's running task (W3), which frees the write lease for q2.
+    // Dropping a server interrupts the bot's running task (W3), which frees the slot for q2.
     await waitDone(stack, w1.taskId);
     held.release();
     await waitDone(stack, w2.taskId);

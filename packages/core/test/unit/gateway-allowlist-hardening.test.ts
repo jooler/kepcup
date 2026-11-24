@@ -71,6 +71,13 @@ function makeGateway(options: { sensitive?: string[] } = {}): ToolGateway {
     taint: {
       mark: () => {},
       guard: () => (tainted ? { firstAt: 1, expiresAt: Date.now() + 60_000 } : null),
+      // D140-3: tainted = the sandbox network is cut; `networkAllowed` is the
+      // `request_network` release table (a null release keeps the cut).
+      networkAllowed: () => null,
+      consumeOnceNetwork: () => {},
+      allowNetwork: () => {},
+      egressAllowed: () => false,
+      allowEgress: () => {},
     },
     platform: 'linux',
     readOnlyRootsOverride: [],
@@ -115,6 +122,10 @@ describe('custom allowlist entries are not read-only-proven (#5)', () => {
   });
 
   it('a write task runs the custom entry without a card — until the conversation is tainted', async () => {
+    // Confirm mode (no sandbox): D140-3's model is a network cut inside the
+    // sandbox; without one the fallback is the historical per-command card, so
+    // a tainted custom entry asks here (the assertion is the fallback, not a
+    // second egress control — see taint-egress.test.ts for the cut itself).
     allowlist.add('touch marker-w');
     const gateway = makeGateway();
     const result = await gateway.exec(writeTask, { command: 'touch marker-w', network: none });

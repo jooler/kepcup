@@ -593,12 +593,17 @@ describe('bash and git_remote', () => {
 
   it('D140-3: a bound workdir keeps loopback (allowLocalhost) while the external network is cut', async () => {
     const backend = sandboxBackend();
+    // A plain bound workdir (no D140-4 isolation): `cwd` / `worktree` mirror
+    // WorkdirRuntime.policyInfo's shape — `worktree.path` is only read when a
+    // tree is present, and an absent field would be a stub bug, not a policy.
     const workdirs = {
       policyInfo: () => ({
         path: '/tmp/wd',
         hasLease: false,
         allowedPorts: [[3000, 3010]] as Array<[number, number]>,
         denyReadGlobs: [],
+        cwd: null,
+        worktree: null,
       }),
       writeDenial: () => null,
     };
