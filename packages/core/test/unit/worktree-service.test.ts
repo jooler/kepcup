@@ -64,6 +64,8 @@ function repo(files: Record<string, string> = { 'README.md': '# base\n' }): stri
   git(dir, ['init', '-q', '-b', 'main']);
   git(dir, ['config', 'user.name', 'fixture']);
   git(dir, ['config', 'user.email', 'fixture@localhost']);
+  git(dir, ['config', 'core.autocrlf', 'false']);
+  git(dir, ['config', 'core.eol', 'lf']);
   git(dir, ['add', '-A']);
   git(dir, ['commit', '-q', '-m', 'init']);
   return dir;
@@ -71,6 +73,36 @@ function repo(files: Record<string, string> = { 'README.md': '# base\n' }): stri
 
 function service(): WorktreeService {
   return new WorktreeService();
+}
+
+/** git worktree list uses long forward-slash paths; Node may have 8.3 names. */
+function listHasPath(listed: string, worktreePath: string): boolean {
+  const normalize = (value: string) =>
+    value.replaceAll('\\', '/').replace(/^\/\/\?\//, '').toLowerCase();
+  const listedNorm = normalize(listed);
+  const candidates = new Set([worktreePath]);
+  try {
+    candidates.add(realpathSync(worktreePath));
+  } catch {
+    // The tree may already have been removed.
+  }
+  try {
+    candidates.add(realpathSync.native(worktreePath));
+  } catch {
+    // native realpath is best-effort (8.3 → long path).
+  }
+  return [...candidates].some((candidate) => listedNorm.includes(normalize(candidate)));
+}
+
+/** Git for Windows marks the gitfile read-only; chmod before forging it. */
+function rewriteGitPointer(worktreePath: string, content: string): void {
+  const pointer = path.join(worktreePath, '.git');
+  try {
+    chmodSync(pointer, 0o666);
+  } catch {
+    // already writable
+  }
+  writeFileSync(pointer, content);
 }
 
 describe('D140-4 WorktreeService', () => {
@@ -294,15 +326,25 @@ describe('D140-4 WorktreeService', () => {
     );
 
     // Deep parent: the workdir itself is valid, its `.worktree` path is not.
+    // Stay under Windows MAX_PATH (~260) so `git init` works; only the
+    // computed tree path must exceed WORKTREE_PATH_MAX (200).
     const deepRoot = mkdtempSync(path.join(os.tmpdir(), 'd140-worktree-long-'));
     dirs.push(deepRoot);
     let deep = deepRoot;
-    for (let i = 0; i < 18; i += 1) deep = path.join(deep, 'aaaaaaaaaa');
-    const workdir = path.join(deep, 'workdir');
+    const workdirAt = (root: string) => path.join(root, 'workdir');
+    const treeLen = (root: string) => worktreePathFor(workdirAt(root), 'run_long_0001').length;
+    while (treeLen(deep) <= 200) {
+      const next = path.join(deep, 'aaaaaaaaaa');
+      // Leave headroom for `\\workdir` and git metadata under Windows MAX_PATH.
+      if (workdirAt(next).length > 230) break;
+      deep = next;
+    }
+    const workdir = workdirAt(deep);
     mkdirSync(workdir, { recursive: true });
     git(workdir, ['init', '-q', '-b', 'main']);
     git(workdir, ['config', 'user.name', 'fixture']);
     git(workdir, ['config', 'user.email', 'fixture@localhost']);
+    git(workdir, ['config', 'core.autocrlf', 'false']);
     writeFileSync(path.join(workdir, 'README.md'), '# base\n');
     git(workdir, ['add', '-A']);
     git(workdir, ['commit', '-q', '-m', 'init']);
@@ -324,9 +366,9 @@ describe('D140-4 WorktreeService', () => {
     expect(readFileSync(path.join(first.path, 'leftover.txt'), 'utf8')).toBe('leftover\n');
     expect(existsSync(path.join(second.path, 'leftover.txt'))).toBe(false);
     // Both are registered worktrees of the repo.
-    const listed = git(workdir, ['worktree', 'list']).split('\n').join('\n');
-    expect(listed).toContain(first.path);
-    expect(listed).toContain(second.path);
+    const listed = git(workdir, ['worktree', 'list']);
+    expect(listHasPath(listed, first.path)).toBe(true);
+    expect(listHasPath(listed, second.path)).toBe(true);
   }, 60_000);
 
   it('reaps aged orphan trees only when no active task owns them and they are not mounted', async () => {
@@ -355,7 +397,7 @@ describe('D140-4 WorktreeService', () => {
     expect(existsSync(active.path)).toBe(true);
     expect(existsSync(mounted.path)).toBe(true);
     // The main repo's metadata was pruned with it.
-    expect(git(workdir, ['worktree', 'list'])).not.toContain(orphan.path);
+    expect(listHasPath(git(workdir, ['worktree', 'list']), orphan.path)).toBe(false);
   }, 60_000);
 
   it('derives the apply state for unrecorded runs (surviving tree = kept, vanished = applied)', () => {
@@ -384,7 +426,7 @@ describe('D140-4 WorktreeService', () => {
     const info = await service().create({ workdirPath: workdir, runId: 'run_forged_0001' });
     const target = mkdtempSync(path.join(os.tmpdir(), 'd140-forged-target-'));
     dirs.push(target);
-    writeFileSync(path.join(info.path, '.git'), `gitdir: ${target}\n`);
+    rewriteGitPointer(info.path, `gitdir: ${target}\n`);
     expect(readWorktreeMeta(info.path)).toBeNull();
 
     // Structurally plausible (<fake>/worktrees/x) but with a commondir that
@@ -393,7 +435,7 @@ describe('D140-4 WorktreeService', () => {
     const fakeMeta = path.join(fake, 'worktrees', 'evil');
     mkdirSync(fakeMeta, { recursive: true });
     writeFileSync(path.join(fakeMeta, 'commondir'), '/Users\n');
-    writeFileSync(path.join(info.path, '.git'), `gitdir: ${fakeMeta}\n`);
+    rewriteGitPointer(info.path, `gitdir: ${fakeMeta}\n`);
     expect(readWorktreeMeta(info.path)).toBeNull();
 
     // Correct structure but the backlink names another tree: rejected.
@@ -403,10 +445,7 @@ describe('D140-4 WorktreeService', () => {
 
     // A real tree still parses (the create case above already asserts it, but
     // keep the negative cases anchored to a working baseline).
-    writeFileSync(
-      path.join(info.path, '.git'),
-      `gitdir: ${info.gitWorktreeMeta}\n`,
-    );
+    rewriteGitPointer(info.path, `gitdir: ${info.gitWorktreeMeta}\n`);
     expect(readWorktreeMeta(info.path)).toEqual({
       gitCommonDir: info.gitCommonDir,
       gitWorktreeMeta: info.gitWorktreeMeta,
@@ -460,7 +499,7 @@ describe('D140-4 WorktreeService', () => {
     writeFileSync(path.join(info.path, 'changed.txt'), 'x\n');
     // A sandboxed command can rewrite the pointer; summary / apply must not
     // let host git follow it into another repository.
-    writeFileSync(path.join(info.path, '.git'), `gitdir: ${path.join(workdir, '.git')}\n`);
+    rewriteGitPointer(info.path, `gitdir: ${path.join(workdir, '.git')}\n`);
     expect(await svc.summary(info.path, info.baseOid)).toBeNull();
     await expect(
       svc.apply({ workdirPath: workdir, worktreePath: info.path, baseOid: info.baseOid }),
