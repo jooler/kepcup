@@ -167,17 +167,35 @@
 
   let avatarDrafts = $state<Record<string, { enabled: boolean; botId: string }>>({});
 
-  function avatarDraft(entry: SectionSource) {
-    const existing = avatarDrafts[entry.key];
-    if (existing !== undefined) return existing;
+  function avatarDraftOf(entry: SectionSource): { enabled: boolean; botId: string } {
     const hash = serverHashOf(entry.source);
     const memberId = connections.get(entry.source).memberId ?? '';
-    const draft = {
+    return {
       enabled: false,
       botId: hash !== null ? avatarRuntime.preferredBotId(hash, memberId) : '',
     };
-    avatarDrafts = { ...avatarDrafts, [entry.key]: draft };
-    return draft;
+  }
+
+  /**
+   * 分身草稿按来源懒初始化。模板表达式里禁止写 $state（Svelte 5
+   * state_unsafe_mutation），所以 avatarDraft 是纯读函数：键缺失时回退计算值；
+   * 真正落键由下方 effect 在来源变化时补齐（与 quietDrafts 同一套约定）。
+   */
+  $effect(() => {
+    const missing: Record<string, { enabled: boolean; botId: string }> = {};
+    let hasMissing = false;
+    for (const entry of sources) {
+      if (avatarDrafts[entry.key] !== undefined) continue;
+      hasMissing = true;
+      missing[entry.key] = avatarDraftOf(entry);
+    }
+    if (hasMissing) avatarDrafts = { ...avatarDrafts, ...missing };
+  });
+
+  function avatarDraft(entry: SectionSource) {
+    const existing = avatarDrafts[entry.key];
+    if (existing !== undefined) return existing;
+    return avatarDraftOf(entry);
   }
 
   function avatarEnabled(entry: SectionSource): boolean {
