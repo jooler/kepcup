@@ -11,6 +11,7 @@
   import { board } from '$lib/features/board/board.svelte';
   import { chatTabBadge } from './project-chat-badge';
   import { boardTabBadge } from './project-board-badge';
+  import { chatDisplay } from '$lib/features/chats/chat-display.svelte';
   import ProjectMembersMenu from './ProjectMembersMenu.svelte';
   import ProjectTabs from './ProjectTabs.svelte';
   import PermissionModeMenu from '$lib/features/approvals/PermissionModeMenu.svelte';
@@ -67,6 +68,8 @@
       pendingApprovals:
         permissions.pendingOf(current?.conversation.id).length +
         episodes.pausedCount(current?.conversation.id),
+      // 对话信息展示设置（设置 → 通用）：用户隐藏的类目不计入未读。
+      display: chatDisplay.prefs,
     }),
   );
 

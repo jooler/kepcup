@@ -20,7 +20,7 @@ function msg(partial: MsgInit): Message {
     runId: null,
     senderBotId: null,
     batchId: null,
-    replyToMessageId: null,
+    replyTo: null,
     ...partial,
   } as Message;
 }
@@ -121,5 +121,24 @@ describe('isVisibleInTranscript（与原 MessageList 过滤逐条一致）', () 
     expect(
       isVisibleInTranscript(msg({ id: 'm1', kind: 'text', senderType: 'bot', status: 'recalled' })),
     ).toBe(true);
+  });
+
+  it('对话信息展示设置（display）：可开关类按默认（任务卡显示、通知类隐藏），显式勾选覆盖', () => {
+    const mail = msg({ id: 'm1', kind: 'card', senderType: 'bot', content: { cardType: 'mail' } });
+    const taskCard = msg({
+      id: 'm3',
+      kind: 'card',
+      senderType: 'bot',
+      content: { cardType: 'task' },
+    });
+    const botText = msg({ id: 'm2', kind: 'text', senderType: 'bot' });
+    // 可开关类缺省按各项默认值：任务卡默认显示，邮件卡默认隐藏。
+    expect(isVisibleInTranscript(mail, {}, {})).toBe(false);
+    expect(isVisibleInTranscript(taskCard, {}, {})).toBe(true);
+    expect(isVisibleInTranscript(mail, {}, { mailCards: true })).toBe(true);
+    expect(isVisibleInTranscript(taskCard, {}, { taskCards: false })).toBe(false);
+    // Bot 文本是锁定类，任何勾选状态都可见；缺省（不传 display）旧行为不变。
+    expect(isVisibleInTranscript(botText, {}, { mailCards: true })).toBe(true);
+    expect(isVisibleInTranscript(mail)).toBe(true);
   });
 });

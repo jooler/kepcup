@@ -154,7 +154,13 @@ describe('settings catalog integrity', () => {
   it('keeps renderer-owned items at confirm at most, with no core store', () => {
     const renderer = items.filter((entry) => entry.owner === 'renderer');
     expect(renderer.map((entry) => entry.id).sort()).toEqual(
-      ['general.language', 'general.theme', 'hardware.camera', 'hardware.microphone'].sort(),
+      [
+        'general.chat-display',
+        'general.language',
+        'general.theme',
+        'hardware.camera',
+        'hardware.microphone',
+      ].sort(),
     );
     for (const entry of renderer) {
       expect(entry.write.maxMode).not.toBe('direct');

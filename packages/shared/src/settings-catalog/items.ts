@@ -1119,6 +1119,47 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     store: { kind: 'settings', paths: ['taskLoop'] },
   }),
 
+  item({
+    id: 'general.chat-display',
+    group: 'general',
+    title: '对话信息展示',
+    summary: '对话本身始终显示；通知与过程类内容按勾选显示（默认仅任务卡显示，其余隐藏）',
+    enables: ['隐藏对话里的通知与过程卡片', '保持对话像人与人的沟通'],
+    keywords: [
+      '对话',
+      '消息',
+      '通知',
+      '卡片',
+      '展示',
+      '显示',
+      '隐藏',
+      '邮件',
+      '监看',
+      'IM',
+      '任务卡',
+      '状态行',
+    ],
+    scope: 'global',
+    // 值只在渲染层 localStorage（主题 / 语言同一待遇）：core 读不到也写不了，
+    // settings_read 报「状态未知（只在本机界面可见）」，出卡只能 link 到设置页。
+    // 字段只列可开关类目（对话本身与需用户接手的交互卡锁定，不在此列）。
+    owner: 'renderer',
+    fields: [
+      field('taskCards', '任务卡', 'toggle'),
+      field('systemNotices', '系统通知', 'toggle'),
+      field('scheduleCards', '定时任务卡', 'toggle'),
+      field('approvalReceipts', '审批回执卡', 'toggle'),
+      field('mailCards', '邮件通知卡', 'toggle'),
+      field('imCards', 'IM 入站卡', 'toggle'),
+      field('watchCards', '监看卡', 'toggle'),
+      field('handoverNotes', '资产交接记录', 'toggle'),
+    ],
+    write: write('confirm'),
+    card: null,
+    deepLink: { surface: 'settings', section: 'general', anchor: 'general-chat-display' },
+    store: { kind: 'renderer' },
+  }),
+
   // --- 无人值守 -----------------------------------------------------------
   item({
     id: 'unattended.enable',

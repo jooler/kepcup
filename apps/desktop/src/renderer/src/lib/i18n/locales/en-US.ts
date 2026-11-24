@@ -2487,6 +2487,62 @@ export const enUS = {
   'prompt.skip': 'Skip',
   'skills.enhancedHint': 'Requires enhanced sandbox: {hint}',
   'settings.generalSection': 'General',
+  // Collapsed entries (2026-11): advanced task engine + chat display settings (sub views).
+  'settings.taskEngineAdvanced': 'Advanced task engine settings',
+  'settings.taskEngineAdvancedHint':
+    'Idle-loop guard, inactivity timeout, max run time and token soft budget for long tasks',
+  'settings.chatDisplaySettings': 'Conversation display settings',
+  'settings.chatDisplaySettingsHint':
+    'Choose what appears in the conversation list: notifications and process cards can be hidden',
+  'settings.chatDisplayPageHint':
+    'Keep the conversation a conversation: categories below appear in the message list per their checkmarks, and unread badges follow the same rule; defaults differ per item (task cards are shown by default) and can be changed anytime.',
+  'settings.chatDisplayAlwaysVisible':
+    'Always shown (the conversation itself and things awaiting you — cannot be turned off)',
+  'settings.chatDisplayToggleable': 'Notifications & process content (defaults below, adjustable)',
+  'settings.chatDisplayLockedTag': 'Always shown',
+  'settings.chatDisplay.userMessages': 'Your messages',
+  'settings.chatDisplay.userMessagesHint':
+    'Text, attachments, quotes you send, and items dispatched from the workbench',
+  'settings.chatDisplay.botMessages': 'Bot messages',
+  'settings.chatDisplay.botMessagesHint': "Bot replies, voice, attachments and file artifacts",
+  'settings.chatDisplay.delegation': 'Delegation & routing prompts',
+  'settings.chatDisplay.delegationHint':
+    "Cross-Bot delegation sent / received / results, and the butler's routing suggestions",
+  'settings.chatDisplay.botOutputs': 'Bot outputs & reports',
+  'settings.chatDisplay.botOutputsHint':
+    'Present cards (tables / charts / metrics), custom widgets and app UI cards',
+  'settings.chatDisplay.setupInterview': 'Setup interview',
+  'settings.chatDisplay.setupInterviewHint': 'First-run question cards and work-directory choice',
+  'settings.chatDisplay.taskQuestion': 'Task questions',
+  'settings.chatDisplay.taskQuestionHint':
+    'Questions a task asks you mid-run (the task pauses until answered)',
+  'settings.chatDisplay.taskCards': 'Task cards',
+  'settings.chatDisplay.taskCardsHint': 'Task progress and result receipt cards (shown by default)',
+  'settings.chatDisplay.systemNotices': 'System notices',
+  'settings.chatDisplay.systemNoticesHint':
+    'Gray pills: interrupted runs, member changes, message edits, etc.',
+  'settings.chatDisplay.scheduleCards': 'Schedule cards',
+  'settings.chatDisplay.scheduleCardsHint': 'Schedule receipts and time proposals',
+  'settings.chatDisplay.approvalReceipts': 'Approval receipts',
+  'settings.chatDisplay.approvalReceiptsHint':
+    'Approval records kept in the flow (import / install / handover, etc.)',
+  'settings.chatDisplay.mailCards': 'Mail notifications',
+  'settings.chatDisplay.mailCardsHint': 'Summary cards for newly arrived mail',
+  'settings.chatDisplay.imCards': 'IM messages',
+  'settings.chatDisplay.imCardsHint': 'Summary cards for arrived IM messages (WeChat etc.)',
+  'settings.chatDisplay.watchCards': 'Watch alerts',
+  'settings.chatDisplay.watchCardsHint': 'Web watch creation and alert cards',
+  'settings.chatDisplay.handoverNotes': 'Handover notes',
+  'settings.chatDisplay.handoverNotesHint': 'Handover / share / copy notes between Bots',
+  'settings.chatDisplay.settingCards': 'In-chat setting cards',
+  'settings.chatDisplay.settingCardsHint': 'Setting change cards a Bot posts in the chat',
+  'settings.chatDisplay.episodePaused': 'Collab paused card',
+  'settings.chatDisplay.episodePausedHint': 'Resume / stop card when a collab turn is paused',
+  'settings.chatDisplay.resolutionCards': 'Resolution cards',
+  'settings.chatDisplay.resolutionCardsHint': 'Team project resolutions and signing status',
+  'settings.chatDisplay.runStatusLines': 'Run status lines',
+  'settings.chatDisplay.runStatusLinesHint':
+    'The "working" status line at the end of the list (tool name and progress)',
   'settings.launchAtLogin': 'Launch at login',
   'settings.launchAtLoginHint':
     "After you sign in, KepCup runs in the background so Bot scheduled tasks and proactive messages aren't interrupted.",
@@ -4193,6 +4249,17 @@ export const enUS = {
   'settingsItem.general.task-loop.field.maxWallMinutes': 'Maximum run time (minutes)',
   'settingsItem.general.task-loop.field.maxWallMinutes.hint':
     '0 means unlimited; default is 240 minutes.',
+  'settingsItem.general.chat-display.title': 'Conversation display',
+  'settingsItem.general.chat-display.summary':
+    'The conversation itself is always shown; notifications and process content follow your checkmarks (only task cards are shown by default, the rest are hidden)',
+  'settingsItem.general.chat-display.field.taskCards': 'Task cards',
+  'settingsItem.general.chat-display.field.systemNotices': 'System notices',
+  'settingsItem.general.chat-display.field.scheduleCards': 'Schedule cards',
+  'settingsItem.general.chat-display.field.approvalReceipts': 'Approval receipt cards',
+  'settingsItem.general.chat-display.field.mailCards': 'Mail notification cards',
+  'settingsItem.general.chat-display.field.imCards': 'IM message cards',
+  'settingsItem.general.chat-display.field.watchCards': 'Watch alert cards',
+  'settingsItem.general.chat-display.field.handoverNotes': 'Handover notes',
   'settingsItem.unattended.enable.title': 'Turn on unattended mode',
   'settingsItem.unattended.enable.summary':
     'Put every conversation at the full-control level during a set period (you must confirm the risk yourself)',
