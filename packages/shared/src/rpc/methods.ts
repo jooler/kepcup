@@ -430,20 +430,6 @@ export const diagnosticsOutputSchema = z.object({
 export type DiagnosticsOutput = z.infer<typeof diagnosticsOutputSchema>;
 export type SystemShutdownOutput = z.infer<typeof systemShutdownOutputSchema>;
 
-// --- T5 连接团队服务器（62.08 §3 桌面 P0 过渡，PLATFORM_RPC_METHODS 契约）------
-// Desktop-only: the MAIN process spawns a detached remote-mode shell pointed at
-// the team server (web 端点不实现——服务端托管的页面没有本地进程可另起). core 也
-// 不实现；渲染层经桌面 preload 桥调用（ipcMain handler 注册在 apps/desktop 主进程）。
-
-export const platformOpenTeamServerInputSchema = z.object({
-  /** Team server origin URL (http/https, validated by the main process). */
-  url: z.string().min(1),
-});
-export type PlatformOpenTeamServerInput = z.infer<typeof platformOpenTeamServerInputSchema>;
-
-export const platformOpenTeamServerOutputSchema = z.object({ ok: z.literal(true) });
-export type PlatformOpenTeamServerOutput = z.infer<typeof platformOpenTeamServerOutputSchema>;
-
 // --- T7 桌面融合视图（62.08 §3 / T7 §2 凭据与多账号，PLATFORM_RPC_METHODS 契约）--
 // Desktop-only: the MAIN process owns team-server credentials (safeStorage 加密
 // 落 <userData>/team-servers.json) and the fusion WS bridge（web 端不实现——T5 的
@@ -468,6 +454,8 @@ export const teamServerStatusSchema = z.enum([
   'connected',
   'unauthenticated',
   'error',
+  /** 连续多次握手 / 重试未果：UI 显示「服务器不可用」；桥仍后台退避重试。 */
+  'unreachable',
 ]);
 export type TeamServerStatus = z.infer<typeof teamServerStatusSchema>;
 
@@ -529,6 +517,12 @@ export const platformTeamServersProbeOutputSchema = z.object({
   /** kind='team' 且会话有效时 true（whoami 200 + member）。 */
   authenticated: z.boolean().optional(),
   member: z.object({ id: z.string().min(1), displayName: z.string() }).optional(),
+  /**
+   * 失败 / 未识别时的可读原因（网络错误文本、HTTP 状态等）。设置界面的
+   * 「无法连接」弹框直接展示，便于用户区分「服务器没起」「端口不对」「不是
+   * 团队服务器」。成功探测（kind='team'）不带该字段。
+   */
+  detail: z.string().optional(),
 });
 export type PlatformTeamServersProbeOutput = z.infer<typeof platformTeamServersProbeOutputSchema>;
 
@@ -3446,13 +3440,6 @@ export const rpcMethodSchemas = {
   },
   'share.failed.discard': { input: shareFailedDiscardInputSchema, output: okOutput },
 
-  // T5 连接团队服务器：桌面主进程实现（另起远程模式壳进程）；core / web 端不实现，
-  // 名称登记在 PLATFORM_RPC_METHODS（62.08 §3 桌面 P0 过渡）。
-  'platform.openTeamServer': {
-    input: platformOpenTeamServerInputSchema,
-    output: platformOpenTeamServerOutputSchema,
-  },
-
   // T7 桌面融合视图：凭据与多账号管理 + 桥接启停（桌面主进程实现，preload 桥到
   // ipcMain；core / web 端不实现，名称登记在 PLATFORM_RPC_METHODS）。
   'platform.teamServers.list': {
@@ -4229,8 +4216,6 @@ export const PLATFORM_RPC_METHODS: readonly RpcMethodName[] = [
   'files.previewResource',
   'share.targets',
   'share.consume',
-  // T5 连接团队服务器（62.08 §3）：桌面主进程实现，core / web 端不实现。
-  'platform.openTeamServer',
   // T7 桌面融合视图：凭据 / 多账号 / 桥接启停（桌面主进程实现，同上）。
   'platform.teamServers.list',
   'platform.teamServers.add',

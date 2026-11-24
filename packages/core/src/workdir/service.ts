@@ -221,11 +221,20 @@ export class WorkdirRuntime {
   /** Releases in flight per run (a re-acquire waits for the old release). */
   readonly #releasing = new Map<string, Promise<void>>();
   /** C9: canonicalized root paths (empty = unrestricted). */
-  readonly #roots: readonly string[];
+  #roots: readonly string[];
 
   constructor(deps: WorkdirRuntimeDeps) {
     this.#deps = deps;
     this.#roots = (deps.roots ?? []).map((root) => canonicalPath(root));
+  }
+
+  /**
+   * C9 roots 的运行期替换（团队服务器「用户工作根目录」切换后调用——根目录迁移
+   * 是管理台运行时操作，不能要求重启）。语义与构造参数完全一致：规范化后整组
+   * 替换；空数组 = 不设根约束。只影响后续的 select / 断言，已绑定会话不受影响。
+   */
+  setRoots(roots: readonly string[]): void {
+    this.#roots = roots.map((root) => canonicalPath(root));
   }
 
   // --- lookups ---------------------------------------------------------------
@@ -880,8 +889,16 @@ export class WorkdirRuntime {
    * (`workdirs.boundOf`), so a binding that only publishes
    * `conversation.updated` leaves the right-panel Bot detail showing
    * 「未设置」 until a full refresh re-lists the workdirs.
+   *
+   * `opts.displayPath`（团队服务器成员面）：绑定系统消息里的路径展示——服务器
+   * 真实主机路径不出服务端，调用方给「相对成员本人子树的相对地址」，消息只落
+   * 该展示值（无括注原名）。缺省（本机 / 管理面）= 现行为 `name（path）`。
    */
-  select(conversationId: string, dir: string): Workdir {
+  select(
+    conversationId: string,
+    dir: string,
+    opts?: { displayPath?: string | null } | undefined,
+  ): Workdir {
     const conv = this.#deps.conversations.getOrThrow(conversationId);
     this.#assertNoActiveRuns(conversationId);
     // C9: validate the canonical path BEFORE the (row-creating) registration
@@ -891,7 +908,11 @@ export class WorkdirRuntime {
     const previousId = conv.workdirId;
     this.#deps.conversations.setWorkdir(conversationId, workdir.id);
     const previous = previousId !== null ? this.#deps.workdirs.get(previousId) : null;
-    const label = `${workdir.name}（${workdir.path}）`;
+    const display = opts?.displayPath;
+    const label =
+      display != null && display.length > 0
+        ? display
+        : `${workdir.name}（${workdir.path}）`;
     if (previousId === workdir.id) {
       this.#systemMessage(conversationId, `工作目录已确认为 ${label}`);
     } else if (previousId === null) {

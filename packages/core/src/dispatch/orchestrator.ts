@@ -1721,8 +1721,21 @@ export class Orchestrator {
    * 访谈目录卡作答（docs/design/19 D59）：path 非空 → 绑定 workdir（复用手动
    * 绑定的系统消息通路）；随后落 setupAnswer 用户消息（选择或跳过），并把
    * 首问卡之后缓冲的全部用户消息一次性投递——首个响应 run 由此开始。
+   *
+   * `opts.display`（团队服务器成员面）：落库消息文本用展示名（目录名 / 预置根
+   * 名），绑定仍用真实 path——成员面不向普通成员暴露服务器绝对路径（B-10），
+   * 目录卡的已答行随消息文本渲染，因此文本与绑定值在此分离。缺省（本机 /
+   * console 访谈）= 现行为，消息文本即 path。
+   *
+   * `opts.displayPath`：绑定系统消息（workdirs.select 内部落的那条「工作目录
+   * 已绑定/切换为 …」）的路径展示值（相对成员本人子树的相对地址）——真实主机
+   * 路径不出服务端；缺省 = select 的现行为（name（真实 path））。
    */
-  answerSetupPath(conversationId: string, path: string | null): Message {
+  answerSetupPath(
+    conversationId: string,
+    path: string | null,
+    opts?: { display?: string | null; displayPath?: string | null } | undefined,
+  ): Message {
     const conv = this.#deps.conversations.getOrThrow(conversationId);
     if (conv.readOnly) {
       throw new AppError('CONVERSATION_READ_ONLY', '该对话为只读');
@@ -1750,13 +1763,24 @@ export class Orchestrator {
       throw new AppError('INVALID_INPUT', '目录问题已作答，不能重复提交');
     }
     if (path !== null) {
-      this.#deps.workdirs.select(conversationId, path);
+      this.#deps.workdirs.select(
+        conversationId,
+        path,
+        // 绑定系统消息同样不落服务器真实路径（成员面传相对展示地址；缺省不变）。
+        opts?.displayPath != null && opts.displayPath.length > 0
+          ? { displayPath: opts.displayPath }
+          : undefined,
+      );
     }
+    const display = opts?.display;
     const message = this.#deps.messages.append({
       conversationId,
       senderType: 'user',
       kind: 'text',
-      text: path ?? setupPathSkipText(this.#deps.settings.get().appLanguage),
+      text:
+        path === null
+          ? setupPathSkipText(this.#deps.settings.get().appLanguage)
+          : (typeof display === 'string' && display.length > 0 ? display : path),
       setupAnswer: true,
       batchId: `batch_${this.#deps.clock.now()}_${Math.random().toString(36).slice(2, 8)}`,
     });

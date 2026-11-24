@@ -64,6 +64,8 @@ infra/cloudflare/relay/public/sw.js
 infra/cloudflare/relay/public/icon.svg
 infra/cloudflare/relay/public/icon-256.png
 infra/cloudflare/relay/public/icon-512.png
+infra/cloudflare/relay/public/privacy.html
+infra/cloudflare/relay/public/terms.html
 
 # D96 WP6: wrangler dev 本地联调的运行时状态(workerd 持久化/临时构建产物)
 infra/cloudflare/relay/.wrangler/

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { t } from '$lib/i18n';
+  import { toast } from 'svelte-sonner';
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
   import { profilePush } from './profile-push.svelte';
@@ -8,7 +9,17 @@
    * 画像上行确认清单（T7 步骤 5，62.05 §1）：本机 profile.list 条目逐条勾选
    * ——`boundaries` 类与命中敏感规则的条目默认不勾选（列 sensitive 标记）；
    * 确认后经团队连接 team.profile.push 上行（只补不删）。仅桌面端点挂载。
+   * 上行成功即关闭（结果用 toast 反馈），不让用户误以为还有未完成的事务。
    */
+
+  async function confirm(): Promise<void> {
+    const result = await profilePush.confirm();
+    if (result !== null) {
+      toast.success(
+        t('team.profilePushResult', { added: result.added, skipped: result.skipped }),
+      );
+    }
+  }
 </script>
 
 <Dialog.Root open={profilePush.open} onOpenChange={(open) => !open && profilePush.close()}>
@@ -65,22 +76,13 @@
       </ul>
     {/if}
 
-    {#if profilePush.lastResult !== null}
-      <p class="mt-2 text-xs text-muted-foreground" data-testid="profile-push-result">
-        {t('team.profilePushResult', {
-          added: profilePush.lastResult.added,
-          skipped: profilePush.lastResult.skipped,
-        })}
-      </p>
-    {/if}
-
     <Dialog.Footer>
       <Button variant="outline" onclick={() => profilePush.close()} data-testid="profile-push-cancel">
         {t('contacts.cancel')}
       </Button>
       <Button
         disabled={profilePush.pushing || profilePush.items.every((item) => !item.checked)}
-        onclick={() => void profilePush.confirm()}
+        onclick={() => void confirm()}
         data-testid="profile-push-confirm"
       >
         {profilePush.pushing ? t('team.profilePushPushing') : t('team.profilePushConfirm')}

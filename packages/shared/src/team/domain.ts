@@ -253,8 +253,14 @@ export const teamBotViewSchema = z.strictObject({
   canEdit: z.boolean(),
   /** Caller may delete (same rule as edit, B-1). */
   canDelete: z.boolean(),
-  /** Bound default work path (member-plane options, B-10). */
-  workdirPath: z.string().min(1).optional(),
+  /**
+   * Bound default work path (2026-11 工作 paths 重构)：opaque option key +
+   * display name only — host paths never leave the server (B-10). `workdirKey`
+   * follows the `teamWorkdirOptionSchema` key grammar (admin:/member:/bot:)
+   * and can be sent back to `team.bots.update` verbatim.
+   */
+  workdirKey: z.string().min(1).optional(),
+  workdirName: z.string().min(1).optional(),
   setupState: teamBotSetupStateSchema.optional(),
 });
 export type TeamBotView = z.infer<typeof teamBotViewSchema>;
@@ -278,25 +284,34 @@ export type TeamBotProfilePatch = z.infer<typeof teamBotProfilePatchSchema>;
 
 /**
  * Patch for `team.bots.update` and the profile seed for `team.bots.create`:
- * the profile sub-fields plus the default work path. `workdirPath` must be in
- * the caller's allowed option set (WORKDIR_NOT_ALLOWED otherwise, B-10).
+ * the profile sub-fields plus the default work path. `workdirKey` must be in
+ * the caller's option set (`team.bots.workdirOptions`, opaque key — host
+ * paths never travel the member plane; WORKDIR_NOT_ALLOWED otherwise, B-10).
  */
 export const teamBotPatchSchema = teamBotProfilePatchSchema.extend({
-  workdirPath: z.string().min(1).optional(),
+  workdirKey: z.string().min(1).optional(),
 });
 export type TeamBotPatch = z.infer<typeof teamBotPatchSchema>;
 
 /**
- * One selectable work path (`team.bots.workdirOptions`, B-10): admin-enabled
- * roots (`source:'admin'`) ∪ the member's own workdirs subtree (`source:
- * 'member'`, mkdir allowed inside). Paths are server-realpath canonical
- * forms; members never browse the free filesystem.
+ * One selectable work path (`team.bots.workdirOptions`, B-10). OPAQUE KEYS +
+ * display names only — server host paths never leave the server (2026-11 工作
+ * 路径重构：成员面不向普通成员暴露服务器目录结构). `key` is sent back verbatim
+ * in `team.bots.update` / `create` / `workdirMkdir` / `answerSetupPath`:
+ * - `admin:<wrtId>` — an enabled registered preset root (directly selectable);
+ * - `member:<rel>` — a directory under the caller's own subtree
+ *   (`<userRoot>/<memberId>/<rel>`); `member:` alone is the subtree root.
  */
 export const teamWorkdirOptionSchema = z.strictObject({
-  path: z.string().min(1),
-  /** Display label (root name or directory name). */
+  key: z.string().min(1),
+  /** Display label (preset root name / directory name). */
   name: z.string(),
   source: z.enum(['admin', 'member']),
+  /**
+   * Member-tree parent key (`null` = top level under the caller's own root);
+   * absent for admin presets. Drives the renderer's tree browser.
+   */
+  parentKey: z.string().nullable().optional(),
 });
 export type TeamWorkdirOption = z.infer<typeof teamWorkdirOptionSchema>;
 

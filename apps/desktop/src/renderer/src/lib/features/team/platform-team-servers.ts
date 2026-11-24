@@ -15,7 +15,14 @@ export interface TeamServerAccountEntry {
   remembered: boolean;
 }
 
-export type TeamServerStatus = 'idle' | 'connecting' | 'connected' | 'unauthenticated' | 'error';
+export type TeamServerStatus =
+  | 'idle'
+  | 'connecting'
+  | 'connected'
+  | 'unauthenticated'
+  | 'error'
+  /** 连续多次重试未果（桥仍后台退避重试，服务器恢复后自愈回 connected）。 */
+  | 'unreachable';
 
 export interface TeamServerEntry {
   serverHash: string;
@@ -31,6 +38,8 @@ export interface TeamServerProbeResult {
   kind: 'team' | 'personal' | 'unknown';
   authenticated?: boolean;
   member?: { id: string; displayName: string };
+  /** 失败 / 未识别时的可读原因（网络错误文本、HTTP 状态等）。 */
+  detail?: string;
 }
 
 export interface TeamServersApi {

@@ -85,7 +85,7 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
     kind: 'anchor',
     id: 'team-server-connection',
     reason:
-      'T5「团队服务器」连接卡（62.08 §3 桌面 P0 过渡）：桌面专属入口（platform.openTeamServer），服务器清单与凭据存主进程 team-servers.json（safeStorage），不入设置目录（62.03 §5——开源设置目录不扩展）',
+      'T5/T7「团队服务器」连接卡（62.08 §3 桌面融合视图）：桌面专属入口（platform.teamServers），服务器清单与凭据存主进程 team-servers.json（safeStorage），不入设置目录（62.03 §5——开源设置目录不扩展）',
   },
   {
     kind: 'settings-section',

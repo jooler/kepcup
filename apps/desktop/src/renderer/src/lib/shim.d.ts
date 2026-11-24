@@ -44,13 +44,6 @@ declare global {
         /** 对话里 @ 本地文件/文件夹：只返回路径与类型，不上传文件字节。 */
         selectLocalPath(): Promise<{ path: string; kind: 'file' | 'folder' } | null>;
         /**
-         * T5「连接团队服务器」（platform.openTeamServer，README 固定契约）：另起一个
-         * 远程模式壳进程加载团队服务器的 web 构建。桌面 preload 专属；web 垫片
-         * （web-shim.ts）不提供此方法——可选字段，调用方按端点隐藏入口之外仍判空
-         * 兜底（旧构建 / 类型删漏时不炸）。
-         */
-        openTeamServer?(input: { url: string }): Promise<{ ok: true }>;
-        /**
          * T7 融合视图：团队服务器凭据 / 多账号 / 桥接启停（钉死契约——A2 按此消费；
          * 实现见 apps/desktop/src/main/team-servers.ts）。token / 密码永不出主进程：
          * 任何返回值都不含凭据字段。错误约定：reject 的 Error.message 为
@@ -91,6 +84,7 @@ declare global {
             kind: 'team' | 'personal' | 'unknown';
             authenticated?: boolean;
             member?: { id: string; displayName: string };
+            detail?: string;
           }>;
           onChanged(cb: () => void): () => void;
         };

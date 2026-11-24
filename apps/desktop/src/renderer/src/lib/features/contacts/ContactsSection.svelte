@@ -32,6 +32,7 @@
   import { canRequestFriend, friends as friendsStore } from '$lib/features/team/friends.svelte';
   // 成员面 Bot（B4 子域 B）：store 与编辑框是子域 A 的契约交付物。
   import { loadTeamBots, teamBotsOf } from '$lib/features/team/team-bots.svelte';
+  import { openTeamBotChat } from '$lib/features/team/team-open';
   import TeamBotEditDialog from '$lib/features/team/TeamBotEditDialog.svelte';
   import type { SourceId } from '$lib/rpc/connections.svelte';
   import MemberAvatar from '$lib/features/team/MemberAvatar.svelte';
@@ -252,6 +253,33 @@
     shell.closeSettings();
     if (isArchivedConversation(project)) await chat.restoreConversation(project.id);
     await chat.select(project.id);
+  }
+
+  // --- 桌面融合来源的 Bot / 项目组 / 我（62.01 S04、62.04 §1） -------------------
+  // 通讯录的团队栏不只有好友：可见服务端 Bot 与团队项目组也要与成员并列。
+  // 团队会话必须经该来源连接打开（conversations.openDirect / chat.select ref）。
+
+  async function openTeamBotCard(source: SourceId, bot: Bot): Promise<void> {
+    shell.closeSettings();
+    if (!(await openTeamBotChat(source, bot.id))) {
+      toast.error(t('team.rosterOpenFailed'));
+    }
+  }
+
+  async function openTeamProjectCard(source: SourceId, project: Conversation): Promise<void> {
+    shell.closeSettings();
+    await chat.select({ source, id: project.id });
+  }
+
+  /** 团队来源的自我会话（S07）：点开自己的备忘 / 文件中转。 */
+  async function openTeamSelf(source: SourceId): Promise<void> {
+    shell.closeSettings();
+    const ref = await contacts.openTeamDm(source);
+    if (ref === null) {
+      toast.error(t('team.rosterOpenFailed'));
+      return;
+    }
+    await chat.select(ref);
   }
 
   async function removeProject(project: Conversation): Promise<void> {
@@ -726,6 +754,11 @@
   <!-- 桌面融合视图的团队名册（T7，62.04 §1 双源名册）：每个已融合服务器一
        栏，与 web 成员栏同构；断开时「未连接」占位、不伪造数据。 -->
   {#each teamSlices as slice (slice.serverHash)}
+    {@const source = `team:${slice.serverHash}` as SourceId}
+    {@const teamBots = slice.connected ? slice.bots : []}
+    {@const teamProjects = slice.connected
+      ? slice.conversations.filter((conversation) => conversation.type === 'project')
+      : []}
     <section
       class="space-y-3"
       data-testid={`contacts-team-${slice.serverHash}`}
@@ -734,7 +767,125 @@
       <h3 class="text-sm font-medium">
         {t('contacts.friendsTitle', { server: slice.serverName || slice.serverHash })}
       </h3>
-      {@render friendsLane(`team:${slice.serverHash}` as SourceId)}
+
+      <!-- 「我」：团队成员栏顶部固定，点开自我会话（S07）。 -->
+      {#if slice.connected && slice.self !== null}
+        <ul class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <li>
+            <button
+              type="button"
+              class="flex w-full items-center gap-3 rounded-xl border p-4 text-left transition-colors hover:bg-accent/40"
+              onclick={() => void openTeamSelf(source)}
+              data-testid={`contacts-team-self-${slice.serverHash}`}
+            >
+              <MemberAvatar
+                name={slice.self.displayName}
+                avatar={slice.self.avatar ?? null}
+                state={slice.self.state}
+                class="size-10"
+              />
+              <div class="min-w-0">
+                <p class="truncate text-sm font-medium">{slice.self.displayName}</p>
+                <p class="truncate text-xs text-muted-foreground">{t('contacts.selfEntry')}</p>
+              </div>
+            </button>
+          </li>
+        </ul>
+      {/if}
+
+      {@render friendsLane(source)}
+
+      <!-- 可见服务端 Bot（62.01 S04）：与好友卡并列，带「团队」徽标。 -->
+      {#if teamBots.length > 0}
+        <h4
+          class="pt-1 text-xs font-medium text-muted-foreground"
+          data-testid={`contacts-team-bots-title-${slice.serverHash}`}
+        >
+          {t('contacts.botsTitleTeam', { server: slice.serverName || slice.serverHash })}
+        </h4>
+        <ul class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {#each teamBots as bot (bot.id)}
+            <li
+              class="flex flex-col gap-3 rounded-xl border p-4 transition-colors hover:bg-accent/40"
+              data-testid={`team-bot-card-${slice.serverHash}-${bot.id}`}
+            >
+              <div class="flex items-center gap-3">
+                <BotAvatar
+                  botId={bot.id}
+                  name={bot.name}
+                  avatar={bot.avatar}
+                  accentColor={bot.accentColor ?? null}
+                  mask={bot.avatarMask}
+                  padding={bot.avatarPadding}
+                  class="size-10"
+                />
+                <div class="min-w-0">
+                  <p class="flex min-w-0 items-center gap-1 text-sm font-medium">
+                    <span class="truncate" data-testid="team-bot-card-name">{bot.name}</span>
+                    <span
+                      class="shrink-0 rounded-full bg-primary/10 px-1.5 text-[10px] text-primary"
+                      data-testid="team-badge"
+                      >{t('team.teamBadge')}</span
+                    >
+                  </p>
+                  <p class="truncate text-xs text-muted-foreground">{bot.bio}</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-1">
+                {@render chatAction(
+                  MessagesSquare,
+                  t('contacts.openChat'),
+                  () => void openTeamBotCard(source, bot),
+                  `team-bot-open-${slice.serverHash}-${bot.id}`,
+                )}
+              </div>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+
+      <!-- 团队项目组：与好友 / Bot 并列，带「团队」徽标。 -->
+      {#if teamProjects.length > 0}
+        <h4
+          class="pt-1 text-xs font-medium text-muted-foreground"
+          data-testid={`contacts-team-projects-title-${slice.serverHash}`}
+        >
+          {t('contacts.projectsTitleTeam', { server: slice.serverName || slice.serverHash })}
+        </h4>
+        <ul class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {#each teamProjects as project (project.id)}
+            <li
+              class="flex flex-col gap-3 rounded-xl border p-4 transition-colors hover:bg-accent/40"
+              data-testid={`team-project-card-${slice.serverHash}-${project.id}`}
+            >
+              <div class="flex items-center gap-3">
+                <ProjectAvatarStack members={project.memberPreviews ?? []} class="size-10" />
+                <div class="min-w-0">
+                  <p class="flex min-w-0 items-center gap-1 text-sm font-medium">
+                    <span class="truncate">{project.title ?? t('project.untitled')}</span>
+                    <span
+                      class="shrink-0 rounded-full bg-primary/10 px-1.5 text-[10px] text-primary"
+                      data-testid="team-badge"
+                      >{t('team.teamBadge')}</span
+                    >
+                  </p>
+                  {#if project.goal}
+                    <p class="truncate text-xs text-muted-foreground">{project.goal}</p>
+                  {/if}
+                </div>
+              </div>
+              <div class="flex items-center gap-1">
+                {@render chatAction(
+                  MessagesSquare,
+                  t('contacts.openProject'),
+                  () => void openTeamProjectCard(source, project),
+                  `team-project-open-${slice.serverHash}-${project.id}`,
+                )}
+              </div>
+            </li>
+          {/each}
+        </ul>
+      {/if}
     </section>
   {/each}
 

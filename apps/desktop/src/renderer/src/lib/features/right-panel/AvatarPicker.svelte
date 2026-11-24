@@ -33,7 +33,25 @@
   import BotPresetAvatar from '$lib/avatars/BotPresetAvatar.svelte';
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
 
-  let { bot, open = $bindable() }: { bot: Bot; open?: boolean } = $props();
+  let {
+    bot,
+    open = $bindable(),
+    updateProfile,
+  }: {
+    bot: Bot;
+    open?: boolean;
+    /**
+     * Profile 保存口覆盖（右栏成员面编辑传 persistProfile：所有者 Bot 走
+     * team.bots.update——core bots.update 在服务器上是 bot-edit 拒绝面）；缺省
+     * contacts.update（本机链路）。签名与 contacts.update 一致（id / 新
+     * profile / base 三方合并基线）。
+     */
+    updateProfile?: (
+      id: string,
+      profile: Bot['profile'],
+      base: Bot['profile'] | null,
+    ) => Promise<void>;
+  } = $props();
 
   const shapeLabel = (id: string): string => t(`avatars.shape.${id}` as MessageKey);
   const colorLabel = (id: string): string => t(`avatars.color.${id}` as MessageKey);
@@ -91,7 +109,8 @@
       // 必须先 snapshot 成纯数据，否则 postMessage 直接抛错。base = 这份写入前的
       // profile：core 三方合并，没改的字段（如模型）不会被盖回去。
       const base = $state.snapshot(bot.profile) as Bot['profile'];
-      await contacts.update(
+      const update = updateProfile ?? contacts.update;
+      await update(
         bot.id,
         {
           ...base,

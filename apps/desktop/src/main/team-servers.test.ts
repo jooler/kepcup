@@ -582,23 +582,33 @@ describe('健康检查 probe（添加流程第一步）', () => {
   it('404 = 配对模式个人服务器（不是团队服务器）', async () => {
     harness.fetchMock.mockResolvedValue(jsonResponse(404, { error: 'not found' }));
     const result = await harness.host.probe({ url: URL_A });
-    expect(result).toEqual({ reachable: true, kind: 'personal' });
+    expect(result).toEqual({ reachable: true, kind: 'personal', detail: 'HTTP 404' });
   });
 
-  it('非 JSON 响应（别的 web 服务占着端口）= unknown', async () => {
+  it('非 JSON 响应（别的 web 服务占着端口）= unknown，带 HTTP 状态', async () => {
     harness.fetchMock.mockResolvedValue({
       status: 200,
       ok: true,
       json: () => Promise.reject(new SyntaxError('Unexpected token < in JSON')),
     } as unknown as Response);
     const result = await harness.host.probe({ url: URL_A });
-    expect(result).toEqual({ reachable: true, kind: 'unknown' });
+    expect(result).toEqual({
+      reachable: true,
+      kind: 'unknown',
+      detail: 'HTTP 200：响应不是 JSON',
+    });
   });
 
-  it('网络错误（不可达）不抛错，按 reachable:false 返回', async () => {
-    harness.fetchMock.mockRejectedValue(new TypeError('fetch failed'));
+  it('网络错误（不可达）不抛错，按 reachable:false 返回并带原因', async () => {
+    harness.fetchMock.mockRejectedValue(
+      new TypeError('fetch failed', { cause: new Error('getaddrinfo ENOTFOUND team.example.com') }),
+    );
     const result = await harness.host.probe({ url: URL_A });
-    expect(result).toEqual({ reachable: false, kind: 'unknown' });
+    expect(result).toEqual({
+      reachable: false,
+      kind: 'unknown',
+      detail: 'fetch failed（getaddrinfo ENOTFOUND team.example.com）',
+    });
   });
 
   it('地址非法直接 INVALID_INPUT（不发起请求）', async () => {

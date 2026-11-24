@@ -6,7 +6,7 @@
  *
  * 这里只做解析与校验：主进程的接线（跳过 core / 窗口不挂 preload）在 index.ts，
  * 窗口加载与导航策略在 window.ts。T5（62.08 §3）：`KEPCUP_REMOTE_PROFILE`（服务器
- * 地址的稳定哈希，team-window.ts 的启动器写入）把多个团队服务器壳的 userData /
+ * 地址的稳定哈希，由外部启动器写入）把多个远程壳的 userData /
  * 单实例锁细分到各自 profile，与本机实例互不冲突。
  */
 
@@ -27,7 +27,7 @@ export interface RemoteModeTarget {
 
 /**
  * 服务器地址 → 稳定的 profile id（T5）：sha256 前 8 字节 hex（16 个字符）。纯函数，
- * 同一 URL 恒同一 id——启动器（team-window.ts）用它写 `KEPCUP_REMOTE_PROFILE`，
+ * 同一 URL 恒同一 id——外部启动器用它写 `KEPCUP_REMOTE_PROFILE`，
  * 子进程经 `resolveRemoteMode` 读回供 userData 分区。
  */
 export function remoteProfileHash(url: string): string {

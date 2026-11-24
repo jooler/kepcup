@@ -1,11 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { TeamBotView } from '@kepcup/shared';
+import type * as dialogsModule from './team-bot-dialogs.svelte';
 
 /**
- * 团队建 Bot / 编辑 Bot 对话框逻辑（member-bots B4 子域 A）：
- * - 创建：public 仅 canCreatePublicBot；配额满前置禁用；BOT_LIMIT_REACHED /
- *   WORKDIR_NOT_ALLOWED 错误码置 errorCode；成功路径不走禁用分支；
- * - 编辑：patch 组装（子结构整体替换、未碰字段以加载基线回填、workdirPath
- *   未改不进 patch）；转交目标不含自己；保存 / 转交 / 删除的错误码呈现。
+ * 团队编辑 Bot 对话框逻辑（member-bots B4 子域 A）：
+ * - 编辑：patch 组装（子结构整体替换、未碰字段以加载基线回填、workdirKey
+ *   未改不进 patch）；转交目标不含自己；保存 / 转交 / 删除的错误码呈现；
+ * - 团队版创建入口（bot-setup.createTeamBotConversational，2026-11「+」菜单
+ *   重构后由菜单直调，原创建对话框状态类已随组件移除）。
  *
  * connections / i18n 全 mock；状态类直测（无 DOM mount 基建）。
  */
@@ -90,71 +92,6 @@ beforeEach(() => {
   h.failWith = null;
 });
 
-describe('TeamCreateBotState（创建对话框）', () => {
-  it('默认 private；无 caps（旧服务端）= public 隐藏、不显配额、不禁用', async () => {
-    const { dialogs } = await freshModules();
-    const state = new dialogs.TeamCreateBotState('team:h1', { submit: async () => ({ ok: true }) });
-    expect(state.mode).toBe('private');
-    expect(state.publicAllowed).toBe(false);
-    expect(state.quota).toBeNull();
-    expect(state.quotaFull).toBe(false);
-    expect(state.createDisabled).toBe(false);
-  });
-
-  it('caps.canCreatePublicBot = true 时 public 档可用；配额满时 private 前置禁用', async () => {
-    const { dialogs, store } = await freshModules();
-    store.setTeamBotCapabilities('team:h1', { canCreatePublicBot: true, privateBotsUsed: 10, privateBotsLimit: 10 });
-    const state = new dialogs.TeamCreateBotState('team:h1', { submit: async () => ({ ok: true }) });
-    expect(state.publicAllowed).toBe(true);
-    expect(state.quota).toEqual({ used: 10, limit: 10 });
-    expect(state.quotaFull).toBe(true);
-    expect(state.createDisabled).toBe(true);
-    // public 档不受私有配额限制（服务端另行校验分组权限）。
-    state.mode = 'public';
-    expect(state.createDisabled).toBe(false);
-  });
-
-  it('名称超 50 字前置禁用；提交带 trim 后的名称与工作路径', async () => {
-    const { dialogs } = await freshModules();
-    const submits: Array<Record<string, unknown>> = [];
-    const state = new dialogs.TeamCreateBotState('team:h1', {
-      submit: async (input) => {
-        submits.push(input as unknown as Record<string, unknown>);
-        return { ok: true };
-      },
-    });
-    state.name = 'x'.repeat(51);
-    expect(state.nameInvalid).toBe(true);
-    expect(state.createDisabled).toBe(true);
-    await state.submit();
-    expect(submits).toHaveLength(0);
-
-    state.name = '  数据分析  ';
-    state.workdirPath = '/srv/projects';
-    expect(await state.submit()).toBe(true);
-    expect(submits[0]).toEqual({ mode: 'private', name: '数据分析', workdirPath: '/srv/projects' });
-  });
-
-  it('BOT_LIMIT_REACHED：errorCode 置码（对话框内联 limitReached），提交失败不关框', async () => {
-    const { dialogs } = await freshModules();
-    const state = new dialogs.TeamCreateBotState('team:h1', {
-      submit: async () => ({ ok: false, code: 'BOT_LIMIT_REACHED' }),
-    });
-    expect(await state.submit()).toBe(false);
-    expect(state.errorCode).toBe('BOT_LIMIT_REACHED');
-  });
-
-  it('mode=public 而权限被收回（caps 刷新后）：normalizeMode 回退 private', async () => {
-    const { dialogs, store } = await freshModules();
-    store.setTeamBotCapabilities('team:h1', { canCreatePublicBot: true, privateBotsUsed: 0, privateBotsLimit: 10 });
-    const state = new dialogs.TeamCreateBotState('team:h1', { submit: async () => ({ ok: true }) });
-    state.mode = 'public';
-    store.setTeamBotCapabilities('team:h1', { canCreatePublicBot: false, privateBotsUsed: 0, privateBotsLimit: 10 });
-    state.normalizeMode();
-    expect(state.mode).toBe('private');
-  });
-});
-
 describe('TeamBotEditState（编辑对话框）', () => {
   async function loadedState(overrides: Record<string, unknown> = {}) {
     const { dialogs } = await freshModules();
@@ -167,7 +104,8 @@ describe('TeamBotEditState（编辑对话框）', () => {
         canEdit: true,
         canDelete: true,
         setupState: 'ready',
-        workdirPath: '/data/members/mbr_me/workdirs/research',
+        workdirKey: 'member:research',
+        workdirName: 'research',
         ...overrides,
       },
     ];
@@ -187,7 +125,7 @@ describe('TeamBotEditState（编辑对话框）', () => {
     expect(state.modelOptions).toHaveLength(2);
   });
 
-  it('patch 组装：表单子结构整体发、未碰字段以基线回填、workdirPath 未改不进 patch', async () => {
+  it('patch 组装：表单子结构整体发、未碰字段以基线回填、workdirKey 未改不进 patch', async () => {
     const state = await loadedState();
     state.name = '  新名字 ';
     state.personality = '活泼';
@@ -201,13 +139,13 @@ describe('TeamBotEditState（编辑对话框）', () => {
     expect(patch.behavior).toEqual({ proactive: true, quiet_hours: null, max_proactive_per_day: null });
     // runtime 整体回发（model 为表单当前值，其余字段基线保留）。
     expect(patch.runtime).toMatchObject({ model: 'gpt-x', network_policy: 'open' });
-    expect('workdirPath' in patch).toBe(false);
+    expect('workdirKey' in patch).toBe(false);
   });
 
-  it('改选工作路径后 workdirPath 进 patch', async () => {
+  it('改选工作路径后 workdirKey 进 patch（opaque key 原样回传）', async () => {
     const state = await loadedState();
-    state.workdirPath = '/srv/projects';
-    expect(state.buildPatch().workdirPath).toBe('/srv/projects');
+    state.workdirKey = 'admin:wrt_9';
+    expect(state.buildPatch().workdirKey).toBe('admin:wrt_9');
   });
 
   it('名称清空：saveDisabled；保存失败置 saveError', async () => {
@@ -241,7 +179,7 @@ describe('TeamBotEditState（编辑对话框）', () => {
   });
 
   it('公共 Bot：isPrivate=false（无转交分区）；删除确认后调 team.bots.delete', async () => {
-    const state = await loadedState({ mode: 'public', workdirPath: '/srv/projects' });
+    const state = await loadedState({ mode: 'public', workdirKey: 'admin:wrt_1', workdirName: 'projects' });
     expect(state.isPrivate).toBe(false);
     state.confirmingDelete = true;
     h.failWith = null;
@@ -275,7 +213,10 @@ describe('团队版创建入口（bot-setup.createTeamBotConversational）', () 
       expect(h.calls.find((c) => c.method === 'conversations.openDirect')?.input).toEqual({ botId: 'bot_new' });
 
       h.failWith = { code: 'WORKDIR_NOT_ALLOWED' };
-      const failed = await createTeamBotConversational('team:h1', { mode: 'public', workdirPath: '/etc' });
+      const failed = await createTeamBotConversational('team:h1', {
+        mode: 'public',
+        workdirKey: 'admin:missing',
+      });
       expect(failed).toEqual({ ok: false, code: 'WORKDIR_NOT_ALLOWED' });
     } finally {
       vi.doUnmock('$lib/stores/chat.svelte');
@@ -283,5 +224,220 @@ describe('团队版创建入口（bot-setup.createTeamBotConversational）', () 
       vi.doUnmock('$lib/stores/contacts.svelte');
       vi.resetModules();
     }
+  });
+});
+
+describe('botPanelRemoveAction（Bot 详情面板「移除 Bot」成员面判定）', () => {
+  let dialogs: typeof dialogsModule;
+  beforeAll(async () => {
+    dialogs = await import('./team-bot-dialogs.svelte');
+  });
+
+  const OWNER_BOT: TeamBotView = {
+    id: 'bot_own',
+    name: '我的私有 Bot',
+    mode: 'private',
+    ownerMemberId: 'mbr_me',
+    canEdit: true,
+    canDelete: true,
+  };
+  const OTHER_PUBLIC: TeamBotView = {
+    id: 'bot_pub',
+    name: '他人的公共 Bot',
+    mode: 'public',
+    ownerMemberId: 'mbr_alice',
+    canEdit: false,
+    canDelete: false,
+  };
+  /** 切片读取桩：按 source 给 loaded / bots。 */
+  function sliceOf(slices: Record<string, { loaded: boolean; bots: TeamBotView[] }>) {
+    return (source: string) => slices[source] ?? { loaded: false, bots: [] };
+  }
+  type RemoveInput = Parameters<(typeof dialogsModule)['botPanelRemoveAction']>[0];
+  const base: Omit<RemoveInput, 'resolveSlice'> = {
+    teamActive: true,
+    conversationSource: 'local',
+    botId: 'bot_own',
+    systemButler: false,
+  };
+
+  it('非团队上下文：恒走本地链路（slice 内容不参与判定）', () => {
+    const resolveSlice = sliceOf({ local: { loaded: true, bots: [OWNER_BOT] } });
+    expect(
+      dialogs.botPanelRemoveAction({ ...base, teamActive: false, resolveSlice }),
+    ).toEqual({ kind: 'local' });
+  });
+
+  it('团队端点 + 所有者 Bot：team 动作，来源锁定 local', () => {
+    const resolveSlice = sliceOf({
+      local: { loaded: true, bots: [OWNER_BOT, OTHER_PUBLIC] },
+    });
+    expect(dialogs.botPanelRemoveAction({ ...base, resolveSlice })).toEqual({
+      kind: 'team',
+      source: 'local',
+      view: OWNER_BOT,
+    });
+  });
+
+  it('非所有者 / 非成员面 Bot（管理员共享）：隐藏该行', () => {
+    const resolveSlice = sliceOf({
+      local: { loaded: true, bots: [OTHER_PUBLIC] },
+    });
+    expect(
+      dialogs.botPanelRemoveAction({ ...base, botId: 'bot_pub', resolveSlice }),
+    ).toEqual({ kind: 'hidden' });
+    expect(
+      dialogs.botPanelRemoveAction({ ...base, botId: 'bot_admin_restricted', resolveSlice }),
+    ).toEqual({ kind: 'hidden' });
+  });
+
+  it('清单未解析：隐藏（不出现「点了没反应」的行）', () => {
+    const resolveSlice = sliceOf({});
+    expect(dialogs.botPanelRemoveAction({ ...base, resolveSlice })).toEqual({ kind: 'hidden' });
+  });
+
+  it('管家 / 无对话：恒隐藏', () => {
+    const resolveSlice = sliceOf({ local: { loaded: true, bots: [OWNER_BOT] } });
+    expect(dialogs.botPanelRemoveAction({ ...base, systemButler: true, resolveSlice })).toEqual({
+      kind: 'hidden',
+    });
+    expect(dialogs.botPanelRemoveAction({ ...base, botId: null, resolveSlice })).toEqual({
+      kind: 'hidden',
+    });
+  });
+
+  it('桌面融合：取当前对话的团队来源（本机对话仍走本地链路）', () => {
+    const resolveSlice = sliceOf({
+      'team:h1': { loaded: true, bots: [OWNER_BOT] },
+    });
+    expect(
+      dialogs.botPanelRemoveAction({
+        ...base,
+        teamActive: false,
+        conversationSource: 'team:h1',
+        resolveSlice,
+      }),
+    ).toEqual({ kind: 'team', source: 'team:h1', view: OWNER_BOT });
+    expect(
+      dialogs.botPanelRemoveAction({
+        ...base,
+        teamActive: false,
+        conversationSource: 'local',
+        resolveSlice,
+      }),
+    ).toEqual({ kind: 'local' });
+    // 该来源清单未解析 → 隐藏。
+    expect(
+      dialogs.botPanelRemoveAction({
+        ...base,
+        teamActive: false,
+        conversationSource: 'team:h2',
+        resolveSlice,
+      }),
+    ).toEqual({ kind: 'hidden' });
+  });
+});
+
+describe('botPanelEditAction（Bot 详情面板参数编辑的成员面判定）', () => {
+  let dialogs: typeof dialogsModule;
+  beforeAll(async () => {
+    dialogs = await import('./team-bot-dialogs.svelte');
+  });
+
+  const OWNER_BOT: TeamBotView = {
+    id: 'bot_own',
+    name: '我的私有 Bot',
+    mode: 'private',
+    ownerMemberId: 'mbr_me',
+    canEdit: true,
+    canDelete: true,
+    workdirKey: 'bot:bot_own',
+    workdirName: 'bot_own',
+  };
+  const OTHER_PUBLIC: TeamBotView = {
+    id: 'bot_pub',
+    name: '他人的公共 Bot',
+    mode: 'public',
+    ownerMemberId: 'mbr_alice',
+    canEdit: false,
+    canDelete: false,
+  };
+  /** 切片读取桩：按 source 给 loaded / bots。 */
+  function sliceOf(slices: Record<string, { loaded: boolean; bots: TeamBotView[] }>) {
+    return (source: string) => slices[source] ?? { loaded: false, bots: [] };
+  }
+  type EditInput = Parameters<(typeof dialogsModule)['botPanelEditAction']>[0];
+  const base: Omit<EditInput, 'resolveSlice'> = {
+    teamActive: true,
+    conversationSource: 'local',
+    botId: 'bot_own',
+  };
+
+  it('团队端点 + 所有者 Bot（canEdit）：team 动作，保存与工作路径改走 team.bots.update', () => {
+    const resolveSlice = sliceOf({ local: { loaded: true, bots: [OWNER_BOT, OTHER_PUBLIC] } });
+    expect(dialogs.botPanelEditAction({ ...base, resolveSlice })).toEqual({
+      kind: 'team',
+      source: 'local',
+      view: OWNER_BOT,
+    });
+  });
+
+  it('非所有者（canEdit=false）回退本地链路——服务端 bot-edit 拒绝面兜底', () => {
+    const resolveSlice = sliceOf({ local: { loaded: true, bots: [OTHER_PUBLIC] } });
+    expect(
+      dialogs.botPanelEditAction({ ...base, botId: 'bot_pub', resolveSlice }),
+    ).toEqual({ kind: 'local' });
+  });
+
+  it('清单未解析 / 非团队成员面 Bot / 无 botId：回退本地链路（面板行为不变）', () => {
+    const resolveSlice = sliceOf({});
+    expect(dialogs.botPanelEditAction({ ...base, resolveSlice })).toEqual({ kind: 'local' });
+    expect(
+      dialogs.botPanelEditAction({ ...base, botId: 'bot_local_only', resolveSlice: sliceOf({ local: { loaded: true, bots: [OWNER_BOT] } }) }),
+    ).toEqual({ kind: 'local' });
+    expect(dialogs.botPanelEditAction({ ...base, botId: null, resolveSlice })).toEqual({
+      kind: 'local',
+    });
+  });
+
+  it('非团队上下文与桌面融合：来源判定与 removeAction 同口径', () => {
+    const resolveSlice = sliceOf({ 'team:h1': { loaded: true, bots: [OWNER_BOT] } });
+    expect(
+      dialogs.botPanelEditAction({ ...base, teamActive: false, resolveSlice }),
+    ).toEqual({ kind: 'local' });
+    expect(
+      dialogs.botPanelEditAction({
+        ...base,
+        teamActive: false,
+        conversationSource: 'team:h1',
+        resolveSlice,
+      }),
+    ).toEqual({ kind: 'team', source: 'team:h1', view: OWNER_BOT });
+  });
+});
+
+describe('teamBotPatchOfProfile（右栏整份 Profile → team.bots.update patch）', () => {
+  it('六个子结构浅拷贝整体进 patch（服务端按子结构替换 + 三方合并）', async () => {
+    const { teamBotPatchOfProfile } = await import('./team-bot-dialogs.svelte');
+    const profile = {
+      identity: { name: '甲', bio: '简介' },
+      persona: { personality: '沉稳', tone: '', style: '', values: '', sample_dialogues: '' },
+      role: { expertise: '测试', responsibilities: '' },
+      boundaries: ['不聊政治'],
+      behavior: { proactive: true, quiet_hours: null, max_proactive_per_day: null },
+      runtime: { model: 'p/m1', network_policy: 'open' },
+    } as unknown as Parameters<typeof teamBotPatchOfProfile>[0];
+    const patch = teamBotPatchOfProfile(profile);
+    expect(patch).toEqual({
+      identity: { name: '甲', bio: '简介' },
+      persona: profile.persona,
+      role: profile.role,
+      boundaries: ['不聊政治'],
+      behavior: profile.behavior,
+      runtime: profile.runtime,
+    });
+    // 浅拷贝：改 patch 不回写原 profile。
+    patch.boundaries?.push('另一条');
+    expect(profile.boundaries).toEqual(['不聊政治']);
   });
 });

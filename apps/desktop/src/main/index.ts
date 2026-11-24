@@ -40,7 +40,6 @@ import { isOpenablePreviewLinkUrl } from './apps-ui-policy';
 import { CoreHost, type CoreProcessState } from './core-host';
 import { createMainWindow } from './window';
 import { resolveRemoteMode, type RemoteModeTarget } from './remote-mode';
-import { openTeamServer } from './team-window';
 import { TeamServers, writeTeamServersState } from './team-servers';
 import { TeamCacheService } from './team-cache/service';
 import { openTeamSocket } from './team-bridge';
@@ -483,17 +482,6 @@ function bootstrap(): void {
     // persisted onboarding setting).
     onboardingVisible: __KEPCUP_TEST_HOOKS__ ? process.env.KEPCUP_ONBOARDING !== 'off' : true,
   }));
-
-  // T5 步骤 5:「连接团队服务器」(platform.openTeamServer {url},web 端不实现)——另起一个
-  // 远程模式壳进程加载团队服务器的 web 构建;同一 profile 已有实例时,子进程经对方
-  // 的单实例锁自然退出并由对方聚焦窗口。入参校验(地址规则)在 team-window 内,
-  // 非法地址走 rejected promise 由渲染层卡片显示。
-  ipcMain.handle('platform:openTeamServer', (_event, input: unknown) => {
-    const url = (input as { url?: unknown } | null)?.url;
-    if (typeof url !== 'string') throw new Error('invalid url');
-    openTeamServer(url);
-    return { ok: true as const };
-  });
 
   // T7 步骤 1:融合视图的凭据与多账号管理 + WS 桥(team-servers.ts / team-bridge.ts)。
   // 懒初始化在模块内:状态文件只在首个 add/login 时创建,连接只在显式 connect 时
@@ -1096,10 +1084,10 @@ if (process.env.KEPCUP_HOME) {
 // 远程模式与本地实例并存：独立 userData 让单实例锁、localStorage（clientId /
 // 显示名 / 草稿缓冲）与登录 Cookie 都不和本地桌面互相抢占——同一台机器上可以
 // 同时开「本地壳」和「远端壳」当两个客户端测试协作（design 57）。
-// T5 步骤 5（62.08 §3）：带 KEPCUP_REMOTE_PROFILE（team-window 启动器写的地址
-// 哈希）时再细分到 <userData>/remote/<profile>——多个团队服务器窗口与本地实例
-// 互不抢占单实例锁；手工启动的远程壳（无 profile）沿用既有 remote 分区，默认
-// 行为不变。必须在请求单实例锁之前设置。
+// T5 步骤 5（62.08 §3）：带 KEPCUP_REMOTE_PROFILE（外部启动器写的地址哈希）
+// 时再细分到 <userData>/remote/<profile>——多个远程壳与本地实例互不抢占单实例
+// 锁；手工启动的远程壳（无 profile）沿用既有 remote 分区，默认行为不变。必须在
+// 请求单实例锁之前设置。
 if (remoteMode !== null) {
   const remoteLeaf =
     remoteMode.profile === null ? 'remote' : join('remote', remoteMode.profile);

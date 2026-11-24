@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
-import { RELAY_MAX_FRAME_BYTES } from '@kepcup/shared';
+import { MEMBER_RPC_MAX_FRAME_BYTES } from '@kepcup/shared';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   TeamServerBridge,
@@ -193,6 +193,79 @@ describe('TeamServerBridge 编排', () => {
     expect(port1.posted).toEqual([{ id: 1, result: 'ok' }]);
   });
 
+  it('排队帧超龄（>60s）不被冲放：陈旧写不重放，open 后的新帧照发', async () => {
+    const socket = fakeSocket();
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    const port1 = new FakePort();
+    const port2 = new FakePort();
+    const bridge = new TeamServerBridge(
+      {
+        createChannel: () => ({ port1, port2 }) as BridgeChannel,
+        postPort: () => {},
+        openSocket: async () => {
+          await gate;
+          return socket;
+        },
+        fetch: (async () => ({ status: 200 })) as unknown as typeof fetch,
+      },
+      () => {},
+    );
+    bridge.connect(HASH, { url: URL_, token: 't' });
+    // WS 未 open：帧入队；随后推进假时钟越过 TTL（模拟服务器长时间不可达）。
+    port1.deliver({ id: 1, method: 'stale.write' });
+    await vi.advanceTimersByTimeAsync(61_000);
+    releaseGate();
+    await vi.advanceTimersByTimeAsync(0);
+    // 超龄帧丢弃，不冲放。
+    expect(socket.sent).toEqual([]);
+    // open 后的新帧照常直发。
+    port1.deliver({ id: 2, method: 'fresh.read' });
+    expect(socket.sent).toEqual(['{"id":2,"method":"fresh.read"}']);
+  });
+
+  it('排队帧超量（>200）：丢最旧保内存有界，较新的帧按序冲放', async () => {
+    const socket = fakeSocket();
+    const port1 = new FakePort();
+    const port2 = new FakePort();
+    const bridge = new TeamServerBridge(
+      {
+        createChannel: () => ({ port1, port2 }) as BridgeChannel,
+        postPort: () => {},
+        openSocket: async () => socket,
+        fetch: (async () => ({ status: 200 })) as unknown as typeof fetch,
+      },
+      () => {},
+    );
+    bridge.connect(HASH, { url: URL_, token: 't' });
+    for (let id = 1; id <= 201; id += 1) port1.deliver({ id });
+    await vi.advanceTimersByTimeAsync(0);
+    // 最旧的 id=1 被挤掉，其余 200 条按序冲放。
+    expect(socket.sent).toHaveLength(200);
+    expect(JSON.parse(socket.sent[0]!)).toEqual({ id: 2 });
+    expect(JSON.parse(socket.sent.at(-1)!)).toEqual({ id: 201 });
+  });
+
+  it('进入 unreachable 清空排队帧：恢复后不冲放陈旧帧，恢复后的新帧照发', async () => {
+    const f = makeBridge(['fail', 'fail', 'fail', 'ok']);
+    f.bridge.connect(HASH, { url: URL_, token: 'tok-1' });
+    await vi.advanceTimersByTimeAsync(0); // 第 1 次失败 → error
+    f.channels[0]!.port1.deliver({ id: 1 });
+    await vi.advanceTimersByTimeAsync(1000); // 第 2 次失败 → error
+    f.channels[0]!.port1.deliver({ id: 2 });
+    await vi.advanceTimersByTimeAsync(2000); // 第 3 次失败 → unreachable，队列清空
+    expect(f.statuses.at(-1)?.[1]).toBe('unreachable');
+    await vi.advanceTimersByTimeAsync(4000); // 第 4 次重试握手成功
+    expect(f.statuses.at(-1)?.[1]).toBe('connected');
+    // error 窗口排队的帧全是孤儿：恢复后不重放（渲染层已同步拒掉这些调用）。
+    expect(f.openLog[3]!.socket.sent).toEqual([]);
+    // 恢复后的新帧照常直发。
+    f.channels[0]!.port1.deliver({ id: 3 });
+    expect(f.openLog[3]!.socket.sent).toEqual(['{"id":3}']);
+  });
+
   it('意外断开 → error + 退避重试（whoami 200 → 重连）；静默重连不换 port', async () => {
     const f = makeBridge(['ok', 'ok']);
     f.bridge.connect(HASH, { url: URL_, token: 'tok-1' });
@@ -252,6 +325,31 @@ describe('TeamServerBridge 编排', () => {
     expect(f.openLog).toHaveLength(2); // 退避翻倍为 2s，1s 处仍未重试
     await vi.advanceTimersByTimeAsync(1000);
     expect(f.openLog).toHaveLength(3); // 2s 处重试成功
+    expect(f.statuses.at(-1)?.[1]).toBe('connected');
+  });
+
+  it('连续 3 次失败 → unreachable（UI 显示「服务器不可用」）；后台重试不再闪 connecting，恢复即 connected', async () => {
+    const f = makeBridge(['fail', 'fail', 'fail', 'fail', 'ok']);
+    f.bridge.connect(HASH, { url: URL_, token: 'tok-1' });
+    // 前 3 次（~0s / 1s / 3s）是「正在试」的诚实窗口：connecting ↔ error。
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.statuses.map(([, s]) => s)).toEqual(['connecting', 'error']);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(f.statuses.at(-1)?.[1]).toBe('error');
+    await vi.advanceTimersByTimeAsync(2000);
+    // 第 3 次失败：进入 unreachable 稳态。
+    expect(f.statuses.at(-1)?.[1]).toBe('unreachable');
+    expect(f.statuses.filter(([, s]) => s === 'unreachable')).toHaveLength(1);
+
+    // 此后后台重试保持静默：不再翻回 connecting（标签不闪），失败也不重复报。
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(f.statuses.filter(([, s]) => s === 'connecting')).toHaveLength(3);
+    expect(f.statuses.filter(([, s]) => s === 'unreachable')).toHaveLength(1);
+    expect(f.openLog).toHaveLength(4);
+
+    // 服务器恢复：下一次后台重试握手成功 → connected（自愈，无需用户干预）。
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(f.openLog).toHaveLength(5);
     expect(f.statuses.at(-1)?.[1]).toBe('connected');
   });
 
@@ -562,8 +660,20 @@ describe('openTeamSocket（真实本地 WS 服务器）', () => {
     socket.close(1000);
   });
 
+  it('http(s) 地址按 ws(s) 处理（主进程桥直接传服务器 URL）', async () => {
+    const socket = await openTeamSocket(`http://127.0.0.1:${echo.port}/rpc`, {
+      authorization: 'Bearer tok-http',
+    });
+    const texts: string[] = [];
+    socket.on({ onText: (text) => texts.push(text), onClose: () => {} });
+    expect(echo.lastHeaders['authorization']).toBe('Bearer tok-http');
+    socket.send('{"id":7,"method":"team.bootstrap"}');
+    await vi.waitFor(() => expect(texts).toEqual(['{"id":7,"method":"team.bootstrap"}']));
+    socket.close(1000);
+  });
+
   it('非法 scheme 直接拒绝', async () => {
-    await expect(openTeamSocket('http://127.0.0.1:1/rpc', {})).rejects.toThrow(/ws:\/\//);
+    await expect(openTeamSocket('ftp://127.0.0.1:1/rpc', {})).rejects.toThrow(/team socket url/);
   });
 
   // --- 协议违规与帧边界（raw 服务器注入违规帧；605 审查清单 A.1） ----------------
@@ -592,7 +702,7 @@ describe('openTeamSocket（真实本地 WS 服务器）', () => {
     });
     writeRawFrame(lastSocket(raw), {
       opcode: 0x1,
-      lengthOverride: RELAY_MAX_FRAME_BYTES + 1,
+      lengthOverride: MEMBER_RPC_MAX_FRAME_BYTES + 1,
       payload: Buffer.from('partial'),
     });
     await vi.waitFor(() => expect(closed).toBe(1009));
@@ -673,7 +783,7 @@ describe('openTeamSocket（真实本地 WS 服务器）', () => {
       onClose: (code) => (closed = code),
     });
     // 每片 ≤ 单帧上限（各自通过帧头检查），合计 > 上限 → 消息级拒收。
-    const half = Math.floor(RELAY_MAX_FRAME_BYTES / 2) + 1024;
+    const half = Math.floor(MEMBER_RPC_MAX_FRAME_BYTES / 2) + 1024;
     const big = Buffer.alloc(half, 0x61);
     writeRawFrame(lastSocket(raw), { opcode: 0x1, fin: false, payload: big });
     writeRawFrame(lastSocket(raw), { opcode: 0x0, fin: true, payload: big });

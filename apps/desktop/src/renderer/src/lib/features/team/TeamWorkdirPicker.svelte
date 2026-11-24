@@ -4,13 +4,14 @@
   import type { SourceId } from '$lib/rpc/connections.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
-  import { TeamWorkdirPickerState } from './team-workdir-picker.svelte';
+  import { TeamWorkdirPickerState, type MemberWorkdirNode } from './team-workdir-picker.svelte';
 
   /**
-   * 团队工作路径选择器（member-bots B-10）：`team.bots.workdirOptions` 的选项集
-   * 分组展示（admin 启用根 / 我的目录，带来源徽章），支持 `workdirMkdir` 在本人
-   * workdirs 子树内新建子文件夹。不做自由路径输入——成员永不浏览任意 FS；
-   * 越界 / 非法目录名以服务端错误码内联呈现（WORKDIR_NOT_ALLOWED / INVALID_INPUT）。
+   * 团队工作路径选择器（member-bots B-10；2026-11 工作路径重构）：`team.bots.
+   * workdirOptions` 的 opaque 选项集分组展示（预置根平铺 / 我的目录按 parentKey
+   * 组树），支持 `workdirMkdir` 在本人子树内新建子文件夹。只显示名称——服务器
+   * 真实路径不出服务端，成员永不浏览任意 FS；越界 / 非法目录名以服务端错误码
+   * 内联呈现（WORKDIR_NOT_ALLOWED / INVALID_INPUT）。
    */
   let {
     source,
@@ -20,10 +21,10 @@
     compact = false,
   }: {
     source: SourceId;
-    /** 当前选中路径（高亮行；null = 未选）。 */
+    /** 当前选中选项 key（高亮行；null = 未选）。 */
     selected?: string | null;
-    onSelect: (path: string) => void;
-    /** public Bot 只能落在管理根（B-10）：我的目录分组不展示。 */
+    onSelect: (key: string) => void;
+    /** public Bot 只能落在预置根（B-10）：我的目录分组不展示。 */
     adminOnly?: boolean;
     /** 紧凑形态（访谈目录卡内嵌）。 */
     compact?: boolean;
@@ -39,28 +40,31 @@
     void picker.refresh();
   });
 
+  /** 新建目录的挂点（parentKey；null = 子树根）。 */
   let mkdirFor = $state<string | null | undefined>(undefined);
   let mkdirName = $state('');
 
-  function startMkdir(parentPath: string | null): void {
-    mkdirFor = parentPath;
+  /** 新建表单的挂点名称（root = 子树根；目录树里找当前名称展示）。 */
+  const mkdirForName = $derived(
+    mkdirFor === null || mkdirFor === undefined
+      ? null
+      : (picker.options.find((option) => option.key === mkdirFor)?.name ?? mkdirFor),
+  );
+
+  function startMkdir(parentKey: string | null): void {
+    mkdirFor = parentKey;
     mkdirName = '';
     picker.mkdirError = null;
   }
 
   async function confirmMkdir(): Promise<void> {
-    const parent = mkdirFor === undefined ? undefined : mkdirFor;
-    const path = await picker.mkdir(mkdirName, parent ?? undefined);
-    if (path !== null) {
+    const parent = mkdirFor === undefined ? undefined : (mkdirFor ?? undefined);
+    const option = await picker.mkdir(mkdirName, parent);
+    if (option !== null) {
       mkdirFor = undefined;
       mkdirName = '';
-      onSelect(path);
+      onSelect(option.key);
     }
-  }
-
-  function pathLabel(path: string): string {
-    // 全路径可读性差：展示时截断前缀（title 里保留全路径）。
-    return path.length > 42 ? `…${path.slice(-41)}` : path;
   }
 </script>
 
@@ -83,32 +87,28 @@
           <p class="text-xs font-medium">{t('teamBot.workdirSource.admin')}</p>
         {/if}
         <ul class="space-y-0.5">
-          {#each picker.groups.admin as option (option.path)}
+          {#each picker.groups.admin as option (option.key)}
             <li>
               <button
                 type="button"
                 class="flex w-full items-center gap-2 rounded-lg border bg-background px-2.5 py-2 text-left text-sm transition-colors hover:border-primary/40 hover:bg-accent
-                  {selected === option.path ? 'border-primary/50 bg-accent' : ''}"
-                onclick={() => onSelect(option.path)}
-                title={option.path}
-                data-selected={selected === option.path ? 'true' : undefined}
-                data-testid={`team-workdir-option-${option.path}`}
+                  {selected === option.key ? 'border-primary/50 bg-accent' : ''}"
+                onclick={() => onSelect(option.key)}
+                data-selected={selected === option.key ? 'true' : undefined}
+                data-testid={`team-workdir-option-${option.key}`}
               >
                 <span
                   class="shrink-0 rounded-full bg-primary/10 px-1.5 text-[10px] text-primary"
                   data-testid="team-workdir-source-badge">{t('teamBot.workdirSource.admin')}</span
                 >
-                <span class="min-w-0 flex-1">
-                  <span class="block truncate">{option.name}</span>
-                  <span class="block truncate text-xs text-muted-foreground">{pathLabel(option.path)}</span>
-                </span>
+                <span class="min-w-0 flex-1 truncate">{option.name}</span>
               </button>
             </li>
           {/each}
         </ul>
       </div>
     {/if}
-    {#if !adminOnly && picker.groups.member.length > 0}
+    {#if !adminOnly}
       <div class="space-y-1">
         <p class="flex items-center gap-2 text-xs font-medium">
           {t('teamBot.workdirSource.member')}
@@ -122,40 +122,48 @@
             <FolderPlus class="size-3.5" aria-hidden="true" />
           </button>
         </p>
-        <ul class="space-y-0.5">
-          {#each picker.groups.member as option (option.path)}
-            <li class="flex items-center gap-1">
-              <button
-                type="button"
-                class="flex min-w-0 flex-1 items-center gap-2 rounded-lg border bg-background px-2.5 py-2 text-left text-sm transition-colors hover:border-primary/40 hover:bg-accent
-                  {selected === option.path ? 'border-primary/50 bg-accent' : ''}"
-                onclick={() => onSelect(option.path)}
-                title={option.path}
-                data-selected={selected === option.path ? 'true' : undefined}
-                data-testid={`team-workdir-option-${option.path}`}
-              >
-                <span
-                  class="shrink-0 rounded-full bg-emerald-500/10 px-1.5 text-[10px] text-emerald-600 dark:text-emerald-400"
-                  >{t('teamBot.workdirSource.member')}</span
-                >
-                <span class="min-w-0 flex-1">
-                  <span class="block truncate">{option.name}</span>
-                  <span class="block truncate text-xs text-muted-foreground">{pathLabel(option.path)}</span>
-                </span>
-              </button>
-              <button
-                type="button"
-                class="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                onclick={() => startMkdir(option.path)}
-                title={t('teamBot.workdirMkdirUnder', { name: option.name })}
-                aria-label={t('teamBot.workdirMkdirUnder', { name: option.name })}
-                data-testid={`team-workdir-mkdir-${option.path}`}
-              >
-                <FolderPlus class="size-3.5" aria-hidden="true" />
-              </button>
-            </li>
-          {/each}
-        </ul>
+        {#if picker.groups.member.length === 0}
+          <p class="text-xs text-muted-foreground" data-testid="team-workdir-member-empty">
+            {t('teamBot.workdirMemberEmpty')}
+          </p>
+        {:else}
+          {#snippet tree(nodes: MemberWorkdirNode[], depth: number)}
+            <ul class="space-y-0.5" style={`margin-inline-start: ${depth > 0 ? 14 : 0}px`}>
+              {#each nodes as node (node.option.key)}
+                <li class="flex items-center gap-1">
+                  <button
+                    type="button"
+                    class="flex min-w-0 flex-1 items-center gap-2 rounded-lg border bg-background px-2.5 py-2 text-left text-sm transition-colors hover:border-primary/40 hover:bg-accent
+                      {selected === node.option.key ? 'border-primary/50 bg-accent' : ''}"
+                    onclick={() => onSelect(node.option.key)}
+                    data-selected={selected === node.option.key ? 'true' : undefined}
+                    data-testid={`team-workdir-option-${node.option.key}`}
+                  >
+                    <span
+                      class="shrink-0 rounded-full bg-emerald-500/10 px-1.5 text-[10px] text-emerald-600 dark:text-emerald-400"
+                      >{t('teamBot.workdirSource.member')}</span
+                    >
+                    <span class="min-w-0 flex-1 truncate">{node.option.name}</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    onclick={() => startMkdir(node.option.key)}
+                    title={t('teamBot.workdirMkdirUnder', { name: node.option.name })}
+                    aria-label={t('teamBot.workdirMkdirUnder', { name: node.option.name })}
+                    data-testid={`team-workdir-mkdir-${node.option.key}`}
+                  >
+                    <FolderPlus class="size-3.5" aria-hidden="true" />
+                  </button>
+                </li>
+                {#if node.children.length > 0}
+                  {@render tree(node.children, depth + 1)}
+                {/if}
+              {/each}
+            </ul>
+          {/snippet}
+          {@render tree(picker.groups.member, 0)}
+        {/if}
       </div>
     {/if}
     {#if picker.groups.admin.length === 0 && (adminOnly || picker.groups.member.length === 0)}
@@ -166,7 +174,9 @@
     {#if mkdirFor !== undefined}
       <div class="space-y-1.5 rounded-lg border border-dashed p-2" data-testid="team-workdir-mkdir-form">
         <p class="text-xs text-muted-foreground">
-          {mkdirFor === null ? t('teamBot.workdirMkdirAtRoot') : t('teamBot.workdirMkdirUnder', { name: pathLabel(mkdirFor) })}
+          {mkdirFor === null
+            ? t('teamBot.workdirMkdirAtRoot')
+            : t('teamBot.workdirMkdirUnder', { name: mkdirForName ?? '' })}
         </p>
         <div class="flex items-center gap-2">
           <Input

@@ -70,12 +70,6 @@ const api = {
     selectLocalPath: (): Promise<{ path: string; kind: 'file' | 'folder' } | null> =>
       ipcRenderer.invoke('dialog:selectLocalPath'),
     /**
-     * T5 步骤 5「连接团队服务器」（platform.openTeamServer，62.08 §3）：另起一个
-     * 远程模式壳进程加载团队服务器的 web 构建。桌面专属——web 垫片不提供此方法。
-     */
-    openTeamServer: (input: { url: string }): Promise<{ ok: true }> =>
-      ipcRenderer.invoke('platform:openTeamServer', input),
-    /**
      * T7 融合视图：凭据 / 多账号 / 桥接启停（主进程 team-servers.ts 实现；token
      * 永不出主进程——任何返回值都不含 token / 密码）。错误约定：reject 的
      * Error.message 是 `JSON.stringify({code, message, details?})`（code 取 shared
@@ -116,8 +110,13 @@ const api = {
       disconnect: (input: { serverHash: string }): Promise<{ ok: true }> =>
         ipcRenderer.invoke('platform:teamServers:disconnect', input),
       /** 健康检查（whoami 探测）：添加流程第一步，确认服务可用再出现登录表单。 */
-      probe: (input: { url: string }): Promise<{ reachable: boolean; kind: 'team' | 'personal' | 'unknown'; authenticated?: boolean; member?: { id: string; displayName: string } }> =>
-        ipcRenderer.invoke('platform:teamServers:probe', input),
+      probe: (input: { url: string }): Promise<{
+        reachable: boolean;
+        kind: 'team' | 'personal' | 'unknown';
+        authenticated?: boolean;
+        member?: { id: string; displayName: string };
+        detail?: string;
+      }> => ipcRenderer.invoke('platform:teamServers:probe', input),
       /** 状态 / 名单变化（主进程推送 ipc 事件 team-servers:changed）；返回解绑函数。 */
       onChanged: (callback: () => void): (() => void) => {
         const listener = (): void => callback();

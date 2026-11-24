@@ -3,36 +3,95 @@ import type { SourceId } from '$lib/rpc/connections.svelte';
 import { teamBots } from './team-bots.svelte';
 
 /**
- * TeamWorkdirPicker 的表单逻辑（member-bots B4 子域 A）：`team.bots.workdirOptions`
- * 拉取 + 分组（admin 启用根 / 我的目录，B-10）+ `team.bots.workdirMkdir` 新建子
- * 文件夹（仅本人 workdirs 子树）。不做自由路径输入——成员永不浏览任意 FS，
- * 越界（WORKDIR_NOT_ALLOWED）与非法目录名（INVALID_INPUT）以错误码呈现。
+ * TeamWorkdirPicker 的表单逻辑（member-bots B4 子域 A；2026-11 工作路径重构）：
+ * `team.bots.workdirOptions` 拉取 opaque 选项（`admin:<wrtId>` 预置根 / `member:
+ * <rel>` 本人子树目录，服务器真实路径不出服务端）+ 分组（预置根平铺 / 我的
+ * 目录按 parentKey 组树）+ `team.bots.workdirMkdir` 在子树内新建目录。不做
+ * 自由路径输入——成员永不浏览任意 FS；越界（WORKDIR_NOT_ALLOWED）与非法目录
+ * 名（INVALID_INPUT）以错误码呈现。
  */
 
 export interface WorkdirGroups {
   admin: TeamWorkdirOption[];
-  member: TeamWorkdirOption[];
+  /** 本人子树（按 parentKey 组树；children 为空数组的节点渲染为叶子）。 */
+  member: MemberWorkdirNode[];
 }
 
-/** 纯分组（展示顺序：admin 根在前，我的目录在后，各自按 path 排序稳定）。 */
-export function groupWorkdirOptions(options: readonly TeamWorkdirOption[]): WorkdirGroups {
-  const admin = options.filter((option) => option.source === 'admin');
-  const member = options.filter((option) => option.source === 'member');
-  const byPath = (a: TeamWorkdirOption, b: TeamWorkdirOption): number =>
-    a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
-  return { admin: [...admin].sort(byPath), member: [...member].sort(byPath) };
+export interface MemberWorkdirNode {
+  option: TeamWorkdirOption;
+  children: MemberWorkdirNode[];
 }
 
 /**
- * mkdir 的 parent 合法性（客户端预检，服务端仍是边界）：admin 根下不可建；
- * member 目录与缺省（本人 workdirs 根）可建。parentPath 未给 = 子树根。
+ * 纯分组（2026-11）：admin 预置根平铺在前，member 子树按 parentKey 组树在后，
+ * 各自按 name / key 排序稳定。parentKey 缺失（旧服务端）或指向不存在节点的
+ * member 选项挂到顶层；挂接成环的边按防御深度剪断（环节点回挂顶层，环下
+ * 子树保持挂载）——服务端契约不产环，此处只保证目录不无声消失、组树不死循环。
+ */
+export function groupWorkdirOptions(options: readonly TeamWorkdirOption[]): WorkdirGroups {
+  const admin = options
+    .filter((option) => option.source === 'admin')
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.key < b.key ? -1 : 1));
+
+  const members = options.filter((option) => option.source === 'member');
+  // Plain Map/Set：纯函数局部的组树结构，不是响应式状态。
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
+  const nodes = new Map<string, MemberWorkdirNode>();
+  for (const option of members) nodes.set(option.key, { option, children: [] });
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
+  const parentOf = new Map(members.map((option) => [option.key, option.parentKey ?? null]));
+  /** 沿 parentKey 上溯：parent 链路回到 childKey 即成环。 */
+  const createsCycle = (childKey: string, parentKey: string): boolean => {
+    let current: string | null = parentKey;
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity
+    const walked = new Set<string>();
+    while (current !== null && !walked.has(current)) {
+      if (current === childKey) return true;
+      walked.add(current);
+      current = parentOf.get(current) ?? null;
+    }
+    return false;
+  };
+  const roots: MemberWorkdirNode[] = [];
+  for (const option of members) {
+    const node = nodes.get(option.key)!;
+    const parentKey = option.parentKey ?? null;
+    const parent = parentKey !== null ? nodes.get(parentKey) : undefined;
+    if (parentKey !== null && parent !== undefined && !createsCycle(option.key, parentKey)) {
+      parent.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+  const byName = (a: MemberWorkdirNode, b: MemberWorkdirNode): number =>
+    a.option.name < b.option.name ? -1 : a.option.name > b.option.name ? 1 : 0;
+  const sortTree = (list: MemberWorkdirNode[]): MemberWorkdirNode[] => {
+    const sorted = [...list].sort(byName);
+    for (const node of sorted) node.children = sortTree(node.children);
+    return sorted;
+  };
+  return { admin, member: sortTree(roots) };
+}
+
+/**
+ * mkdir 的 parent 合法性（客户端预检，服务端仍是边界）：parentKey 未给 = 子树根
+ * `member:`；否则必须出现在本人子树选项里（预置根 admin: 下不可建）。旧服务端
+ *（无 parentKey 字段）缺省挂顶层。
  */
 export function mkdirAllowedUnder(
   groups: WorkdirGroups,
-  parentPath: string | undefined,
+  parentKey: string | undefined,
 ): boolean {
-  if (parentPath === undefined) return true;
-  return groups.member.some((option) => option.path === parentPath);
+  if (parentKey === undefined) return true;
+  const flat: string[] = [];
+  const collect = (list: MemberWorkdirNode[]): void => {
+    for (const node of list) {
+      flat.push(node.option.key);
+      collect(node.children);
+    }
+  };
+  collect(groups.member);
+  return flat.includes(parentKey);
 }
 
 /** 目录名预检（与服务端同口径：非空、无分隔符 / 控制字符、非 `.` / `..`）。 */
@@ -57,7 +116,7 @@ export class TeamWorkdirPickerState {
   /** mkdir 失败的服务端错误码（WORKDIR_NOT_ALLOWED / INVALID_INPUT）。 */
   mkdirError = $state<string | null>(null);
   creating = $state(false);
-  /** public Bot 只能落在管理根（B-10）：为 true 时我的目录分组不展示。 */
+  /** public Bot 只能落在预置根（B-10）：为 true 时我的目录分组不展示。 */
   adminOnly = $state(false);
 
   source: SourceId;
@@ -78,7 +137,8 @@ export class TeamWorkdirPickerState {
   async refresh(): Promise<void> {
     this.loading = true;
     try {
-      this.options = await teamBots.workdirOptions(this.source);
+      const result = await teamBots.workdirOptions(this.source);
+      this.options = result;
       this.loaded = true;
       this.loadError = null;
     } catch (error) {
@@ -94,24 +154,24 @@ export class TeamWorkdirPickerState {
   }
 
   /**
-   * 在 `parentPath`（缺省 = 本人 workdirs 根）下新建子文件夹；成功后重拉选项并
-   * 返回新路径（调用方据此选中）。失败置 mkdirError、返回 null。
+   * 在 `parentKey`（缺省 = 本人子树根）下新建子目录；成功后重拉选项并返回新目录
+   * 的选项（调用方据此选中）。失败置 mkdirError、返回 null。
    */
-  async mkdir(name: string, parentPath?: string): Promise<string | null> {
+  async mkdir(name: string, parentKey?: string): Promise<TeamWorkdirOption | null> {
     if (!validMkdirName(name)) {
       this.mkdirError = 'INVALID_INPUT';
       return null;
     }
-    if (!mkdirAllowedUnder(this.groups, parentPath)) {
+    if (!mkdirAllowedUnder(this.groups, parentKey)) {
       this.mkdirError = 'WORKDIR_NOT_ALLOWED';
       return null;
     }
     this.creating = true;
     this.mkdirError = null;
     try {
-      const path = await teamBots.workdirMkdir(this.source, name.trim(), parentPath);
+      const option = await teamBots.workdirMkdir(this.source, name.trim(), parentKey);
       await this.refresh();
-      return path;
+      return option;
     } catch (error) {
       this.mkdirError = errorCodeOf(error);
       return null;

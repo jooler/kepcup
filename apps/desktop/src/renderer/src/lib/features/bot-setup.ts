@@ -105,10 +105,10 @@ export type TeamBotCreateResult =
   | { ok: false; code: string };
 
 /**
- * 团队版对话式建 Bot（TeamCreateBotDialog 的提交口）：`team.bots.create
- * { interview: true }` 在服务端建 Bot、开直聊会话并启动访谈（B-11）；客户端
- * 经同一来源幂等 openDirect 拿到该会话并跳转（团队来源切片）。错误码原样
- * 返回（对话框内联呈现 BOT_LIMIT_REACHED 等，不在这里 toast）。
+ * 团队版对话式建 Bot（2026-11「+」菜单重构后的直建入口，原 TeamCreateBotDialog
+ * 已随对话框一并移除）：`team.bots.create { interview: true }` 在服务端建 Bot、
+ * 开直聊会话并启动访谈（B-11）；客户端经同一来源幂等 openDirect 拿到该会话并
+ * 跳转（团队来源切片）。错误码原样返回（调用方 toast，BOT_LIMIT_REACHED 等）。
  */
 export async function createTeamBotConversational(
   source: SourceId,

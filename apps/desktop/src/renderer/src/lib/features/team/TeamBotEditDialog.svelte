@@ -152,21 +152,20 @@
           </select>
         </div>
 
-        <!-- workdir：当前绑定 + 选项集改绑（未改动不进 patch）。 -->
+        <!-- workdir：当前绑定 + 选项集改绑（未改动不进 patch；opaque key + 展示名，
+             服务器真实路径不出服务端——2026-11 工作路径重构）。 -->
         <div class="grid gap-1.5">
           <Label>{t('teamBot.workdirLabel')}</Label>
           <p class="text-xs text-muted-foreground" data-testid="team-bot-edit-workdir-current">
-            {state.workdirPath !== undefined
-              ? t('common.labelValue', { label: t('teamBot.workdirLabel'), value: state.workdirPath })
-              : t('teamBot.workdirCurrent', {
-                  path: state.currentWorkdirPath ?? t('teamBot.workdirUnbound'),
-                })}
+            {t('teamBot.workdirCurrent', {
+              path: state.currentWorkdirName ?? t('teamBot.workdirUnbound'),
+            })}
           </p>
           <TeamWorkdirPicker
             {source}
-            selected={state.workdirPath ?? null}
+            selected={state.workdirKey ?? null}
             adminOnly={state.view.mode !== 'private'}
-            onSelect={(path) => (state.workdirPath = path)}
+            onSelect={(key) => (state.workdirKey = key)}
           />
         </div>
 

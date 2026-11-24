@@ -45,7 +45,7 @@ describe('resolveRemoteMode', () => {
 });
 
 /**
- * T5 步骤 5（62.08 §3）：KEPCUP_REMOTE_PROFILE（team-window 启动器写的地址哈希）
+ * T5 步骤 5（62.08 §3）：KEPCUP_REMOTE_PROFILE（外部启动器写的地址哈希）
  * 解析出 profile id 供 userData 分区；没有它默认行为不变。
  */
 describe('resolveRemoteMode profile (KEPCUP_REMOTE_PROFILE)', () => {

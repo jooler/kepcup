@@ -44,7 +44,7 @@ export interface TeamBotsSlice {
 export interface TeamBotCreateInput {
   mode: 'private' | 'public';
   name?: string;
-  workdirPath?: string;
+  workdirKey?: string;
 }
 
 export interface TeamBotPatchInput {
@@ -54,7 +54,7 @@ export interface TeamBotPatchInput {
   boundaries?: string[];
   behavior?: Record<string, unknown>;
   runtime?: Record<string, unknown>;
-  workdirPath?: string;
+  workdirKey?: string;
 }
 
 function emptySlice(): TeamBotsSlice {
@@ -192,8 +192,8 @@ class TeamBotsState {
     const result = (await connections.get(source).callTeam('team.bots.create', {
       mode: input.mode,
       ...(name !== undefined && name.length > 0 ? { name } : {}),
-      ...(input.workdirPath !== undefined && input.workdirPath !== null
-        ? { workdirPath: input.workdirPath }
+      ...(input.workdirKey !== undefined && input.workdirKey !== null
+        ? { workdirKey: input.workdirKey }
         : {}),
       interview: true,
     })) as { bot: TeamBotView };
@@ -231,12 +231,31 @@ class TeamBotsState {
     return result.options;
   }
 
-  async workdirMkdir(source: SourceId, name: string, parentPath?: string): Promise<string> {
+  /**
+   * 在本人工作目录子树内新建目录（2026-11 工作路径重构：`team.bots.workdirMkdir`
+   * 返回新目录的 opaque 选项——服务器真实路径不出服务端；`parentKey` 缺省 =
+   * 子树根 `member:`）。越界 / 非法名以服务端错误码抛出
+   *（WORKDIR_NOT_ALLOWED / INVALID_INPUT）。
+   */
+  async workdirMkdir(
+    source: SourceId,
+    name: string,
+    parentKey?: string,
+  ): Promise<TeamWorkdirOption> {
     const result = (await connections.get(source).callTeam('team.bots.workdirMkdir', {
       name,
-      ...(parentPath !== undefined ? { parentPath } : {}),
-    })) as { path: string };
-    return result.path;
+      ...(parentKey !== undefined ? { parentKey } : {}),
+    })) as { option: TeamWorkdirOption };
+    return result.option;
+  }
+
+  /**
+   * 访谈目录卡作答（2026-11 工作路径重构）：`team.bots.answerSetupPath`——key
+   * 经服务端选项集解析，绑定真实路径但 transcript 只落展示名。「暂不设置」走
+   * 既有 core `bots.interview.answerPath { path: null }`（见 interview-routing）。
+   */
+  async answerSetupPath(source: SourceId, conversationId: string, key: string): Promise<void> {
+    await connections.get(source).callTeam('team.bots.answerSetupPath', { conversationId, key });
   }
 
   async modelOptions(source: SourceId): Promise<TeamModelOption[]> {

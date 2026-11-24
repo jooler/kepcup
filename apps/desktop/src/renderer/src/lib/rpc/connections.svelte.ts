@@ -3,6 +3,7 @@ import {
   type RpcClient,
   type TeamEventName,
   type TeamRpcMethodName,
+  type TeamServerStatus,
 } from '@kepcup/shared';
 import { core } from './client.svelte';
 import { domPortToTransport } from './port';
@@ -56,7 +57,13 @@ export function parseRefKey(key: string): ConversationRef | null {
   return { source, id };
 }
 
-export type TeamConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'offline';
+export type TeamConnectionState =
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting'
+  /** 平台确认连续重试未果：显示「服务器不可用」；数据面语义同 reconnecting。 */
+  | 'unreachable'
+  | 'offline';
 
 type EventHandler = (payload: unknown) => void;
 
@@ -155,10 +162,33 @@ class TeamConnection implements SourceConnection {
     for (const handler of this.#connectedHandlers) handler();
   }
 
-  /** 平台状态回落 / 端口关闭：销毁客户端；数据面保持「未连接」占位。 */
+  /**
+   * 平台状态回落：`reconnectExpected=true` 只标记「重连中」，**保留**当前端口与
+   * RPC 客户端——主进程桥的 WS 重连复用同一对 MessagePort，销毁客户端会让连接
+   * 永远回不来；`false`（用户断开 / 移除 / 认证失效）才销毁。
+   */
   markOffline(reconnectExpected: boolean): void {
-    this.#dropClient();
+    if (!reconnectExpected) this.#dropClient();
     this.status = reconnectExpected ? 'reconnecting' : 'offline';
+  }
+
+  /**
+   * 平台确认连续重试未果（`unreachable`）：UI 显示「服务器不可用」；同时拒掉
+   * 所有 pending 调用——它们的帧还排在桥的 outboundQueue 里，不拒的话调用方要
+   * 挂到 birpc 超时（30 分钟）才失败，恢复后还会被冲放成陈旧重复执行。桥保留
+   * 端口后台退避重试，服务器恢复后回 connected。
+   */
+  markUnreachable(): void {
+    this.status = 'unreachable';
+    this.#rpc?.rejectPending('team source unreachable');
+  }
+
+  /**
+   * 平台状态回到 connected（WS 重连成功，或「connecting 旧帧」晚于端口交付到达
+   * 的竞态）：端口已就绪就恢复数据面，不再依赖主进程重发端口。
+   */
+  markConnected(): void {
+    if (this.#port !== null) this.status = 'connected';
   }
 
   #dropClient(): void {
@@ -199,6 +229,14 @@ class TeamConnection implements SourceConnection {
 
   async call(method: string, input?: unknown): Promise<unknown> {
     if (!this.#rpc) throw new Error('team source not connected');
+    // unreachable 稳态（平台确认连续重试未果）不发新帧：主进程桥会把它排队到 WS
+    // 恢复后冲放——陈旧写操作会被延迟重复执行，排队时长也无界。这里快速失败，
+    // 调用方按错误提示、恢复 connected 后重试。reconnecting 不拦：它是瞬态标签
+    // （旧 connecting 帧晚到的竞态里 WS 实际是通的），瞬态窗口的帧由桥侧队列
+    // TTL / 容量兜底。
+    if (this.status === 'unreachable') {
+      throw new Error('team source unreachable');
+    }
     return this.#rpc.call(method, input === undefined ? undefined : $state.snapshot(input));
   }
 
@@ -237,6 +275,12 @@ class ConnectionsRegistry {
   readonly #connectAttempted = new Set<string>();
   /** 来源清单 / 连接集合变化的监听（contacts / chat 团队切片接线用）。 */
   readonly #sourcesListeners = new Set<() => void>();
+  /** 平台清单里最近一次的连接状态（onTeamOnline 的 WS 判据；端口就绪是另一判据）。 */
+  readonly #platformStatus = new Map<string, TeamServerStatus>();
+  /** 真·在线边沿订阅（按 serverHash）。 */
+  readonly #onlineListeners = new Map<string, Set<() => void>>();
+  /** 本会话已发过上线边沿的 hash（断开即移除，重新上线再触发）。 */
+  readonly #onlineNotified = new Set<string>();
 
   /**
    * 应用启动接线（App.svelte，与 core.start() 同一处）：桌面端点才激活；
@@ -317,6 +361,49 @@ class ConnectionsRegistry {
     return () => this.#sourcesListeners.delete(callback);
   }
 
+  /**
+   * 真·在线边沿订阅：平台 WS connected **且** 数据面端口就绪时触发一次；断开
+   * （任一条件丢失）后重新武装，重连成功再触发。
+   *
+   * 与 `onConnected` 的差别：桥在建连接时先把端口交付给渲染层、WS 在后台握手
+   * （team-bridge 的 outboundQueue 兜底排队），所以端口就绪 ≠ 服务器可达——
+   * 「服务器没起来也弹框」就是把它当在线用导致的。需要对端真正在线才能成功的
+   * 一次性动作（如画像启动同步）用本事件；数据面订阅 / 首拉仍用 `onConnected`。
+   *
+   * 服务器移除时监听保留（来源重加后原订阅继续有效，调用方按 hash 自行去重）。
+   */
+  onTeamOnline(serverHash: string, handler: () => void): () => void {
+    let set = this.#onlineListeners.get(serverHash);
+    if (set === undefined) {
+      // Plain Set: event registry, not UI state.
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity
+      set = new Set();
+      this.#onlineListeners.set(serverHash, set);
+    }
+    set.add(handler);
+    return () => set?.delete(handler);
+  }
+
+  /** 真·在线判定：平台状态 connected 且该来源的端口数据面就绪。 */
+  #isOnline(serverHash: string): boolean {
+    return (
+      this.#platformStatus.get(serverHash) === 'connected' &&
+      this.#teams.get(serverHash)?.status === 'connected'
+    );
+  }
+
+  /** 上线边沿检查（每次平台状态 / 端口绑定后调用）：就绪且未发过 → 触发一次。 */
+  #maybeNotifyOnline(serverHash: string): void {
+    if (!this.#isOnline(serverHash)) {
+      this.#onlineNotified.delete(serverHash);
+      return;
+    }
+    if (this.#onlineNotified.has(serverHash)) return;
+    this.#onlineNotified.add(serverHash);
+    const listeners = this.#onlineListeners.get(serverHash);
+    if (listeners !== undefined) for (const listener of [...listeners]) listener();
+  }
+
   #notifySourcesChanged(): void {
     for (const listener of this.#sourcesListeners) listener();
   }
@@ -330,6 +417,8 @@ class ConnectionsRegistry {
       const server = this.serverOf(serverHash);
       if (server?.activeMemberId != null) team.memberId = server.activeMemberId;
       team.bind(port);
+      // 端口晚于平台 connected 状态到达（窗口重载时 WS 是活的）：此刻补检在线边沿。
+      this.#maybeNotifyOnline(serverHash);
     }
     this.#notifySourcesChanged();
   }
@@ -340,6 +429,9 @@ class ConnectionsRegistry {
     this.#teams.clear();
     this.servers = [];
     this.#connectAttempted.clear();
+    this.#platformStatus.clear();
+    this.#onlineNotified.clear();
+    this.#onlineListeners.clear();
     this.#teamsRevision += 1;
     this.#started = false;
     this.#api = null;
@@ -362,15 +454,25 @@ class ConnectionsRegistry {
     this.servers = list;
     this.#notifySourcesChanged();
     for (const server of list) {
+      this.#platformStatus.set(server.serverHash, server.status);
       const fused = fusionPref().isEnabled(server.serverHash);
       const team = this.#teams.get(server.serverHash);
-      // 状态回落（登出 / 出错 / 主动断开）：销毁客户端，占位「未连接」。
-      if (team !== undefined && server.status !== 'connected') {
+      // 平台状态同步：connected 恢复数据面；connecting / error 标记重连中、
+      // unreachable 标记「服务器不可用」（桥复用同一端口）；idle / unauthenticated
+      // 才是真断开，销毁客户端。
+      if (team !== undefined) {
         team.memberId = server.activeMemberId;
-        if (team.status === 'connected') {
-          team.markOffline(server.status === 'connecting');
+        if (server.status === 'connected') {
+          team.markConnected();
+        } else if (server.status === 'idle' || server.status === 'unauthenticated') {
+          team.markOffline(false);
+        } else if (server.status === 'unreachable') {
+          team.markUnreachable();
+        } else {
+          team.markOffline(true);
         }
       }
+      this.#maybeNotifyOnline(server.serverHash);
       // 融合开着、已登录、还没连：请求一次连接（主进程负责实际的 WS 与重连）。
       if (
         fused &&
@@ -382,11 +484,14 @@ class ConnectionsRegistry {
         void api.connect({ serverHash: server.serverHash }).catch(() => undefined);
       }
     }
-    // 已移除的服务器：拆连接。
+    // 已移除的服务器：拆连接（在线边沿状态一并失效；监听保留——来源重加后
+    // 原订阅继续有效）。
     for (const hash of [...this.#teams.keys()]) {
       if (!list.some((entry) => entry.serverHash === hash)) {
         this.#teams.get(hash)?.markOffline(false);
         this.#teams.delete(hash);
+        this.#platformStatus.delete(hash);
+        this.#onlineNotified.delete(hash);
         this.#teamsRevision += 1;
       }
     }

@@ -30,6 +30,15 @@ export const REMOTE_DEVICE_ID_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
 /** 单帧（envelope + 密文）上限；超过由 DO 拒绝（§4.3 滥用防护）。 */
 export const RELAY_MAX_FRAME_BYTES = 512 * 1024;
 
+/**
+ * 成员面 RPC 单帧（单条 ws 消息）上限：member-hub 的 `maxPayload` 与桌面
+ * team-bridge 的入站校验共用。基线帧很小，但 `team.bots.templateImport` 要把
+ * `*.kepcup-bot.json` 模板内容（契约上限 4MB = BOT_TEMPLATE_LIMITS.jsonBytes）
+ * 随 RPC 上行，为其留足信封余量。仅放宽成员面——中转 relay 仍按
+ * `RELAY_MAX_FRAME_BYTES` 执行，两者互不引用。
+ */
+export const MEMBER_RPC_MAX_FRAME_BYTES = 6 * 1024 * 1024;
+
 /** 逻辑消息超过该字节数即按 `frag` 分片（§4.5）。 */
 export const RELAY_FRAGMENT_THRESHOLD_BYTES = 128 * 1024;
 

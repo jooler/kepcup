@@ -591,7 +591,9 @@ export const zhCN = {
   'contacts.openChat': '发消息',
   'contacts.delete': '删除 Bot',
   'contacts.botsTitle': 'Bot',
+  'contacts.botsTitleTeam': 'Bot · {server}',
   'contacts.projectsTitle': '项目组',
+  'contacts.projectsTitleTeam': '项目组 · {server}',
   'contacts.projectsEmpty': '还没有项目组',
   // 好友栏（62.04 D129v2 微信式通讯录）。
   'contacts.friendsTitle': '好友 · {server}',
@@ -703,6 +705,10 @@ export const zhCN = {
   'contacts.deleteGoReplace': '去更换',
   'contacts.deleteAgentNote':
     '该 Bot 使用外部智能体：KepCup 会尽量通知智能体删除对应会话，但智能体自己保存在本机的会话记录不归 KepCup 管理，需要时请在该智能体中自行清理。',
+  'contacts.deleteBodyTeam':
+    '该 Bot 及其对话、记忆、技能等全部数据将从团队服务器级联清理，历史消息保留为只读。此操作不可恢复。',
+  'contacts.deleteBodyTeamPublic':
+    '该 Bot 当前对全体成员开放：删除后其他成员将无法再访问此 Bot，其全部数据将从团队服务器级联清理。此操作不可恢复。',
   'rightPanel.title': 'Bot 详情',
   'rightPanel.placeholder': '此区域用于展示当前对话中 Bot 的信息。',
   'rightPanel.otherSection': '其它',
@@ -754,6 +760,9 @@ export const zhCN = {
   'botPanel.plugins.hint': '为这个 Bot 添加插件；没有添加的插件，其技能、工具与账号对它不可见。',
   'botPanel.plugins.empty': '还没有安装插件，可以去插件商店看看。',
   'botPanel.plugins.noneAdded': '还没有给这个 Bot 添加插件。',
+  'botPanel.plugins.teamManagedHint':
+    '团队服务器上的插件、技能、工具与邮箱账号由管理员在管理台绑定；这里只读展示，成员端不可修改。',
+  'botPanel.plugins.teamManagedEmpty': '管理员还没有给这个 Bot 绑定插件。',
   'botPanel.plugins.openStore': '插件商店',
   'botPanel.plugins.add': '添加插件',
   'botPanel.plugins.addTitle': '添加插件',
@@ -879,6 +888,12 @@ export const zhCN = {
   'botTemplate.importDone': '已从模板创建 Bot「{name}」',
   'botTemplate.importFailed': '导入失败：{reason}',
   'botTemplate.importSkillFailures': '{count} 个技能未安装成功：{names}',
+  // 团队模板导入弹框（2026-11「+」菜单重构：类型 → 文件两步；服务端直接建 Bot）
+  'botTemplate.teamImportModeHint': '先选择新 Bot 的类型，再选择模板文件。',
+  'botTemplate.teamImportFileHint': '选择 .kepcup-bot.json 模板文件，上传后将在服务端直接创建 Bot。',
+  'botTemplate.teamFileTooLarge': '模板文件超过 4MB 上限',
+  'botTemplate.teamFileInvalid': '文件不是合法的 Bot 模板（.kepcup-bot.json）',
+  'botTemplate.teamImporting': '导入中…',
   'locked.title': '无法访问数据',
   'locked.reason': '原因：{reason}',
   'locked.hint':
@@ -1834,6 +1849,7 @@ export const zhCN = {
   'approvals.skillPresetNote': '批准后将安装为公共技能（所有 Bot 可用），并立即用于当前任务。',
 
   'skills.tabHint': '技能以名字与描述进入提示词，脚本只在沙箱中执行。',
+  'skills.teamManagedHint': '技能由服务器管理员在管理台配置；成员端只读。',
   'skills.import': '导入技能',
   'skills.empty': '还没有安装任何技能。',
   'skills.compat.compatible': '兼容',
@@ -2582,25 +2598,35 @@ export const zhCN = {
   'settings.remoteTrustBoundaryHint':
     '配对设备等同坐在本机前的用户：可发起对话、批准审批、读写设置。撤销即时生效。',
   'settings.remotePairDevice': '连接手机…',
-  // T5：桌面「连接团队服务器」入口（另起远程模式进程窗口；web 端点隐藏）。
+  // T5/T7：桌面「连接团队服务器」入口（web 端点隐藏）。
   'settings.teamServerTitle': '团队服务器',
-  'settings.teamServerHint': '连接团队服务器，在新窗口打开团队版客户端。',
   // 「团队服务器」独立设置分组（连接远程执行中心；桌面端点动态插入）。
   'settings.navTeamServer': '团队服务器',
   'settings.teamServerSectionTitle': '团队服务器',
   'settings.teamServerSectionHint':
-    '连接团队服务器 = 连接远端的 KepCup：地址通过健康检查、登录成功后，服务端可见的 Bot 与项目组会出现在本窗口。',
+    '连接团队服务器 = 连接远端的 KepCup：地址通过健康检查、登录成功后，服务端可见的 Bot、项目组与联系人会出现在本窗口。',
   'settings.teamServerPlaceholder': 'https://team.example.com',
   'settings.teamServerConnect': '连接',
   'settings.teamServerConnecting': '连接中…',
-  'settings.teamServerOpening': '正在打开团队服务器窗口',
   'settings.teamServerInvalidUrl': '地址无效：应为 http(s) 地址，且不能内嵌用户名密码',
-  'settings.teamServerFailed': '无法打开团队服务器窗口',
+  'settings.teamServerFailed': '团队服务器操作失败',
   'settings.teamServerRecent': '最近使用',
   // 连接流程：先健康检查（whoami 探测），通过后才登记并出现登录表单。
+  'settings.teamServerProbing': '检查中…',
   'settings.teamServerProbeChecking': '正在检查服务可用性…',
   'settings.teamServerProbeUnreachable': '无法连接到该地址：请确认服务器已启动、地址与端口正确',
-  'settings.teamServerProbeNotTeamServer': '该地址可达，但不是 KepCup 团队服务器',
+  'settings.teamServerProbePersonal':
+    '该地址可达，但它是个人版服务器（配对模式），不是 KepCup 团队服务器。',
+  'settings.teamServerProbeUnknown':
+    '该地址可达，但响应不是 KepCup 团队服务器。请确认地址与端口指向团队服务器。',
+  'settings.teamServerProbeFailedTitle': '无法添加团队服务器',
+  'settings.teamServerProbeNotAdded': '未添加该服务器。修正地址后可以重试。',
+  'settings.teamServerAddFailed': '服务器可用，但保存配置失败。',
+  'settings.teamServerProbePassed': '服务器可用：{url}',
+  'settings.teamServerLoginStepHint':
+    '使用团队服务器上的成员账号登录。登录成功后，服务端的 Bot、项目组与联系人会出现在本窗口。',
+  'settings.teamServerLoginSuccess': '已登录 {url}',
+  'settings.teamServerAlreadyConnected': '该服务器已连接',
   'settings.remoteRevoked': '已撤销「{name}」的遥控权限',
   'settings.remotePairTitle': '连接手机',
   'settings.remotePairHint':
@@ -4243,10 +4269,10 @@ export const zhCN = {
   // --- T7 桌面融合视图与协作 UI（62-team-server §3 / §5）------------------------
   'team.teamBadge': '团队',
   'team.serverConnecting': '连接中…',
+  'team.serverUnavailable': '服务器不可用',
   'team.serverOffline': '未连接',
   'team.serverStatusConnected': '已连接',
   'team.serverStatusUnauthenticated': '未登录',
-  'team.serverStatusError': '连接出错',
   'team.serverStatusIdle': '待连接',
   'team.serverDisconnectedRows': '未连接——会话与名册暂不可用',
   'team.serverNoConversations': '暂无团队会话',
@@ -4254,7 +4280,6 @@ export const zhCN = {
   'team.serverKnownAccounts': '本设备登录过的账号：',
   'team.serverRetry': '重试连接',
   'team.fusionToggle': '在此窗口融合',
-  'team.openSeparateWindow': '在独立窗口打开',
   'team.logout': '登出',
   'team.removeServer': '移除服务器',
   'team.removeServerConfirm': '移除 {url}？本设备保存的该服务器账号与融合配置将一并删除，该服务器的本地缓存（全部成员分区）也会清除。',
@@ -4270,6 +4295,11 @@ export const zhCN = {
   'team.cacheClearFailed': '清除缓存失败，请稍后重试',
   'team.cacheLimitSaved': '附件缓存上限已保存',
   'team.serversEmpty': '尚未添加团队服务器。',
+  // 侧栏团队分组里的联系人（已连接但还没有会话的 Bot / 好友 / 项目组）。
+  'team.rosterBots': 'Bot',
+  'team.rosterMembers': '成员',
+  'team.rosterProjects': '项目组',
+  'team.rosterOpenFailed': '打开团队对话失败，请稍后重试',
   'team.loginUsername': '用户名',
   'team.loginPassword': '密码',
   'team.loginRemember': '记住我（凭据保存在系统钥匙串）',
@@ -4309,7 +4339,7 @@ export const zhCN = {
   'team.profilePushHint': '把本机画像条目上行到团队服务器（只补不删）；敏感条目默认不上行。',
   'team.profilePushRefresh': '刷新我的画像上行',
   'team.profilePushTitle': '上行我的画像',
-  'team.profilePushBody': '以下本机画像条目将上行到团队服务器，供团队 Bot 认识你。取消勾选的条目不会上行；上行只增不改、永不删除服务端条目。',
+  'team.profilePushBody': '以下本机画像条目将上行到团队服务器，供团队 Bot 认识你。取消勾选的条目不会上行；上行只增不改、永不删除服务端条目。本次确认后，之后上线会自动上行新增的非敏感条目（已拒绝的不再询问）。',
   'team.profilePushLoading': '正在读取本机画像…',
   'team.profilePushEmpty': '本机画像暂无条目。',
   'team.profilePushError': '读取或上行画像失败，请稍后重试。',
@@ -4342,7 +4372,7 @@ export const zhCN = {
   'team.resolutionFallback': '决议卡',
   'settings.navTeam': '团队',
   'team.settingsHint': '离开态、成员域免打扰、个人用量与画像上行。',
-  'settings.teamServerHintFusion': '在本窗口融合团队服务器：通讯录与会话列表长出团队条目；关闭后仍可用独立窗口打开。',
+  'settings.teamServerHintFusion': '在本窗口融合团队服务器：通讯录与会话列表长出团队条目；关闭后团队内容不在本窗口显示。',
   'settings.teamServerAdd': '添加',
   // --- D122 手机原生壳（docs/design/58-mobile-shell.md）------------------------
   'web.shell.disconnect': '断开',
@@ -4367,40 +4397,33 @@ export const zhCN = {
   'collab.clientNameCancel': '取消',
   'collab.clientNameSaved': '设备名称已更新',
   // --- 成员侧 Bot 面（member-bots B4；teamBot.* 前缀）-----------------------------
-  // + 面板团队分组（子域 B 消费）
+  // + 面板团队分组（2026-11「+」菜单重构：私有 / 公开两档直建入口，无对话框，
+  //   参数在访谈对话里逐步完善；公开档仅 canCreatePublicBot 时出现）
   'teamBot.groupSection': '团队',
-  'teamBot.createProjectAction': '新建团队项目组',
-  // 建_bot 对话框
-  'teamBot.createTitle': '在服务器上创建 Bot',
-  'teamBot.createDescription': '创建后进入对话式访谈，Bot 会自己提问完善设置。',
-  'teamBot.modeLabel': '可见范围',
+  'teamBot.createPrivateAction': '新建服务端 Bot - 私有',
+  'teamBot.createPublicAction': '新建服务端 Bot - 公开',
+  'teamBot.createProjectAction': '新建服务端项目组',
+  // 建 Bot 模式卡（模板导入弹框步骤 1 复用）
   'teamBot.modePrivate': '私有 Bot',
   'teamBot.modePrivateHint': '仅你可见、可修改，可转交给其他成员。',
   'teamBot.modePublic': '公共 Bot',
   'teamBot.modePublicHint': '全体成员可见可发消息，你作为创建者可修改、可删除。',
   'teamBot.publicUnavailable': '你没有创建公共 Bot 的权限（需管理员分组授权）。',
   'teamBot.quotaLabel': '私有 Bot {used}/{limit}',
-  'teamBot.nameLabel': '名称',
-  'teamBot.namePlaceholder': '给 Bot 起个名字（可选）',
-  'teamBot.nameOptional': '留空则进入访谈后由 Bot 自己问你。',
   'teamBot.nameTooLong': '名称最长 {max} 字',
   'teamBot.nameRequired': '名称不能为空',
   'teamBot.workdirLabel': '工作路径',
-  'teamBot.workdirAuto': '自动分配专属目录',
-  'teamBot.workdirAutoHint': '在服务器上为这个 Bot 分配一个专属工作目录。',
-  'teamBot.workdirAutoShort': '自动分配的专属目录',
   'teamBot.workdirCurrent': '当前：{path}',
   'teamBot.workdirUnbound': '未绑定',
   'teamBot.limitReached': '私有 Bot 数量已达上限（{used}/{limit}）',
   'teamBot.createFailed': '创建失败，请稍后重试',
-  'teamBot.creating': '创建中…',
-  'teamBot.createAction': '创建并开始访谈',
-  // 工作路径选择器
+  // 工作路径选择器（2026-11 重构：opaque 选项 + 展示名，服务器路径不出服务端）
   'teamBot.workdirLoading': '正在加载可选路径…',
   'teamBot.workdirLoadFailed': '可选路径加载失败',
   'teamBot.workdirEmpty': '暂无可选的工作路径',
   'teamBot.workdirSource.admin': '管理员',
   'teamBot.workdirSource.member': '我的目录',
+  'teamBot.workdirMemberEmpty': '还没有自建目录——点分组名旁的文件夹＋图标创建一个',
   'teamBot.workdirMkdirAtRoot': '在我的目录根下新建文件夹',
   'teamBot.workdirMkdirUnder': '在「{name}」下新建文件夹',
   'teamBot.workdirMkdirPlaceholder': '文件夹名称',
@@ -4429,12 +4452,6 @@ export const zhCN = {
   'teamBot.deleteConfirmYes': '确认删除',
   'teamBot.deleting': '删除中…',
   'teamBot.deleteFailed': '删除失败，请稍后重试',
-  // 我的私有 Bot 面板
-  'teamBot.myBots': '我的私有 Bot',
-  'teamBot.myBotsDescription': '点击 Bot 可修改参数、转交或删除。',
-  'teamBot.myBotsEmpty': '还没有私有 Bot，从「+」菜单创建一个。',
-  'teamBot.myBotsLoadFailed': '列表加载失败，请重试。',
-  'teamBot.statusInterviewing': '访谈中',
   // 团队项目组创建
   'teamBot.projectTitle': '新建团队项目组',
   'teamBot.projectDescription': '选一个 Bot 当负责人，再勾选成员（Bot 与团队成员）。',

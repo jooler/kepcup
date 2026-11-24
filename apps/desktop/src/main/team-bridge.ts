@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import type { Socket as NetSocket } from 'node:net';
-import { RELAY_MAX_FRAME_BYTES } from '@kepcup/shared';
+import { MEMBER_RPC_MAX_FRAME_BYTES } from '@kepcup/shared';
 
 /**
  * T7 步骤 1（62.08 §3 / T7 §2「团队连接走主进程桥接」）：融合视图的团队 WS 桥。
@@ -16,8 +16,9 @@ import { RELAY_MAX_FRAME_BYTES } from '@kepcup/shared';
  *
  * 重连：WS 意外关闭 → 指数退避；每次重试前先 `GET /api/auth/whoami`（Bearer）探测：
  * 200 → 重连，401/403 → `unauthenticated`（不自动重试，等用户重新 login），其它 /
- * 网络错误 → 继续退避重试。主动 disconnect / 服务器 remove 时关 WS、关双侧 port、
- * 状态 idle。
+ * 网络错误 → 继续退避重试；连续 UNREACHABLE_AFTER_ATTEMPTS 次失败 → `unreachable`
+ * （UI 显示「服务器不可用」，重试继续但不闪烁状态，服务器恢复后自愈回 connected）。
+ * 主动 disconnect / 服务器 remove 时关 WS、关双侧 port、状态 idle。
  *
  * 本模块不 import electron：MessageChannelMain 与 webContents 经构造注入（测试用
  * fake），不触碰应用单例。
@@ -38,6 +39,22 @@ const HANDSHAKE_TIMEOUT_MS = 15_000;
 const IDLE_TIMEOUT_MS = 90_000;
 /** 主动 close 后等待对端回 close 的宽限。 */
 const CLOSE_GRACE_MS = 3_000;
+/**
+ * 连续失败多少次后置 `unreachable`（UI 显示「服务器不可用」而非永远的
+ * 「连接中」）：前 3 次（~0s / 1s / 3s，指数退避）照常报 connecting / error
+ * ——这是「正在试」的诚实窗口；此后进入稳态 unreachable，重试继续但不再
+ * 翻回 connecting（不闪标签），握手成功才回到 connected（自愈无需用户干预）。
+ */
+const UNREACHABLE_AFTER_ATTEMPTS = 3;
+
+/**
+ * outboundQueue 的兜底约束：它只服务「端口已交付、WS 握手中」的短窗口（渲染层
+ * 对 reconnecting / unreachable 的调用会就地快速失败，正常不再入队）。这里仍
+ * 给每帧带入队时刻并限容量——渲染层语义漂移或竞态窗口漏进来的帧，超龄 / 超量
+ * 即丢弃，不陈旧重放、不无界占内存。
+ */
+const OUTBOUND_QUEUE_TTL_MS = 60_000;
+const OUTBOUND_QUEUE_MAX_FRAMES = 200;
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
@@ -72,9 +89,11 @@ export class TeamSocketHttpError extends Error {
 export type OpenTeamSocket = (url: string, headers: Record<string, string>) => Promise<TeamSocket>;
 
 /**
- * 连 `{url}/rpc` 形态的 WebSocket 端点。`url` 是完整 ws(s) URL；`headers` 会原样
- * 进入 Upgrade 请求头（主进程桥用它传 `Authorization: Bearer <token>`——Origin 头
- * 不需要：member-hub 只对 cookie 握手校验同源，Bearer 路径跳过）。
+ * 连 `{url}/rpc` 形态的 WebSocket 端点。`url` 是完整 ws(s) URL；也接受 http(s)
+ * ——主进程桥持有的服务器地址是 http(s)，这里统一换成 ws(s) 再握手，避免调用方
+ * 各自记一套协议。`headers` 会原样进入 Upgrade 请求头（主进程桥用它传
+ * `Authorization: Bearer <token>`——Origin 头不需要：member-hub 只对 cookie 握手
+ * 校验同源，Bearer 路径跳过）。
  */
 export const openTeamSocket: OpenTeamSocket = (url, headers) =>
   new Promise<TeamSocket>((resolve, reject) => {
@@ -85,8 +104,10 @@ export const openTeamSocket: OpenTeamSocket = (url, headers) =>
       reject(new Error(`team socket url invalid: ${url}`));
       return;
     }
+    if (parsed.protocol === 'http:') parsed.protocol = 'ws:';
+    else if (parsed.protocol === 'https:') parsed.protocol = 'wss:';
     if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') {
-      reject(new Error(`team socket url must be ws:// or wss://: ${url}`));
+      reject(new Error(`team socket url must be ws(s):// or http(s)://: ${url}`));
       return;
     }
     const secure = parsed.protocol === 'wss:';
@@ -229,14 +250,14 @@ function createSocket(socket: NetSocket, head: Buffer): TeamSocket {
       } else if (length === 127) {
         if (buffer.length < 10) return;
         const big = buffer.readBigUInt64BE(2);
-        if (big > BigInt(RELAY_MAX_FRAME_BYTES)) {
+        if (big > BigInt(MEMBER_RPC_MAX_FRAME_BYTES)) {
           failProtocol(1009, 'frame too large');
           return;
         }
         length = Number(big);
         offset = 10;
       }
-      if (length > RELAY_MAX_FRAME_BYTES) {
+      if (length > MEMBER_RPC_MAX_FRAME_BYTES) {
         failProtocol(1009, 'frame too large');
         return;
       }
@@ -265,7 +286,7 @@ function createSocket(socket: NetSocket, head: Buffer): TeamSocket {
         }
         fragments.push(payload);
         const total = fragments.reduce((sum, part) => sum + part.length, 0);
-        if (total > RELAY_MAX_FRAME_BYTES) {
+        if (total > MEMBER_RPC_MAX_FRAME_BYTES) {
           failProtocol(1009, 'message too large');
           return;
         }
@@ -379,10 +400,22 @@ export interface BridgeChannel {
   port2: BridgePortLike;
 }
 
-export type TeamConnectionStatus = 'idle' | 'connecting' | 'connected' | 'unauthenticated' | 'error';
+export type TeamConnectionStatus =
+  | 'idle'
+  | 'connecting'
+  | 'connected'
+  | 'unauthenticated'
+  | 'error'
+  | 'unreachable';
 
 /** whoami 探测结果：ok = 继续；unauthenticated = 401/403，终态不再重试；error = 继续。 */
 type ProbeResult = 'ok' | 'unauthenticated' | 'error';
+
+/** 排队帧（带入队时刻：冲放时丢弃超龄帧，只保留握手窗口内的短龄帧）。 */
+interface QueuedFrame {
+  data: unknown;
+  queuedAt: number;
+}
 
 interface BridgeConnection {
   serverHash: string;
@@ -390,8 +423,8 @@ interface BridgeConnection {
   token: string;
   socket: TeamSocket | null;
   port1: BridgePortLike | null;
-  /** WS 打开前渲染层发来的帧（open 后按序冲掉）。 */
-  outboundQueue: unknown[];
+  /** WS 打开前渲染层发来的帧（open 后按序冲掉；超龄帧丢弃）。 */
+  outboundQueue: QueuedFrame[];
   /** 连续失败次数（成功连接后清零）；指数退避的指数。 */
   attempts: number;
   retryTimer: ReturnType<typeof setTimeout> | null;
@@ -512,7 +545,12 @@ export class TeamServerBridge {
       }
       return;
     }
-    connection.outboundQueue.push(data);
+    connection.outboundQueue.push({ data, queuedAt: Date.now() });
+    if (connection.outboundQueue.length > OUTBOUND_QUEUE_MAX_FRAMES) {
+      // 丢最旧（调用方多为已放弃 / 已重试的陈旧请求），保证内存有界。
+      connection.outboundQueue.shift();
+      this.#deps.log?.(`bridge outbound queue overflow (${connection.serverHash}): dropped oldest frame`);
+    }
   }
 
   #setStatus(connection: BridgeConnection, status: TeamConnectionStatus): void {
@@ -529,7 +567,8 @@ export class TeamServerBridge {
       connection.attempts === 0
         ? Promise.resolve('ok' as const)
         : this.#probeWhoami(connection);
-    this.#setStatus(connection, 'connecting');
+    // unreachable 稳态下的后台重试不再翻回 connecting（UI 不闪「连接中」）。
+    if (connection.lastStatus !== 'unreachable') this.#setStatus(connection, 'connecting');
     probe
       .then((result) => {
         if (connection.stopped) return;
@@ -568,9 +607,14 @@ export class TeamServerBridge {
               },
             });
             this.#setStatus(connection, 'connected');
+            const now = Date.now();
             const queued = connection.outboundQueue;
             connection.outboundQueue = [];
-            for (const data of queued) this.#sendOrQueue(connection, data);
+            for (const frame of queued) {
+              // 超龄帧丢弃（陈旧写不重放；调用方的渲染层调用早已超时 / 失败）。
+              if (now - frame.queuedAt > OUTBOUND_QUEUE_TTL_MS) continue;
+              this.#sendOrQueue(connection, frame.data);
+            }
           });
       })
       .catch((error: unknown) => {
@@ -591,7 +635,16 @@ export class TeamServerBridge {
   #scheduleRetry(connection: BridgeConnection, why: string): void {
     if (connection.stopped) return;
     this.#deps.log?.(`bridge retry scheduled (${connection.serverHash}): ${why}`);
-    this.#setStatus(connection, 'error');
+    // 前 UNREACHABLE_AFTER_ATTEMPTS 次报 error（快速重试梯子进行中）；此后进入
+    // unreachable 稳态——显示「服务器不可用」，重试仍在后台按退避继续。
+    const next: TeamConnectionStatus =
+      connection.attempts + 1 >= UNREACHABLE_AFTER_ATTEMPTS ? 'unreachable' : 'error';
+    this.#setStatus(connection, next);
+    if (next === 'unreachable') {
+      // 进入稳态：队列里的帧全是孤儿（渲染层同步拒掉 pending 调用并停发新帧），
+      // 清空——不清的话 WS 恢复后会被冲放成陈旧重复执行。
+      connection.outboundQueue = [];
+    }
     const delay = backoffDelayMs(connection.attempts);
     connection.attempts += 1;
     connection.retryTimer = setTimeout(() => {

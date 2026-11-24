@@ -40,7 +40,7 @@ import {
  * 401 透传团队服务器口径 `INVALID_CREDENTIALS`）；JSON.parse 失败按通用错误处理。
  *
  * 本模块不 import electron：safeStorage / MessageChannelMain / webContents 发送
- * 均经构造注入（测试用 fake），先例 team-window.ts。
+ * 均经构造注入（测试用 fake）。
  */
 
 export interface SafeStorageLike {
@@ -145,6 +145,19 @@ export function normalizeTeamServerUrl(raw: string): string {
 /** `${url}/path` 拼接（规范化 url 可能带也可能不带尾斜杠）。 */
 function joinServerPath(url: string, path: string): string {
   return `${url.replace(/\/$/, '')}${path}`;
+}
+
+/**
+ * 健康检查失败原因（设置界面弹框展示）：fetch 的顶层 message 常常只有
+ * `fetch failed`，真正的 DNS / 连接错误在 `cause` 里——两层都带上。
+ */
+function probeErrorDetail(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const cause = (error as { cause?: unknown }).cause;
+  if (cause instanceof Error && cause.message.length > 0 && cause.message !== error.message) {
+    return `${error.message}（${cause.message}）`;
+  }
+  return error.message;
 }
 
 /** sha256(url) 前 16 hex——与 remoteProfileHash 同一实现（导出复用，勿造第二种）。 */
@@ -265,8 +278,8 @@ export class TeamServers {
       res = await this.#deps.fetch(joinServerPath(url, '/api/auth/whoami'), {
         signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
       });
-    } catch {
-      return { reachable: false, kind: 'unknown' };
+    } catch (error) {
+      return { reachable: false, kind: 'unknown', detail: probeErrorDetail(error) };
     }
     // 非 JSON 响应（别的 web 服务占着端口）视作不是 KepCup。
     let body: { member?: unknown; error?: unknown } | null;
@@ -275,7 +288,13 @@ export class TeamServers {
     } catch {
       body = null;
     }
-    if (body === null) return { reachable: true, kind: 'unknown' };
+    if (body === null) {
+      return {
+        reachable: true,
+        kind: 'unknown',
+        detail: `HTTP ${res.status}：响应不是 JSON`,
+      };
+    }
     const member = body.member as { id?: unknown; displayName?: unknown } | undefined;
     if (res.ok && typeof member?.id === 'string' && typeof member?.displayName === 'string') {
       return {
@@ -288,8 +307,10 @@ export class TeamServers {
     if ((res.status === 401 || res.status === 403) && typeof body.error === 'string') {
       return { reachable: true, kind: 'team', authenticated: false };
     }
-    if (res.status === 404) return { reachable: true, kind: 'personal' };
-    return { reachable: true, kind: 'unknown' };
+    if (res.status === 404) {
+      return { reachable: true, kind: 'personal', detail: 'HTTP 404' };
+    }
+    return { reachable: true, kind: 'unknown', detail: `HTTP ${res.status}` };
   }
 
   /** 删配置 + 删已存 token + 断开桥接。 */

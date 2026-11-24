@@ -5,6 +5,8 @@ import type {
 import {
   APP_METHODS,
   APP_RPC_METHODS,
+  BOT_TEMPLATE_FORMAT,
+  BOT_TEMPLATE_VERSION,
   TEAM_EVENT_NAMES,
   TEAM_RPC_METHODS,
   TEAM_SURFACE_IDS,
@@ -35,7 +37,7 @@ const APP_METHOD_NAMES_ARE_LITERAL: AppMethodName extends RpcMethodName
   : never = true;
 void APP_METHOD_NAMES_ARE_LITERAL;
 
-const METHOD_COUNT = 35; // README 固定契约清单逐项枚举（P0×5 + P1×6 + 好友层×7+拉黑×2 + P2×5）+ T7 名册读口 roster + 成员自助资料 updateSelf（2026-11 web 个人资料）+ 成员侧 Bot 面×8（B 方案 member-bots B1）；名字不得再改动。
+const METHOD_COUNT = 37; // README 固定契约清单逐项枚举（P0×5 + P1×6 + 好友层×7+拉黑×2 + P2×5）+ T7 名册读口 roster + 成员自助资料 updateSelf（2026-11 web 个人资料）+ 成员侧 Bot 面×8（B 方案 member-bots B1）+ 模板导入 templateImport（2026-11「+」菜单重构）+ 目录卡作答 answerSetupPath（2026-11 工作路径重构）；名字不得再改动。
 const EXPECTED_METHODS = [
   'team.bootstrap',
   'team.members.list',
@@ -72,6 +74,9 @@ const EXPECTED_METHODS = [
   'team.bots.workdirOptions',
   'team.bots.workdirMkdir',
   'team.bots.modelOptions',
+  'team.bots.templateImport',
+  // 2026-11 工作路径重构：成员面访谈目录卡作答（key 经选项集解析，真实路径不出服务端）。
+  'team.bots.answerSetupPath',
 ];
 
 const MBR = 'mbr_01ARZ3NDEKTSV4RRFFQ69G5FAV';
@@ -503,6 +508,7 @@ describe('team domain schemas', () => {
 // --- B 方案 member-bots（B1）：成员侧 Bot 面契约 --------------------------------
 
 describe('member bots plane (B 方案 B1)', () => {
+  // 2026-11 工作路径重构：视图带 opaque key + 展示名（服务器真实路径不出服务端）。
   const botView = {
     id: 'bot_01ARZ3NDEKTSV4RRFFQ69G5FAV',
     name: '阿贝',
@@ -510,7 +516,8 @@ describe('member bots plane (B 方案 B1)', () => {
     ownerMemberId: MBR,
     canEdit: true,
     canDelete: true,
-    workdirPath: '/srv/team/members/mbr_alice/workdirs/research',
+    workdirKey: 'member:research',
+    workdirName: 'research',
     setupState: 'ready',
   };
 
@@ -542,13 +549,13 @@ describe('member bots plane (B 方案 B1)', () => {
       create.input.safeParse({
         mode: 'public',
         name: '客服',
-        workdirPath: '/srv/team/workdirs/shared',
+        workdirKey: 'admin:wrt_shared',
         profile: { identity: { name: '客服' }, runtime: { model: 'gpt-4o' } },
       }).success,
     ).toBe(true);
-    // name ≤120；profile 是 teamBotPatch 的 profile 部分（不含 workdirPath）且外壳 strict。
+    // name ≤120；profile 是 teamBotPatch 的 profile 部分（不含 workdirKey）且外壳 strict。
     expect(create.input.safeParse({ mode: 'private', name: 'x'.repeat(121) }).success).toBe(false);
-    expect(create.input.safeParse({ mode: 'private', profile: { workdirPath: '/x' } }).success).toBe(
+    expect(create.input.safeParse({ mode: 'private', profile: { workdirKey: 'admin:x' } }).success).toBe(
       false,
     );
     expect(create.input.safeParse({ mode: 'private', sneaky: 1 }).success).toBe(false);
@@ -556,12 +563,12 @@ describe('member bots plane (B 方案 B1)', () => {
     expect(create.output.safeParse({ bot: botView }).success).toBe(true);
   });
 
-  it('update / delete / transfer io: patch strict with workdirPath, deleted literal true', () => {
+  it('update / delete / transfer io: patch strict with workdirKey, deleted literal true', () => {
     const update = teamRpcMethodSchemas['team.bots.update'];
     expect(
       update.input.safeParse({
         botId: 'bot_1',
-        patch: { persona: { personality: '耐心' }, workdirPath: '/srv/team/workdirs/shared' },
+        patch: { persona: { personality: '耐心' }, workdirKey: 'member:research' },
       }).success,
     ).toBe(true);
     expect(update.input.safeParse({ botId: 'bot_1', patch: { sneaky: 1 } }).success).toBe(false);
@@ -579,35 +586,105 @@ describe('member bots plane (B 方案 B1)', () => {
     ).toBe(true);
   });
 
-  it('workdir / model options and mkdir: source two-way, name ≤80, parentPath optional', () => {
+  it('workdir / model options and mkdir (2026-11 key 模型): source two-way, parentKey, name ≤80', () => {
     const options = teamRpcMethodSchemas['team.bots.workdirOptions'];
     expect(options.input.parse({})).toEqual({});
     expect(
       options.output.safeParse({
         options: [
-          { path: '/srv/team/workdirs/shared', name: '共享根', source: 'admin' },
-          { path: '/srv/team/members/mbr_alice/workdirs/w1', name: 'w1', source: 'member' },
+          { key: 'admin:wrt_1', name: '共享根', source: 'admin' },
+          { key: 'member:w1', name: 'w1', source: 'member', parentKey: 'member:' },
         ],
       }).success,
     ).toBe(true);
+    // 服务器路径绝不出现在选项里（key 是 opaque；带 path 的载荷一律拒）。
     expect(
-      options.output.safeParse({ options: [{ path: '/p', name: 'p', source: 'system' }] }).success,
+      options.output.safeParse({
+        options: [{ key: 'member:w1', name: 'w1', source: 'member', path: '/srv/x' }],
+      }).success,
+    ).toBe(false);
+    expect(
+      options.output.safeParse({ options: [{ key: 'member:p', name: 'p', source: 'system' }] })
+        .success,
     ).toBe(false);
     const mkdir = teamRpcMethodSchemas['team.bots.workdirMkdir'];
     expect(mkdir.input.safeParse({ name: '新目录' }).success).toBe(true);
     expect(mkdir.input.safeParse({ name: 'x'.repeat(81) }).success).toBe(false);
-    expect(mkdir.input.safeParse({ name: 'n', parentPath: '/srv/team/members/mbr_alice/workdirs', extra: 1 }).success).toBe(
+    expect(mkdir.input.safeParse({ name: 'n', parentKey: 'member:w1', extra: 1 }).success).toBe(
       false,
     );
-    expect(mkdir.output.safeParse({ path: '/srv/team/members/mbr_alice/workdirs/n' }).success).toBe(
-      true,
+    // 输出 = 新目录的 opaque 选项（不再是服务器路径）。
+    expect(
+      mkdir.output.safeParse({ option: { key: 'member:w1/n', name: 'n', source: 'member', parentKey: 'member:w1' } })
+        .success,
+    ).toBe(true);
+    expect(mkdir.output.safeParse({ path: '/srv/x/n' }).success).toBe(false);
+    // answerSetupPath（2026-11）：key 上行、okOutput 下行。
+    const answer = teamRpcMethodSchemas['team.bots.answerSetupPath'];
+    expect(answer.input.safeParse({ conversationId: 'conv_1', key: 'member:w1' }).success).toBe(true);
+    expect(answer.input.safeParse({ conversationId: 'conv_1', key: 'member:w1', sneaky: 1 }).success).toBe(
+      false,
     );
+    expect(answer.output.parse({ ok: true })).toEqual({ ok: true });
     const models = teamRpcMethodSchemas['team.bots.modelOptions'];
     expect(models.input.parse({})).toEqual({});
     expect(models.output.safeParse({ models: [{ id: 'gpt-4o', label: 'GPT-4o' }] }).success).toBe(
       true,
     );
     expect(models.output.safeParse({ models: [{ id: 'gpt-4o' }] }).success).toBe(false);
+  });
+
+  it('templateImport io: template obeys botTemplateSchema, mode closed enum, output carries skill results', () => {
+    const io = teamRpcMethodSchemas['team.bots.templateImport'];
+    const template = {
+      format: BOT_TEMPLATE_FORMAT,
+      version: BOT_TEMPLATE_VERSION,
+      exportedAt: 1_000_000,
+      profile: {
+        identity: { name: '模板Bot', bio: '来自模板' },
+        persona: { personality: '耐心', tone: '', style: '', values: '', sample_dialogues: '' },
+        role: { expertise: '排版', responsibilities: '' },
+        boundaries: [],
+        runtime: {
+          model: '',
+          light_model: '',
+          network_policy: 'open',
+          network_allowlist: [],
+          mcp_server_ids: [],
+          app_connection_ids: [],
+          browser_profile: '',
+          message_transport: '',
+          inkcop_agent_keys: [],
+          agent: { id: '', model: '', effort: '', permission: 'workspace', capabilities: null },
+        },
+        behavior: { proactive: true, quiet_hours: null, max_proactive_per_day: null },
+      },
+      skills: { authored: [], imported: [] },
+    };
+    // botProfileSchema 会补齐缺省字段（background_model 等），断言关键字段而非全量相等。
+    const parsed = io.input.parse({ mode: 'private', template });
+    expect(parsed.mode).toBe('private');
+    expect(parsed.template.profile.identity.name).toBe('模板Bot');
+    // mode 只收 private/public；外壳 strict；模板必须通过 botTemplateSchema。
+    expect(io.input.safeParse({ mode: 'restricted', template }).success).toBe(false);
+    expect(io.input.safeParse({ mode: 'private', template, sneaky: 1 }).success).toBe(false);
+    expect(io.input.safeParse({ mode: 'private', template: { ...template, version: 99 } }).success).toBe(
+      false,
+    );
+    expect(
+      io.input.safeParse({ mode: 'private', template: { ...template, profile: { identity: { name: '' } } } })
+        .success,
+    ).toBe(false);
+    // 输出：bot 视图 + 技能安装结果三件套（failed / skipped 明细）。
+    expect(
+      io.output.safeParse({
+        bot: botView,
+        installedSkills: [{ name: 'weekly-report', status: 'active' }],
+        failedSkills: [{ name: 'broken', reason: 'SKILL.md 缺失' }],
+        skippedImportedSkills: [{ name: 'deploy', sourceUrl: null }],
+      }).success,
+    ).toBe(true);
+    expect(io.output.safeParse({ bot: botView }).success).toBe(false);
   });
 
   it('bootstrap botCapabilities: additive optional block, absent on legacy payloads', () => {

@@ -623,7 +623,9 @@ export const enUS = {
   'contacts.openChat': 'Send message',
   'contacts.delete': 'Delete bot',
   'contacts.botsTitle': 'Bots',
+  'contacts.botsTitleTeam': 'Bots · {server}',
   'contacts.projectsTitle': 'Project groups',
+  'contacts.projectsTitleTeam': 'Project groups · {server}',
   'contacts.projectsEmpty': 'No project groups yet',
   // Friends lane (62.04 D129v2, WeChat-style contacts).
   'contacts.friendsTitle': 'Friends · {server}',
@@ -737,6 +739,10 @@ export const enUS = {
   'contacts.deleteGoReplace': 'Change lead',
   'contacts.deleteAgentNote':
     "This bot uses an external agent. KepCup will try to notify the agent to delete the corresponding sessions, but session records the agent stores locally are outside KepCup's control; clean them up in that agent if needed.",
+  'contacts.deleteBodyTeam':
+    "The Bot and all of its data (conversations, memory, skills, …) will be removed from the team server; conversation history stays read-only. This can't be undone.",
+  'contacts.deleteBodyTeamPublic':
+    "This Bot is visible to all members: after deletion other members will no longer be able to access it. All of its data will be removed from the team server. This can't be undone.",
   'rightPanel.title': 'Bot details',
   'rightPanel.placeholder': 'This area shows information about the bot in the current chat.',
   'rightPanel.otherSection': 'Other',
@@ -790,6 +796,9 @@ export const enUS = {
     'Add plugins to this bot; skills, tools and accounts of plugins you have not added stay invisible to it.',
   'botPanel.plugins.empty': 'No plugins installed yet — take a look at the plugin store.',
   'botPanel.plugins.noneAdded': 'No plugins added to this bot yet.',
+  'botPanel.plugins.teamManagedHint':
+    'On a team server, plugins, skills, tools and mailbox accounts are bound by an administrator in the console; this view is read-only for members.',
+  'botPanel.plugins.teamManagedEmpty': 'An administrator has not bound any plugins to this bot yet.',
   'botPanel.plugins.openStore': 'Plugin store',
   'botPanel.plugins.add': 'Add plugin',
   'botPanel.plugins.addTitle': 'Add plugins',
@@ -919,6 +928,14 @@ export const enUS = {
   'botTemplate.importDone': 'Bot "{name}" created from template',
   'botTemplate.importFailed': 'Import failed: {reason}',
   'botTemplate.importSkillFailures': '{count} skills were not installed: {names}',
+  // Team template import dialog (2026-11 "+" menu rework: mode → file two steps;
+  // the server creates the Bot directly)
+  'botTemplate.teamImportModeHint': 'Pick the new Bot’s type first, then choose the template file.',
+  'botTemplate.teamImportFileHint':
+    'Choose a .kepcup-bot.json template file; the Bot is created on the server right after upload.',
+  'botTemplate.teamFileTooLarge': 'The template file exceeds the 4MB limit',
+  'botTemplate.teamFileInvalid': 'The file is not a valid Bot template (.kepcup-bot.json)',
+  'botTemplate.teamImporting': 'Importing…',
   'locked.title': "Can't access data",
   'locked.reason': 'Reason: {reason}',
   'locked.hint':
@@ -1893,6 +1910,8 @@ export const enUS = {
     'Once approved, it will be installed as a public skill (available to all Bots) and used for the current task immediately.',
   'skills.tabHint':
     'Skills enter the prompt by name and description; scripts run only in the sandbox.',
+  'skills.teamManagedHint':
+    'Skills are configured by the server administrator in the console; this view is read-only.',
   'skills.import': 'Import skill',
   'skills.empty': 'No skills installed yet.',
   'skills.compat.compatible': 'Compatible',
@@ -2678,28 +2697,37 @@ export const enUS = {
   'settings.remoteTrustBoundaryHint':
     'A paired device acts like the user sitting at this desktop: it can chat, approve, and change settings. Revoking takes effect immediately.',
   'settings.remotePairDevice': 'Connect phone…',
-  // T5: desktop "connect team server" entry (spawns a remote-mode process
-  // window; hidden on web endpoints where platform.openTeamServer is absent).
+  // T5/T7: desktop "connect team server" entry (hidden on web endpoints).
   'settings.teamServerTitle': 'Team server',
-  'settings.teamServerHint': 'Connect to a team server and open the team client in a new window.',
   // "Team server" standalone settings group (remote execution center; inserted
   // dynamically on desktop endpoints only).
   'settings.navTeamServer': 'Team server',
   'settings.teamServerSectionTitle': 'Team server',
   'settings.teamServerSectionHint':
-    'Connecting a team server = connecting a remote KepCup: after the health check passes and you sign in, the server-side bots and project groups appear in this window.',
+    'Connecting a team server = connecting a remote KepCup: after the health check passes and you sign in, the server-side bots, project groups, and contacts appear in this window.',
   'settings.teamServerPlaceholder': 'https://team.example.com',
   'settings.teamServerConnect': 'Connect',
   'settings.teamServerConnecting': 'Connecting…',
-  'settings.teamServerOpening': 'Opening the team server window',
   'settings.teamServerInvalidUrl': 'Invalid address: must be http(s) without embedded credentials',
-  'settings.teamServerFailed': 'Could not open the team server window',
+  'settings.teamServerFailed': 'Team server operation failed',
   'settings.teamServerRecent': 'Recent',
   // Connection flow: health check (whoami probe) first; the login form appears
   // only after the service is confirmed reachable.
+  'settings.teamServerProbing': 'Checking…',
   'settings.teamServerProbeChecking': 'Checking service availability…',
   'settings.teamServerProbeUnreachable': 'Cannot reach this address: check that the server is running and the address/port are correct',
-  'settings.teamServerProbeNotTeamServer': 'The address is reachable, but it is not a KepCup team server',
+  'settings.teamServerProbePersonal':
+    'The address is reachable, but it is a personal server (pairing mode), not a KepCup team server.',
+  'settings.teamServerProbeUnknown':
+    'The address is reachable, but the response is not a KepCup team server. Check that the address and port point to the team server.',
+  'settings.teamServerProbeFailedTitle': 'Could not add the team server',
+  'settings.teamServerProbeNotAdded': 'The server was not added. Fix the address and try again.',
+  'settings.teamServerAddFailed': 'The server is reachable, but saving the configuration failed.',
+  'settings.teamServerProbePassed': 'Server available: {url}',
+  'settings.teamServerLoginStepHint':
+    'Sign in with a member account on the team server. After signing in, the server-side bots, project groups, and contacts appear in this window.',
+  'settings.teamServerLoginSuccess': 'Signed in to {url}',
+  'settings.teamServerAlreadyConnected': 'This server is already connected',
   'settings.remoteRevoked': 'Revoked remote access for "{name}"',
   'settings.remotePairTitle': 'Connect phone',
   'settings.remotePairHint':
@@ -4495,10 +4523,10 @@ export const enUS = {
   // --- T7 desktop fusion view & collaboration UI (62-team-server §3 / §5) --------
   'team.teamBadge': 'Team',
   'team.serverConnecting': 'Connecting…',
+  'team.serverUnavailable': 'Server unavailable',
   'team.serverOffline': 'Not connected',
   'team.serverStatusConnected': 'Connected',
   'team.serverStatusUnauthenticated': 'Signed out',
-  'team.serverStatusError': 'Connection error',
   'team.serverStatusIdle': 'Idle',
   'team.serverDisconnectedRows': 'Not connected — team chats and roster are unavailable',
   'team.serverNoConversations': 'No team conversations yet',
@@ -4506,7 +4534,6 @@ export const enUS = {
   'team.serverKnownAccounts': 'Accounts used on this device:',
   'team.serverRetry': 'Retry connection',
   'team.fusionToggle': 'Fuse in this window',
-  'team.openSeparateWindow': 'Open in separate window',
   'team.logout': 'Sign out',
   'team.removeServer': 'Remove server',
   'team.removeServerConfirm': 'Remove {url}? Accounts saved for this server and its fusion preference will be deleted, and the local cache of this server (every member partition) will be cleared.',
@@ -4522,6 +4549,12 @@ export const enUS = {
   'team.cacheClearFailed': 'Failed to clear the cache. Try again later.',
   'team.cacheLimitSaved': 'Attachment cache limit saved',
   'team.serversEmpty': 'No team server added yet.',
+  // Roster entries in the sidebar team group (bots / friends / projects that
+  // have no conversation yet on a connected server).
+  'team.rosterBots': 'Bots',
+  'team.rosterMembers': 'Members',
+  'team.rosterProjects': 'Projects',
+  'team.rosterOpenFailed': 'Could not open the team conversation, please retry',
   'team.loginUsername': 'Username',
   'team.loginPassword': 'Password',
   'team.loginRemember': 'Remember me (credential stored in the OS keychain)',
@@ -4561,7 +4594,7 @@ export const enUS = {
   'team.profilePushHint': 'Upload local profile entries to the team server (additive only); sensitive entries stay off by default.',
   'team.profilePushRefresh': 'Refresh my profile upload',
   'team.profilePushTitle': 'Upload my profile',
-  'team.profilePushBody': 'The local profile entries below will be uploaded so team bots know you. Unchecked entries stay local; uploads only add and never delete server entries.',
+  'team.profilePushBody': 'The local profile entries below will be uploaded so team bots know you. Unchecked entries stay local; uploads only add and never delete server entries. After you confirm once, new non-sensitive entries will be uploaded automatically on sign-in (declined ones are never asked again).',
   'team.profilePushLoading': 'Reading local profile…',
   'team.profilePushEmpty': 'No local profile entries yet.',
   'team.profilePushError': 'Reading or uploading the profile failed, please retry.',
@@ -4594,7 +4627,7 @@ export const enUS = {
   'team.resolutionFallback': 'Resolution card',
   'settings.navTeam': 'Team',
   'team.settingsHint': 'Away state, quiet hours, personal usage, and profile upload.',
-  'settings.teamServerHintFusion': 'Fuse the team server into this window: the roster and chat list grow team entries. Turn off to use a separate window instead.',
+  'settings.teamServerHintFusion': 'Fuse the team server into this window: the roster and chat list grow team entries. Turn off to hide team content in this window.',
   'settings.teamServerAdd': 'Add',
   // --- D122 native mobile shell (docs/design/58-mobile-shell.md) ---------------
   'web.shell.disconnect': 'Disconnect',
@@ -4620,41 +4653,35 @@ export const enUS = {
   'collab.clientNameSave': 'Save',
   'collab.clientNameCancel': 'Cancel',
   'collab.clientNameSaved': 'Device name updated',
-  // --- Member bot plane (member-bots B4; teamBot.* prefix) ------------------------
-  // + panel team group (consumed by subdomain B)
+  // Member-side bot plane (member-bots B4; teamBot.* prefix)
+  // "+" panel team group (2026-11 "+" menu rework: private / public direct-create
+  // entries, no dialog — parameters are filled in during the interview; the public
+  // entry only appears with canCreatePublicBot)
   'teamBot.groupSection': 'Team',
-  'teamBot.createProjectAction': 'New team project group',
-  // Create-bot dialog
-  'teamBot.createTitle': 'Create a Bot on the server',
-  'teamBot.createDescription': 'After creation you enter a conversational interview where the Bot fills in its own setup.',
-  'teamBot.modeLabel': 'Visibility',
+  'teamBot.createPrivateAction': 'New server Bot – private',
+  'teamBot.createPublicAction': 'New server Bot – public',
+  'teamBot.createProjectAction': 'New server project group',
+  // Create-bot mode cards (reused by the template import dialog step 1)
   'teamBot.modePrivate': 'Private Bot',
   'teamBot.modePrivateHint': 'Visible and editable only by you; can be transferred to another member.',
   'teamBot.modePublic': 'Public Bot',
   'teamBot.modePublicHint': 'Every member can see it and message it; you keep edit and delete rights as the creator.',
   'teamBot.publicUnavailable': 'You cannot create public Bots (requires an admin-assigned group).',
   'teamBot.quotaLabel': 'Private Bots {used}/{limit}',
-  'teamBot.nameLabel': 'Name',
-  'teamBot.namePlaceholder': 'Name the Bot (optional)',
-  'teamBot.nameOptional': 'Leave it empty and the Bot will ask you during the interview.',
   'teamBot.nameTooLong': 'The name is limited to {max} characters',
   'teamBot.nameRequired': 'A name is required',
   'teamBot.workdirLabel': 'Work path',
-  'teamBot.workdirAuto': 'Auto-allocate a dedicated directory',
-  'teamBot.workdirAutoHint': 'The server assigns a dedicated work directory for this Bot.',
-  'teamBot.workdirAutoShort': 'Auto-allocated directory',
   'teamBot.workdirCurrent': 'Current: {path}',
   'teamBot.workdirUnbound': 'not bound',
   'teamBot.limitReached': 'Private Bot limit reached ({used}/{limit})',
   'teamBot.createFailed': 'Creation failed — try again later',
-  'teamBot.creating': 'Creating…',
-  'teamBot.createAction': 'Create and start the interview',
-  // Workdir picker
+  // Workdir picker (2026-11 rework: opaque options + display names; server paths stay server-side)
   'teamBot.workdirLoading': 'Loading selectable paths…',
   'teamBot.workdirLoadFailed': 'Failed to load selectable paths',
   'teamBot.workdirEmpty': 'No selectable work paths yet',
   'teamBot.workdirSource.admin': 'Admin',
   'teamBot.workdirSource.member': 'My directories',
+  'teamBot.workdirMemberEmpty': 'No folders yet — use the folder-plus icon next to the group name to create one',
   'teamBot.workdirMkdirAtRoot': 'New folder in my directory root',
   'teamBot.workdirMkdirUnder': 'New folder under “{name}”',
   'teamBot.workdirMkdirPlaceholder': 'Folder name',
@@ -4683,12 +4710,6 @@ export const enUS = {
   'teamBot.deleteConfirmYes': 'Delete',
   'teamBot.deleting': 'Deleting…',
   'teamBot.deleteFailed': 'Delete failed — try again later',
-  // My private bots panel
-  'teamBot.myBots': 'My private Bots',
-  'teamBot.myBotsDescription': 'Click a Bot to edit its parameters, transfer or delete it.',
-  'teamBot.myBotsEmpty': 'No private Bots yet — create one from the “+” menu.',
-  'teamBot.myBotsLoadFailed': 'Failed to load the list — try again.',
-  'teamBot.statusInterviewing': 'Interviewing',
   // Team project group creation
   'teamBot.projectTitle': 'New team project group',
   'teamBot.projectDescription': 'Pick a Bot as the lead, then check the members (Bots and team members).',

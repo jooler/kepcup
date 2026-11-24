@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { botTemplateSchema } from '../domain/bot-template.js';
 import { conversationSchema } from '../domain/types.js';
 import {
   teamBootstrapSchema,
@@ -39,6 +40,12 @@ import {
  * 「固定契约」）。与 D128v2 下线的 `team.bots.*Private` 旧名无关：旧名仍按
  * 未归类拒绝；私有 / 公共 Bot 落在既有可见性行上（B-5），配额（B-6）与工作
  * 路径边界（B-10）由服务端策略执行（实现 B2 落地）。
+ *
+ * 2026-11（「+」菜单重构）：新增 `team.bots.templateImport`——成员以
+ * `*.kepcup-bot.json` 模板文件直接建 Bot（无访谈；配额 / 分组门槛 / 缺省工作
+ * 目录语义同 `team.bots.create`，见该方法 schema 注释）。模板文件内容随 RPC
+ * 上行，成员面帧上限相应放宽为 MEMBER_RPC_MAX_FRAME_BYTES（domain/remote.ts；
+ * relay 的 RELAY_MAX_FRAME_BYTES 不变）。
  */
 
 /**
@@ -98,6 +105,12 @@ export const TEAM_RPC_METHODS = [
   'team.bots.workdirOptions',
   'team.bots.workdirMkdir',
   'team.bots.modelOptions',
+  // 成员面「从模板导入」建 Bot（2026-11「+」菜单重构；模板内容随 RPC 上行，
+  // 依赖成员面放宽的 MEMBER_RPC_MAX_FRAME_BYTES 帧上限）
+  'team.bots.templateImport',
+  // 访谈目录卡作答（2026-11 工作路径重构）：key 经选项集解析，服务器真实路径
+  // 不出服务端（B-10），transcript 只落展示名。
+  'team.bots.answerSetupPath',
 ] as const satisfies readonly string[];
 export type TeamRpcMethodName = (typeof TEAM_RPC_METHODS)[number];
 
@@ -430,8 +443,9 @@ export const teamRpcMethodSchemas = {
    * Create a bot in the member plane (README fixed contract). `mode:'private'`
    * counts against the caller's private-bot quota → BOT_LIMIT_REACHED when
    * full (B-6); `mode:'public'` requires the caller's group permission →
-   * FORBIDDEN otherwise (B-1). `workdirPath` must come from the caller's
-   * option set → WORKDIR_NOT_ALLOWED otherwise (B-10; omitted = the
+   * FORBIDDEN otherwise (B-1). `workdirKey` must come from the caller's option
+   * set (`team.bots.workdirOptions`, opaque key — host paths never travel the
+   * member plane) → WORKDIR_NOT_ALLOWED otherwise (B-10; omitted = the
    * auto-allocated `members/<mbrId>/bots/<botId>` directory). `interview`
    * defaults to true: the server starts the core creation interview and the
    * client completes it via the member-guarded `bots.interview.*` (B-11).
@@ -441,7 +455,7 @@ export const teamRpcMethodSchemas = {
       mode: z.enum(['private', 'public']),
       /** Pre-seeded display name (the interview may still refine it). */
       name: z.string().min(1).max(120).optional(),
-      workdirPath: z.string().min(1).optional(),
+      workdirKey: z.string().min(1).optional(),
       /** Start the creation interview after create (default true, B-11). */
       interview: z.boolean().optional().default(true),
       /** Profile seed = the teamBotPatch profile sub-fields (B-2). */
@@ -453,8 +467,9 @@ export const teamRpcMethodSchemas = {
   /**
    * Update a member-plane bot's parameters (B-2 全量参数): only canEdit
    * callers (owner / public creator / console admin, B-1). Patch fields are
-   * applied shallowly per sub-structure; `workdirPath` re-validated against
-   * the caller's option set.
+   * applied shallowly per sub-structure; `workdirKey` re-validated against the
+   * caller's option set (and the caller's existing direct chat with the bot
+   * re-binds to follow).
    */
   'team.bots.update': {
     input: z.strictObject({
@@ -493,23 +508,47 @@ export const teamRpcMethodSchemas = {
     output: z.strictObject({ bots: z.array(teamBotViewSchema) }),
   },
 
-  /** The caller's selectable work paths (B-10: admin roots ∪ own workdirs subtree). */
+  /**
+   * The caller's selectable work paths (B-10: enabled admin presets ∪ the
+   * caller's own subtree under the server's user workdir root). Options carry
+   * OPAQUE KEYS + display names only — server host paths never leave the
+   * server; keys are sent back verbatim in update / create / mkdir /
+   * answerSetupPath.
+   */
   'team.bots.workdirOptions': {
     input: emptyInput,
     output: z.strictObject({ options: z.array(teamWorkdirOptionSchema) }),
   },
 
   /**
-   * Create a directory inside the caller's own workdirs subtree (B-10: the
-   * only member mkdir path; `parentPath` defaults to the subtree root).
-   * Outside the subtree → WORKDIR_NOT_ALLOWED.
+   * Create a directory inside the caller's own subtree (B-10: the only member
+   * mkdir path; `parentKey` defaults to the subtree root — the caller's
+   * `<userRoot>/<memberId>/` directory). Outside the subtree / bad name →
+   * WORKDIR_NOT_ALLOWED / INVALID_INPUT.
    */
   'team.bots.workdirMkdir': {
     input: z.strictObject({
       name: z.string().min(1).max(80),
-      parentPath: z.string().min(1).optional(),
+      parentKey: z.string().min(1).optional(),
     }),
-    output: z.strictObject({ path: z.string() }),
+    output: z.strictObject({ option: teamWorkdirOptionSchema }),
+  },
+
+  /**
+   * Interview setup-path card answer (member plane; 19/D59): `key` resolves
+   * through the caller's option set → WORKDIR_NOT_ALLOWED. The conversation
+   * must be the caller's own direct chat with an interviewing bot (core
+   * answerSetupPath's rules); the bound path is the resolved server path while
+   * the transcript records only the option's display name (host paths never
+   * enter member-visible messages). Also syncs the bot's default binding
+   * (`bot_workdirs`) so the member-plane view stays consistent.
+   */
+  'team.bots.answerSetupPath': {
+    input: z.strictObject({
+      conversationId: z.string().min(1),
+      key: z.string().min(1),
+    }),
+    output: okOutput,
   },
 
   /** Models the server enables for member bots (B-2: `runtime.model` values). */
@@ -517,4 +556,39 @@ export const teamRpcMethodSchemas = {
     input: emptyInput,
     output: z.strictObject({ models: z.array(teamModelOptionSchema) }),
   },
+
+  /**
+   * 成员面「从模板导入」建 Bot（2026-11「+」菜单重构）：`template` 为
+   * `*.kepcup-bot.json` 模板文件内容（botTemplateSchema，序列化上限 4MB =
+   * BOT_TEMPLATE_LIMITS.jsonBytes，成员面帧上限 MEMBER_RPC_MAX_FRAME_BYTES
+   * 为其留足余量）。语义与 `team.bots.create` 对齐但**无访谈**——模板即完整
+   * 参数源，直接创建：`mode:'private'` 计私有配额（B-6）→ BOT_LIMIT_REACHED；
+   * `mode:'public'` 需调用者 ∈ 任一 allow_public_bot 分组（B-1）→ FORBIDDEN；
+   * 建后绑缺省工作目录 `members/<mbrId>/bots/<botId>/`（B-9，访谈目录卡可再
+   * 改绑）。Profile 本机引用由导入侧强制清洗（防御纵深）；runtime 模型不在
+   * 服务器启用集 → 软归一为 ''（跟随默认，模板跨机导入不硬拒）。自写技能装入
+   * 服务端技能库（单技能失败不回滚 Bot，见 failedSkills）；imported 技能只列
+   * 清单不安装（内容不在模板里）。
+   */
+  'team.bots.templateImport': {
+    input: z.strictObject({
+      mode: z.enum(['private', 'public']),
+      template: botTemplateSchema,
+    }),
+    output: z.strictObject({
+      bot: teamBotViewSchema,
+      installedSkills: z.array(
+        z.object({ name: z.string(), status: z.enum(['active', 'disabled']) }),
+      ),
+      failedSkills: z.array(z.object({ name: z.string(), reason: z.string() })),
+      skippedImportedSkills: z.array(
+        z.object({ name: z.string(), sourceUrl: z.string().nullable() }),
+      ),
+    }),
+  },
 } satisfies Record<TeamRpcMethodName, TeamRpcIo>;
+
+/** `team.bots.templateImport` 的输出（渲染层导入弹框消费；与上方 schema 单一事实源）。 */
+export type TeamBotsTemplateImportOutput = z.infer<
+  (typeof teamRpcMethodSchemas)['team.bots.templateImport']['output']
+>;

@@ -271,14 +271,14 @@ describe('动作方法（载荷 + 成功后重拉）', () => {
     expect(store.teamBotsOf('local').bots[0]?.id).toBe('bot_new');
   });
 
-  it('createBot：workdirPath 透传', async () => {
+  it('createBot：workdirKey 透传（opaque key 原样上行）', async () => {
     const store = await freshStore();
     h.responses.set('team.bots.create', [{ bot: botView() }]);
     h.responses.set('team.bots.list', [{ bots: [] }]);
-    await store.createBot('local', { mode: 'public', workdirPath: '/srv/root/a' });
+    await store.createBot('local', { mode: 'public', workdirKey: 'admin:wrt_a' });
     expect(h.state.calls.find((c) => c.method === 'team.bots.create')?.input).toEqual({
       mode: 'public',
-      workdirPath: '/srv/root/a',
+      workdirKey: 'admin:wrt_a',
       interview: true,
     });
   });

@@ -1,8 +1,17 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { errorText, t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { Button } from '$lib/components/ui/button';
+  import {
+    Dialog,
+    DialogContent,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+  } from '$lib/components/ui/dialog';
   import { connections } from '$lib/rpc/connections.svelte';
+  import { shell } from '$lib/stores/shell.svelte';
   import { fusionPref } from '$lib/features/team/fusion-pref';
   import { teamCacheSync } from '$lib/features/team/cache-sync.svelte';
   import {
@@ -10,14 +19,23 @@
     parseTeamError,
     type TeamServerEntry,
   } from '$lib/features/team/platform-team-servers';
+  import {
+    normalizeTeamServerAddress,
+    probeFailureOf,
+    type TeamServerProbeFailure,
+  } from '$lib/features/team/team-server-connect';
   import { ENDPOINT_KIND } from '$lib/features/web-shell/endpoint';
 
   /**
-   * 「团队服务器」管理卡（T7 步骤 4，升级 T5 的连接卡）：已保存服务器列表
-   *（地址 / 状态点 / 活跃账号）、分步添加（地址 → 主进程 whoami 健康检查 →
-   * 通过才登记并出现登录表单）、登录（用户名 / 密码 / 记住我）、多账号
-   * 选择器（微信式，62.10 §4）、登出、「在此窗口融合」开关（默认开，本机
-   * 偏好按 serverHash 存）、「在独立窗口打开」（T5 远程进程）与移除。
+   * 「团队服务器」管理卡（T7 步骤 4，升级 T5 的连接卡；2026-11 连接流程重构）：
+   *
+   * 步骤一（地址）：输入地址 → 主进程 `probe` 健康检查（`GET /api/auth/whoami`，
+   * 可达 + 是团队服务器）→ **通过后才 add 登记**。检查失败只弹框说明原因，
+   * 不登记、不落任何配置；用户修正地址后可重试。
+   *
+   * 步骤二（登录）：健康检查通过后登录表单出现在地址下方（不再藏在列表条目
+   * 的状态分支里），用户名 / 密码交主进程换 token；成功后建立团队连接，
+   * 已保存服务器列表随后展示状态 / 多账号 / 融合开关。
    *
    * 密码只在提交瞬间经 platform 调用传主进程（token / 密码不落任何渲染层
    * 存储）。web 端点没有 platform.teamServers：整卡不渲染（desktopOnly）。
@@ -26,15 +44,19 @@
   const desktopOnly = ENDPOINT_KIND === 'desktop';
   const pref = fusionPref();
 
+  /** `add-failed` = 健康检查通过但登记失败（写配置文件出错），同样弹框。 */
+  type ConnectFailure = TeamServerProbeFailure | { kind: 'add-failed'; detail: string | null };
+
   let address = $state('');
   let adding = $state(false);
-  let addError = $state<'invalid' | 'failed' | null>(null);
-  /** 健康检查结果（添加流程第一步）：失败时不登记，错误与重试就地展示。 */
-  let probing = $state(false);
-  let probeFailed = $state<'unreachable' | 'not-team-server' | null>(null);
+  let invalidAddress = $state(false);
+  let probeFailure = $state<ConnectFailure | null>(null);
 
-  /** 登录表单（当前选中的服务器）。 */
-  let loginServer = $state<TeamServerEntry | null>(null);
+  /** 登录步骤的目标服务器（null = 未展开登录表单）。 */
+  let loginServerHash = $state<string | null>(null);
+  let loginSection = $state<HTMLElement | null>(null);
+  /** 新添加服务器登录成功后回到对话列表（直接看到左栏出现的团队内容）。 */
+  let closeSettingsOnLogin = $state(false);
   let username = $state('');
   let password = $state('');
   let remember = $state(true);
@@ -45,70 +67,98 @@
   let busyHash = $state<string | null>(null);
 
   const servers = $derived(connections.servers);
-
-  /** 地址校验（与 TeamServerConnectCard T5 同口径的轻量前端预检）。 */
-  function normalizeAddress(raw: string): string | null {
-    const trimmed = raw.trim();
-    if (trimmed.length === 0) return null;
-    try {
-      const parsed = new URL(trimmed);
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
-      if (parsed.username !== '' || parsed.password !== '') return null;
-      return parsed.origin + (parsed.pathname === '/' ? '' : parsed.pathname);
-    } catch {
-      return null;
-    }
-  }
+  const loginServer = $derived(
+    loginServerHash === null ? null : connections.serverOf(loginServerHash),
+  );
 
   async function refresh(): Promise<void> {
     await connections.refreshServers();
   }
 
   /**
-   * 连接流程（分步）：输入地址 → 主进程 whoami 健康检查（可达 + 是团队服务器）
-   * → 通过才登记并直接落到登录表单。检查失败不登记，错误就地展示（点「连接」
-   * 即重试）。登录成功 → requestConnect → 资源经 onSourcesChanged 出现在应用中。
+   * 步骤一：地址 → 健康检查 → 通过才登记 → 展开登录表单。
+   * 检查失败（不可达 / 不是团队服务器）弹框说明原因并直接返回，**不 add**。
    */
   async function addServer(): Promise<void> {
     const api = getTeamServersApi();
-    if (api === null) return;
-    const url = normalizeAddress(address);
+    if (api === null || adding) return;
+    const url = normalizeTeamServerAddress(address);
     if (url === null) {
-      addError = 'invalid';
+      invalidAddress = true;
       return;
     }
-    addError = null;
-    probeFailed = null;
+    invalidAddress = false;
+    probeFailure = null;
     adding = true;
-    probing = true;
     try {
       const result = await api.probe({ url });
-      if (!result.reachable) {
-        probeFailed = 'unreachable';
-        return;
-      }
-      if (result.kind !== 'team') {
-        probeFailed = 'not-team-server';
+      const failure = probeFailureOf(result);
+      if (failure !== null) {
+        probeFailure = failure;
         return;
       }
       const { serverHash } = await api.add({ url });
       await refresh();
-      // 健康检查通过：新服务器直接落到登录表单（没有账号时可登录）。
-      loginServer = connections.serverOf(serverHash);
       address = '';
+      const entry = connections.serverOf(serverHash);
+      // 同一地址重复添加：已登录的服务器不再重复走登录，只确保连接在跑
+      //（idle 直接连；unreachable 是过期状态——probe 刚证明服务器可达，踢一次
+      // 重连，避免 toast「已连接」而列表仍显示「服务器不可用」的矛盾）；
+      // 未登录 / 出错（例如 token 失效）仍落到登录步骤。
+      if (
+        entry !== null &&
+        entry.activeMemberId !== null &&
+        entry.status !== 'unauthenticated' &&
+        entry.status !== 'error'
+      ) {
+        if (entry.status === 'idle' || entry.status === 'unreachable') {
+          await connections.requestConnect(serverHash);
+        }
+        toast.success(t('settings.teamServerAlreadyConnected'));
+        return;
+      }
+      startLogin(serverHash, { closeSettingsOnSuccess: true });
     } catch (error) {
-      addError = 'failed';
-      toast.error(errorTextOf(error));
+      probeFailure = { kind: 'add-failed', detail: errorTextOf(error) };
     } finally {
-      probing = false;
       adding = false;
     }
   }
 
+  /** 展开登录步骤（新添加的服务器 / 列表里点「登录」）。 */
+  function startLogin(
+    serverHash: string,
+    options: { closeSettingsOnSuccess?: boolean } = {},
+  ): void {
+    const server = connections.serverOf(serverHash);
+    if (server === null) return;
+    closeSettingsOnLogin = options.closeSettingsOnSuccess === true;
+    loginServerHash = serverHash;
+    loginError = null;
+    password = '';
+    const account =
+      server.accounts.find((entry) => entry.memberId === server.activeMemberId) ??
+      server.accounts[0];
+    username = account?.username ?? '';
+    remember = true;
+    void tick().then(() =>
+      loginSection?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }),
+    );
+  }
+
+  function cancelLogin(): void {
+    loginServerHash = null;
+    loginError = null;
+    closeSettingsOnLogin = false;
+    username = '';
+    password = '';
+  }
+
+  /** 步骤二：主进程登录换 token → 建立团队连接（融合开着时）。 */
   async function login(): Promise<void> {
     const api = getTeamServersApi();
     const server = loginServer;
-    if (api === null || server === null) return;
+    if (api === null || server === null || loggingIn) return;
     if (username.trim().length === 0 || password.length === 0) return;
     loggingIn = true;
     loginError = null;
@@ -121,8 +171,18 @@
       });
       password = '';
       await refresh();
-      if (pref.isEnabled(server.serverHash)) await connections.requestConnect(server.serverHash);
-      loginServer = null;
+      if (pref.isEnabled(server.serverHash)) {
+        // 连接失败不回滚登录（token 已拿到，状态点会显示 error 供重试）。
+        await connections.requestConnect(server.serverHash).catch(() => undefined);
+      }
+      loginServerHash = null;
+      username = '';
+      toast.success(t('settings.teamServerLoginSuccess', { url: server.url }));
+      // 新添加服务器的首次登录：回到对话列表，左栏团队分组随即出现。
+      if (closeSettingsOnLogin) {
+        closeSettingsOnLogin = false;
+        shell.closeSettings();
+      }
     } catch (error) {
       loginError = errorTextOf(error);
     } finally {
@@ -136,6 +196,7 @@
     busyHash = server.serverHash;
     try {
       await api.logout({ serverHash: server.serverHash });
+      if (loginServerHash === server.serverHash) cancelLogin();
       await refresh();
     } catch (error) {
       toast.error(errorTextOf(error));
@@ -169,14 +230,6 @@
     await connections.requestConnect(server.serverHash);
   }
 
-  function openSeparateWindow(server: TeamServerEntry): void {
-    const openTeamServer = window.kepcup.platform.openTeamServer;
-    if (typeof openTeamServer !== 'function') return;
-    void openTeamServer({ url: server.url }).then(() => {
-      toast.success(t('settings.teamServerOpening'));
-    });
-  }
-
   async function confirmRemove(): Promise<void> {
     const api = getTeamServersApi();
     const server = removeTarget;
@@ -187,6 +240,7 @@
       // T8（62.10 §4）：移除服务器 = 清除该服务器全部成员分区（含附件与密钥文件
       // + 各成员的同步 cursor）。确认框文案已提示；清除失败不影响移除本身。
       await teamCacheSync.clearServerPartitions(server.serverHash);
+      if (loginServerHash === server.serverHash) cancelLogin();
       removeTarget = null;
       await refresh();
     } catch (error) {
@@ -210,19 +264,38 @@
       case 'connected':
         return t('team.serverStatusConnected');
       case 'connecting':
+      case 'error':
+        // error 只在前 3 次快速重试之间瞬时存在（此后桥报 unreachable）：
+        // 与 connecting 同文案，避免「连接出错 / 连接中」来回闪。
         return t('team.serverConnecting');
+      case 'unreachable':
+        return t('team.serverUnavailable');
       case 'unauthenticated':
         return t('team.serverStatusUnauthenticated');
-      case 'error':
-        return t('team.serverStatusError');
       default:
-        return t('team.serverStatusIdle');
+        return server.activeMemberId === null
+          ? t('team.serverStatusUnauthenticated')
+          : t('team.serverStatusIdle');
     }
   }
 
   function activeAccountName(server: TeamServerEntry): string {
     const account = server.accounts.find((entry) => entry.memberId === server.activeMemberId);
     return account?.displayName ?? account?.username ?? '';
+  }
+
+  /** 失败弹框正文（连接失败原因）。 */
+  function failureReason(failure: ConnectFailure): string {
+    switch (failure.kind) {
+      case 'unreachable':
+        return t('settings.teamServerProbeUnreachable');
+      case 'personal':
+        return t('settings.teamServerProbePersonal');
+      case 'unknown':
+        return t('settings.teamServerProbeUnknown');
+      case 'add-failed':
+        return t('settings.teamServerAddFailed');
+    }
   }
 </script>
 
@@ -231,7 +304,7 @@
     <h4 class="text-sm font-medium">{t('settings.teamServerTitle')}</h4>
     <p class="mt-1 text-xs text-muted-foreground">{t('settings.teamServerHintFusion')}</p>
 
-    <!-- 添加服务器：分步连接（先健康检查，通过才登记并出现登录表单）。 -->
+    <!-- 步骤一：地址 + 健康检查（检查通过才登记）。 -->
     <form
       class="mt-3 flex items-start gap-2"
       onsubmit={(event) => {
@@ -247,40 +320,93 @@
         placeholder={t('settings.teamServerPlaceholder')}
         bind:value={address}
         oninput={() => {
-          addError = null;
-          probeFailed = null;
+          invalidAddress = false;
         }}
         data-testid="team-server-address"
       />
       <Button
+        type="submit"
         size="sm"
+        class="mt-0.5"
         disabled={adding || address.trim().length === 0}
-        onclick={() => void addServer()}
         data-testid="team-server-connect"
       >
-        {probing ? t('settings.teamServerProbeChecking') : t('settings.teamServerAdd')}
+        {adding ? t('settings.teamServerProbing') : t('settings.teamServerAdd')}
       </Button>
     </form>
-    {#if addError === 'invalid'}
+    {#if invalidAddress}
       <p class="mt-2 text-xs text-destructive" data-testid="team-server-error">
         {t('settings.teamServerInvalidUrl')}
       </p>
-    {:else if addError === 'failed'}
-      <p class="mt-2 text-xs text-destructive" data-testid="team-server-error">
-        {t('settings.teamServerFailed')}
-      </p>
-    {:else if probing}
+    {:else if adding}
       <p class="mt-2 text-xs text-muted-foreground" data-testid="team-server-probing">
         {t('settings.teamServerProbeChecking')}
       </p>
-    {:else if probeFailed === 'unreachable'}
-      <p class="mt-2 text-xs text-destructive" data-testid="team-server-probe-error">
-        {t('settings.teamServerProbeUnreachable')}
-      </p>
-    {:else if probeFailed === 'not-team-server'}
-      <p class="mt-2 text-xs text-destructive" data-testid="team-server-probe-error">
-        {t('settings.teamServerProbeNotTeamServer')}
-      </p>
+    {/if}
+
+    <!-- 步骤二：健康检查通过后，登录表单出现在地址下方。 -->
+    {#if loginServer !== null}
+      <div
+        class="mt-3 rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-3"
+        bind:this={loginSection}
+        data-testid="team-server-login-step"
+      >
+        <p class="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+          {t('settings.teamServerProbePassed', { url: loginServer.url })}
+        </p>
+        <p class="mt-1 text-xs text-muted-foreground">
+          {t('settings.teamServerLoginStepHint')}
+        </p>
+        <form
+          class="mt-2 space-y-1.5"
+          onsubmit={(event) => {
+            event.preventDefault();
+            void login();
+          }}
+        >
+          <input
+            class="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
+            type="text"
+            autocomplete="username"
+            placeholder={t('team.loginUsername')}
+            bind:value={username}
+            data-testid="team-login-username"
+          />
+          <input
+            class="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
+            type="password"
+            autocomplete="current-password"
+            placeholder={t('team.loginPassword')}
+            bind:value={password}
+            data-testid="team-login-password"
+          />
+          <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <input type="checkbox" bind:checked={remember} data-testid="team-login-remember" />
+            {t('team.loginRemember')}
+          </label>
+          {#if loginError !== null}
+            <p class="text-xs text-destructive" data-testid="team-login-error">{loginError}</p>
+          {/if}
+          <div class="flex gap-1.5">
+            <Button
+              size="sm"
+              type="submit"
+              disabled={loggingIn || username.trim().length === 0 || password.length === 0}
+              data-testid="team-login-submit"
+            >
+              {loggingIn ? t('team.loginSubmitting') : t('team.loginSubmit')}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onclick={cancelLogin}
+              data-testid="team-login-cancel"
+            >
+              {t('contacts.cancel')}
+            </Button>
+          </div>
+        </form>
+      </div>
     {/if}
 
     <!-- 已保存服务器列表 -->
@@ -298,7 +424,7 @@
               <span
                 class="size-2 shrink-0 rounded-full {server.status === 'connected'
                   ? 'bg-emerald-500'
-                  : server.status === 'connecting'
+                  : server.status === 'connecting' || server.status === 'error'
                     ? 'bg-amber-400'
                     : 'bg-zinc-400'}"
                 data-testid="team-server-status-dot"
@@ -312,8 +438,26 @@
               </p>
             {/if}
 
-            {#if server.status === 'unauthenticated' || server.status === 'error'}
-              <!-- 未认证 / 出错：登录表单（或重试）。 -->
+            {#if server.status === 'connected'}
+              {#if server.accounts.length > 1}
+                <!-- 多账号选择器（微信式）。 -->
+                <div class="mt-2 flex flex-wrap gap-1" data-testid="team-server-accounts">
+                  {#each server.accounts as account (account.memberId)}
+                    <Button
+                      variant={account.memberId === server.activeMemberId ? 'default' : 'outline'}
+                      size="sm"
+                      class="h-7 px-2 text-xs"
+                      disabled={busyHash === server.serverHash}
+                      onclick={() => void switchAccount(server, account.memberId)}
+                      data-testid={`team-server-account-${account.memberId}`}
+                    >
+                      {account.displayName || account.username}
+                    </Button>
+                  {/each}
+                </div>
+              {/if}
+            {:else}
+              <!-- 未登录 / 出错：登录入口（表单在上方步骤二就地展开）。 -->
               <div class="mt-2 space-y-1.5" data-testid="team-server-login">
                 {#if server.accounts.length > 0}
                   <p class="text-xs text-muted-foreground">{t('team.serverKnownAccounts')}</p>
@@ -332,98 +476,27 @@
                     {/each}
                   </div>
                 {/if}
-                {#if loginServer?.serverHash === server.serverHash}
-                  <form
-                    class="space-y-1.5"
-                    onsubmit={(event) => {
-                      event.preventDefault();
-                      void login();
-                    }}
+                <div class="flex flex-wrap gap-1.5">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onclick={() => startLogin(server.serverHash)}
+                    data-testid="team-server-show-login"
                   >
-                    <input
-                      class="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
-                      type="text"
-                      autocomplete="username"
-                      placeholder={t('team.loginUsername')}
-                      bind:value={username}
-                      data-testid="team-login-username"
-                    />
-                    <input
-                      class="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
-                      type="password"
-                      autocomplete="current-password"
-                      placeholder={t('team.loginPassword')}
-                      bind:value={password}
-                      data-testid="team-login-password"
-                    />
-                    <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <input type="checkbox" bind:checked={remember} data-testid="team-login-remember" />
-                      {t('team.loginRemember')}
-                    </label>
-                    {#if loginError !== null}
-                      <p class="text-xs text-destructive" data-testid="team-login-error">{loginError}</p>
-                    {/if}
-                    <div class="flex gap-1.5">
-                      <Button
-                        size="sm"
-                        type="submit"
-                        disabled={loggingIn || username.trim().length === 0 || password.length === 0}
-                        data-testid="team-login-submit"
-                      >
-                        {loggingIn ? t('team.loginSubmitting') : t('team.loginSubmit')}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onclick={() => (loginServer = null)}
-                        data-testid="team-login-cancel"
-                      >
-                        {t('contacts.cancel')}
-                      </Button>
-                    </div>
-                  </form>
-                {:else}
-                  <div class="flex flex-wrap gap-1.5">
+                    {t('team.loginSubmit')}
+                  </Button>
+                  {#if server.status === 'error'}
                     <Button
                       variant="outline"
                       size="sm"
-                      onclick={() => {
-                        loginServer = server;
-                        loginError = null;
-                      }}
-                      data-testid="team-server-show-login"
+                      disabled={busyHash === server.serverHash}
+                      onclick={() => void retryConnect(server)}
+                      data-testid="team-server-retry"
                     >
-                      {t('team.loginSubmit')}
+                      {t('team.serverRetry')}
                     </Button>
-                    {#if server.status === 'error'}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={busyHash === server.serverHash}
-                        onclick={() => void retryConnect(server)}
-                        data-testid="team-server-retry"
-                      >
-                        {t('team.serverRetry')}
-                      </Button>
-                    {/if}
-                  </div>
-                {/if}
-              </div>
-            {:else if server.accounts.length > 1}
-              <!-- 多账号选择器（微信式）。 -->
-              <div class="mt-2 flex flex-wrap gap-1" data-testid="team-server-accounts">
-                {#each server.accounts as account (account.memberId)}
-                  <Button
-                    variant={account.memberId === server.activeMemberId ? 'default' : 'outline'}
-                    size="sm"
-                    class="h-7 px-2 text-xs"
-                    disabled={busyHash === server.serverHash}
-                    onclick={() => void switchAccount(server, account.memberId)}
-                    data-testid={`team-server-account-${account.memberId}`}
-                  >
-                    {account.displayName || account.username}
-                  </Button>
-                {/each}
+                  {/if}
+                </div>
               </div>
             {/if}
 
@@ -438,15 +511,6 @@
                 {t('team.fusionToggle')}
               </label>
               <span class="flex-1"></span>
-              <Button
-                variant="ghost"
-                size="sm"
-                class="h-7 px-2 text-xs"
-                onclick={() => openSeparateWindow(server)}
-                data-testid={`team-server-open-window-${server.serverHash}`}
-              >
-                {t('team.openSeparateWindow')}
-              </Button>
               {#if server.activeMemberId !== null}
                 <Button
                   variant="ghost"
@@ -497,4 +561,39 @@
       </div>
     {/if}
   </div>
+
+  <!-- 健康检查失败弹框：说明原因 + 明确「未添加」。 -->
+  <Dialog
+    open={probeFailure !== null}
+    onOpenChange={(open) => {
+      if (!open) probeFailure = null;
+    }}
+  >
+    <DialogContent class="max-w-md" data-testid="team-server-probe-dialog">
+      <DialogHeader>
+        <DialogTitle>{t('settings.teamServerProbeFailedTitle')}</DialogTitle>
+      </DialogHeader>
+      <div class="space-y-2">
+        <p class="text-sm" data-testid="team-server-probe-dialog-reason">
+          {probeFailure === null ? '' : failureReason(probeFailure)}
+        </p>
+        {#if probeFailure !== null && probeFailure.detail !== null}
+          <p
+            class="rounded-md bg-muted px-2 py-1.5 font-mono text-xs break-all text-muted-foreground"
+            data-testid="team-server-probe-dialog-detail"
+          >
+            {probeFailure.detail}
+          </p>
+        {/if}
+        <p class="text-xs text-muted-foreground">
+          {t('settings.teamServerProbeNotAdded')}
+        </p>
+      </div>
+      <DialogFooter>
+        <Button onclick={() => (probeFailure = null)} data-testid="team-server-probe-dialog-ok">
+          {t('common.close')}
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 {/if}

@@ -11,6 +11,8 @@
  */
 
 const CACHE = 'kepcup-shell-v2';
+/** 导航网络超时：弱网 / captive portal 下尽快回落缓存壳，不等浏览器默认超时。 */
+const NAV_TIMEOUT_MS = 4000;
 const PRECACHE = ['/', '/manifest.webmanifest', '/icon.svg', '/icon-256.png', '/icon-512.png'];
 /** 允许 stale-while-revalidate 的静态壳文件（白名单；/ 之外均为可枚举的 public 资产）。 */
 const SHELL_FILES = new Set(PRECACHE.filter((path) => path !== '/'));
@@ -81,8 +83,10 @@ async function staleWhileRevalidate(request) {
 
 async function networkFirstNavigation(request) {
   const cache = await caches.open(CACHE);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), NAV_TIMEOUT_MS);
   try {
-    const response = await fetch(request);
+    const response = await fetch(request, { signal: controller.signal });
     // 只有根导航才回落写 '/'：深链（如 /foo）的响应内容不能覆盖 SPA 入口缓存
     //（审查修复：原先任意导航响应都写 '/'，离线回落会拿到错误内容）。
     if (response.ok) {
@@ -92,5 +96,7 @@ async function networkFirstNavigation(request) {
     return response;
   } catch {
     return (await cache.match('/')) ?? Response.error();
+  } finally {
+    clearTimeout(timer);
   }
 }
