@@ -38,9 +38,28 @@
 | `~/.kepcup` 中未列出的部分 | 永远禁止 |
 | `.git/config`、`.git/hooks`、shell 配置文件 | 不可写（`srt` 内置规则） |
 
-- 读侧 = 整机减清单：`denyRead` 只含应用数据目录（红线）、敏感凭证清单、workdir 保护规则 globs；不再整目录禁读用户主目录。
+- 读侧 = 整机减清单：`denyRead` 只含应用数据目录（红线）、敏感凭证清单、workdir 保护规则 globs 与 `.worktree/` 内部目录（D140-4，worktree 任务自己的树精确重开）；不再整目录禁读用户主目录。
 - 写侧逐字节不变：读宽后 `srt` 会自动放开其默认便利写路径（`~/.npm/_logs`、`~/.claude/debug`，见 `srtFilesystemFor` 的显式 `denyWrite`），已全部锁死；「本机其他位置写入需授权」不变。
 - 增强后端：Lima 在 VM 内跑同一套 srt 规则（home 同径挂载，读宽同样生效）；**Podman / WSL 是挂载式，宿主 home 不进 guest，读宽不适用**，行为不变。
+
+### worktree 双根（D140-4 修订）
+
+`start_task({ isolation: 'worktree' })` 的写任务在 `<workdir 父目录>/.worktree/<basename>-<短id>/` 的 linked worktree 中执行，沙箱策略按**一个 workdir + 可选 worktree 根**生成：
+
+| 路径 | 权限 |
+|---|---|
+| 任务自己的树根（`<workdir 父>/.worktree/<basename>-<短id>/`） | 读写（任务独占租约；默认可写、不经授权卡） |
+| `<git-common-dir>/worktrees/<name>/`（index / HEAD / logs 等） | 读写（精确子目录） |
+| `<git-common-dir>/objects/` | 读写（`git add` / `commit` 写共享对象库，DEV-152） |
+| 主 workdir（`<workdir>`） | 只读（文件工具写主目录被拒，提示在隔离目录里改） |
+| 其余 `.git`（`config`、`hooks`、主仓库 `index`、refs …） | 不可写 |
+| `.worktree/` home、同级其他任务的树 | 读禁（`.worktreeinclude` 可能复制了受保护文件） |
+
+- **protect 规则随树根重锚**：主 workdir 的 `denyReadGlobs` 以树根为前缀重新拼接，`.env` 等拒读规则在副本上同样生效。
+- `.worktree/` home 对绑定该 workdir 的**所有 run** 读禁；worktree 任务自己的树经 srt 的 deny-then-allow（末条命中）精确重开。宿主每次写检查都读树的 `.git` 指针并**结构化校验**（`<commondir>/worktrees/<name>` + `commondir` / `gitdir` 回指一致）——指针被改写时任务失去写挂载，而不是把挂载指到别处。
+- 首次创建 `.worktree/` 时写入内容为 `*` 的 `.gitignore` 并置 0700（已存在则不 chmod、不覆盖）；`.worktreeinclude`（gitignore 语法）列出的**被忽略、存在且非符号链接**的文件从 workdir 复制进树，已存在的目标不覆盖，`node_modules` 不自动复制。
+- **worktree 任务强制 srt**：执行时绕过增强后端（Lima 在 VM 内跑同一套规则，但本期不接树挂载），默认后端为 WSL / Podman / Lima 时任务以 `WORKTREE_NOT_AVAILABLE` 失败；srt 本身不可用时按逐条确认模式运行（命令仍在树根执行、逐条由用户确认，不静默脱离沙箱）；ACP 引擎在派发时即 `INVALID_INPUT`（[28](28-external-agents-acp.md) §6）。
+- **DEV-152 残余风险（如实记录）**：放行的是整个 `<git-common-dir>/objects` 子树，其中 `objects/info/alternates`（及 `http-alternates`）也在可写范围内——沙箱内的 shell 可直接写它（文件工具写这些路径会走仓库控制文件的授权卡，shell 不会）。影响仅限「未来 git 读对象时的后备库」：不能改 refs / config / hooks，也不能伪造与已有哈希冲突的对象，但可让主仓在未来读到攻击者预置的、正常不可达的对象。彻底关闭需要给 `SandboxPolicy` 增 `denyWrite` 并透传到 srt，本期未做（独立策略面）。
 
 ### 网络
 
@@ -51,6 +70,7 @@
   - 未绑定 workdir 时拦截。
   - 通过 `srt` 的网络配置实现，实现时验证；Windows 上还需验证 WSL2 与 Windows 之间的本机端口转发。
 - 浏览器工具不经过沙箱，其网络规则见 [14-models-and-browser.md](14-models-and-browser.md#网络)。
+- **污点断网（D140-3 修订）**：对话处于污点期时，沙箱命令的网络策略统一压成「无外网」（保留 localhost 与绑定 workdir 的允许端口；`open` / `allowlist` 同样断），不再逐命令弹外发卡。模型调用 `request_network` 获批后按所选时长（仅这一次 / 本任务内 / 本对话内）放开；带 hosts 时改为 `allowlist` 主机白名单，不带 hosts 时恢复 Bot 自身的网络策略（Bot 策略为 `none` 时不放开）。ACP 不受此机制影响（其沙箱网络自控，仍逐请求卡）。已知限制：srt 的网络配置是全局单例，策略不同的命令不能并发（切换先排空在途命令），`request_network` 的主机白名单会加剧切换。
 - 已知限制：不遵循代理设置的工具无法联网。
 
 ### 缓存

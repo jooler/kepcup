@@ -7,7 +7,7 @@
 - **两层 loop**：对话轮（`loop_type='turn'`）由消息 / 定时 / 事件 / 任务结算触发，秒级，发完回复即结算；任务（`loop_type='task'`）只由对话轮的 `start_task` 派出，分钟到小时级，多条可并行。**对话轮永不等待任务**——任务结算是一个事件，按宿主的确定性条件唤醒下一个对话轮。
 - **职责切分即权限切分**：写操作与长时工作只发生在任务里；对话轮只读，执行期由工具网关硬拒一切写路径（`RUN_READ_ONLY`），不只靠不注册工具。只读任务（`task_writes=false`）同样硬拒写。
 - 对话记录与执行过程分离：过程存入执行记录（Run / `run_steps`），只有 Bot 发出的消息进入对话；Bot 与自己任务之间的往返作为**私有条目**进对话消息表，只给该 Bot 看（见「上下文注入」）。
-- 工作目录：对话轮与任务都在该 Bot 专属于该对话的 workspace（`{bot_id}/workspaces/{conversation_id}/`）与绑定的工作目录（workdir）范围内工作；任务的工作目录（`task_cwd`）在派出时确定：缺省为绑定且可用的工作目录（workdir），否则 workspace，也可由 `start_task({cwd})` 指定。
+- 工作目录：对话轮与任务都在该 Bot 专属于该对话的 workspace（`{bot_id}/workspaces/{conversation_id}/`）与绑定的工作目录（workdir）范围内工作；任务的工作目录（`task_cwd`）在派出时确定：缺省为绑定且可用的工作目录（workdir），否则 workspace，也可由 `start_task({cwd})` 指定；**D140-4 起 `isolation:'worktree'` 的任务以隔离树为 `task_cwd`**（命令 cwd 取 `policyInfo.cwd`，主 workdir 对它只读）。
 - Loop 框架使用 pi（[09-tech-stack.md](09-tech-stack.md#agent-looppi)）。**对话轮固定走内置引擎**（Bot 的内置主模型）；任务走 Bot 配置的引擎——内置 pi，或外部智能体（D72，`runtime.agent` 即 Bot 的**任务引擎**，见 [28-external-agents-acp.md](28-external-agents-acp.md)）。
 
 ## 对话轮与任务
@@ -15,7 +15,7 @@
 | 项 | 对话轮（turn） | 任务（task） |
 |---|---|---|
 | 触发 | 用户消息批、`@` / 回复、项目组路由（续接 / 网关）、定时、事件、D71 委派、任务结果 / 失败条目、设置完成后重试 | 对话轮的 `start_task`（唯一入口）；失败任务经设置卡重试、或用户在任务卡上重试失败 / 中断的任务时由宿主派出接续任务 |
-| 串行 / 并发 | 每（Bot, 对话）同时最多一个（mailbox） | 对话级 `TASK_CONCURRENCY_PER_CONVERSATION`（3）、全局 `TASK_CONCURRENCY_GLOBAL`（8）、单个对话轮最多派 `TASK_START_MAX_PER_TURN`（2）个；写任务按**声明写域**互斥——域不相交即并行，`writes: true`（整 cwd）保持串行安全默认（D123，见下文「写互斥」） |
+| 串行 / 并发 | 每（Bot, 对话）同时最多一个（mailbox） | 对话级 `TASK_CONCURRENCY_PER_CONVERSATION`（3）、全局 `TASK_CONCURRENCY_GLOBAL`（8）、单个对话轮最多派 `TASK_START_MAX_PER_TURN`（2）个；**写任务默认并行（D140-1）**——内置写任务一律共享写租约，互斥下沉到文件级自动认领；写域（`writes: ['…']`）保留为执行期硬边界与展示（见下文「写互斥」） |
 | 引擎 | 固定内置（无内置模型时见「无内置模型的 Bot」） | 内置 pi 或该 Bot 的外部智能体 |
 | 轮数 / 时限 | 不设步数上限（`TURN_MAX_TURNS=0`）。提示词要求 Bot 自行估计工作量：轻的直接答，重的用 `start_task`；没派任务也不因步数失败 | 无步数上限（`TASK_MAX_TURNS=0`）；用量默认不设上限，D93 起可开启软预算；`taskLoop.maxWallMinutes`（默认 240 分钟，0 = 不限制；等用户回答问题卡的时间不计入）超限或内置任务超过 `taskLoop.stallTimeoutMinutes` 无活动时由 reaper 强制 `failed`。内置 pi 任务另有自动上下文压缩与空转检测，见 [43](43-task-loop-harness.md) |
 | 工具面 | 对话核心 + 只读查询（含只读且免审批的 MCP 工具）+ 任务管理 + 异步托管动作（[dev/04](../dev/04-agent-runtime.md#工具目录)） | 完整工具面，去掉任务管理、跨 Bot 委派与管家提议；多一个 `ask_user` |
@@ -52,11 +52,11 @@
 ### 写互斥：租约，而不是物理隔离
 
 - 只读任务不取租约、不限 cwd 并发（仍受上述配额封顶）。
-- 写任务启动前取 cwd 根的写租约并**整个任务持有**（`ensureWriteLease(…, { pin: true })`）；租约键对 workdir 是目录根，对 workspace 是 `ws:{botId}:{conversationId}`（D29 扩到 workspace，[08-workdir.md](08-workdir.md#并发写入租约)）。
-- 同一 cwd 的第二个写任务在**任务层**排队（跨对话生效）：停在 submitted，卡片与 `<tasks>` 段显示「等写入租约（任务 … 持有）」，持有方任务结束或被取消后才启动。它不去申请租约，因此「强制收回」对这种排队不起作用，只对租约层的等待（被非任务持有者挡住）出现（见 DEV-015）。对一个持有租约的写任务点强制收回，它就失去写权限：之后的写入以「写入租约已被用户收回」失败，不会悄悄重新取得租约（[30 §5.1](30-supervisor-and-tasks.md#51-规则)）。
-- **D123 修订**：`start_task.writes` 可声明相对 cwd 的 glob **写域**；互斥从「整个 cwd 一个写任务」细化为「写域相交的任务至多一个在跑」——TaskHost 派发预拦截与结构化写域租约键（根重叠 ∧ 域相交才算冲突）双重生效，域不相交的写任务真并行。`writes: true`（缺省安全默认）= 整 cwd，行为与修订前逐字节一致。内置引擎下文件写工具按写域硬拒域外写入（`WRITE_OUT_OF_DOMAIN`），沙箱命令按声明收紧可写挂载、覆盖不到的部分由影子仓库 interleaved 冲突检测兜底；外部智能体仅调度与租约层面生效。任务面另有兄弟任务协调四件（`send_to_task` / `wait_for_task` / `claim` / `release` + `<peer_tasks>` 段）与写域内路径认领。详见 [59-parallel-tasks-and-coordination.md](59-parallel-tasks-and-coordination.md)。
-- workspace 没有影子仓库检查点：workspace 写任务被取消时只列出它的文件工具写过的文件，不提供整次回退；workdir 写任务照常有改动摘要与整次回退（D30）。
-- git worktree / CoW 隔离明确不做（[30 §9](30-supervisor-and-tasks.md#9-非目标)）。
+- 写任务启动前取 cwd 根的写租约并**整个任务持有**（`ensureWriteLease(…, { pin: true })`）；租约键对 workdir 是目录根，对 workspace 是 `ws:{botId}:{conversationId}`（D29 扩到 workspace，[08-workdir.md](08-workdir.md#并发写入租约)）。**D140-1 修订**：内置引擎写任务取**共享**租约（同根可多个），外部智能体写任务取**独占**整根租约，worktree 任务在树根取**独占**租约（一树一任务）。
+- **D140-1 修订：写任务默认并行，互斥下沉到文件级自动认领**。同一 cwd 的多个内置写任务直接启动（任务层不再按写域 / 写租约排队）；任务经网关文件工具首次成功写入某路径即自动认领，同一根下其他任务（跨对话、跨 Bot）写同一路径得到 `WRITE_CLAIMED`，用 `send_to_task` / `wait_for_task` 协调。`bash` 等命令写入、浏览器下载、外部智能体写入不认领（靠 per-run 快照的改动交集在结算时标 `interleaved`）。排队只剩并发额度与「独占租约持有者（外部智能体 run / 宿主 revert 与应用）占用根时的等写入租约」。对一个共享写任务点强制收回 = **停止该任务的写入**（只它失去写权限），同目录其他写任务继续（[30 §5.1](30-supervisor-and-tasks.md#51-规则)）。
+- **D123 写域（在 D140-1 下保留为边界，不再是排队依据）**：`start_task.writes` 可声明相对 cwd 的 glob **写域**；内置引擎下文件写工具按写域硬拒域外写入（`WRITE_OUT_OF_DOMAIN`），沙箱命令按声明收紧可写挂载、覆盖不到的部分由 per-run 影子窗口的 `interleaved` 标记兜底；外部智能体仅调度与租约层面生效。任务面另有兄弟任务协调四件（`send_to_task` / `wait_for_task` / `claim` / `release` + `<peer_tasks>` 段）与跨对话生效的路径认领。详见 [59-parallel-tasks-and-coordination.md](59-parallel-tasks-and-coordination.md)。
+- workspace 没有影子仓库检查点：workspace 写任务被取消时只列出它的文件工具写过的文件，不提供整次回退；workdir 写任务照常有 per-run 改动摘要与整次回退（D30 / D140-1）。
+- **D140-4 worktree 隔离（opt-in）**：`start_task({ isolation: 'worktree' })` 的写任务在 `<workdir 父>/.worktree/<basename>-<短id>/` 的独立树中执行（起点含未提交改动），命令 cwd = `policyInfo.cwd`（树根），主 workdir 只读；任务结算出「应用到工作目录」卡，批准后三方合并回主工作区。只支持内置引擎 + srt；worktree 任务没有 `run_changes`（[30 §9.1](30-supervisor-and-tasks.md#91-d140-4-修订worktree-隔离作为-opt-in-实施)、DEV-153）。CoW 克隆仍不作为架构依赖。
 
 ### 调度器与名额
 

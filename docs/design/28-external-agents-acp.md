@@ -220,6 +220,8 @@ interface AgentCatalogEntry {
 
 外部 Agent 的文件 / 命令工具在**其进程内直接操作真实文件系统**（已核对：claude-agent-acp、codex-acp 都不调用 ACP 客户端的 `fs/`* / `terminal/*`）。D35 / D27、workdir `protectRules`、Bot `network_policy` 对这些工具不成立。补偿措施（Provider 负责把档位映射到各家的模式 / 配置）：
 
+> **D140 修订（2026-11）**：ACP **不参与** D140 的两项机制——① **污点断网**（D140-3）：智能体的沙箱网络由它自己控制，宿主切不断，污点期仍**逐请求弹卡**；② **worktree 隔离**（D140-4）：`start_task({ isolation: 'worktree' })` + ACP 引擎在派发时返回 `INVALID_INPUT`（执行启动前还会复查当前引擎，排队中切成 ACP 同样失败），worktree 只支持内置引擎 + srt。其余 D140 变更（共享写租约、`task` 授权时长）对 ACP 任务照常生效。
+
 
 | 措施               | 规定                                                                                                                                                                             |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -227,11 +229,11 @@ interface AgentCatalogEntry {
 | Agent 自身沙箱       | 有 OS 沙箱的 Agent 必须开启（Claude 原生沙箱 + `denyRead`/`denyWrite` 覆盖 `~/.kepcup` 其余部分；Codex `workspace-write`）；**永不**使用 bypass / auto / dontAsk / full-access 一类模式（Provider 层过滤，UI 不出现） |
 | 无 OS 沙箱的 Agent   | （如 OpenCode、DeepSeek Harness、Cursor、Antigravity）`workspace` 档下工作目录内编辑可放行，但**每条命令都弹卡**（等同 D39 逐条确认），经其权限配置（如 `OPENCODE_PERMISSION`）强制命令走询问                                         |
 | 权限档位             | `read_only` · `workspace`（默认）· `ask`（编辑前确认：文件工具写入与联网读取逐次确认；沙箱内命令及其写入自动放行，f2b9627）；`preview` 档 Agent 默认 `ask`；收到 `current_mode_update` 偏离档位时改回并审计；各档实际行为见 [13 档位表](13-permissions.md#外部智能体引擎d72) |
-| 沙箱内命令与污点（D73 × f2b9627，DEV-028） | 污点外发控制开着时（默认）Claude 会话关闭 `autoAllowBashIfSandboxed`，每条 Bash 经权限桥：未污点自动放行、污点期间弹 `egress` 卡；控制关闭时由 Claude Code 自动放行。原因：SDK 只在 `session/new` 读沙箱设置，ACP 无中途修改入口，污点却可能在会话中途出现。沙箱网络代理的逐主机询问（`SandboxNetworkAccess`）污点期间弹 `egress` 卡、否则弹卡。残留：本会话内已批准过的主机 Claude Code 不再询问（污点前已在跑的命令连向这些主机不再弹卡）；「加载我的个人配置」里的 `allowedDomains` 不经宿主 |
-| PermissionBridge | `mcp__kepcup__*` 直接放行（桥内另走网关审批）；路径优先级「cwd 与技能目录 → 应用数据目录其余部分（拒绝）→ 网关 `checkPath`」；工作目录内按档位；越界读写弹 `agent_tool` 卡（复用 D37：仅这一次 / 本对话内）；命令命中内置白名单（D40）放行（自定义条目在只读档与污点期间不算），否则弹卡且只有「仅这一次」；看不懂的请求弹卡      |
+| 沙箱内命令与污点（D73 × f2b9627，DEV-028；D140-3 修订） | 污点外发控制开着时（默认）Claude 会话关闭 `autoAllowBashIfSandboxed`，每条 Bash 经权限桥：未污点自动放行、污点期间弹 `egress` 卡；控制关闭时由 Claude Code 自动放行。原因：SDK 只在 `session/new` 读沙箱设置，ACP 无中途修改入口，污点却可能在会话中途出现。沙箱网络代理的逐主机询问（`SandboxNetworkAccess`）污点期间弹 `egress` 卡、否则弹卡。**D140-3 的「污点 = 断网 + `request_network`」只作用于内置引擎的沙箱命令：ACP 的网络由智能体自身沙箱控制，宿主切不断，因此仍逐请求卡，不改为断网。** 残留：本会话内已批准过的主机 Claude Code 不再询问（污点前已在跑的命令连向这些主机不再弹卡）；「加载我的个人配置」里的 `allowedDomains` 不经宿主 |
+| PermissionBridge | `mcp__kepcup__*` 直接放行（桥内另走网关审批）；路径优先级「cwd 与技能目录 → 应用数据目录其余部分（拒绝）→ 网关 `checkPath`」；工作目录内按档位；越界读写弹 `agent_tool` 卡（复用 D37 时长：仅这一次 / 本任务内 / 本对话内，D140 §1.2；`targetUncertain` 请求只有「仅这一次」）；命令命中内置白名单（D40）放行（自定义条目在只读档与污点期间不算），否则弹卡且只有「仅这一次」；看不懂的请求弹卡      |
 | 选项映射             | 只按 Provider 声明的 **optionId 白名单**选 `allow_once` / `reject_once`；不选 `allow_always`、不选任何会切换模式的选项                                                                                  |
 | 无人值守（D41）        | `agent_tool` 自动批准并审计，但并入数据目录底线：命令或路径触及应用数据目录（workspace / 技能目录除外）时拒绝                                                                                                            |
-| 写入租约 / 检查点       | workdir 绑定且档位可写时，run 开工前显式取租约（现有租约是首次写工具调用时懒取），整 run 持有，前后快照照常                                                                                                                 |
+| 写入租约 / 检查点       | workdir 绑定且档位可写时，run 开工前显式取租约（现有租约是首次写工具调用时懒取），整 run 持有，前后快照照常（**D140-1**：外部智能体 run 仍取**独占整根**租约，与内置写任务的共享租约串行）                                                                                                                 |
 | Windows          | 无沙箱的 Agent 强制 `ask`；日后可选在 KepCup 的 WSL 发行版中运行 Agent                                                                                                                            |
 | 读取让渡（披露）    | Agent 沙箱的**读**多半不受限：Codex 的 read-only / workspace-write 沙箱可不经请求读取整台电脑（含应用数据目录里其他 Bot 的 workspace、技能、日志）；Claude 原生沙箱的 `denyRead` 只约束 Bash，Read 工具越界靠权限请求。联网读取（WebFetch / WebSearch，`kind: fetch`）在只读 / 工作区档自动放行（外泄通道）。两者在 Bot 首次切换弹框与 Bot 详情中明示；「加载我的个人配置」开启后个人配置中的放行规则与钩子绕过权限桥，设置页醒目警告 |
 | Agent 侧配置       | workdir 内 Agent 自读且无法关闭的配置（`agentSideConfigFiles`）首次运行前确认，按内容哈希记住到对话（内容变化重新确认，无人值守的自动批准不算记住）；Agent 对这些文件与仓库 `.git/` 的写入一律弹卡 |
