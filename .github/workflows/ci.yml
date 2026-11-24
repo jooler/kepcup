@@ -14,9 +14,9 @@ jobs:
     name: Lint & typecheck (Ubuntu)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -37,9 +37,9 @@ jobs:
         os: [macos-latest, ubuntu-24.04, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -81,9 +81,9 @@ jobs:
     env:
       TZ: Asia/Shanghai
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -120,7 +120,7 @@ jobs:
       # test-results; without them a failing runner's page state is invisible.
       - name: Upload e2e failure snapshots
         if: failure() && matrix.os != 'windows-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: e2e-test-results-${{ matrix.os }}
           path: apps/desktop/test-results
