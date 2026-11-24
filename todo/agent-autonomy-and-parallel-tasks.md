@@ -570,10 +570,22 @@ taskWorktree?: { path: string; gitCommonDir: string /* <workdir>/.git */; gitWor
 - **遗留**：computer_control 卡键盘按 3（bot）无响应为 W2 之前既有缺口，未顺手修（记入备查）。
 
 ### W3
-（待填）
+
+- **提交**：`feat(core): D140 W3——污点=断网：沙箱命令外网切断、request_network 一张卡三档、TTL 60min`（`70142fe5`）+ 审查修正 `fix(core): D140 W3 审查修正——requestNetworkAccess 的轮/子代理拒绝分支先于只读分支`（`d3959256`）；闭源私有仓 `feat(server): D140——KNOWN_TOOLS 补 request_network`（`2b4a2f0`，apps/team-server 内单独提交）。
+- **改动**：§3.4 全部——gateway.exec 的 `effectiveNetwork`（污点未放行 → `mode:'none'` + 保留 allowLocalhost/allowedPorts）、bypass 追加 `taint===null`、删除逐命令 egressCheck 与 `#builtinExempt`、once 命令启动前消费；`TaintService` 新增 `allowNetwork`/`networkAllowed`/`consumeOnceNetwork`/`expireNetworkForRun`（scope 编码 `all`/`task:<runId>`/`once:<runId>`，hosts 编码进 scope，有效期夹紧污点窗口，mark 仍清空全部）；`request_network` 工具 + 网关 `requestNetworkAccess`（一张 egress 卡三档、hosts 校验防注入、轮/子代理/只读不等待）；`NETWORK_VIOLATION_PATTERN` 提示；effects/classify 与 settings/context 登记；orchestrator 三处 expireNetworkForRun 接线；设计 13/29 修订。
+- **验证**：定向四文件 105 用例 + 相邻回归 92 用例 + 额外 5 组回归全绿；core/team-server typecheck 通过。
+- **审查**：独立审查核对 srt 源码确认 violation 行格式与正则匹配、once 消费无 await 竞态、`all|hosts` 行不会被其他 egress 通道误读、expireNetworkForRun 三处接线齐全；修正 1 处低危（轮/子代理专用拒绝分支被 `writeDenial` 前置遮蔽会给出误导性 ask_user 指引，已移到只读分支之前）。
+- **自选决策**：① hosts 编码进 scope（表无列，`cmd:` 前缀不受影响）；② 无 hosts 放开 = 恢复 Bot 自身 `req.network`（不越过用户显式收紧，Bot 策略 none 时批准也不放开）；③ 无人值守按 once 写入、审计沿用 egress_tainted、AUTO_APPROVED_KINDS 不扩；④ `networkAllowed` 去掉契约骨架里无消费方的 workdir 参数；⑤ 旧 `cmd:` 读路径保留兼容（ACP 桥仍可见），不删死代码。
+- **遗留**：真沙箱断网验证留 W6；srt 全局网络单例的串行化影响写入设计文档已知限制。
 
 ### W4
-（待填）
+
+- **提交**：`feat(core): D140 W4——写任务默认并行：共享写租约 + 文件级自动认领 + per-run 影子快照`。
+- **改动**：§3.3 全部——`LeaseService` 多持有者 + shared 两态冲突规则（共享×共享=并存）、promotion 重写（稳定 seq、waiter 占位到 grant/cancel、cancel 后补 promote，顺带修复 release 漏删 `#byRun` 与同键双 waiter 死锁）；`WorkdirRuntime` ensureWriteLease shared 透传、revokeLease 新语义（优先停本对话内置共享任务、回退仅独占）、`beginTaskWindow`/`releaseRun`（先快照后释放、按 run/workdir 串行、重试合并窗口）；`claims.ts` 跨对话 denial + `autoClaim`（5000 封顶）；tasks.ts 删 `#domainBlocker` 与「等写域」、wait_for_task 守卫删除；orchestrator 内置写任务 `shared:true`；gateway write 段 `writeClaimDenial` 跨对话 + `noteFileWritten`；coding-tools/tools 写入成功后自动认领；system-prompt/tasks-segment/task-tools 文案；TaskRunView 改动文件区（+/~/-、interleaved、reverted）；i18n 双语；共享 `taskChangesSchema` files 变体。
+- **验证**：core 15 文件 158 用例全绿（含新增 `tasks-parallel-writes.test.ts` 8 例、`task-claims-registry.test.ts` 3 例）；渲染端 5 文件 76 用例全绿；core/desktop typecheck 通过。
+- **审查**：独立审查修正 11 处，其中 3 个高危并发缺陷——① 影子窗口并发 release 会在他人 after-snapshot 前释放租约（改按 run 串行 + 窗口关闭 promise 化 + try/finally）；② auto-retry 重入拿到「即将被释放」的租约（ensureWriteLease 等在设计中的 release、窗口身份校验）；③ 已结束并行任务的写入被后来任务冒领（窗口 otherFiles 交接 + workdir 串行关闭，删 `WorkdirsService.listChanges`）。另有中危：auto-retry 覆盖首轮文件清单（改合并 upsert）、revokeLease 可能停掉其他对话的共享任务（回退仅独占）、promotion/FIFO 重写；低危：interleaved 跨 workdir 误标、claimedPaths「等」误报、测试前缀串匹配导致的偶发超时、过时注释与死代码、e2e workdirs.spec 的「等写域」旧断言重写为并行场景。
+- **自选决策**：① promotion 不由持有者直接授权，改唤醒 + waiter 自身复核（保 FIFO 与批量共享）；② 认领 root 前缀预过滤用 `leaseKeysConflict`（带 `/` 边界）；③ 快照窗口每写任务一窗、end 先快照后释放；④ claim 工具次数上限改「单次新增 ≤16」（自动认领不占额度）；⑤ 视图侧 claims 截 12/4 条；⑥ 附件副本（get_attachment → workspace `.attachments/`）不自动认领（会话级共享缓存，认领会误拦同对话并行任务；偏差已在此记录）。
+- **遗留**：bash/浏览器下载/外部智能体写入不认领（已知限制 1，结算 span-diff 兜底）；denial 逐条 glob 最坏 5000 条约 10ms（未做索引，常态无感）；e2e workdirs.spec 重写后未在本机执行（需 Electron 打包产物，逻辑与 158 例集成覆盖同构）。
 
 ### W5
 （待填）
