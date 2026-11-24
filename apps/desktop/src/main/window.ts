@@ -185,7 +185,14 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
   win.on('maximize', persistSoon);
   win.on('unmaximize', persistSoon);
 
-  win.on('ready-to-show', () => win.show());
+  win.on('ready-to-show', () => {
+    // e2e：钉住内容区宽度。Windows CI / 小工作区可能把默认 1280 外框收进
+    // 覆盖抽屉区间（默认侧栏下对话可用宽 < 530，约 innerWidth < 1178），
+    // 抽屉遮罩会挡住 composer，打开右栏后再发消息的用例会超时。
+    if (__KEPCUP_TEST_HOOKS__) win.setContentSize(1600, 900);
+    win.show();
+    if (__KEPCUP_TEST_HOOKS__) win.setContentSize(1600, 900);
+  });
 
   // Tray-resident: closing the window only hides it (02-architecture.md).
   // Persist before hide/destroy so the next show/launch restores this frame.
