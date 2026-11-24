@@ -506,11 +506,16 @@ test('narrow layout: deep links in detail, Esc layering, focus containment, layo
     const chatBox = (await page.locator('[data-testid="chat-view"]').boundingBox())!;
     // 底线 360（WIDE_CHAT_MIN_WIDTH），留几 px 给分隔线 / 取整。
     expect(chatBox.width).toBeGreaterThanOrEqual(355);
-    // 右栏放不下：药丸开全屏覆盖层而不是并排右栏；✕ 关闭。
+    // 右栏放不下：药丸开宽屏覆盖抽屉（right-panel），不是并排挤对话，
+    // 也不是窄屏全屏覆盖层（narrow-bot-detail）。✕ 关闭。
     await page.locator('[data-testid="right-panel-toggle"]').click();
-    await expect(overlay).toBeVisible();
-    await overlay.locator('[data-testid="right-panel-hide"]').click();
+    const panel = page.locator('[data-testid="right-panel"]');
+    await expect(panel).toBeVisible();
     await expect(overlay).toHaveCount(0);
+    const chatBoxAfterOpen = (await page.locator('[data-testid="chat-view"]').boundingBox())!;
+    expect(chatBoxAfterOpen.width).toBeGreaterThanOrEqual(355);
+    await panel.locator('[data-testid="right-panel-hide"]').click();
+    await expect(panel).toHaveCount(0);
     // 窗口拉到足够宽：药丸切换并排右栏，覆盖层不出现。
     await resizeWindow(app, 1280, 840);
     await page.locator('[data-testid="right-panel-toggle"]').click();
