@@ -297,7 +297,7 @@ function sameCanonicalPath(left: string, right: string): boolean {
 
 /** `\\?\C:\...` → `C:/...`; `\\?\UNC\server\share\...` → `//server/share/...`. */
 function stripWinLongPathPrefix(value: string): string {
-  let normalized = value.replaceAll('\\', '/');
+  const normalized = value.replaceAll('\\', '/');
   const lower = normalized.toLowerCase();
   if (lower.startsWith('//?/unc/')) return '//' + normalized.slice('//?/unc/'.length);
   if (lower.startsWith('//?/')) return normalized.slice(4);
