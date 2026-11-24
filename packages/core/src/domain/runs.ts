@@ -257,12 +257,9 @@ export class RunsService {
     taskCapabilities?: string[] | null;
     /**
      * D140-4 worktree isolation. `worktreePath` / `worktreeBase` are written by
-     * the host right after the worktree is created (W5 wires start_task); a row
-     * created before that step stores nulls.
-     *
-     * TODO(W4/W5): TaskView's `worktreePath` / `applyState` are filled in
-     * dispatch/tasks.ts `view()` — wiring belongs to those waves, not W0;
-     * consumers must treat missing as null / 'none'.
+     * `setWorktree` right after the host created the tree; a row created before
+     * that step stores nulls (and a retry names the main workdir, never another
+     * run's tree). TaskView projects both (dispatch/tasks.ts `view()`).
      */
     isolation?: RunIsolation | null;
     worktreePath?: string | null;
@@ -652,6 +649,28 @@ export class RunsService {
       )
       .all() as RunRow[];
     return rows.map(rowToRun);
+  }
+
+  /**
+   * D140-4: records the task's worktree right after the host created it — the
+   * tree becomes the execution root (`task_cwd`). A row that never reaches
+   * this call keeps nulls and fails with WORKTREE_CREATE_FAILED instead.
+   */
+  setWorktree(
+    id: string,
+    input: {
+      worktreePath: string;
+      worktreeBase: string;
+      /** The tree replaces the task cwd; null = keep the current cwd. */
+      taskCwd?: string | null;
+    },
+  ): Run {
+    this.db
+      .prepare(
+        'update runs set task_isolation = ?, task_worktree_path = ?, task_worktree_base = ?, task_cwd = coalesce(?, task_cwd) where id = ?',
+      )
+      .run('worktree', input.worktreePath, input.worktreeBase, input.taskCwd ?? null, id);
+    return this.getOrThrow(id);
   }
 
   /** Settled tasks whose result no supervisor turn has consumed yet (§3.2 reconciliation). */

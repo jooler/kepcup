@@ -1,10 +1,11 @@
 import { existsSync } from 'node:fs';
+import path from 'node:path';
 
 import type { AppPaths } from '../infra/paths.js';
 import { sensitivePaths, readOnlyRoots } from './sensitive-paths.js';
 import type { SandboxNetworkPolicy, SandboxPolicy } from './types.js';
 import { expressibleDomainDirs } from '../workdir/domains.js';
-import type { Grant } from '@kepcup/shared';
+import { WORKTREE_DIR_NAME, type Grant } from '@kepcup/shared';
 
 export interface PolicyWorkdir {
   /** Canonical workdir directory. */
@@ -12,6 +13,19 @@ export interface PolicyWorkdir {
   /** True when this run holds the workdir write lease. */
   hasLease: boolean;
   /** Absolute glob patterns that stay unread (workdir protect rules). */
+  denyReadGlobs: string[];
+}
+
+/**
+ * D140-4: the task's isolated tree. The tree root and the two precise `.git`
+ * subtrees (the linked worktree's metadata and the shared object store) are
+ * writable; the main workdir stays a read-only reference and the protect
+ * rules re-apply inside the tree.
+ */
+export interface PolicyTaskWorktree {
+  path: string;
+  gitWorktreeMeta: string;
+  gitObjectsDir: string;
   denyReadGlobs: string[];
 }
 
@@ -25,6 +39,12 @@ export interface PolicyInput {
   grants?: Grant[];
   /** The conversation's bound workdir (P04). */
   workdir?: PolicyWorkdir;
+  /**
+   * D140-4: the task executes in an isolated worktree. The tree becomes the
+   * write root; the main workdir is a read-only reference (it is already
+   * read-only because the task's lease is keyed on the tree, not the workdir).
+   */
+  taskWorktree?: PolicyTaskWorktree;
   /**
    * P06 installed toolchains: PATH prefix (bin dirs, platform-delimited) and
    * the toolchains root (read-only inside the sandbox, docs 任务 5).
@@ -158,6 +178,48 @@ export function buildSandboxPolicy(input: PolicyInput): SandboxPolicy {
       (denied) => !(denied === workdir.path || isAncestor(workdir.path, denied)),
     );
     denyRead.push(...workdir.denyReadGlobs);
+    // D140-4: `.worktree/` next to the workdir is KepCup-internal (task trees
+    // hold `.worktreeinclude` copies of protected files). Read-denied for
+    // every run of this workdir; a worktree task's own tree re-opens itself
+    // below (deny-then-allow).
+    const home = path.join(path.dirname(workdir.path), WORKTREE_DIR_NAME);
+    if (existsSync(home) && !denyRead.includes(home)) denyRead.push(home);
+  }
+
+  // D140-4: the task's worktree replaces the workdir's write mount. Only the
+  // tree root and the two precise `.git` subtrees are writable; the workdir
+  // above stayed read-only (the task's lease is keyed on the tree).
+  const taskWorktree = input.taskWorktree;
+  if (taskWorktree !== undefined) {
+    if (!readOnlyRun) {
+      if (domainDirs !== null && writeDomain !== undefined) {
+        if (rootContains(taskWorktree.path, writeDomain.root)) {
+          for (const dir of domainDirs) pushUnique(readWrite, dir);
+        }
+      } else {
+        pushUnique(readWrite, taskWorktree.path);
+      }
+      pushUnique(readWrite, taskWorktree.gitWorktreeMeta);
+      pushUnique(readWrite, taskWorktree.gitObjectsDir);
+    } else {
+      // A read-only subagent of the task still reads the tree; the allow also
+      // re-opens the tree inside the read-denied `.worktree` home below.
+      pushUnique(readOnly, taskWorktree.path);
+    }
+    // The read-side rules apply to every run in the tree, read-only subagents
+    // included (the main workdir's globs are anchored at the tree).
+    denyRead = denyRead.filter(
+      (denied) => !(denied === taskWorktree.path || isAncestor(taskWorktree.path, denied)),
+    );
+    denyRead.push(...taskWorktree.denyReadGlobs);
+    // Sibling trees under the same `.worktree` home are other tasks' private
+    // areas (their `.worktreeinclude` copies may hold the very secrets the
+    // protect rules deny). The home is read-denied; the task's own tree
+    // re-opens itself through readWrite (deny-then-allow).
+    const home = path.dirname(taskWorktree.path);
+    if (path.basename(home) === WORKTREE_DIR_NAME && !denyRead.includes(home)) {
+      denyRead.push(home);
+    }
   }
 
   for (const grant of input.grants ?? []) {

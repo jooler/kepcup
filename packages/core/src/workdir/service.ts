@@ -19,6 +19,7 @@ import { encodeWriteDomainKey, absolutePatterns, formatWriteDomain, type AbsDoma
 import type { CheckpointService } from './checkpoints.js';
 import { buildWorkdirSection, WORKDIR_SECTION_BUDGET } from './context.js';
 import { gitCliAvailable, runGitRemote, type GitRemoteOperation } from './git-remote.js';
+import { readWorktreeMeta, isWorktreePathOf, type WorktreeService } from './worktree.js';
 import type { WorkdirsService } from '../domain/workdirs.js';
 import type { ConversationsService } from '../domain/conversations.js';
 import { projectScopeOf } from '../domain/project-scope.js';
@@ -45,6 +46,11 @@ export interface WorkdirRuntimeDeps {
   grants: GrantsService;
   leases: LeaseService;
   checkpoints: CheckpointService;
+  /**
+   * D140-4: worktree isolation. Absent = feature off (unit tests); the task
+   * host never creates one and `isolation: 'worktree'` is refused.
+   */
+  worktrees?: WorktreeService;
   publish: <K extends keyof CoreEventsMap>(event: K, payload: CoreEventsMap[K]) => void;
   /**
    * P11: pushes the new loopback policy to the conversation's already-open
@@ -71,6 +77,22 @@ export interface LeaseTarget {
   key: string;
   /** Set when the lease key is the bound workdir (checkpoints apply). */
   workdir: Workdir | null;
+}
+
+/**
+ * D140-4: a task's isolated tree, as the sandbox / gateway / command cwd see
+ * it. `gitWorktreeMeta` and `gitObjectsDir` are the only `.git` subtrees the
+ * sandbox may write (the linked worktree's index / HEAD live in the former,
+ * new objects in the latter — see DEV-152); `denyReadGlobs` re-applies the
+ * workdir's protect rules inside the tree.
+ */
+export interface TaskWorktree {
+  path: string;
+  workdirPath: string;
+  gitCommonDir: string;
+  gitWorktreeMeta: string;
+  gitObjectsDir: string;
+  denyReadGlobs: string[];
 }
 
 /**
@@ -277,6 +299,14 @@ export class WorkdirRuntime {
   }
 
   /**
+   * D140-4: whether any run currently holds a lease conflicting with this
+   * root — the apply callback refuses to wait behind a writing task.
+   */
+  workdirBusy(workdirPath: string): boolean {
+    return this.#deps.leases.conflictingHolders(workdirPath).length > 0;
+  }
+
+  /**
    * D123 §3.6: null when the writing task's resolved path stays inside its
    * declared write domain, else the refusal reason. Read-only identities and
    * undeclared domains (`writes: true`) always pass. Fail-closed: a missing
@@ -324,10 +354,8 @@ export class WorkdirRuntime {
     return { root: task.taskCwd, patterns };
   }
 
-  /**
-   * The task row that writes for `identity` (subagent → owning task), or
-   * `'missing'` when the subagent chain cannot be resolved.
-   */
+  /** The task row that writes for `identity` (subagent → owning task), or
+   * `'missing'` when the subagent chain cannot be resolved. */
   #writingTask(identity: RunIdentity): Run | null | 'missing' {
     let loopType: RunIdentity['loopType'] | SharedLoopType = identity.loopType;
     let runId = identity.runId;
@@ -345,41 +373,115 @@ export class WorkdirRuntime {
     return this.#deps.runs.get(runId) ?? 'missing';
   }
 
+  /** D140-4: the owning task's isolation mode (null = not a task / not isolated). */
+  #owningIsolation(identity: RunIdentity): Run['isolation'] {
+    const task = this.#writingTask(identity);
+    if (task === null || task === 'missing') return null;
+    return task.isolation;
+  }
+
   /** Sandbox policy input for the executing identity (null = no workdir). */
   policyInfo(identity: RunIdentity): {
     path: string;
     hasLease: boolean;
     allowedPorts: Workdir['allowedPorts'];
     denyReadGlobs: string[];
+    /**
+     * D140-4: the command cwd — the task's worktree root when it runs in one,
+     * else null (the caller falls back to `path`). The main workdir stays a
+     * read-only reference for a worktree task.
+     */
+    cwd: string | null;
+    worktree: TaskWorktree | null;
   } | null {
     const workdir = this.boundWorkdir(identity.conversationId);
     if (workdir === null || workdir.status === 'missing') return null;
+    const worktree = this.taskWorktree(identity, workdir);
     return {
       path: workdir.path,
       hasLease: this.holdsLease(identity, workdir.path),
       allowedPorts: workdir.allowedPorts,
       denyReadGlobs: this.denyReadGlobs(workdir),
+      cwd: worktree?.path ?? null,
+      worktree,
+    };
+  }
+
+  /** D140-4: the worktree a task (or its subagent) executes in, null otherwise. */
+  taskWorktree(
+    identity: RunIdentity,
+    workdir: Workdir | null = this.boundWorkdir(identity.conversationId),
+  ): TaskWorktree | null {
+    if (workdir === null || workdir.status !== 'available') return null;
+    const task = this.#writingTask(identity);
+    if (task === null || task === 'missing' || task.isolation !== 'worktree') return null;
+    if (task.worktreePath === null || task.taskCwd === null) return null;
+    return this.#taskWorktreeOf(workdir, task.worktreePath);
+  }
+
+  /** Relative-path base of the identity's tools: its worktree, else null. */
+  taskWorktreePath(identity: RunIdentity): string | null {
+    return this.taskWorktree(identity)?.path ?? null;
+  }
+
+  /**
+   * D140-4: whether the identity belongs to a task isolated in a worktree.
+   * Row-only (no metadata read): the gateway uses it to keep the main workdir
+   * closed even when the tree's own metadata is unreadable.
+   */
+  isWorktreeTask(identity: RunIdentity): boolean {
+    return this.#owningIsolation(identity) === 'worktree';
+  }
+
+  /** D140-4: the worktree of an explicit task row (orchestrator / task host). */
+  taskWorktreeOfTask(task: Run): TaskWorktree | null {
+    if (task.isolation !== 'worktree' || task.worktreePath === null || task.taskCwd === null) {
+      return null;
+    }
+    const workdir = this.boundWorkdir(task.conversationId);
+    if (workdir === null || workdir.status !== 'available') return null;
+    return this.#taskWorktreeOf(workdir, task.worktreePath);
+  }
+
+  #taskWorktreeOf(workdir: Workdir, worktreePath: string): TaskWorktree | null {
+    const meta = readWorktreeMeta(worktreePath);
+    if (meta === null) return null;
+    return {
+      path: worktreePath,
+      workdirPath: workdir.path,
+      gitCommonDir: meta.gitCommonDir,
+      gitWorktreeMeta: meta.gitWorktreeMeta,
+      gitObjectsDir: path.join(meta.gitCommonDir, 'objects'),
+      denyReadGlobs: this.denyReadGlobs(workdir, worktreePath),
     };
   }
 
   /** Absolute glob patterns of the workdir's deny-read rules (policy denyRead). */
-  denyReadGlobs(workdir: Workdir): string[] {
+  denyReadGlobs(workdir: Workdir, root: string = workdir.path): string[] {
     const patterns: string[] = [];
     for (const pattern of workdir.protectRules.denyRead) {
       if (pattern.includes('/')) {
-        patterns.push(`${workdir.path}/${pattern}`);
+        patterns.push(`${root}/${pattern}`);
       } else {
         // Slash-less patterns match the file name at any depth.
-        patterns.push(`${workdir.path}/${pattern}`);
-        patterns.push(`${workdir.path}/**/${pattern}`);
+        patterns.push(`${root}/${pattern}`);
+        patterns.push(`${root}/**/${pattern}`);
       }
     }
     return patterns;
   }
 
-  /** True when `resolvedPath` hits a protection rule of the workdir. */
-  matchesProtectRule(workdir: Workdir, resolvedPath: string, mode: 'read' | 'write'): boolean {
-    return matchProtectRule(workdir.protectRules, workdir.path, resolvedPath, mode);
+  /**
+   * True when `resolvedPath` hits a protection rule of the workdir. `root`
+   * overrides the anchor (D140-4: the same rules apply inside a worktree).
+   */
+  matchesProtectRule(
+    workdir: Workdir,
+    resolvedPath: string,
+    mode: 'read' | 'write',
+    root: string = workdir.path,
+  ): boolean {
+    return matchProtectRule(workdir.protectRules, root, resolvedPath, mode);
   }
 
   // --- lease orchestration ---------------------------------------------------
@@ -751,7 +853,11 @@ export class WorkdirRuntime {
     return this.#roots.some((root) => {
       if (candidate === root) return true;
       const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
-      return candidate.startsWith(prefix);
+      if (candidate.startsWith(prefix)) return true;
+      // D140-4: a workdir's isolated trees live next to it, not under it
+      // (`<workdir parent>/.worktree/`). Only this root's own trees are
+      // opened up — the home is shared with sibling roots.
+      return isWorktreePathOf(root, candidate);
     });
   }
 
@@ -1065,6 +1171,15 @@ export class WorkdirRuntime {
     input: { operation: GitRemoteOperation; args: string[]; reason: string },
     options: { signal?: AbortSignal; requestApproval: (payload: Record<string, unknown>) => Promise<'approved' | 'denied' | 'cancelled'> },
   ): Promise<{ exitCode: number | null; output: string }> {
+    // D140-4: a worktree is a detached HEAD — push / pull / fetch have no
+    // meaningful target and would cross the main checkout. Apply the changes
+    // first, then operate on the workdir.
+    if (this.#owningIsolation(identity) === 'worktree') {
+      throw new AppError(
+        'INVALID_INPUT',
+        'worktree 任务不支持远程操作：请先把改动应用到工作目录，再在主工作目录执行 git 远程操作',
+      );
+    }
     const workdir = this.boundWorkdir(identity.conversationId);
     if (workdir === null) {
       throw new AppError('INVALID_INPUT', '当前对话未绑定 workdir，无法执行 git 远程操作');
@@ -1098,19 +1213,24 @@ export class WorkdirRuntime {
   /** `<workdir>` system prompt section (null when nothing bound). */
   async promptSection(
     conversationId: string | null,
-    options: { skipGuideFiles?: readonly string[] } = {},
+    options: { skipGuideFiles?: readonly string[]; root?: string | null } = {},
   ): Promise<string | null> {
     const workdir = this.boundWorkdir(conversationId);
     if (workdir === null || workdir.status !== 'available') return null;
+    // D140-4: a worktree task's context is built from its tree (listing, git
+    // status, AGENTS.md). Ignore verdicts only come from the workdir's shadow
+    // repo — the tree is a fresh checkout, nothing there is ignored.
+    const root = options.root ?? workdir.path;
+    const usesWorkdir = root === workdir.path;
     // Ignore verdicts come from the shadow repo (libgit2, exact semantics);
     // it is created lazily here — it lives in the data directory only.
-    const repo = await this.#deps.checkpoints.ensureOpen(workdir);
+    const repo = usesWorkdir ? await this.#deps.checkpoints.ensureOpen(workdir) : null;
     const isIgnored =
       repo !== null && workdir.path === (repo.workdir()?.replace(/\/+$/, '') ?? workdir.path)
         ? (relative: string) => repo.isPathIgnored(relative)
         : null;
     const section = await buildWorkdirSection({
-      path: workdir.path,
+      path: root,
       budget: WORKDIR_SECTION_BUDGET,
       isIgnored,
       ...(options.skipGuideFiles !== undefined ? { skipGuideFiles: options.skipGuideFiles } : {}),
@@ -1137,12 +1257,32 @@ export class WorkdirRuntime {
   ): LeaseTarget | null {
     const keyOf = (base: string): string =>
       domains !== null ? encodeWriteDomainKey(base, domains) : base;
+    // D140-4: a worktree task leases its own tree root (exclusive, one task
+    // per tree). The tree is a sibling of the workdir, so the shared lease of
+    // the main workdir never conflicts with it.
+    const worktree = this.taskWorktree(identity);
+    if (
+      worktree !== null &&
+      (resolvedPath === worktree.path || isInsidePath(resolvedPath, worktree.path))
+    ) {
+      return { key: keyOf(worktree.path), workdir: null };
+    }
     const workdir = this.boundWorkdir(identity.conversationId);
     if (
       workdir !== null &&
       workdir.status === 'available' &&
       isInsidePath(resolvedPath, workdir.path)
     ) {
+      // D140-4: an isolated task never leases the main workdir. Silently
+      // acquiring that lease here would (a) let the task write — and thus
+      // bypass the apply card — and (b) replace its own tree lease (one lease
+      // per run), opening the tree to the next task.
+      if (this.#owningIsolation(identity) === 'worktree') {
+        throw new AppError(
+          'INVALID_INPUT',
+          'worktree 任务的写入租约就是隔离目录本身：请直接写隔离目录里的相对路径，主工作目录的改动在任务结束后应用',
+        );
+      }
       return { key: keyOf(workdir.path), workdir };
     }
     // D75 §5.2: the identity's own workspace (realpath-normalized on both

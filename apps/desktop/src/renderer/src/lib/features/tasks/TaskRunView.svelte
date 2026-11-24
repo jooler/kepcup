@@ -496,8 +496,23 @@
           {#if task.cwdKind !== null}
             <span aria-hidden="true">·</span>
             <span
-              >{task.cwdKind === 'workdir' ? t('task.run.workdir') : t('task.run.workspace')}</span
+              >{task.cwdKind === 'worktree'
+                ? t('task.run.worktree')
+                : task.cwdKind === 'workdir'
+                  ? t('task.run.workdir')
+                  : t('task.run.workspace')}</span
             >
+          {/if}
+          {#if task.worktreePath != null}
+            <!-- D140-4：隔离目录路径 + 应用到工作目录的状态 -->
+            <span aria-hidden="true">·</span>
+            <span class="min-w-0 truncate font-mono" data-testid="task-run-worktree"
+              >{task.worktreePath}</span
+            >
+            {#if task.applyState !== undefined && task.applyState !== 'none'}
+              <span aria-hidden="true">·</span>
+              <span data-testid="task-run-apply-state">{t(`task.applyState.${task.applyState}`)}</span>
+            {/if}
           {/if}
           <span aria-hidden="true">·</span>
           <span>{task.writes ? t('task.run.writes') : t('task.run.readOnly')}</span>

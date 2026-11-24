@@ -11,6 +11,7 @@
     skillImportApprovalPayloadSchema,
     skillPresetApprovalPayloadSchema,
     mcpToolApprovalPayloadSchema,
+    worktreeApplyApprovalPayloadSchema,
     type SkillImportApprovalPayload,
   } from '@kepcup/shared';
   import {
@@ -151,6 +152,12 @@
   const mailSend = $derived.by(() => {
     if (approval.kind !== 'mail_send') return null;
     const parsed = mailSendApprovalPayloadSchema.safeParse(approval.payload);
+    return parsed.success ? parsed.data : null;
+  });
+  // D140-4：worktree 任务结算后的「应用到工作目录」卡（改动摘要 + 路径）。
+  const worktreeApply = $derived.by(() => {
+    if (approval.kind !== 'worktree_apply') return null;
+    const parsed = worktreeApplyApprovalPayloadSchema.safeParse(approval.payload);
     return parsed.success ? parsed.data : null;
   });
   /** D73 P3：由 MCP 应用界面（而非模型）发起的操作，卡片上明示来源。 */
@@ -591,13 +598,15 @@
                           : t('approvals.mcpToolTitle')
                         : approval.kind === 'agent_tool'
                           ? agentToolTitle
-                          : approval.kind === 'butler_proposal'
+                            : approval.kind === 'butler_proposal'
                             ? butlerProposal?.proposalType === 'project'
                               ? t('approvals.butlerProjectTitle')
                               : butlerProposal?.proposalType === 'bot'
                                 ? t('approvals.butlerBotTitle')
                                 : t('approvals.butlerTeamTitle')
-                            : t('approvals.commandTitle'),
+                            : approval.kind === 'worktree_apply'
+                              ? t('approvals.worktreeApplyTitle')
+                              : t('approvals.commandTitle'),
   );
 </script>
 
@@ -692,7 +701,13 @@
                               )
                               .map((bot) => bot.name)
                               .join(listSeparator()) ?? '')
-                        : command}
+                        : approval.kind === 'worktree_apply'
+                          ? `${t('approvals.worktreeApplyStats', {
+                              insertions: worktreeApply?.insertions ?? 0,
+                              deletions: worktreeApply?.deletions ?? 0,
+                              count: worktreeApply?.fileCount ?? 0,
+                            })} · ${worktreeApply?.worktreePath ?? ''}`
+                          : command}
       </code>
     {/if}
     {#if effectLine !== null}
@@ -752,6 +767,8 @@
       {:else if approval.kind === 'agent_tool'}
         {#if agentTool?.sensitive}<FileWarning class="size-4 text-destructive" aria-hidden="true" />
         {:else}<Bot class="size-4 text-amber-600" aria-hidden="true" />{/if}
+      {:else if approval.kind === 'worktree_apply'}
+        <ShieldAlert class="size-4 text-amber-600" aria-hidden="true" />
       {:else}
         <TerminalSquare class="size-4 text-amber-600" aria-hidden="true" />
       {/if}
@@ -1457,6 +1474,45 @@
           {/each}
         </div>
       {/if}
+    {:else if approval.kind === 'worktree_apply' && worktreeApply !== null}
+      <!-- D140-4：把隔离目录的改动三方合并回工作目录（冲突时保留隔离目录） -->
+      <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1" data-testid="approval-worktree-apply">
+        <span class="text-muted-foreground">{t('approvals.worktreeApplyWorktree')}</span>
+        <code class="break-all" data-testid="approval-worktree-path">{worktreeApply.worktreePath}</code>
+        <span class="text-muted-foreground">{t('approvals.worktreeApplyTarget')}</span>
+        <code class="break-all" data-testid="approval-worktree-workdir">{worktreeApply.workdirPath}</code>
+        <span class="text-muted-foreground">{t('approvals.worktreeApplyFiles')}</span>
+        <span data-testid="approval-worktree-stats"
+          >{t('approvals.worktreeApplyStats', {
+            insertions: worktreeApply.insertions,
+            deletions: worktreeApply.deletions,
+            count: worktreeApply.fileCount,
+          })}</span
+        >
+      </div>
+      {#if worktreeApply.files.length > 0}
+        <ul
+          class="mt-2 max-h-40 list-inside list-disc overflow-auto rounded bg-muted/50 px-2 py-1 font-mono text-xs"
+          data-testid="approval-worktree-files"
+        >
+          {#each worktreeApply.files as file (file)}
+            <li class="truncate">{file}</li>
+          {/each}
+          {#if worktreeApply.fileCount > worktreeApply.files.length}
+            <li class="text-muted-foreground">
+              {t('task.run.changesMore', {
+                count: worktreeApply.fileCount - worktreeApply.files.length,
+              })}
+            </li>
+          {/if}
+        </ul>
+      {/if}
+      <p
+        class="mt-2 rounded bg-amber-500/10 px-2 py-1 text-xs text-amber-800 dark:text-amber-300"
+        data-testid="approval-worktree-hint"
+      >
+        {t('approvals.worktreeApplyHint')}
+      </p>
     {:else}
       <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
         <span class="text-muted-foreground">{t('approvals.command')}</span>
@@ -1578,11 +1634,13 @@
           data-testid="approval-approve"
           >{approval.kind === 'butler_proposal'
             ? t('approvals.butlerConfirm')
-            : approval.kind === 'egress'
-              ? egressChoosesDur
-                ? t('approvals.approve')
-                : t('approvals.egress.allowOnce')
-              : t('approvals.approve')}</Button
+            : approval.kind === 'worktree_apply'
+              ? t('approvals.worktreeApplyApprove')
+              : approval.kind === 'egress'
+                ? egressChoosesDur
+                  ? t('approvals.approve')
+                  : t('approvals.egress.allowOnce')
+                : t('approvals.approve')}</Button
         >
         <Button
           size="sm"

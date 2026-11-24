@@ -14,6 +14,7 @@ import {
   mcpToolRiskSchema,
   type McpToolRisk,
   skillPresetApprovalPayloadSchema,
+  worktreeApplyApprovalPayloadSchema,
   type Approval,
   type ApprovalDecision,
   type ApprovalDuration,
@@ -168,6 +169,9 @@ const NEVER_AUTO_DECIDED: ReadonlySet<ApprovalKind> = new Set([
   'profile_change',
   // D105: 键鼠操控永不无人值守自动批准（硬约束）。
   'computer_control',
+  // D140-4: applies a task's tree to the user's main workdir — unattended must
+  // never merge into it silently.
+  'worktree_apply',
 ]);
 
 /** Which level produced an automatic decision (audit / folded-record wording). */
@@ -181,9 +185,15 @@ function viaOf(tier: { mode: PermissionMode; source: PermissionModeSource }): Au
 /**
  * Non-blocking kinds whose card must outlive the requesting run: the tool
  * returned immediately and the run usually settles long before the user
- * decides (`environment` P06, `butler_proposal` D70, `bot_handover` D88).
+ * decides (`environment` P06, `butler_proposal` D70, `bot_handover` D88,
+ * `worktree_apply` D140-4 — the card is created at settlement).
  */
-const SURVIVES_RUN: ApprovalKind[] = ['environment', 'butler_proposal', 'bot_handover'];
+const SURVIVES_RUN: ApprovalKind[] = [
+  'environment',
+  'butler_proposal',
+  'bot_handover',
+  'worktree_apply',
+];
 
 /**
  * The approval mechanism (docs/dev/phases/P03-permissions.md "审批框架").
@@ -1367,6 +1377,27 @@ export class ApprovalsService {
           return `[系统] 已取消：${label}`;
         case 'failed':
           return `[系统] 处理失败：${label}${failureSuffix(approval)}（未安装）`;
+      }
+    }
+    if (approval.kind === 'worktree_apply') {
+      const parsed = worktreeApplyApprovalPayloadSchema.safeParse(approval.payload);
+      const title = parsed.success && parsed.data.taskTitle.length > 0
+        ? parsed.data.taskTitle
+        : (parsed.success ? parsed.data.worktreePath : '隔离目录');
+      const label = `应用隔离目录的改动（${title}）`;
+      switch (approval.status) {
+        case 'pending':
+          return `[系统] 等待用户确认：${label}`;
+        case 'approved':
+          return approval.autoApproved
+            ? `[系统] 用户批准${label}（${autoModeWord(approval)}自动批准）`
+            : `[系统] 用户批准${label}`;
+        case 'denied':
+          return `[系统] 用户拒绝${label}，隔离目录保留`;
+        case 'cancelled':
+          return `[系统] 已取消：${label}，隔离目录保留`;
+        case 'failed':
+          return `[系统] 处理失败：${label}${failureSuffix(approval)}`;
       }
     }
     const label =

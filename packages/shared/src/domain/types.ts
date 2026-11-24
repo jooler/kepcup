@@ -2679,6 +2679,24 @@ export const gitRemoteApprovalPayloadSchema = z.object({
 export type GitRemoteApprovalPayload = z.infer<typeof gitRemoteApprovalPayloadSchema>;
 
 /**
+ * Payload of a `worktree_apply` approval（D140-4 §3.6）：任务结算后把隔离目录的
+ * 改动应用到主工作目录。`files` 只带前若干项（`fileCount` 是总数）。
+ */
+export const worktreeApplyApprovalPayloadSchema = z.object({
+  runId: z.string(),
+  worktreePath: z.string(),
+  workdirPath: z.string(),
+  /** The commit the tree started from (`git stash create` oid, else HEAD). */
+  baseOid: z.string().default(''),
+  files: z.array(z.string()).default([]),
+  fileCount: z.number().default(0),
+  insertions: z.number().default(0),
+  deletions: z.number().default(0),
+  taskTitle: z.string().default(''),
+});
+export type WorktreeApplyApprovalPayload = z.infer<typeof worktreeApplyApprovalPayloadSchema>;
+
+/**
  * Payload of a `computer_control` approval（D105，docs/design/52 §5）：同一 run 内
  * 首个 computer 动作前出卡一次；`summary` 只含动作名与目标，不含敏感文本
  * （type / paste / set_value 的文本走 sensitiveParams，不进卡面与日志）。

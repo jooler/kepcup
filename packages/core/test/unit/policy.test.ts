@@ -294,6 +294,80 @@ describe('D123 write-domain narrowing', () => {
   });
 });
 
+describe('D140-4 worktree (two-root) policy', () => {
+  const base = {
+    platform: process.platform,
+    paths,
+    workspacePath: workspace(),
+    network: { mode: 'open', allowDomains: [] } as SandboxNetworkPolicy,
+  };
+  const workdir = {
+    path: '/tmp/kepcup-policy-test/proj',
+    // The task's lease is keyed on the tree, not the workdir.
+    hasLease: false,
+    denyReadGlobs: ['/tmp/kepcup-policy-test/proj/.env', '/tmp/kepcup-policy-test/proj/**/.env'],
+  };
+  const taskWorktree = {
+    path: '/tmp/kepcup-policy-test/.worktree/proj-3f9a1c2d',
+    gitWorktreeMeta: '/tmp/kepcup-policy-test/proj/.git/worktrees/proj-3f9a1c2d',
+    gitObjectsDir: '/tmp/kepcup-policy-test/proj/.git/objects',
+    denyReadGlobs: [
+      '/tmp/kepcup-policy-test/.worktree/proj-3f9a1c2d/.env',
+      '/tmp/kepcup-policy-test/.worktree/proj-3f9a1c2d/**/.env',
+    ],
+  };
+
+  it('makes the tree and its precise .git subtrees writable, the workdir read-only', () => {
+    const policy = buildSandboxPolicy({ ...base, workdir, taskWorktree });
+    expect(policy.readWrite).toContain(taskWorktree.path);
+    expect(policy.readWrite).toContain(taskWorktree.gitWorktreeMeta);
+    expect(policy.readWrite).toContain(taskWorktree.gitObjectsDir);
+    expect(policy.readWrite).not.toContain(workdir.path);
+    expect(policy.readOnly).toContain(workdir.path);
+    // The workdir's whole .git is NOT opened by the worktree entries.
+    expect(policy.readWrite).not.toContain('/tmp/kepcup-policy-test/proj/.git');
+    expect(policy.readWrite).not.toContain('/tmp/kepcup-policy-test/proj/.git/config');
+  });
+
+  it('re-applies the workdir protect globs anchored at the tree root', () => {
+    const policy = buildSandboxPolicy({ ...base, workdir, taskWorktree });
+    expect(policy.denyRead).toContain('/tmp/kepcup-policy-test/.worktree/proj-3f9a1c2d/.env');
+    expect(policy.denyRead).toContain(
+      '/tmp/kepcup-policy-test/.worktree/proj-3f9a1c2d/**/.env',
+    );
+    // The workdir's own globs stay in place too (the dir remains readable).
+    expect(policy.denyRead).toContain('/tmp/kepcup-policy-test/proj/.env');
+    // Sibling trees under the same home are other tasks' private areas; the
+    // task's own tree re-opens itself through readWrite (deny-then-allow).
+    expect(policy.denyRead).toContain('/tmp/kepcup-policy-test/.worktree');
+    expect(policy.readWrite).toContain(taskWorktree.path);
+  });
+
+  it('narrows a tree-rooted write domain to its expressible dirs', () => {
+    const policy = buildSandboxPolicy({
+      ...base,
+      workdir,
+      taskWorktree,
+      writeDomain: { root: taskWorktree.path, patterns: ['apps/**'] },
+    });
+    expect(policy.readWrite).toContain(path.join(taskWorktree.path, 'apps'));
+    expect(policy.readWrite).toContain(taskWorktree.gitWorktreeMeta);
+    expect(policy.readWrite).not.toContain(taskWorktree.path);
+    expect(policy.readWrite).not.toContain(workspace());
+  });
+
+  it('keeps a read-only run read-only (no tree write mount) but keeps the read denies', () => {
+    const policy = buildSandboxPolicy({ ...base, workdir, taskWorktree, readOnlyRun: true });
+    expect(policy.readWrite).not.toContain(taskWorktree.path);
+    expect(policy.readWrite).not.toContain(taskWorktree.gitWorktreeMeta);
+    // A read-only subagent still reads the tree (re-opened inside the denied
+    // home) and the protect rules follow it in.
+    expect(policy.readOnly).toContain(taskWorktree.path);
+    expect(policy.denyRead).toContain('/tmp/kepcup-policy-test/.worktree/proj-3f9a1c2d/.env');
+    expect(policy.denyRead).toContain('/tmp/kepcup-policy-test/.worktree');
+  });
+});
+
 describe('macOS startup sysctls', () => {
   it('inserts kern.iosupportversion into a seatbelt sysctl allow list once', () => {
     const profile = `(allow sysctl-read\n  (sysctl-name "kern.osproductversion")\n)`;

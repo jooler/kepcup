@@ -1779,6 +1779,22 @@ export const zhCN = {
   'task.run.changesInterleaved': '并行任务也改过此文件',
   'task.run.changesMore': '还有 {count} 个文件未列出',
   'task.run.claimsAuto': '含首次写入的自动认领',
+  // D140-4：worktree 隔离任务（隔离目录与「应用到工作目录」状态）
+  'task.run.worktree': '隔离目录',
+  'task.run.worktreePath': '隔离目录 {path}',
+  'task.applyState.pending': '隔离目录的改动待应用',
+  'task.applyState.applied': '改动已应用到工作目录',
+  'task.applyState.conflict': '合并冲突：改动保留在隔离目录',
+  'task.applyState.kept': '隔离目录已保留（未应用）',
+  // D140-4：worktree_apply 审批卡
+  'approvals.worktreeApplyTitle': '应用隔离目录的改动',
+  'approvals.worktreeApplyHint':
+    '应用会用三方合并把隔离目录的改动写入你的工作目录；冲突时保留隔离目录、不自动重试。',
+  'approvals.worktreeApplyFiles': '改动文件',
+  'approvals.worktreeApplyStats': '+{insertions} / −{deletions} 行（共 {count} 个文件）',
+  'approvals.worktreeApplyWorktree': '隔离目录',
+  'approvals.worktreeApplyTarget': '应用到',
+  'approvals.worktreeApplyApprove': '应用到工作目录',
   // D115 注入坞（docs/design/56 §1）：任务详情页最底部的用户直注入口。
   'task.run.injectPlaceholder': '追加指令，Enter 发送…',
   'task.run.injectHintAwaiting': '任务在等你回答：发送的内容将作为回答',

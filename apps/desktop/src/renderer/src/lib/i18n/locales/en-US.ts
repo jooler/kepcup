@@ -1834,6 +1834,22 @@ export const enUS = {
   'task.run.changesInterleaved': 'A parallel task changed this file too',
   'task.run.changesMore': '{count} more files not listed',
   'task.run.claimsAuto': 'Includes auto-claims from first writes',
+  // D140-4: worktree-isolated tasks (the tree and its apply state)
+  'task.run.worktree': 'Isolated worktree',
+  'task.run.worktreePath': 'Isolated worktree {path}',
+  'task.applyState.pending': 'Worktree changes are waiting to be applied',
+  'task.applyState.applied': 'Changes applied to the working directory',
+  'task.applyState.conflict': 'Merge conflict: changes kept in the isolated worktree',
+  'task.applyState.kept': 'Worktree kept (not applied)',
+  // D140-4: worktree_apply approval card
+  'approvals.worktreeApplyTitle': 'Apply worktree changes',
+  'approvals.worktreeApplyHint':
+    'Applying three-way merges the isolated worktree into your working directory; on conflict the worktree is kept and nothing is retried.',
+  'approvals.worktreeApplyFiles': 'Changed files',
+  'approvals.worktreeApplyStats': '+{insertions} / −{deletions} lines ({count} files)',
+  'approvals.worktreeApplyWorktree': 'Isolated worktree',
+  'approvals.worktreeApplyTarget': 'Applying to',
+  'approvals.worktreeApplyApprove': 'Apply to working directory',
   // D115 inject dock (docs/design/56 §1): user steering entry at the bottom of the task page.
   'task.run.injectPlaceholder': 'Add an instruction, Enter to send…',
   'task.run.injectHintAwaiting': 'The task is waiting for your answer: what you send is the answer',

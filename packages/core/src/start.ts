@@ -116,6 +116,8 @@ import { CheckpointService } from './workdir/checkpoints.js';
 import { WorkdirRuntime } from './workdir/service.js';
 import { writeDomainKeysConflict } from './workdir/domains.js';
 import { TaskClaimRegistry } from './workdir/claims.js';
+import { WorktreeService } from './workdir/worktree.js';
+import { isInsidePath } from './sandbox/sensitive-paths.js';
 import { WorkdirsService } from './domain/workdirs.js';
 import {
   createSandboxBackend,
@@ -618,6 +620,8 @@ export interface CoreDomainServices {
   /** 对话级权限级别（manual / auto / bypass）；仅内存态。 */
   permissionMode: PermissionModeService;
   workdirs: WorkdirsService;
+  /** D140-4: worktree isolation (host git; create / apply / reap). */
+  worktrees: WorktreeService;
 }
 
 export interface CoreServices {
@@ -662,6 +666,8 @@ export interface CoreServices {
   share: ShareIntakeService | null;
   /** Workdir runtime (P04): binding, leases, checkpoints, git remote. */
   workdirRuntime: WorkdirRuntime | null;
+  /** D140-4: worktree isolation (create / apply / reap task trees). */
+  worktrees: WorktreeService | null;
   /** P06 environment manager (null while locked / errored). */
   environment: EnvManager | null;
   /** P07 memory & profile domain (null while locked / errored). */
@@ -807,6 +813,9 @@ const CONSOLIDATION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 
 /** Weekly wiki lint due-check cadence (P09; the job itself gates to one week). */
 const WIKI_LINT_CHECK_INTERVAL_MS = 30 * 60 * 1000;
+
+/** D140-4：孤儿 worktree 清理「启动 + 每日」的每日间隔。 */
+const WORKTREE_REAPER_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Assembles the whole core service: paths, logger, keystore, master key,
@@ -987,6 +996,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
 
   /** D75 §3.2 task reaper (armed after startup recovery, cleared by close()). */
   let taskSweepTimer: NodeJS.Timeout | null = null;
+  /** D140-4: daily orphan worktree reaper (cleared by close()). */
+  let worktreeReaperTimer: NodeJS.Timeout | null = null;
 
   /** Never logs after close: pino's sync write throw would reject unhandled. */
   const warnQuietly = (message: string, error: unknown) => {
@@ -1017,6 +1028,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     principalOps: null,
     share: null,
     workdirRuntime: null,
+    worktrees: null,
     environment: null,
     memory: null,
     media: null,
@@ -1121,6 +1133,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       if (shareSweepTimerRef.timer) clearInterval(shareSweepTimerRef.timer);
       if (taskSweepTimer !== null) clearInterval(taskSweepTimer);
       taskSweepTimer = null;
+      if (worktreeReaperTimer !== null) clearInterval(worktreeReaperTimer);
+      worktreeReaperTimer = null;
       try {
         services.memory?.closeAll();
       } catch {
@@ -1642,6 +1656,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // D123 §5: in-memory claims, read by the gateway's write check and
     // written by TaskHost's claim/release tools.
     const taskClaims = new TaskClaimRegistry();
+    // D140-4: worktree isolation (host-side git; readWorktreeMeta is used by
+    // the gateway / sandbox on every command).
+    const worktrees = new WorktreeService({ logger });
     const workdirRuntime = new WorkdirRuntime({
       db: mainDb,
       paths,
@@ -1658,6 +1675,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       // principalOps.provisionWorkdir 的建目录位置。缺省 = 不限制（现状）。
       ...(options.workdirRoots !== undefined ? { roots: options.workdirRoots } : {}),
       checkpoints: new CheckpointService({ paths, logger }),
+      worktrees,
       publish: (event, payload) => events.emit(event, payload as never),
       // P11: binding changes retarget the network rules of open pages at once
       // (best-effort — the tools also re-send the context on every call).
@@ -2849,6 +2867,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       // D140-3：task / once 网络放行的 run 终态清理。
       taint,
       workdirs: workdirRuntime,
+      worktrees,
       sandbox,
       clock,
       logger,
@@ -3910,6 +3929,43 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       warnQuietly('attachment orphan sweep failed', error);
     }
 
+    // D140-4: orphan worktree reaper (once at startup, then daily). Trees
+    // without a non-terminal task, older than the retention window, and not
+    // part of any registered mount are removed; the audit names them.
+    const reapWorktrees = (): void => {
+      void (async () => {
+        const reaped = await worktrees.reap({
+          workdirs: workdirsService.listAll().map((workdir) => workdir.path),
+          activeTasks: runs.listNonTerminalTasks(),
+          // A tree that is (or contains) a registered mount is user-visible data.
+          isMounted: (candidate) =>
+            mountRegistration
+              .registeredWindowsPaths()
+              .some(
+                (registered) =>
+                  isInsidePath(candidate, registered) || isInsidePath(registered, candidate),
+              ),
+          now: clock.now(),
+        });
+        if (reaped.length === 0) return;
+        logger.info({ reaped }, 'orphan worktrees reaped');
+        try {
+          // A sweep has no run context (no run id / bot) — recordSystem is the
+          // host-action form of the audit (audit_log.run_id stays null).
+          audit.recordSystem('worktree_reaped', { paths: reaped });
+        } catch (error) {
+          warnQuietly('worktree reap audit failed', error);
+        }
+      })().catch((error) => {
+        // The startup sweep can outlive a fast close: the raw logger would
+        // throw on the closed DB instead of reporting anything.
+        warnQuietly('worktree reaper failed', error);
+      });
+    };
+    reapWorktrees();
+    worktreeReaperTimer = setInterval(reapWorktrees, WORKTREE_REAPER_INTERVAL_MS);
+    worktreeReaperTimer.unref?.();
+
     services.mainDb = mainDb;
     services.runsDb = runsDb;
     // D48 Bot 模板：导入时外部智能体引擎在本机不可用（实验开关/目录）→ 回退内置。
@@ -3959,6 +4015,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       effects,
       revocations,
       browserProfiles,
+      worktrees,
     };
     services.orchestrator = orchestrator;
     // D140-1：执行器之外关闭任务影子窗口的路径（强制收回 RPC / 驱逐）也拿得到
@@ -4068,6 +4125,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       events.emit('share.targets.changed', { reason: 'project' }),
     );
     services.workdirRuntime = workdirRuntime;
+    services.worktrees = worktrees;
     services.environment = environment;
     services.memory = memory;
     services.media = media;

@@ -55,6 +55,7 @@ import {
   MAIL_ALERT_EVENT,
   IM_ALERT_EVENT,
   type Run,
+  type TaskApplyState,
   type ToolEffect,
   connectorMetaOf,
   type AppAuthReason,
@@ -165,6 +166,7 @@ import type { GrantsService } from '../permissions/grants.js';
 import type { TaintService } from '../apps/taint.js';
 import type { WorkdirRuntime } from '../workdir/service.js';
 import type { TaskClaimRegistry } from '../workdir/claims.js';
+import { readWorktreeMeta, type WorktreeService } from '../workdir/worktree.js';
 import type { SandboxBackend } from '../sandbox/types.js';
 import type { CoreEventsMap } from '../start-types.js';
 import {
@@ -428,6 +430,11 @@ export interface OrchestratorDeps {
   workdirs: WorkdirRuntime;
   /** D123 §5: shared in-memory task claims (gateway + TaskHost). */
   claims?: TaskClaimRegistry | undefined;
+  /**
+   * D140-4: worktree isolation — the host creates / applies / reaps task
+   * trees. Absent = `isolation: 'worktree'` is refused (unit harnesses).
+   */
+  worktrees?: WorktreeService | undefined;
   sandbox: SandboxBackend;
   clock: Clock;
   logger: CoreLogger;
@@ -833,6 +840,8 @@ export class Orchestrator {
   readonly #subagentFacades = new Map<string, SubagentToolFacade>();
   /** D75 任务层（dispatch/tasks.ts）：派出、注入、取消、结算、修复、对账、reaper。 */
   readonly #taskHost: TaskHost;
+  /** D140-4: worktree tasks that already got their apply card (per run id). */
+  readonly #worktreeApplySubmitted = new Set<string>();
   /** 管家提议的宿主侧（D70）：提议卡提交、确认后确定性创建 Bot / 项目组。 */
   readonly #butlerHost: ButlerHost;
   /** 跨 Bot 委派的宿主侧（D71）：投递闸门、结算、取消、恢复。 */
@@ -878,6 +887,7 @@ export class Orchestrator {
       // 任务失败自动重试：生产默认完整档位（测试装配可传 [] 关闭）。
       autoRetryDelaysMs: deps.taskAutoRetryDelaysMs ?? TASK_AUTO_RETRY_DELAYS_MS,
       ...(deps.claims !== undefined ? { claims: deps.claims } : {}),
+      ...(deps.worktrees !== undefined ? { worktrees: deps.worktrees } : {}),
       ...(deps.effects !== undefined ? { effects: deps.effects } : {}),
       messages: deps.messages,
       // D115 附件直注：注入坞直带附件的存取（归属校验 + claim + 字节）。
@@ -952,6 +962,16 @@ export class Orchestrator {
         }
         deps.publish('run.status', { run });
         if (run.conversationId !== null) this.#publishConversation(run.conversationId);
+        // D140-4: a settled worktree task with changes gets its「应用到工作
+        // 目录」card (non-blocking, outlives the run).
+        if (run.loopType === 'task' && run.isolation === 'worktree') {
+          void this.#settleWorktree(run).catch((error) => {
+            deps.logger.warn(
+              { runId: run.id, error: error instanceof Error ? error.message : String(error) },
+              'worktree settle card failed',
+            );
+          });
+        }
         // W6：委派跟随的任务到达终态 → 等它的委派重新检查是否可以结算。
         try {
           this.#delegationHost.onTaskSettled(run);
@@ -4023,6 +4043,248 @@ export class Orchestrator {
   }
 
   /**
+   * D140-4: submits the「应用到工作目录」card for a settled worktree task with
+   * changes. No changes → the tree is kept silently (`kept`); a card is never
+   * re-submitted for the same run (a retried run has its own id).
+   */
+  async #settleWorktree(run: Run): Promise<void> {
+    const worktrees = this.#deps.worktrees;
+    if (worktrees === undefined) return;
+    if (run.worktreePath === null || run.conversationId === null) return;
+    if (this.#worktreeApplySubmitted.has(run.id)) return;
+    // Startup recovery / a host interruption: the tree is kept, never carded
+    // (the app may not even show the conversation's old approvals anymore).
+    if (run.status === 'interrupted') {
+      worktrees.setApplyState(run.id, existsSync(run.worktreePath) ? 'kept' : 'none');
+      this.#taskHost.publishUpdate(run.id);
+      return;
+    }
+    const workdir = this.#deps.workdirs.boundWorkdir(run.conversationId);
+    if (workdir === null || workdir.status !== 'available') {
+      worktrees.setApplyState(run.id, existsSync(run.worktreePath) ? 'kept' : 'none');
+      this.#taskHost.publishUpdate(run.id);
+      return;
+    }
+    const summary = await worktrees.summary(run.worktreePath, run.worktreeBase ?? '');
+    if (summary === null || summary.fileCount === 0) {
+      worktrees.setApplyState(run.id, 'kept');
+      this.#taskHost.publishUpdate(run.id);
+      return;
+    }
+    this.#worktreeApplySubmitted.add(run.id);
+    if (this.#worktreeApplySubmitted.size > 512) {
+      const oldest = this.#worktreeApplySubmitted.values().next().value;
+      if (oldest !== undefined) this.#worktreeApplySubmitted.delete(oldest);
+    }
+    worktrees.setApplyState(run.id, 'pending');
+    this.#taskHost.publishUpdate(run.id);
+    const input = {
+      workdirPath: workdir.path,
+      worktreePath: run.worktreePath,
+      baseOid: run.worktreeBase ?? '',
+    };
+    const treePath = run.worktreePath;
+    const identity: RunIdentity = {
+      runId: run.id,
+      botId: run.botId,
+      conversationId: run.conversationId,
+      loopType: 'task',
+    };
+    try {
+      this.#deps.approvals.submitNonBlocking(
+        identity,
+        'worktree_apply',
+        {
+          runId: run.id,
+          worktreePath: run.worktreePath,
+          workdirPath: workdir.path,
+          baseOid: run.worktreeBase ?? '',
+          files: summary.files,
+          fileCount: summary.fileCount,
+          insertions: summary.insertions,
+          deletions: summary.deletions,
+          taskTitle: run.taskTitle ?? '',
+        },
+        (outcome) => {
+          if (outcome.decision !== 'approved') {
+            worktrees.setApplyState(run.id, 'kept');
+            this.#taskHost.publishUpdate(run.id);
+            return;
+          }
+          // The merge runs after `decide` returned: an unexpected throw must
+          // not become an unhandled rejection (the card would stay "approved"
+          // with nothing recorded).
+          void this.#applyWorktree(run, input, outcome.approval.id).catch((error) => {
+            this.#deps.logger.warn(
+              { runId: run.id, error: error instanceof Error ? error.message : String(error) },
+              'worktree apply callback failed',
+            );
+            worktrees.setApplyState(run.id, existsSync(treePath) ? 'kept' : 'none');
+            this.#taskHost.publishUpdate(run.id);
+          });
+        },
+      );
+    } catch (error) {
+      // No card → no decide path: the tree stays, and no `pending` state is
+      // left behind without an affordance.
+      worktrees.setApplyState(run.id, existsSync(run.worktreePath) ? 'kept' : 'none');
+      this.#taskHost.publishUpdate(run.id);
+      throw error;
+    }
+  }
+
+  /**
+   * Applies a settled task's tree to the main workdir. A workdir that a task
+   * is writing right now is never touched: the decision is marked failed with
+   * the retry hint and the tree stays. A conflict restores the workdir (the
+   * worktree service backs the touched files up) and keeps the tree.
+   */
+  async #applyWorktree(
+    run: Run,
+    input: { workdirPath: string; worktreePath: string; baseOid: string },
+    approvalId: string,
+  ): Promise<void> {
+    const worktrees = this.#deps.worktrees;
+    if (worktrees === undefined) return;
+    const fail = (message: string, state: TaskApplyState): void => {
+      try {
+        this.#deps.approvals.fail(approvalId, message);
+      } catch (error) {
+        this.#deps.logger.warn(
+          { approvalId, error: error instanceof Error ? error.message : String(error) },
+          'worktree apply failure could not be recorded on the card',
+        );
+      }
+      worktrees.setApplyState(run.id, state);
+      this.#taskHost.publishUpdate(run.id);
+    };
+    const busyMessage = '工作目录正被任务写入，请稍后重试：隔离目录与改动已保留';
+    // The binding may have moved after the task settled (switching is only
+    // blocked while runs are active): the card's target no longer exists for
+    // this conversation, so the merge is refused with a readable reason
+    // instead of a lease error about an unrelated root.
+    const currentWorkdir =
+      run.conversationId !== null
+        ? this.#deps.workdirs.boundWorkdir(run.conversationId)
+        : null;
+    if (currentWorkdir?.path !== input.workdirPath) {
+      fail(
+        `工作目录已变更（当前：${currentWorkdir?.path ?? '未绑定'}），本次改动未应用：隔离目录与改动已保留`,
+        'kept',
+      );
+      return;
+    }
+    if (this.#deps.workdirs.workdirBusy(input.workdirPath)) {
+      fail(busyMessage, 'kept');
+      return;
+    }
+    // Host-held exclusive lease for the merge; a short abort keeps the
+    // callback from parking behind a task that grabbed the workdir meanwhile.
+    const hostIdentity: RunIdentity = {
+      runId: `worktree-apply:${run.id}`,
+      botId: run.botId,
+      conversationId: run.conversationId,
+      loopType: 'host',
+    };
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), 5_000);
+    timer.unref?.();
+    try {
+      await this.#deps.workdirs.ensureWriteLease(hostIdentity, input.workdirPath, {
+        pin: true,
+        signal: abort.signal,
+        reason: '应用隔离目录的改动',
+      });
+    } catch (error) {
+      clearTimeout(timer);
+      // A lost race for the workdir reads as the busy hint; anything else
+      // (the workdir went away, the conversation was deleted) is reported as
+      // itself.
+      fail(
+        abort.signal.aborted
+          ? busyMessage
+          : `应用隔离目录的改动失败：${error instanceof Error ? error.message : String(error)}`,
+        'kept',
+      );
+      return;
+    }
+    clearTimeout(timer);
+    try {
+      const outcome = await worktrees.apply(input);
+      if (!outcome.ok) {
+        if (outcome.conflicts.length > 0) {
+          fail(
+            `WORKTREE_APPLY_CONFLICT：三方合并冲突，改动保留在隔离目录（${outcome.conflicts
+              .slice(0, 20)
+              .join('、')}）`,
+            'conflict',
+          );
+          this.#appendWorktreeEvent(
+            run.conversationId,
+            'worktree_apply_conflict',
+            `隔离目录的改动未能自动合并（冲突文件：${outcome.conflicts.slice(0, 20).join('、')}${
+              outcome.conflicts.length > 20 ? ` 等 ${outcome.conflicts.length} 个` : ''
+            }）。改动保留在 ${input.worktreePath}，可在终端里手动合并。`,
+          );
+        } else {
+          // No conflict, an outright refusal (git's own reason): the workdir is
+          // untouched and the tree keeps every change.
+          fail(
+            `改动未写入工作目录，已保留在隔离目录（${outcome.reason.slice(0, 300)}）`,
+            'kept',
+          );
+        }
+        return;
+      }
+      // The merge landed: a failed tree cleanup must not report the apply as
+      // failed (the changes are already in the workdir) nor invite a second
+      // apply — keep the tree flag truthful and let the reaper collect it.
+      try {
+        await worktrees.remove(input.workdirPath, input.worktreePath);
+      } catch (error) {
+        this.#deps.logger.warn(
+          { runId: run.id, worktreePath: input.worktreePath, error: error instanceof Error ? error.message : String(error) },
+          'applied worktree could not be removed; the reaper will collect it',
+        );
+      }
+      worktrees.setApplyState(run.id, 'applied');
+      this.#taskHost.publishUpdate(run.id);
+    } catch (error) {
+      fail(
+        `应用隔离目录的改动失败：${error instanceof Error ? error.message : String(error)}`,
+        existsSync(input.worktreePath) ? 'kept' : 'none',
+      );
+    } finally {
+      await this.#deps.workdirs.releaseRun(hostIdentity.runId).catch(() => {});
+    }
+  }
+
+  /** User-visible system line for a worktree apply outcome (conversation exists). */
+  #appendWorktreeEvent(
+    conversationId: string | null,
+    event: string,
+    text: string,
+  ): void {
+    if (conversationId === null) return;
+    if (this.#deps.conversations.get(conversationId) === null) return;
+    try {
+      const message = this.#deps.messages.append({
+        conversationId,
+        senderType: 'system',
+        kind: 'system_event',
+        event,
+        text,
+      });
+      this.#deps.publish('message.created', { conversationId, message });
+    } catch (error) {
+      this.#deps.logger.warn(
+        { conversationId, event, error: error instanceof Error ? error.message : String(error) },
+        'worktree event message failed',
+      );
+    }
+  }
+
+  /**
    * D75 task launch (TaskHost `execute`): rebuilds the brief from the task's
    * private entries, takes the write lease for a write task (§5.1 — the whole
    * task holds it; the row stays `queued` = submitted while it waits, and no
@@ -4030,8 +4292,9 @@ export class Orchestrator {
    * (`kind: 'task'`) under scheduler key `task:{id}`. Every path ends in
    * `control.finish()`.
    */
-  async #startTask(task: Run, control: TaskRunControl): Promise<void> {
+  async #startTask(initial: Run, control: TaskRunControl): Promise<void> {
     let submitted = false;
+    let task = initial;
     try {
       // Stopped before it got here: the host already settled it.
       if (control.signal.aborted) return;
@@ -4049,14 +4312,99 @@ export class Orchestrator {
       }
       const botId = task.botId;
       const conversationId = task.conversationId;
+      // D140-4: the isolated tree is created before the task takes its lease
+      // (the tree root is the lease target) and before any scheduler slot.
+      // A failure settles the task with WORKTREE_CREATE_FAILED and leaves the
+      // workdir untouched.
+      if (task.isolation === 'worktree') {
+        // Mount-based backends (Windows WSL, the Linux container backend) are
+        // out of scope for the two-root rule set (see §8 limitation 6); only
+        // srt (or the confirm-mode fallback when srt is unavailable) runs a
+        // task in its tree. The enhanced routing is already bypassed in the
+        // gateway; this covers a mount backend configured as the DEFAULT.
+        const backendKind = this.#deps.sandbox.kind;
+        if (backendKind === 'wsl' || backendKind === 'podman' || backendKind === 'lima') {
+          this.#taskHost.settle(task.id, {
+            status: 'failed',
+            error: `WORKTREE_NOT_AVAILABLE：当前沙箱后端（${backendKind}）不支持 worktree 隔离，只有 srt 沙箱支持`,
+          });
+          return;
+        }
+        // A task can outlive the dispatch-time engine check: switching the Bot
+        // to an external agent while the task is queued would run ACP inside
+        // the tree, which §8 limitation 6 does not cover. The row's `engine`
+        // is not enough (the executor reads the Bot's current engine).
+        if (this.#taskAgentIdOf(this.#deps.bots.get(botId)).length > 0) {
+          this.#taskHost.settle(task.id, {
+            status: 'failed',
+            error:
+              'WORKTREE_NOT_AVAILABLE：该 Bot 已切换为外部智能体，worktree 隔离只支持内置引擎',
+          });
+          return;
+        }
+        // A tree is reused only while it is still a valid linked worktree of
+        // its repository: a deleted / rewritten `.git` pointer means the tree
+        // can never be written under the two-root policy — recreate instead.
+        const reused =
+          task.worktreePath !== null &&
+          task.taskCwd !== null &&
+          existsSync(task.worktreePath) &&
+          readWorktreeMeta(task.worktreePath) !== null;
+        if (!reused) {
+          const workdir = this.#deps.workdirs.boundWorkdir(conversationId);
+          const worktrees = this.#deps.worktrees;
+          if (
+            workdir === null ||
+            workdir.status !== 'available' ||
+            worktrees === undefined
+          ) {
+            this.#taskHost.settle(task.id, {
+              status: 'failed',
+              error: 'WORKTREE_CREATE_FAILED：对话没有可用的工作目录，无法创建隔离目录',
+            });
+            return;
+          }
+          control.waiting('创建隔离目录');
+          try {
+            const info = await worktrees.create({
+              workdirPath: workdir.path,
+              runId: task.id,
+            });
+            if (control.signal.aborted) {
+              // Cancelled mid-creation: the fresh tree is nobody's — collect it.
+              await worktrees.remove(workdir.path, info.path).catch(() => {});
+              return;
+            }
+            task = this.#deps.runs.setWorktree(task.id, {
+              worktreePath: info.path,
+              worktreeBase: info.baseOid,
+              taskCwd: info.path,
+            });
+            this.#deps.publish('run.status', { run: task });
+          } catch (error) {
+            if (control.signal.aborted) return;
+            this.#taskHost.settle(task.id, {
+              status: 'failed',
+              error: `WORKTREE_CREATE_FAILED：${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            });
+            return;
+          }
+        }
+      }
       if (task.taskWrites === true) {
         // Same fallback as the execution's cwd (#executeRun, 审查 L6).
         const root = task.taskCwd ?? workspacePathFor(this.#deps.paths, botId, conversationId);
         // D140-1: built-in engine write tasks take a SHARED lease (several may
         // hold one root; mutual exclusion moved to file-level auto-claims).
         // External agent tasks keep the EXCLUSIVE whole-root lease — they
-        // serialize against everything on the root (unchanged).
-        const shared = this.#taskAgentIdOf(this.#deps.bots.get(botId)).length === 0;
+        // serialize against everything on the root (unchanged). D140-4: a
+        // worktree task is EXCLUSIVE on its own tree root (one task per tree),
+        // which never conflicts with the workdir's shared leases.
+        const shared =
+          task.isolation !== 'worktree' &&
+          this.#taskAgentIdOf(this.#deps.bots.get(botId)).length === 0;
         control.waiting('等写入租约');
         try {
           await this.#deps.workdirs.ensureWriteLease(
@@ -4182,6 +4530,11 @@ export class Orchestrator {
   async #executeRun(runId: string, exec: RunExecution): Promise<void> {
     let { batch } = exec;
     const isTask = exec.kind === 'task';
+    // D140-4: the task's isolated tree (null for turns / plain tasks). It is
+    // the execution root: relative tool paths, command cwd and the context
+    // section all resolve against it instead of the workdir.
+    const taskWorktree =
+      exec.kind === 'task' ? this.#deps.workdirs.taskWorktreeOfTask(exec.task) : null;
     const loopType = isTask ? ('task' as const) : ('turn' as const);
     /**
      * 本 run 是语音对话模式下的对话轮（53 号修订 v3）：只影响对话轮的提示词
@@ -4680,7 +5033,12 @@ export class Orchestrator {
         renderOptions,
         gateway: this.#deps.gateway,
         workspacePath,
-        workdirPath: workdir !== null && workdir.status === 'available' ? workdir.path : null,
+        workdirPath:
+          taskWorktree !== null
+            ? taskWorktree.path
+            : workdir !== null && workdir.status === 'available'
+              ? workdir.path
+              : null,
         workdirs: this.#deps.workdirs,
         network,
         fsState: this.#fsState,
@@ -4834,8 +5192,14 @@ export class Orchestrator {
                     runs,
                     gateway: this.#deps.gateway,
                     workspacePath,
+                    // D140-4: a worktree task's research sub run resolves its
+                    // relative paths in the same tree as the task.
                     workdirPath:
-                      workdir !== null && workdir.status === 'available' ? workdir.path : null,
+                      taskWorktree !== null
+                        ? taskWorktree.path
+                        : workdir !== null && workdir.status === 'available'
+                          ? workdir.path
+                          : null,
                     network,
                     secrets: this.#deps.secrets,
                     fsState: this.#fsState,
@@ -4879,7 +5243,11 @@ export class Orchestrator {
                     botName: bot.profile.identity.name || bot.name,
                     workspacePath,
                     workdirPath:
-                      workdir !== null && workdir.status === 'available' ? workdir.path : null,
+                      taskWorktree !== null
+                        ? taskWorktree.path
+                        : workdir !== null && workdir.status === 'available'
+                          ? workdir.path
+                          : null,
                     timeZone: this.#deps.timeZone,
                     now: new Date(this.#deps.clock.now()),
                   }),
@@ -5218,8 +5586,14 @@ export class Orchestrator {
       // 宿主 MCP 桥）；提示词拆成会话级（ACP 版平台规则 + <tool_policy> + 身份 /
       // 人设 / 对话信息）、run 级动态段与对话段。内置引擎不受影响。
       // The agent's cwd: the bound workdir, else the workspace; a D75 task
-      // works in its resolved cwd (§3.4 task_cwd).
-      const workdirPath = workdir !== null && workdir.status === 'available' ? workdir.path : null;
+      // works in its resolved cwd (§3.4 task_cwd). D140-4: a task's isolated
+      // worktree IS its resolved cwd (same value as `taskWorktree` above).
+      const workdirPath =
+        taskWorktree !== null
+          ? taskWorktree.path
+          : workdir !== null && workdir.status === 'available'
+            ? workdir.path
+            : null;
       // A task without a recorded cwd works in the workspace — the root
       // #startTask leased — never in an unleased workdir (审查 L6).
       const agentCwd =
@@ -5426,7 +5800,11 @@ export class Orchestrator {
               ? { projectRole: bot.id === conv.leadBotId ? ('lead' as const) : ('member' as const) }
               : {}),
             ...(cardPrompt !== undefined ? { card: cardPrompt } : {}),
-            workdir: (await this.#deps.workdirs.promptSection(batch.conversationId)) ?? undefined,
+            workdir:
+              (await this.#deps.workdirs.promptSection(
+                batch.conversationId,
+                taskWorktree !== null ? { root: taskWorktree.path } : {},
+              )) ?? undefined,
             workspace: {
               path: workspacePath,
               entries: this.#deps.gateway.workspaceTopLevel(workspacePath),

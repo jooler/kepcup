@@ -43,6 +43,7 @@ import {
 import { capabilityIdOfSetup } from '../capabilities/catalog.js';
 import { claimWithinDomain } from '../workdir/domains.js';
 import type { TaskClaimRegistry } from '../workdir/claims.js';
+import type { WorktreeService } from '../workdir/worktree.js';
 import {
   formatWriteDomain,
   inspectDeclaredDomains,
@@ -321,6 +322,12 @@ export interface TaskHostDeps {
   releaseExecution(runId: string): void;
   /** D123 §5: in-memory path claims (shared with the gateway's write check). */
   claims?: TaskClaimRegistry;
+  /**
+   * D140-4: worktree isolation. The host creates the tree before the task
+   * starts (orchestrator `#startTask`), and this service projects the apply
+   * state / reaps orphans. Absent = isolation unavailable.
+   */
+  worktrees?: WorktreeService;
   /**
    * The engine slot a task occupies beyond the task caps (design 30 §8.5:
    * task concurrency = min(TASK_CONCURRENCY_*, `agent:{id}` concurrency)):
@@ -1005,7 +1012,43 @@ export class TaskHost implements TaskToolFacade {
         '写域任务不能使用 cwd: "workspace"：写域按任务 cwd 解析，需与工具的相对路径基准（绑定工作目录）一致',
       );
     }
+    // D140-4: worktree isolation is opt-in, write tasks of the built-in engine
+    // only (an external agent's cwd / lease / permission bridge is not wired
+    // for the tree). A continuation does not inherit it: its cwd is resolved
+    // from scratch, so a previous task's tree never leaks into the new one.
+    const isolation = input.isolation ?? null;
+    if (isolation !== null) {
+      if (declaration.writes !== true) {
+        throw new AppError('INVALID_INPUT', 'worktree 隔离只用于写任务（writes: true 或写域）');
+      }
+      if (input.cwd === 'workspace') {
+        throw new AppError(
+          'INVALID_INPUT',
+          'worktree 隔离需要 cwd 为绑定的工作目录（不能用 workspace）',
+        );
+      }
+      if ((this.#deps.taskEngine?.(botId) ?? null) !== null) {
+        throw new AppError(
+          'INVALID_INPUT',
+          'worktree 隔离只支持内置引擎：外部智能体任务不能使用 isolation: "worktree"',
+        );
+      }
+      if (this.#deps.worktrees === undefined) {
+        throw new AppError('INVALID_INPUT', '当前环境不支持 worktree 隔离');
+      }
+    }
     const cwd = this.#deps.resolveCwd(botId, conversationId, input.cwd);
+    if (isolation !== null) {
+      let workdirPath: string | null;
+      try {
+        workdirPath = this.#deps.resolveCwd(botId, conversationId, 'workdir');
+      } catch {
+        workdirPath = null;
+      }
+      if (workdirPath === null || cwd !== workdirPath) {
+        throw new AppError('INVALID_INPUT', 'worktree 隔离需要对话绑定可用的工作目录');
+      }
+    }
     // Persist first (§3.1): a crash after this line leaves a submitted row that
     // is re-queued on restart; a crash before it means no task at all.
     const task = this.#deps.runs.create({
@@ -1018,6 +1061,7 @@ export class TaskHost implements TaskToolFacade {
       taskWrites: declaration.writes,
       taskCwd: cwd,
       ...(declaration.domains !== null ? { taskWriteDomains: declaration.domains } : {}),
+      ...(isolation !== null ? { isolation } : {}),
       ...(capabilities.length > 0 ? { taskCapabilities: capabilities } : {}),
       originRunId: identity.runId,
       ...this.#engineFields(botId),
@@ -2072,7 +2116,14 @@ export class TaskHost implements TaskToolFacade {
       // D123: declared write domains + this task's runtime claim.
       writeDomains: task.taskWriteDomains,
       claims: claim === null ? [] : [claim],
-      cwdKind: cwd?.kind ?? null,
+      cwdKind: task.isolation === 'worktree' ? 'worktree' : (cwd?.kind ?? null),
+      // D140-4: the isolated tree and its「应用到工作目录」state. Non-worktree
+      // tasks project null / `none` (consumers fall back).
+      worktreePath: task.worktreePath,
+      applyState:
+        task.isolation === 'worktree'
+          ? (this.#deps.worktrees?.applyStateFor(task, terminal) ?? 'none')
+          : 'none',
       queueReason: terminal ? null : summary.queueReason,
       awaitingInput: task.awaitingInput,
       questionMessageId: task.awaitingInput ? questionMessageId : null,
@@ -2476,6 +2527,19 @@ export class TaskHost implements TaskToolFacade {
     const title = task.taskTitle ?? brief.title ?? '';
     const writes = task.taskWrites === true;
     const capabilities = this.#retryCapabilities(task);
+    // D140-4: a worktree task's retry starts in the main workdir again — the
+    // old tree path must not be carried into the new row (that tree belongs to
+    // the previous attempt; `#startTask` replaces the cwd with the NEW tree).
+    let retryCwd = task.taskCwd;
+    if (task.isolation === 'worktree') {
+      try {
+        retryCwd = this.#deps.resolveCwd(botId, conversationId, 'workdir');
+      } catch {
+        // No usable workdir right now: the row is still created and the start
+        // fails with WORKTREE_CREATE_FAILED — never pointing at another tree.
+        retryCwd = null;
+      }
+    }
     const retried = this.#deps.runs.create({
       botId,
       conversationId,
@@ -2484,8 +2548,12 @@ export class TaskHost implements TaskToolFacade {
       triggerMessageIds: sourceIds,
       taskTitle: title,
       taskWrites: writes,
-      taskCwd: task.taskCwd,
+      taskCwd: retryCwd,
       ...(task.taskWriteDomains !== null ? { taskWriteDomains: task.taskWriteDomains } : {}),
+      // D140-4: a worktree task is retried in a NEW tree (the old one keeps
+      // its changes; the reaper collects it). `#startTask` recreates it and
+      // rebases on the then-current HEAD.
+      ...(task.isolation !== null ? { isolation: task.isolation } : {}),
       // D91: a retry keeps the capabilities the failed task declared (plus the app it just got
       // connected, see #retryCapabilities).
       ...(capabilities.length > 0 ? { taskCapabilities: capabilities } : {}),

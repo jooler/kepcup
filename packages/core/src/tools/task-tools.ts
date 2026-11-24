@@ -47,6 +47,12 @@ export interface StartTaskInput {
   writes?: boolean | string[];
   /** Cwd root; default = the bound workdir when available, else the workspace. */
   cwd?: 'workspace' | 'workdir' | undefined;
+  /**
+   * D140-4: run the task in an isolated `git worktree` next to the workdir
+   * (`<workdir parent>/.worktree/`). Write tasks only, built-in engine only;
+   * the changes come back through a「应用到工作目录」card.
+   */
+  isolation?: 'worktree' | undefined;
   /** Replay this settled task's process into the new one (D56 budget, §7.1). */
   continuesTaskId?: string | undefined;
   /**
@@ -437,6 +443,7 @@ export function buildTaskTools(input: {
     source_message_ids: string[];
     writes?: boolean | string[];
     cwd?: 'workspace' | 'workdir';
+    isolation?: 'worktree';
     continues_task_id?: string;
     capabilities?: string[];
   }> = {
@@ -468,6 +475,12 @@ export function buildTaskTools(input: {
         cwd: Type.Optional(
           Type.Union([Type.Literal('workspace'), Type.Literal('workdir')], {
             description: '工作目录：workdir（对话绑定的工作目录，缺省时有绑定即用）或 workspace',
+          }),
+        ),
+        isolation: Type.Optional(
+          Type.Literal('worktree', {
+            description:
+              'worktree = 在绑定的工作目录旁边建一个独立的 git worktree，任务在那个隔离目录里执行（只支持内置引擎的写任务）；改动先落在隔离目录，任务结束后由用户决定是否应用到工作目录。多个任务同时改同一目录又互不影响时使用',
           }),
         ),
         continues_task_id: Type.Optional(
@@ -502,6 +515,9 @@ export function buildTaskTools(input: {
         if (params.cwd !== undefined && params.cwd !== 'workspace' && params.cwd !== 'workdir') {
           return fail('INVALID_INPUT', 'cwd 只能是 workspace 或 workdir');
         }
+        if (params.isolation !== undefined && params.isolation !== 'worktree') {
+          return fail('INVALID_INPUT', 'isolation 目前只支持 worktree');
+        }
         const capabilities = capabilityIds(params.capabilities);
         if (typeof capabilities === 'string') return fail('INVALID_INPUT', capabilities);
         const started = tasks.start(identity, {
@@ -510,6 +526,7 @@ export function buildTaskTools(input: {
           sourceMessageIds: ids,
           ...(writes !== undefined ? { writes } : {}),
           ...(params.cwd !== undefined ? { cwd: params.cwd } : {}),
+          ...(params.isolation !== undefined ? { isolation: params.isolation } : {}),
           ...(params.continues_task_id !== undefined && params.continues_task_id.trim() !== ''
             ? { continuesTaskId: params.continues_task_id.trim() }
             : {}),

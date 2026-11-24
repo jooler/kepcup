@@ -31,6 +31,7 @@ import type { AllowlistService } from '../permissions/allowlist.js';
 import type { UnattendedService } from '../permissions/unattended.js';
 import { gitRemoteGrantTarget, type GitRemoteGrants } from '../permissions/git-remote-grants.js';
 import type { WorkdirRuntime } from '../workdir/service.js';
+import { worktreeDirFor } from '../workdir/worktree.js';
 import type { TaskClaimRegistry } from '../workdir/claims.js';
 import type { McpToolDecision } from '../mcp/policy.js';
 import type { AppToolGrants } from '../apps/grants.js';
@@ -563,8 +564,12 @@ export class ToolGateway {
     const paths = this.#deps.paths;
     const expanded = expandTilde(inputPath);
     // Relative paths resolve against the workdir when one is bound
-    // (docs/dev/04-agent-runtime.md "工具目录": 相对路径以 workdir 为基准).
-    const base = this.#deps.workdirs.boundWorkdir(identity.conversationId)?.path ?? workspace;
+    // (docs/dev/04-agent-runtime.md "工具目录": 相对路径以 workdir 为基准);
+    // D140-4: a worktree task resolves them against its own tree.
+    const base =
+      this.#deps.workdirs.taskWorktreePath?.(identity) ??
+      this.#deps.workdirs.boundWorkdir(identity.conversationId)?.path ??
+      workspace;
     const absolute = path.isAbsolute(expanded)
       ? path.resolve(expanded)
       : path.resolve(base, expanded);
@@ -609,6 +614,70 @@ export class ToolGateway {
       return { kind: 'allowed', resolvedPath: resolved };
     }
 
+    // 1b. D140-4: the task's isolated worktree (a sibling of the workdir).
+    //     Reads follow the workdir's protect rules anchored at the tree root;
+    //     writes need the task's own lease on the tree root. The workdir's
+    //     step below never sees the tree, so this branch is the only door.
+    const taskWorktree = this.#deps.workdirs.taskWorktree?.(identity) ?? null;
+    if (taskWorktree !== null && isInsidePath(resolvedNorm, norm(taskWorktree.path))) {
+      // The data home is the red line in every branch: a tree that somehow
+      // lives inside it (a bound workdir cannot, but fail closed anyway) must
+      // not re-open it just because this branch precedes step 2.
+      if (isInsidePath(resolvedNorm, norm(paths.home))) {
+        return { kind: 'forbidden', resolvedPath: resolved, reason: '应用数据目录不可访问' };
+      }
+      const bound = this.#deps.workdirs.boundWorkdir(identity.conversationId);
+      if (
+        bound !== null &&
+        this.#deps.workdirs.matchesProtectRule(bound, resolved, mode, taskWorktree.path)
+      ) {
+        return {
+          kind: 'forbidden',
+          resolvedPath: resolved,
+          reason:
+            mode === 'read'
+              ? '被工作目录保护规则禁止读取（可在目录设置中调整）'
+              : '被工作目录保护规则禁止写入（可在目录设置中调整）',
+        };
+      }
+      if (mode === 'read') return { kind: 'allowed', resolvedPath: resolved };
+      if (this.#deps.workdirs.holdsLease(identity, taskWorktree.path)) {
+        // A hard link whose other entries live outside the tree would mutate
+        // an external file through the tree lease (same hazard as the workdir
+        // branch; realpaths stay inside, so only the link count can see it).
+        if (mode === 'write' && hasExternalHardlink(resolved, taskWorktree.path)) {
+          return {
+            kind: 'forbidden',
+            resolvedPath: resolved,
+            reason: '目标文件存在隔离目录之外的硬链接',
+          };
+        }
+        if (isGitControlPath(resolvedNorm)) return this.#gitControlDecision(identity, resolved);
+        return { kind: 'allowed', resolvedPath: resolved };
+      }
+      return {
+        kind: 'needs_lease',
+        resolvedPath: resolved,
+        reason: '隔离目录写入需要先取得写入租约',
+      };
+    }
+
+    // 1c. D140-4: the `.worktree/` home next to the bound workdir is
+    //     KepCup-internal. Another task's tree may hold `.worktreeinclude`
+    //     copies of the very files the protect rules deny, so no identity
+    //     reaches it by path — a worktree task's own tree returned above.
+    const boundForHome = this.#deps.workdirs.boundWorkdir(identity.conversationId);
+    if (boundForHome !== null) {
+      const home = worktreeDirFor(boundForHome.path);
+      if (isInsidePath(resolvedNorm, norm(home))) {
+        return {
+          kind: 'forbidden',
+          resolvedPath: resolved,
+          reason: '隔离目录属于其他任务，不可访问',
+        };
+      }
+    }
+
     // 2. The data directory: everything except the current workspace (above)
     //    and this bot's skill directories (below). Never grantable — checked
     //    before grants on purpose.
@@ -636,6 +705,18 @@ export class ToolGateway {
     //    this run to hold the write lease (P04).
     const workdir = this.#deps.workdirs.boundWorkdir(identity.conversationId);
     if (workdir !== null && isInsidePath(resolvedNorm, norm(workdir.path))) {
+      // D140-4: a worktree task never writes the main workdir directly — its
+      // changes live in the tree and come back through the「应用到工作目录」
+      // card. The tree's lease is keyed on the tree, so the automatic
+      // needs_lease path below could otherwise release it and take the
+      // workdir lease (one lease per run), letting a second task into the tree.
+      if (mode === 'write' && (this.#deps.workdirs.isWorktreeTask?.(identity) ?? false)) {
+        return {
+          kind: 'forbidden',
+          resolvedPath: resolved,
+          reason: 'worktree 任务不能直接写入主工作目录：改动请写在隔离目录，任务结束后应用到工作目录',
+        };
+      }
       if (this.#deps.workdirs.matchesProtectRule(workdir, resolved, mode)) {
         return {
           kind: 'forbidden',
@@ -1162,7 +1243,13 @@ export class ToolGateway {
     // backend takes over when the enhanced one reports unavailable — the
     // sandbox gate below applies to whichever backend runs).
     let backend = this.#deps.sandbox;
+    // D140-4: worktree isolation is supported by srt only (Lima shares the
+    // srt rule layer; the mount-based Podman/WSL backends would need the tree
+    // registered as a mount). A worktree task always takes the default
+    // backend instead of the enhanced one.
+    const isolated = (this.#deps.workdirs.taskWorktree?.(identity) ?? null) !== null;
     if (
+      !isolated &&
       this.#deps.enhanced !== undefined &&
       identity.botId !== null &&
       (this.#deps.enhancedRouting?.requiredForBot(identity.botId) ?? false)
@@ -1176,7 +1263,8 @@ export class ToolGateway {
     const writeDomain = this.#deps.workdirs.writeDomain?.(identity) ?? null;
     // Bound conversation: commands default to the workdir directory and the
     // sandbox permits listening on / reaching localhost (dev servers).
-    const cwd = workdir !== null ? workdir.path : workspace;
+    // D140-4: a worktree task runs its commands in its own tree.
+    const cwd = workdir !== null ? (workdir.cwd ?? workdir.path) : workspace;
     // P06: installed toolchains join every command — sandbox policy env and
     // confirm-mode overlay use the same childEnvFor allowlist + overlay.
     const toolchainPrefix = this.#deps.environment?.toolchainPathPrefix(this.#platform) ?? null;
@@ -1270,6 +1358,15 @@ export class ToolGateway {
                 path: workdir.path,
                 hasLease: workdir.hasLease,
                 denyReadGlobs: workdir.denyReadGlobs,
+              }
+            : undefined,
+        taskWorktree:
+          workdir !== null && workdir.worktree !== null
+            ? {
+                path: workdir.worktree.path,
+                gitWorktreeMeta: workdir.worktree.gitWorktreeMeta,
+                gitObjectsDir: workdir.worktree.gitObjectsDir,
+                denyReadGlobs: workdir.worktree.denyReadGlobs,
               }
             : undefined,
         ...(toolchainPrefix !== null ? { toolchainPathPrefix: toolchainPrefix } : {}),
@@ -1408,6 +1505,9 @@ export class ToolGateway {
     if (workspace !== null) roots.push(workspace, resolveStandingPath(workspace));
     const workdir = this.#deps.workdirs.boundWorkdir(identity.conversationId);
     if (workdir !== null) roots.push(workdir.path, resolveStandingPath(workdir.path));
+    // D140-4: the task's isolated tree is Bot-writable too.
+    const worktree = this.#deps.workdirs.taskWorktreePath?.(identity) ?? null;
+    if (worktree !== null) roots.push(worktree, resolveStandingPath(worktree));
     return [...new Set(roots)];
   }
 

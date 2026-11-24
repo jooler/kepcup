@@ -153,6 +153,15 @@
         {t('task.capabilities', { list: model.capabilities.join(listSeparator()) })}
       </p>
     {/if}
+    {#if task.worktreePath != null}
+      <!-- D140-4：worktree 隔离任务的执行根与「应用到工作目录」状态 -->
+      <p class="mt-1 truncate text-xs text-muted-foreground" data-testid="task-worktree">
+        {t('task.run.worktreePath', { path: task.worktreePath })}
+        {#if task.applyState !== undefined && task.applyState !== 'none'}
+          <span class="ml-1">· {t(`task.applyState.${task.applyState}`)}</span>
+        {/if}
+      </p>
+    {/if}
     {#if model.queueReason !== null}
       <p class="mt-1.5 text-xs text-amber-700 dark:text-amber-400" data-testid="task-queue-reason">
         {model.queueReason.length > 0
@@ -166,8 +175,9 @@
         {t('task.awaitingInput')}
       </p>
     {/if}
-    {#if pendingApprovals.length > 0}
-      <!-- 中途权限卡只在输入区上方的停靠区渲染（12-ui-layout 焦点三），卡上只留提示。 -->
+    {#if pendingApprovals.length > 0 && model.canCancel}
+      <!-- 中途权限卡只在输入区上方的停靠区渲染（12-ui-layout 焦点三），卡上只留提示。
+           已结束的任务没有「继续」一说：结算后的应用卡由 applyState 行与停靠区呈现。 -->
       <p
         class="mt-2 text-xs text-amber-700 dark:text-amber-400"
         data-testid="task-pending-approvals"
