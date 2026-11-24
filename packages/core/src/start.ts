@@ -3961,6 +3961,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       browserProfiles,
     };
     services.orchestrator = orchestrator;
+    // D140-1：执行器之外关闭任务影子窗口的路径（强制收回 RPC / 驱逐）也拿得到
+    // 每 run 的写入归属（自己的文件工具写入 + 并行开窗任务的写入）。
+    workdirRuntime.setWriteAttributionSource((runId) => orchestrator.writeAttributionOf(runId));
     // 62.11 C15 宿主写入口（进程内 domain API，不注册 RPC）：加人 / 系统消息 /
     // 卡片 / 唤醒 Bot / 建并绑定工作目录。
     services.principalOps = new PrincipalOps({

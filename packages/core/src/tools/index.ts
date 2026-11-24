@@ -1314,6 +1314,8 @@ export function buildResponseTools(input: {
     } catch {
       // Best effort: no card when the file vanished or stats failed.
     }
+    // D140-1: the generated artifact is a write — auto-claim its path.
+    gateway.noteFileWritten(identity, target);
   };
   const imageTools =
     deps.media !== undefined

@@ -321,6 +321,9 @@ export interface OrchestratorWatchFacade extends WatchToolFacade {
  */
 export const SETUP_DISMISSED_EVENT = 'task_setup_dismissed';
 
+/** D140-1: per-file detail carried on a settled task's TaskChanges (capped). */
+const TASK_CHANGES_FILES_MAX = 50;
+
 /**
  * D90 workbench (lazy facade from start.ts): the todo a dispatched turn belongs to and the
  * delivery bookkeeping the orchestrator reports (docs/design/39-workbench.md §3.5).
@@ -944,8 +947,8 @@ export class Orchestrator {
         // A still-unwinding execution keeps its write lease until it ends (an
         // aborted tool may still be writing); it releases the lease itself.
         if (!executorActive) {
+          void this.#releaseRunWindow(run.id).catch(() => {});
           this.#fsState.release(run.id);
-          void deps.workdirs.releaseRun(run.id).catch(() => {});
         }
         deps.publish('run.status', { run });
         if (run.conversationId !== null) this.#publishConversation(run.conversationId);
@@ -960,8 +963,8 @@ export class Orchestrator {
         }
       },
       releaseExecution: (runId) => {
+        void this.#releaseRunWindow(runId).catch(() => {});
         this.#fsState.release(runId);
-        void deps.workdirs.releaseRun(runId).catch(() => {});
       },
       // W3 interrupt (permission revoked): the task's and its sub runs' cards go.
       cancelPendingApprovals: (runIds) =>
@@ -4049,6 +4052,11 @@ export class Orchestrator {
       if (task.taskWrites === true) {
         // Same fallback as the execution's cwd (#executeRun, 审查 L6).
         const root = task.taskCwd ?? workspacePathFor(this.#deps.paths, botId, conversationId);
+        // D140-1: built-in engine write tasks take a SHARED lease (several may
+        // hold one root; mutual exclusion moved to file-level auto-claims).
+        // External agent tasks keep the EXCLUSIVE whole-root lease — they
+        // serialize against everything on the root (unchanged).
+        const shared = this.#taskAgentIdOf(this.#deps.bots.get(botId)).length === 0;
         control.waiting('等写入租约');
         try {
           await this.#deps.workdirs.ensureWriteLease(
@@ -4056,6 +4064,7 @@ export class Orchestrator {
             root,
             {
               pin: true,
+              shared,
               signal: control.signal,
               reason: `任务「${brief.title}」`,
               // D123: a declared domain makes this key structured; undeclared
@@ -4071,6 +4080,9 @@ export class Orchestrator {
           throw error;
         }
         if (control.signal.aborted) return;
+        // D140-1: open the per-run shadow window (before-snapshot while the
+        // lease is held; run_changes + interleaved marks at release).
+        await this.#deps.workdirs.beginTaskWindow(task).catch(() => {});
       }
       const key = `task:${task.id}`;
       let started = false;
@@ -5671,7 +5683,7 @@ export class Orchestrator {
       // Close the lease window before settling: the after-snapshot writes the
       // changes summary card, which must land after the bot's final message.
       try {
-        await this.#deps.workdirs.releaseRun(runId);
+        await this.#releaseRunWindow(runId);
       } catch (error) {
         this.#deps.logger.warn(
           { runId, error: error instanceof Error ? error.message : String(error) },
@@ -6706,21 +6718,65 @@ export class Orchestrator {
   }
 
   /**
+   * D140-1: the run's write attribution for its shadow window — its own
+   * gateway-recorded files (exact per-run attribution) and those of every
+   * other task whose window is still open (files both wrote land
+   * `interleaved` in run_changes). Also wired into WorkdirRuntime for release
+   * paths outside the executor (the revoke RPC).
+   */
+  writeAttributionOf(runId: string): { own: Array<{ path: string; change: 'created' | 'modified' | 'deleted' }>; others: Set<string> } {
+    const own = this.#fsState
+      .changesOf(runId)
+      .map((change) => ({ path: change.path, change: change.change }));
+    const others = new Set<string>();
+    for (const window of this.#deps.workdirs.openTaskWindows()) {
+      if (window.runId === runId) continue;
+      for (const change of this.#fsState.changesOf(window.runId)) others.add(change.path);
+    }
+    return { own, others };
+  }
+
+  /** D140-1: closes a run's write lease with its write attribution. */
+  async #releaseRunWindow(runId: string): Promise<void> {
+    await this.#deps.workdirs.releaseRun(runId, this.writeAttributionOf(runId));
+  }
+
+  /**
    * Where a task works and what it left behind (TaskHost.describeCwd;
-   * `withChanges` false = the kind only, no lookup).
+   * `withChanges` false = the kind only, no lookup). D140-1: a settled write
+   * task's shadow window wrote its run_changes row — the file list (with
+   * `interleaved` marks for files a parallel task also changed) is back on
+   * the task detail page.
    */
   #describeTaskCwd(
     task: Run,
-    _withChanges: boolean,
+    withChanges: boolean,
   ): { kind: 'workdir' | 'workspace'; changes: TaskChanges | null } {
     const workspace =
       task.botId !== null && task.conversationId !== null
         ? workspacePathFor(this.#deps.paths, task.botId, task.conversationId)
         : null;
     const kind = task.taskCwd !== null && task.taskCwd !== workspace ? 'workdir' : 'workspace';
-    // Change summary / file list / revert on the task card was retired —
-    // never attach changes (disk writes still happen).
-    return { kind, changes: null };
+    if (!withChanges || kind !== 'workdir') return { kind, changes: null };
+    const change = this.#deps.workdirs.changesOf(task.id);
+    if (change === null) return { kind, changes: null };
+    const files = change.files.slice(0, TASK_CHANGES_FILES_MAX);
+    return {
+      kind,
+      changes: {
+        kind: 'workdir',
+        added: change.files.filter((file) => file.change === 'added').length,
+        modified: change.files.filter((file) => file.change === 'modified').length,
+        deleted: change.files.filter((file) => file.change === 'deleted').length,
+        reverted: change.revertedAt !== null,
+        files: files.map((file) => ({
+          path: file.path,
+          change: file.change,
+          ...(file.interleaved === true ? { interleaved: true } : {}),
+        })),
+        ...(change.files.length > files.length ? { more: change.files.length - files.length } : {}),
+      },
+    };
   }
 
   #publishConversation(conversationId: string): void {

@@ -403,11 +403,15 @@ export function buildCodingTools(
         ...(size !== undefined ? { size } : {}),
       });
       gateway.audit(identity, 'fs_write', { path: resolved, tool: 'write' });
+      // D140-1: first writer wins — the successful write auto-claims the path.
+      gateway.noteFileWritten(identity, resolved);
     },
     mkdir: async (dir: string) => {
       const resolved = await checked(identity, gateway, dir, 'write', 'write');
       mkdirSync(resolved, { recursive: true });
       gateway.audit(identity, 'fs_write', { path: resolved, tool: 'write', op: 'mkdir' });
+      // D140-1: claiming the created directory keeps peers out of its subtree.
+      gateway.noteFileWritten(identity, resolved);
     },
   };
 

@@ -1065,9 +1065,10 @@ export const enUS = {
     "This will delete the working directory's change records and checkpoints and unbind it from all chats. Files in the working directory won't be changed. This can't be undone.",
   'workdirs.removeConfirm': 'Remove',
   'workdirs.leaseWaiting': 'Waiting for {name} to finish modifying the working directory',
-  'workdirs.leaseRevoke': 'Force revoke',
-  'workdirs.leaseRevoked': 'Lease revoked',
-  'workdirs.leaseNothing': 'No lease to revoke',
+  // D140-1: shared write leases — revoking stops only the blocking task; other tasks on the directory continue
+  'workdirs.leaseRevoke': "Stop this task's writes",
+  'workdirs.leaseRevoked': "Stopped that task's writes (other tasks on the directory continue)",
+  'workdirs.leaseNothing': 'No task to stop',
   'changes.title': 'Changes from this run',
   'changes.added': 'Added',
   'changes.modified': 'Modified',
@@ -1827,6 +1828,12 @@ export const enUS = {
   'task.run.peerMessage': 'From task {id}{title}',
   'task.run.writeDomains': 'Write domain {list}',
   'task.run.claims': 'Claimed {list}',
+  // D140-1: settled write task's changed files (shadow snapshots restored; interleaved = a parallel task changed it too)
+  'task.run.changesTitle': 'Changed files ({added} added · {modified} modified · {deleted} deleted)',
+  'task.run.changesReverted': 'Run reverted',
+  'task.run.changesInterleaved': 'A parallel task changed this file too',
+  'task.run.changesMore': '{count} more files not listed',
+  'task.run.claimsAuto': 'Includes auto-claims from first writes',
   // D115 inject dock (docs/design/56 §1): user steering entry at the bottom of the task page.
   'task.run.injectPlaceholder': 'Add an instruction, Enter to send…',
   'task.run.injectHintAwaiting': 'The task is waiting for your answer: what you send is the answer',

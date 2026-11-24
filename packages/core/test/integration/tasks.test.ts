@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -313,19 +314,25 @@ describe('D75 task layer (TaskHost)', () => {
     expect(wakeRuns(stack, conv.id)).toHaveLength(0);
   }, 30_000);
 
-  it('two write tasks on the same cwd: the second stays submitted until the first settles', async () => {
+  it('two undeclared write tasks on the same cwd run in parallel (D140-1)', async () => {
     const stack = await start();
     const { core, llm } = stack;
     const bot = await makeBot(core, '小艾');
     const conv = await openDirect(core, bot.id);
     const host = tasksOf(stack);
-    const held = step().expect(isTaskRequest('TASK-W1')).hold().replyToolCall('skip_reply', {
+    const workdirDir = mkdtempSync(path.join(tmpdir(), 'd140-parallel-'));
+    writeFileSync(path.join(workdirDir, 'README.md'), '# p\n');
+    const bound = (await core.rpc.call('workdirs.select', {
+      conversationId: conv.id,
+      path: workdirDir,
+    })) as { workdir: { path: string } };
+    const heldA = step().expect(isTaskRequest('TASK-W1')).hold().replyToolCall('skip_reply', {
       reason: 'x',
     });
-    llm.script('mock-main', [
-      held,
-      step().expect(isTaskRequest('TASK-W2')).replyToolCall('skip_reply', { reason: 'x' }),
-    ]);
+    const heldB = step().expect(isTaskRequest('TASK-W2')).hold().replyToolCall('skip_reply', {
+      reason: 'x',
+    });
+    llm.script('mock-main', [heldA, heldB]);
     const turn = turnIdentity(bot.id, conv.id);
     const w1 = host.start(turn, {
       title: 'w1',
@@ -339,27 +346,37 @@ describe('D75 task layer (TaskHost)', () => {
       sourceMessageIds: [],
       writes: true,
     });
-    // W1 still takes its write lease when start returns: its true state is
-    // submitted (审查 LOW-7); w2 waits behind w1.
+    // D140-1: both write tasks take the shared lease — neither queues behind
+    // the other at the task layer (the transient「等写入租约」/「等模型并发
+    // 额度」 handoff may still show before the engine starts).
     expect(w1.state).toBe('submitted');
-    // W1's queue reason is the lease-layer waiting string; w2 waits behind w1
-    // at the task layer with the D123 write-domain reason.
-    expect(w1.queueReason).toContain('写入租约');
     expect(w2.state).toBe('submitted');
-    expect(w2.queueReason).toContain(`等写域（任务 ${w1.taskId} 持有 整目录）`);
-    expect(runOf(stack, w1.taskId).taskCwd).toBe(runOf(stack, w2.taskId).taskCwd);
-    await waitRun(stack, w1.taskId, ['running'], 'w1 running');
-    await waitFor(() => (llm.requestsFor('mock-main').length >= 1 ? true : null), {
-      label: 'w1 request held',
+    expect(w2.queueReason ?? '').not.toContain('等写域');
+    expect(runOf(stack, w1.taskId).taskCwd).toBe(bound.workdir.path);
+    expect(runOf(stack, w2.taskId).taskCwd).toBe(bound.workdir.path);
+    // Both engine runs start and each sandbox sees hasLease (shared holders).
+    const runtime = core.services.workdirRuntime!;
+    await waitFor(() => (heldA.consumed && heldB.consumed ? true : null), {
+      label: 'both write tasks running',
     });
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(runOf(stack, w2.taskId).status).toBe('queued');
-    expect(llm.requests().some(isTaskRequest('TASK-W2'))).toBe(false);
-    held.release();
-    const w2Done = await waitRun(stack, w2.taskId, ['completed'], 'w2 completed after w1');
-    const w1Done = runOf(stack, w1.taskId);
-    expect(w1Done.status).toBe('completed');
-    expect(w2Done.startedAt ?? 0).toBeGreaterThanOrEqual(w1Done.endedAt ?? Infinity);
+    const identityOf = (taskId: string) => ({
+      runId: taskId,
+      botId: bot.id,
+      conversationId: conv.id,
+      loopType: 'task' as const,
+    });
+    expect(runtime.policyInfo(identityOf(w1.taskId))?.hasLease).toBe(true);
+    expect(runtime.policyInfo(identityOf(w2.taskId))?.hasLease).toBe(true);
+    heldA.release();
+    heldB.release();
+    await waitRun(stack, w1.taskId, ['completed'], 'w1 completed');
+    await waitRun(stack, w2.taskId, ['completed'], 'w2 completed');
+    // Overlap: the later start precedes the earlier end (真并行，不是先后).
+    const w1Run = runOf(stack, w1.taskId);
+    const w2Run = runOf(stack, w2.taskId);
+    const laterStart = Math.max(w1Run.startedAt ?? 0, w2Run.startedAt ?? 0);
+    const earlierEnd = Math.min(w1Run.endedAt ?? 0, w2Run.endedAt ?? 0);
+    expect(laterStart).toBeLessThan(earlierEnd);
   }, 30_000);
 
   it('cancel_task writes cancel + failure(status=cancelled) entries and never wakes', async () => {

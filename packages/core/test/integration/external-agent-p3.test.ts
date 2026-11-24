@@ -721,12 +721,14 @@ describe('external agents in a workdir (P3: config confirmation, explicit lease,
       conversationId: builtinConv.id,
       loopType: 'turn',
     };
-    // The built-in write task stays submitted, waiting for the workdir lease.
+    // The built-in write task stays submitted, waiting for the workdir lease
+    // (D140-1: the agent's EXCLUSIVE lease serializes built-in writers; the
+    // queue reason is the lease-layer waiting string).
     const waiting = await waitFor(
       () =>
         tasks
           .list(builtinTurn)
-          .find((task) => task.state === 'submitted' && task.queueReason?.startsWith('等写域') === true,
+          .find((task) => task.state === 'submitted' && task.queueReason?.startsWith('等写入租约') === true,
           ) ?? null,
       { label: 'built-in task waiting for the lease', timeoutMs: 30_000 },
     );
@@ -740,13 +742,15 @@ describe('external agents in a workdir (P3: config confirmation, explicit lease,
     const agentDone: Run = await waitTask(stack, agentConv.id, 'completed');
     expect(agentDone.id).toBe(agentTask.id);
     await waitTask(stack, builtinConv.id, 'completed');
-    expect(readFileSync(path.join(workdirPath, 'builtin.txt'), 'utf8')).toBe('from builtin');
+    expect(readFileSync(path.join(workdirPath, 'builtin.txt'), 'utf-8')).toBe('from builtin');
 
-    // Change tracking retired: both agents' disk writes remain; no run_changes.
+    // D140-1: the per-task shadow window records the agent's write task
+    // changes again (run_changes) — the agent's own file write is attributed
+    // by the span diff (its exclusive lease means no parallel writer).
     const diff = (await stack.core.rpc.call('workdirs.diff', { runId: agentTask.id })) as {
       change: { files: Array<{ path: string; change: string }> } | null;
     };
-    expect(diff.change).toBeNull();
+    expect(diff.change?.files ?? []).toContainEqual({ path: 'agent.txt', change: 'added' });
     expect(existsSync(path.join(workdir, 'agent.txt'))).toBe(true);
     expect(existsSync(path.join(workdir, 'builtin.txt'))).toBe(true);
   }, 120_000);

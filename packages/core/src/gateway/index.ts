@@ -7,6 +7,7 @@ import {
   AppError,
   BASH_TIMEOUT_DEFAULT_MS,
   EGRESS_TARGET_MAX_CHARS,
+  TASK_AUTO_CLAIM_MAX,
   type ApprovalDuration,
   type EgressChannel,
   type GrantDuration,
@@ -488,16 +489,50 @@ export class ToolGateway {
   }
 
   /**
-   * D123 §5: the WRITE_CLAIMED reason when another task of the same (bot,
-   * conversation) claimed this resolved path, otherwise null. Claims held by
-   * the writing task itself (subagents included) never block it.
+   * D123 §5 / D140-1: the WRITE_CLAIMED reason when another task claimed this
+   * resolved path. Claims reach every task on an overlapping root — parallel
+   * write tasks of one workdir may belong to different conversations — while
+   * claims held by the writing task itself (subagents included) never block
+   * it. The path match stays anchored to the claiming task's root.
    */
   writeClaimDenial(identity: RunIdentity, resolvedPath: string): string | null {
     const claims = this.#deps.claims;
     if (claims === undefined) return null;
     const task = this.#deps.workdirs.owningTask?.(identity) ?? null;
-    if (task === null || task.botId === null || task.conversationId === null) return null;
-    return claims.denial(task.id, task.botId, task.conversationId, resolvedPath);
+    if (task === null) return null;
+    return claims.denial(task.id, resolvedPath, task.taskCwd);
+  }
+
+  /**
+   * D140-1 auto-claim: registers `resolvedPath` on the writing task's claim
+   * after a successful gateway-mediated write (write / edit / mkdir /
+   * generated artifacts). First writer wins — another task writing the same
+   * path afterwards gets WRITE_CLAIMED. Read-only runs, turns and writes
+   * outside the task's root never register; bash / browser downloads /
+   * external-agent writes do not pass through here (known limitation, task
+   * detail and docs say so). Capped at TASK_AUTO_CLAIM_MAX paths per task.
+   */
+  noteFileWritten(identity: RunIdentity, resolvedPath: string): void {
+    const claims = this.#deps.claims;
+    if (claims === undefined) return;
+    const task = this.#deps.workdirs.owningTask?.(identity) ?? null;
+    if (task === null || task.taskWrites !== true || task.taskCwd === null) return;
+    const relative = path.relative(task.taskCwd, resolvedPath).replaceAll('\\', '/');
+    if (relative.length === 0 || relative.startsWith('../')) return;
+    const outcome = claims.autoClaim({
+      taskId: task.id,
+      botId: task.botId ?? '',
+      conversationId: task.conversationId ?? '',
+      title: task.taskTitle ?? '',
+      root: task.taskCwd,
+      path: relative,
+    });
+    if (outcome === 'capped' && claims.consumeCapNotice(task.id)) {
+      this.#deps.logger.warn(
+        { taskId: task.id, max: TASK_AUTO_CLAIM_MAX },
+        'task auto-claim cap reached; further paths are not claimed',
+      );
+    }
   }
 
   /**

@@ -18,8 +18,10 @@ import type { Run } from '@kepcup/shared';
 import type { RunIdentity } from '../../src/agent/types.js';
 
 /**
- * D75 审查批 E（workdir 租约窗口）：
- * - 改动摘要 / run_changes / 整次回退已退役——租约窗口不再落库改动记录；
+ * D75 审查批 E（workdir 租约窗口；D140-1 修订）：
+ * - 宿主伪身份的租约窗口不落 run_changes（没有任务窗口）；
+ * - 写任务的 per-run 影子窗口恢复落库（D140-1）——强制收回时窗口关闭并记录
+ *   到当时为止的改动；
  * - 被强制收回的写任务（钉住的租约）失去写权限（design 30 §5.1），之后的
  *   写入以「写入租约已被用户收回」失败，不再悄悄重新取得租约。
  */
@@ -144,7 +146,9 @@ describe('a force-revoked write task loses its write permission (design 30 §5.1
     expect(after.consumed).toBe(true);
     expect(existsSync(path.join(workdir.path, 'a2.txt'))).toBe(false);
     expect(readFileSync(path.join(workdir.path, 'a.txt'), 'utf8')).toBe('A1');
-    expect(filesOf(stack, task.id)).toEqual([]);
+    // D140-1: the revoke closed the task's shadow window and recorded the
+    // change written so far; the revoked second write never happened.
+    expect(filesOf(stack, task.id)).toEqual(['a.txt:added']);
     expect(
       core.services.workdirRuntime!.holdsLease(
         { runId: task.id, botId: task.botId, conversationId: conv.id, loopType: 'task' },

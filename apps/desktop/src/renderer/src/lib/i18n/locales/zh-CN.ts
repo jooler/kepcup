@@ -1014,9 +1014,10 @@ export const zhCN = {
     '将删除工作目录的改动记录与检查点，并取消所有对话的绑定。工作目录中的文件不会被改动。此操作不可恢复。',
   'workdirs.removeConfirm': '移除',
   'workdirs.leaseWaiting': '等待 {name} 完成对工作目录的修改',
-  'workdirs.leaseRevoke': '强制收回',
-  'workdirs.leaseRevoked': '已收回租约',
-  'workdirs.leaseNothing': '当前没有可收回的租约',
+  // D140-1：共享写租约——「强制收回」只停掉挡路的那个任务，同目录其他任务继续
+  'workdirs.leaseRevoke': '停止该任务的写入',
+  'workdirs.leaseRevoked': '已停止该任务的写入（同目录其他任务不受影响）',
+  'workdirs.leaseNothing': '当前没有可停止写入的任务',
   'changes.title': '本次执行的改动',
   'changes.added': '新增',
   'changes.modified': '修改',
@@ -1772,6 +1773,12 @@ export const zhCN = {
   'task.run.peerMessage': '来自任务 {id}{title}',
   'task.run.writeDomains': '写域 {list}',
   'task.run.claims': '认领 {list}',
+  // D140-1：结算后的改动文件清单（影子快照恢复；interleaved = 并行任务也改过）
+  'task.run.changesTitle': '改动文件（新增 {added} · 修改 {modified} · 删除 {deleted}）',
+  'task.run.changesReverted': '已整次回退',
+  'task.run.changesInterleaved': '并行任务也改过此文件',
+  'task.run.changesMore': '还有 {count} 个文件未列出',
+  'task.run.claimsAuto': '含首次写入的自动认领',
   // D115 注入坞（docs/design/56 §1）：任务详情页最底部的用户直注入口。
   'task.run.injectPlaceholder': '追加指令，Enter 发送…',
   'task.run.injectHintAwaiting': '任务在等你回答：发送的内容将作为回答',

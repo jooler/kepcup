@@ -3947,6 +3947,22 @@ export const taskChangesSchema = z.discriminatedUnion('kind', [
     modified: z.number().int(),
     deleted: z.number().int(),
     reverted: z.boolean(),
+    /**
+     * D140-1: per-file detail from the task's run_changes row (capped;
+     * `interleaved` = a parallel task also changed the file — the shadow
+     * window detected the overlap). Absent on legacy rows.
+     */
+    files: z
+      .array(
+        z.object({
+          path: z.string(),
+          change: z.enum(['added', 'modified', 'deleted']),
+          interleaved: z.boolean().optional(),
+        }),
+      )
+      .optional(),
+    /** D140-1: files beyond the cap. */
+    more: z.number().int().optional(),
   }),
   z.object({
     kind: z.literal('workspace'),

@@ -126,15 +126,50 @@ interface RunLeaseState {
    * Agent 仍在写它）。
    */
   pinned?: boolean;
+  /**
+   * D140-1：内置引擎写任务取共享租约（同根多任务并存）；独占为缺省——
+   * 外部智能体 run、宿主操作与非任务的 acquire_workdir_write。
+   */
+  shared?: boolean;
 }
+
+/**
+ * D140-1 per-run shadow-snapshot window: opened when a write task starts (a
+ * `before` snapshot while it holds the lease) and closed at its release point
+ * (an `after` snapshot + the run's `run_changes` row, with files another
+ * parallel task also changed marked `interleaved`).
+ */
+interface TaskWindowState {
+  workdirId: string;
+  beforeOid: string;
+  /**
+   * Relative paths written by other task windows that overlapped this one (a
+   * peer that closed while ours was open). They are excluded from our span
+   * diff (the peer's own row owns them) and mark our own writes interleaved.
+   */
+  otherFiles: Set<string>;
+}
+
+/** What one run's file tools actually wrote (attribution for run_changes). */
+export interface RunWriteAttribution {
+  /** Absolute paths this run wrote through the gateway's file tools. */
+  own: ReadonlyArray<{ path: string; change: 'created' | 'modified' | 'deleted' }>;
+  /** Absolute paths other still-running tasks wrote (interleaved marking). */
+  others: ReadonlySet<string>;
+}
+
+/** fs-state's per-file change kind → run_changes spelling. */
+const toChangeKind = (change: 'created' | 'modified' | 'deleted'): RunChangeFile['change'] =>
+  change === 'created' ? 'added' : change;
 
 /**
  * Workdir runtime (docs/dev/phases/P04-project.md): binding lifecycle, write
  * leases with waiting/running state transitions, and git remote execution.
- * Change-summary cards / run_changes persistence / whole-run revert UX are
- * retired — disk writes stay; lease windows no longer snapshot or record.
- * The gateway consults it for path decisions and sandbox policy input; RPC
- * binds user actions here. Diff/revert RPCs remain only for legacy rows.
+ * D140-1: write tasks open a per-run shadow-snapshot window whose close records
+ * `run_changes` (file list + `interleaved` marks) on the task detail page; the
+ * chat-side change card and whole-run revert UX stay retired. The gateway
+ * consults it for path decisions and sandbox policy input; RPC binds user
+ * actions here.
  */
 export class WorkdirRuntime {
   readonly #deps: WorkdirRuntimeDeps;
@@ -151,6 +186,18 @@ export class WorkdirRuntime {
    * the same key join the first instead of releasing + cancelling it.
    */
   readonly #acquiring = new Map<string, { key: string; promise: Promise<LeaseTarget> }>();
+  /** D140-1: open per-task shadow-snapshot windows (run id → window). */
+  readonly #taskWindows = new Map<string, TaskWindowState>();
+  /**
+   * Closes in flight per workdir: closing windows one at a time lets the peer
+   * still open hand its files over (exclusion + interleaved marks) instead of
+   * two concurrent closes each claiming the other's writes.
+   */
+  readonly #windowClosings = new Map<string, Promise<void>>();
+  /** Run windows currently closing (a second release waits for the first). */
+  readonly #closingWindows = new Map<string, Promise<void>>();
+  /** Releases in flight per run (a re-acquire waits for the old release). */
+  readonly #releasing = new Map<string, Promise<void>>();
   /** C9: canonicalized root paths (empty = unrestricted). */
   readonly #roots: readonly string[];
 
@@ -343,12 +390,13 @@ export class WorkdirRuntime {
    * or the longest covering write grant outside both. Parks the run in
    * `waiting_lease` (publishing `lease.waiting`) while queued. Aborting the
    * signal leaves the queue cleanly. Read-only identities (writeDenial) are
-   * refused with RUN_READ_ONLY. Lease windows no longer snapshot / record
-   * run_changes (change-summary UX retired).
+   * refused with RUN_READ_ONLY. D140-1: `shared` requests coexist with other
+   * shared holders (built-in write tasks); the default is exclusive.
    *
    * Workspace writes never *require* the lease (the gateway allows them
    * outright); only callers that ask for it — D75 write tasks, pinned for the
-   * whole task — take it, so they serialize among themselves.
+   * whole task — take it. The per-run shadow window is opened separately by
+   * `beginTaskWindow` once the lease is held.
    */
   async ensureWriteLease(
     identity: RunIdentity,
@@ -359,6 +407,11 @@ export class WorkdirRuntime {
       /** D72：整 run 持有、不可被替换（外部智能体 run，见 RunLeaseState.pinned）。 */
       pin?: boolean;
       /**
+       * D140-1：取共享租约（同根多任务并存，内置引擎写任务）。缺省独占——
+       * 外部智能体 run、宿主操作与非任务的 acquire_workdir_write 不共享。
+       */
+      shared?: boolean;
+      /**
        * D123: declared write-domain globs of a pinned write task. Encoded into
        * the lease key so two tasks on one root with disjoint domains coexist.
        * Null / omitted = the whole root (`['**']`, today's behavior).
@@ -368,6 +421,12 @@ export class WorkdirRuntime {
   ): Promise<LeaseTarget> {
     const denial = this.writeDenial(identity);
     if (denial !== null) throw new AppError('RUN_READ_ONLY', denial);
+    // A retried run may still be releasing its previous lease/window (the
+    // settle path is fire-and-forget): joining it here keeps the early
+    // "already held" return from handing the task a lease that is about to be
+    // released under it.
+    const releasing = this.#releasing.get(identity.runId);
+    if (releasing !== undefined) await releasing.catch(() => {});
     const target = this.#leaseTarget(identity, resolvedPath, options.domains ?? null);
     if (target === null) {
       throw new AppError('INVALID_INPUT', '该路径不涉及 workdir 或 workspace，无需写入租约');
@@ -412,13 +471,14 @@ export class WorkdirRuntime {
   async #acquireLease(
     identity: RunIdentity,
     target: LeaseTarget,
-    options: { signal?: AbortSignal; pin?: boolean },
+    options: { signal?: AbortSignal; pin?: boolean; shared?: boolean },
   ): Promise<LeaseTarget> {
     // One lease per run: close out the previous window first.
     await this.releaseRun(identity.runId);
 
     await this.#deps.leases.acquire(identity, target.key, {
       signal: options.signal,
+      shared: options.shared === true,
       onWaiting: (holder) => {
         this.#setRunStatus(identity.runId, 'waiting_lease');
         this.#deps.publish('lease.waiting', {
@@ -435,13 +495,15 @@ export class WorkdirRuntime {
       throw new AppError('APPROVAL_DENIED', '执行已取消，未取得写入租约');
     }
 
-    // Track the lease window for revoke / pin only — no before snapshot.
-    // Change cards and run_changes persistence were retired.
+    // Track the lease window for revoke / pin only. D140-1's before snapshot is
+    // the per-task shadow window (`beginTaskWindow`), opened by the executor
+    // after this lease is held.
     this.#runLeases.set(identity.runId, {
       key: target.key,
       workdir: target.workdir,
       beforeOid: null,
       ...(options.pin === true ? { pinned: true } : {}),
+      ...(options.shared === true ? { shared: true } : {}),
     });
 
     this.#setRunStatus(identity.runId, 'running');
@@ -449,14 +511,232 @@ export class WorkdirRuntime {
   }
 
   /**
-   * Ends the run's lease window: cancels queued waits and releases the lease.
-   * Idempotent; safe to call from every settle path.
-   * No after-snapshot / run_changes / summary card — that UX was retired.
+   * Ends the run's lease window: cancels queued waits, closes the D140-1
+   * shadow-snapshot window (after-snapshot + run_changes), and releases the
+   * lease. The after-snapshot is taken while the lease is still held — a
+   * promoted waiter (the next writer) must not be able to start before the
+   * span ends, or its writes would pollute this run's diff. Idempotent and
+   * concurrency-safe: a second caller waits for the in-flight close (the lease
+   * is released only after the snapshot, on every path).
    */
-  async releaseRun(runId: string): Promise<void> {
+  async releaseRun(runId: string, writes?: RunWriteAttribution): Promise<void> {
+    const inFlight = this.#releasing.get(runId);
+    if (inFlight !== undefined) {
+      await inFlight.catch(() => {});
+      return;
+    }
+    const release = this.#doReleaseRun(runId, writes);
+    this.#releasing.set(runId, release);
+    try {
+      await release;
+    } finally {
+      if (this.#releasing.get(runId) === release) this.#releasing.delete(runId);
+    }
+  }
+
+  async #doReleaseRun(runId: string, writes?: RunWriteAttribution): Promise<void> {
     this.#deps.leases.cancelWaitersOfRun(runId);
-    this.#deps.leases.release(runId);
-    this.#runLeases.delete(runId);
+    try {
+      // A close in flight is awaited first; a retried run may already have a
+      // NEW window by then (same run id), so re-check instead of skipping it.
+      // The bound keeps a pathological retry loop from hanging the release.
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const closing = this.#closingWindows.get(runId);
+        if (closing !== undefined) {
+          await closing.catch(() => {});
+          if (this.#closingWindows.get(runId) === closing) this.#closingWindows.delete(runId);
+          continue;
+        }
+        if (!this.#taskWindows.has(runId)) break;
+        let attribution = writes;
+        if (attribution === undefined && this.#attributionOf !== null) {
+          try {
+            attribution = this.#attributionOf(runId);
+          } catch (error) {
+            this.#deps.logger.warn(
+              { runId, error: error instanceof Error ? error.message : String(error) },
+              'task window write attribution failed',
+            );
+          }
+        }
+        const closingPromise = this.#endTaskWindow(runId, attribution);
+        this.#closingWindows.set(runId, closingPromise);
+        try {
+          await closingPromise;
+        } finally {
+          if (this.#closingWindows.get(runId) === closingPromise) {
+            this.#closingWindows.delete(runId);
+          }
+        }
+      }
+    } finally {
+      // The lease is always released, even when the snapshot bookkeeping failed.
+      this.#deps.leases.release(runId);
+      this.#runLeases.delete(runId);
+    }
+  }
+
+  /**
+   * D140-1: the orchestrator's per-run write attribution (its own file-tool
+   * writes and those of parallel open-window tasks). Release paths without
+   * executor context (the revoke RPC, eviction) fall back to it so a window
+   * closed outside the executor still attributes files correctly.
+   */
+  setWriteAttributionSource(source: ((runId: string) => RunWriteAttribution) | null): void {
+    this.#attributionOf = source;
+  }
+
+  #attributionOf: ((runId: string) => RunWriteAttribution) | null = null;
+
+  // --- per-task shadow window (D140-1) ----------------------------------------
+
+  /** The open task windows (run id + workdir), for interleaved attribution. */
+  openTaskWindows(): Array<{ runId: string; workdirId: string }> {
+    return [...this.#taskWindows.entries()].map(([runId, window]) => ({
+      runId,
+      workdirId: window.workdirId,
+    }));
+  }
+
+  /**
+   * D140-1: opens the task's shadow-snapshot window — a `before` snapshot of
+   * the workdir taken while the task holds its lease. Write tasks on a bound
+   * workdir only (workspace / read-only tasks and turns never open one); an
+   * external agent's write task opens it too (its exclusive lease still
+   * serializes it, but run_changes is still recorded).
+   */
+  async beginTaskWindow(task: Run): Promise<void> {
+    if (task.taskWrites !== true || task.conversationId === null) return;
+    const workdir = this.boundWorkdir(task.conversationId);
+    if (workdir === null || workdir.status !== 'available') return;
+    if (task.taskCwd === null || !isInsidePath(task.taskCwd, workdir.path)) return;
+    try {
+      const before = await this.#deps.checkpoints.snapshot(workdir);
+      this.#taskWindows.set(task.id, {
+        workdirId: workdir.id,
+        beforeOid: before.oid,
+        otherFiles: new Set(),
+      });
+    } catch (error) {
+      // A missing git / broken shadow repo must not fail the task: the window
+      // is bookkeeping, run_changes is simply absent for it.
+      this.#deps.logger.warn(
+        { taskId: task.id, workdirId: workdir.id, error: error instanceof Error ? error.message : String(error) },
+        'task window begin snapshot failed',
+      );
+    }
+  }
+
+  /**
+   * D140-1: closes the window — after-snapshot, then the run's `run_changes`:
+   * files are the task's own gateway-recorded writes (exact attribution) plus
+   * span-diff files no other overlapping task wrote (bash writes; marked
+   * `interleaved` when another window was open — a parallel task may have
+   * written them). A file another overlapping task also wrote is marked
+   * `interleaved`; files of a task whose window already closed while ours was
+   * open are excluded too (their own row owns them), so a finished parallel
+   * task's work is never attributed to this one.
+   *
+   * Closes run one at a time per workdir (windows stay registered until their
+   * turn), which is what makes the hand-over deterministic. A retried run
+   * re-opens a window with the same run id: its new files merge into the row
+   * instead of replacing the earlier attempt's.
+   */
+  async #endTaskWindow(runId: string, writes?: RunWriteAttribution): Promise<void> {
+    const window = this.#taskWindows.get(runId);
+    if (window === undefined) return;
+    const workdirId = window.workdirId;
+    const previous = this.#windowClosings.get(workdirId) ?? Promise.resolve();
+    const closing = previous
+      .catch(() => {})
+      .then(() => this.#closeTaskWindow(runId, window, writes));
+    this.#windowClosings.set(workdirId, closing);
+    try {
+      await closing;
+    } finally {
+      if (this.#windowClosings.get(workdirId) === closing) this.#windowClosings.delete(workdirId);
+    }
+  }
+
+  async #closeTaskWindow(
+    runId: string,
+    window: TaskWindowState,
+    writes?: RunWriteAttribution,
+  ): Promise<void> {
+    // A retried run may have opened a NEW window under the same id while this
+    // close was queued: only this exact window is closed/removed.
+    if (this.#taskWindows.get(runId) === window) this.#taskWindows.delete(runId);
+    const overlapping = [...this.#taskWindows.entries()].filter(
+      ([id, other]) => id !== runId && other.workdirId === window.workdirId,
+    );
+    let workdirForLog: string = window.workdirId;
+    try {
+      const task = this.#deps.runs.get(runId);
+      const workdir = this.#deps.workdirs.get(window.workdirId);
+      if (workdir === null) return;
+      workdirForLog = workdir.id;
+      const after = await this.#deps.checkpoints.snapshot(workdir);
+      const span = await this.#deps.checkpoints.diffFiles(workdir.id, window.beforeOid, after.oid);
+      const own = new Map<string, RunChangeFile['change']>();
+      for (const file of writes?.own ?? []) {
+        const rel = path.relative(workdir.path, file.path).replaceAll('\\', '/');
+        if (rel.length === 0 || rel.startsWith('../')) continue;
+        own.set(rel, toChangeKind(file.change));
+      }
+      const others = new Set<string>(window.otherFiles);
+      for (const absolute of writes?.others ?? []) {
+        const rel = path.relative(workdir.path, absolute).replaceAll('\\', '/');
+        if (rel.length > 0 && !rel.startsWith('../')) others.add(rel);
+      }
+      // A task that started while the snapshot was running overlaps too.
+      const laterOpen = [...this.#taskWindows.entries()].filter(
+        ([id, other]) => id !== runId && other.workdirId === window.workdirId,
+      );
+      const parallel = new Map<string, TaskWindowState>([...overlapping, ...laterOpen]);
+      const files: RunChangeFile[] = [];
+      for (const [rel, change] of own) {
+        const interleaved = others.has(rel);
+        files.push({ path: rel, change, ...(interleaved ? { interleaved: true } : {}) });
+      }
+      for (const file of span) {
+        if (own.has(file.path) || others.has(file.path)) continue;
+        // Not attributed to any overlapping task's file tools: a bash write of
+        // this run (or, when a parallel writer was open, possibly theirs).
+        files.push({
+          path: file.path,
+          change: file.change,
+          ...(parallel.size > 0 ? { interleaved: true } : {}),
+        });
+      }
+      files.sort((a, b) => a.path.localeCompare(b.path));
+      // A retried run (same run id) keeps the union of its attempts' files: the
+      // previous row's before-oid stays the earliest, the after-oid advances.
+      const previous = this.#deps.workdirs.getChange(runId);
+      const merged = new Map<string, RunChangeFile>();
+      for (const file of previous?.files ?? []) merged.set(file.path, file);
+      for (const file of files) merged.set(file.path, file);
+      const allFiles = [...merged.values()].sort((a, b) => a.path.localeCompare(b.path));
+      if (allFiles.length > 0) {
+        this.#deps.workdirs.recordChange({
+          runId,
+          workdirId: workdir.id,
+          conversationId: task?.conversationId ?? null,
+          beforeOid: previous?.beforeOid ?? window.beforeOid,
+          afterOid: after.oid,
+          files: allFiles,
+        });
+      }
+      // Overlapping windows exclude this run's files from their own span diffs
+      // and mark them interleaved: whoever closes last must not claim the other.
+      for (const other of parallel.values()) {
+        for (const file of allFiles) other.otherFiles.add(file.path);
+      }
+    } catch (error) {
+      this.#deps.logger.warn(
+        { runId, workdirId: workdirForLog, error: error instanceof Error ? error.message : String(error) },
+        'task window end snapshot failed',
+      );
+    }
   }
 
   // --- binding -----------------------------------------------------------------
@@ -596,19 +876,43 @@ export class WorkdirRuntime {
   }
 
   /**
-   * User force-revoke of the lease held on the conversation's workdir. The
-   * holder's lease window is closed first so a later settle of the revoked
-   * run cannot re-take a pinned lease (BR-P04-001 / design 30 §5.1).
+   * User force-revoke on the conversation's workdir (D140-1 semantics): with
+   * shared leases several write tasks hold the same root, so the revoke picks
+   * a **built-in write task of this conversation** among the shared holders —
+   * only that task loses its write permission (`#revokedPinned`, design 30
+   * §5.1); other tasks on the directory continue. No such holder (the waiter
+   * is blocked by an exclusive holder — an external agent run, a host
+   * operation): fall back to revoking that holder outright. The released
+   * window is closed first so a later settle of the revoked run cannot re-take
+   * a pinned lease (BR-P04-001).
    */
   async revokeLease(conversationId: string): Promise<boolean> {
     const workdir = this.boundWorkdir(conversationId);
     if (workdir === null) return false;
-    const holder = this.#deps.leases.conflictingHolder(workdir.path);
-    if (holder === null) return false;
-    // A pinned holder (a write task) loses its write permission for good
-    // (design 30 §5.1): its next write fails instead of re-taking the lease
-    // as a new window — otherwise the revoke would not take effect.
-    if (this.#runLeases.get(holder.runId)?.pinned === true) {
+    const holders = this.#deps.leases.conflictingHolders(workdir.path);
+    if (holders.length === 0) return false;
+    const sharedTask = holders.find((holder) => {
+      if (!holder.shared) return false;
+      const run = this.#deps.runs.get(holder.runId);
+      return (
+        run !== null &&
+        run.loopType === 'task' &&
+        run.taskWrites === true &&
+        run.conversationId === conversationId
+      );
+    });
+    // No own write task holds the root: the waiter is blocked by an EXCLUSIVE
+    // holder (external agent run, host operation). Never pick another
+    // conversation's shared task here — shared waiters are not blocked by
+    // shared holders, so stopping one would be an unrelated user's task.
+    const exclusive = holders.find((holder) => !holder.shared);
+    const holder = sharedTask ?? exclusive;
+    if (holder === undefined) return false;
+    // A pinned holder (a write task — shared or exclusive alike) loses its
+    // write permission for good (design 30 §5.1): its next write fails instead
+    // of re-taking the lease as a new window — otherwise the revoke would not
+    // take effect.
+    if (sharedTask !== undefined || this.#runLeases.get(holder.runId)?.pinned === true) {
       if (this.#revokedPinned.size >= REVOKED_RUNS_REMEMBERED) {
         const oldest = this.#revokedPinned.values().next().value;
         if (oldest !== undefined) this.#revokedPinned.delete(oldest);
