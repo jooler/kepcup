@@ -94,15 +94,39 @@ function listHasPath(listed: string, worktreePath: string): boolean {
   return [...candidates].some((candidate) => listedNorm.includes(normalize(candidate)));
 }
 
-/** Git for Windows marks the gitfile read-only; chmod before forging it. */
+/** Git for Windows marks the gitfile read-only and may briefly lock it. */
 function rewriteGitPointer(worktreePath: string, content: string): void {
   const pointer = path.join(worktreePath, '.git');
-  try {
-    chmodSync(pointer, 0o666);
-  } catch {
-    // already writable
+  const unlock = (): void => {
+    if (process.platform === 'win32') {
+      spawnSync('attrib', ['-R', pointer], { windowsHide: true });
+    }
+    try {
+      chmodSync(pointer, 0o666);
+    } catch {
+      // already writable or missing
+    }
+  };
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    unlock();
+    try {
+      writeFileSync(pointer, content);
+      return;
+    } catch (error) {
+      lastError = error;
+      try {
+        unlock();
+        rmSync(pointer);
+        writeFileSync(pointer, content);
+        return;
+      } catch (retryError) {
+        lastError = retryError;
+      }
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
   }
-  writeFileSync(pointer, content);
+  throw lastError;
 }
 
 describe('D140-4 WorktreeService', () => {

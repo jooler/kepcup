@@ -111,6 +111,19 @@ function waitStatus(stack: TestStack, id: string, status: Run['status'], label: 
   );
 }
 
+/** Workdir switch is blocked while a turn or task is still active. */
+function waitConversationIdle(stack: TestStack, conversationId: string) {
+  return waitFor(
+    () => {
+      const active = domain(stack)
+        .runs.listActiveByConversation(conversationId)
+        .filter((run) => run.loopType === 'turn' || run.loopType === 'task');
+      return active.length === 0 ? true : null;
+    },
+    { label: 'no active turn or task', timeoutMs: 30_000 },
+  );
+}
+
 async function waitWorktreeApply(
   stack: TestStack,
   conversationId: string,
@@ -636,6 +649,9 @@ describeIsolation('D140-4 worktree isolation', () => {
     await waitStatus(stack, started.taskId, 'completed', 'task completed');
     const card = await waitWorktreeApply(stack, conv.id, started.taskId);
     const payload = card.payload as { worktreePath: string };
+    // The post-task turn (「收到」) may still be running; workdir switch is
+    // blocked until every turn and task in the conversation is idle.
+    await waitConversationIdle(stack, conv.id);
     // The task is terminal, so the user may switch workdirs before deciding.
     const secondRepo = await bindWorkdir(stack, conv.id, makeRepo());
     expect(secondRepo).not.toBe(firstRepo);
