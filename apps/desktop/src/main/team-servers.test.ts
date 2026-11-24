@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { readFile as fsReadFile } from 'node:fs/promises';
@@ -295,6 +295,98 @@ describe('未配置时零副作用', () => {
   });
 });
 
+describe('服务器名称：rename（仅本机，左栏显示名称优先）', () => {
+  it('rename 落盘并在 list 回读；同值幂等不写文件、不发事件', async () => {
+    const { serverHash } = await harness.host.add({ url: URL_A });
+    const before = harness.changedCount();
+    await harness.host.rename({ serverHash, name: '  生产团队  ' });
+    let list = await harness.host.list();
+    expect(list[0]!.name).toBe('生产团队'); // trim 后落盘
+    expect(harness.changedCount()).toBe(before + 1);
+    const writes = harness.writeFileCalls.length;
+
+    // 同值幂等：不重写文件、不发事件。
+    await harness.host.rename({ serverHash, name: '生产团队' });
+    expect(await harness.host.list()).toEqual(list);
+    expect(harness.writeFileCalls).toHaveLength(writes);
+    expect(harness.changedCount()).toBe(before + 1);
+
+    // 清除（trim 后为空）：回退语义，list 回 ''。
+    await harness.host.rename({ serverHash, name: '   ' });
+    list = await harness.host.list();
+    expect(list[0]!.name).toBe('');
+  });
+
+  it('未登记的 serverHash → NOT_FOUND（JSON 约定）；其他服务器名称不受影响', async () => {
+    const { serverHash } = await harness.host.add({ url: URL_A });
+    const other = await harness.host.add({ url: URL_B });
+    await harness.host.rename({ serverHash, name: '主团队' });
+    await expect(harness.host.rename({ serverHash: 'deadbeef', name: 'x' })).rejects.toThrow();
+    try {
+      await harness.host.rename({ serverHash: 'deadbeef', name: 'x' });
+    } catch (error) {
+      expect(JSON.parse((error as Error).message)).toMatchObject({ code: 'NOT_FOUND' });
+    }
+    const list = await harness.host.list();
+    expect(list.find((entry) => entry.serverHash === serverHash)?.name).toBe('主团队');
+    expect(list.find((entry) => entry.serverHash === other.serverHash)?.name).toBe('');
+  });
+
+  it('旧版本状态文件（无 name 字段）可读：list 回 \'\'，rename 后正常落盘', async () => {
+    // 手写一份旧版结构（version 1、无 name），模拟升级场景。
+    const url = normalizeTeamServerUrl(URL_A);
+    const legacy = {
+      version: 1,
+      servers: {
+        [teamServerHash(url)]: {
+          url,
+          activeMemberId: null,
+          accounts: [],
+        },
+      },
+    };
+    // harness 的 statePath 在已存在的 tmpdir 下，直接写即可。
+    writeFileSync(harness.statePath, `${JSON.stringify(legacy, null, 2)}\n`);
+    const list = await harness.host.list();
+    expect(list[0]!.name).toBe('');
+    await harness.host.rename({ serverHash: list[0]!.serverHash, name: '升级后命名' });
+    const reread = JSON.parse(readFileSync(harness.statePath, 'utf8')) as {
+      servers: Record<string, { name?: string }>;
+    };
+    expect(reread.servers[list[0]!.serverHash]?.name).toBe('升级后命名');
+  });
+
+  it('手改文件里的空白名加载时收敛为 \'\'（trim，回退地址语义不被绕过）', async () => {
+    const url = normalizeTeamServerUrl(URL_A);
+    const handEdited = {
+      version: 1,
+      servers: {
+        [teamServerHash(url)]: { url, name: '   ', activeMemberId: null, accounts: [] },
+      },
+    };
+    writeFileSync(harness.statePath, `${JSON.stringify(handEdited, null, 2)}\n`);
+    expect((await harness.host.list())[0]!.name).toBe('');
+  });
+
+  it('ipc 面过 schema 门：name 超 100 拒 INVALID_INPUT；合法输入经 handler 生效', async () => {
+    const { serverHash } = await harness.host.add({ url: URL_A });
+    const handlers = new Map<string, (event: unknown, input: unknown) => unknown>();
+    harness.host.registerIpc((channel, handler) => handlers.set(channel, handler));
+    const renameHandler = handlers.get('platform:teamServers:rename');
+    expect(renameHandler).toBeTypeOf('function');
+    // parseJsonInput 在 handler 内同步抛（ipcMain.handle 会转成 invoke reject）。
+    expect(() => renameHandler!(null, { serverHash, name: 'x'.repeat(101) })).toThrow();
+    try {
+      renameHandler!(null, { serverHash, name: 'x'.repeat(101) });
+    } catch (error) {
+      expect(JSON.parse((error as Error).message)).toMatchObject({ code: 'INVALID_INPUT' });
+    }
+    expect((await harness.host.list())[0]!.name).toBe(''); // 拒绝路径不落盘
+    await renameHandler!(null, { serverHash, name: '  经 IPC 改名  ' });
+    expect((await harness.host.list())[0]!.name).toBe('经 IPC 改名');
+  });
+});
+
 describe('多账号：add / login / switch / logout', () => {
   it('login 记录账号并设为 active；token 加密落盘、无明文、无密码', async () => {
     const { serverHash } = await harness.host.add({ url: URL_A });
@@ -304,6 +396,7 @@ describe('多账号：add / login / switch / logout', () => {
     expect(list[0]!).toEqual({
       serverHash,
       url: 'http://127.0.0.1:8643/',
+      name: '',
       accounts: [{ memberId: 'm1', username: 'alice', displayName: 'Alice', remembered: true }],
       activeMemberId: 'm1',
       status: 'idle',

@@ -25,7 +25,7 @@
     TeamMember,
   } from '@kepcup/shared';
   import { isArchivedConversation } from '@kepcup/shared';
-  import { contacts } from '$lib/stores/contacts.svelte';
+  import { contacts, type TeamSourceSlice } from '$lib/stores/contacts.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { shell } from '$lib/stores/shell.svelte';
   import { teamContext } from '$lib/features/team/team-context.svelte';
@@ -34,7 +34,7 @@
   import { loadTeamBots, teamBotsOf } from '$lib/features/team/team-bots.svelte';
   import { openTeamBotChat } from '$lib/features/team/team-open';
   import TeamBotEditDialog from '$lib/features/team/TeamBotEditDialog.svelte';
-  import type { SourceId } from '$lib/rpc/connections.svelte';
+  import { connections, type SourceId } from '$lib/rpc/connections.svelte';
   import MemberAvatar from '$lib/features/team/MemberAvatar.svelte';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import ProjectAvatarStack from '$lib/avatars/ProjectAvatarStack.svelte';
@@ -100,6 +100,14 @@
   const teamSlices = $derived(
     Object.values(contacts.teamSources).sort((a, b) => a.serverHash.localeCompare(b.serverHash)),
   );
+
+  /**
+   * 名册栏标题：设置 - 团队服务器里本机命名的名称优先；未命名回退现状链
+   *（服务器自报名 / hash）——本面未命名行为不变，只贯通用户改的名。
+   */
+  function teamServerTitleOf(slice: TeamSourceSlice): string {
+    return connections.serverOf(slice.serverHash)?.name || slice.serverName || slice.serverHash;
+  }
 
   // --- 好友搜索与申请（web 本地与融合来源互斥出现，共用一份搜索状态） ---------
 
@@ -765,7 +773,7 @@
       data-connected={slice.connected ? 'true' : 'false'}
     >
       <h3 class="text-sm font-medium">
-        {t('contacts.friendsTitle', { server: slice.serverName || slice.serverHash })}
+        {t('contacts.friendsTitle', { server: teamServerTitleOf(slice) })}
       </h3>
 
       <!-- 「我」：团队成员栏顶部固定，点开自我会话（S07）。 -->
@@ -801,7 +809,7 @@
           class="pt-1 text-xs font-medium text-muted-foreground"
           data-testid={`contacts-team-bots-title-${slice.serverHash}`}
         >
-          {t('contacts.botsTitleTeam', { server: slice.serverName || slice.serverHash })}
+          {t('contacts.botsTitleTeam', { server: teamServerTitleOf(slice) })}
         </h4>
         <ul class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {#each teamBots as bot (bot.id)}
@@ -850,7 +858,7 @@
           class="pt-1 text-xs font-medium text-muted-foreground"
           data-testid={`contacts-team-projects-title-${slice.serverHash}`}
         >
-          {t('contacts.projectsTitleTeam', { server: slice.serverName || slice.serverHash })}
+          {t('contacts.projectsTitleTeam', { server: teamServerTitleOf(slice) })}
         </h4>
         <ul class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {#each teamProjects as project (project.id)}

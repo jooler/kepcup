@@ -27,6 +27,8 @@ export type TeamServerStatus =
 export interface TeamServerEntry {
   serverHash: string;
   url: string;
+  /** 用户在本机起的显示名（'' = 未设，显示回退 url）。 */
+  name: string;
   accounts: TeamServerAccountEntry[];
   activeMemberId: string | null;
   status: TeamServerStatus;
@@ -54,6 +56,8 @@ export interface TeamServersApi {
   }): Promise<{ member: { id: string; displayName: string } }>;
   logout(input: { serverHash: string }): Promise<{ ok: true }>;
   switchAccount(input: { serverHash: string; memberId: string }): Promise<{ ok: true }>;
+  /** 本机重命名（name trim 落盘，空 = 清除回退显示 url）；只存本机。 */
+  rename(input: { serverHash: string; name: string }): Promise<{ ok: true }>;
   connect(input: { serverHash: string }): Promise<{ ok: true }>;
   disconnect(input: { serverHash: string }): Promise<{ ok: true }>;
   probe(input: { url: string }): Promise<TeamServerProbeResult>;
@@ -89,7 +93,7 @@ export function getTeamServersApi(): TeamServersApi | null {
   const api = platform?.teamServers;
   if (api === null || api === undefined || typeof api !== 'object') return null;
   const candidate = api as Record<string, unknown>;
-  const required = ['list', 'add', 'remove', 'login', 'logout', 'switchAccount', 'connect', 'disconnect', 'probe', 'onChanged'];
+  const required = ['list', 'add', 'remove', 'rename', 'login', 'logout', 'switchAccount', 'connect', 'disconnect', 'probe', 'onChanged'];
   return required.every((name) => typeof candidate[name] === 'function')
     ? (candidate as unknown as TeamServersApi)
     : null;

@@ -4,6 +4,7 @@ import {
   platformTeamServersAddInputSchema,
   platformTeamServersLoginInputSchema,
   platformTeamServersProbeInputSchema,
+  platformTeamServersRenameInputSchema,
   platformTeamServersServerHashInputSchema,
   platformTeamServersSwitchAccountInputSchema,
   type PlatformTeamServersProbeOutput,
@@ -85,6 +86,8 @@ interface StoredAccount {
 
 interface StoredServer {
   url: string;
+  /** 用户在本机起的显示名（'' = 未设，UI 回退显示 url；不上传服务器）。 */
+  name: string;
   activeMemberId: string | null;
   accounts: StoredAccount[];
 }
@@ -209,6 +212,9 @@ export class TeamServers {
     register('platform:teamServers:switchAccount', (_event, input) =>
       this.switchAccount(parseJsonInput(platformTeamServersSwitchAccountInputSchema, input)),
     );
+    register('platform:teamServers:rename', (_event, input) =>
+      this.rename(parseJsonInput(platformTeamServersRenameInputSchema, input)),
+    );
     register('platform:teamServers:connect', (_event, input) =>
       this.connect(parseJsonInput(platformTeamServersServerHashInputSchema, input)),
     );
@@ -235,6 +241,7 @@ export class TeamServers {
     return Object.entries(state.servers).map(([serverHash, server]) => ({
       serverHash,
       url: server.url,
+      name: server.name,
       accounts: server.accounts.map((account) => ({
         memberId: account.memberId,
         username: account.username,
@@ -255,11 +262,26 @@ export class TeamServers {
     const serverHash = teamServerHash(url);
     const state = await this.#load();
     if (state.servers[serverHash] === undefined) {
-      state.servers[serverHash] = { url, activeMemberId: null, accounts: [] };
+      state.servers[serverHash] = { url, name: '', activeMemberId: null, accounts: [] };
       await this.#persist();
       this.#deps.onChanged();
     }
     return { serverHash };
+  }
+
+  /**
+   * 本机重命名（设置 - 团队服务器）：name trim 后落盘（空 = 清除，UI 回退显示
+   * url）。名字只存本机状态文件，与服务器无交互；未登记的 serverHash 报 NOT_FOUND。
+   */
+  async rename(input: { serverHash: string; name: string }): Promise<{ ok: true }> {
+    const state = await this.#load();
+    const server = this.#requireServer(state, input.serverHash);
+    const name = input.name.trim();
+    if (server.name === name) return { ok: true };
+    server.name = name;
+    await this.#persist();
+    this.#deps.onChanged();
+    return { ok: true };
   }
 
   /**
@@ -552,6 +574,9 @@ export class TeamServers {
       }
       servers[hash] = {
         url: server.url,
+        // 旧版本状态文件没有 name 字段 → ''（未命名，UI 回退显示 url）；
+        // trim 防手改文件的空白名绕过「空 = 回退地址」语义（正常写入恒已 trim）。
+        name: typeof server.name === 'string' ? server.name.trim() : '',
         activeMemberId: (server.activeMemberId as string | null) ?? null,
         accounts: (server.accounts as unknown[]).map((entry) => {
           const account = entry as Record<string, unknown>;

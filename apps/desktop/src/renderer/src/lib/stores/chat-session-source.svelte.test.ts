@@ -206,6 +206,7 @@ beforeEach(() => {
     {
       serverHash: 'h1',
       url: 'https://team.example.com',
+      name: '',
       accounts: [{ memberId: 'mbr_self', username: 'a', displayName: '我', remembered: true }],
       activeMemberId: 'mbr_self',
       status: 'connected',

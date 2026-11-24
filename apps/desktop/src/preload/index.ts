@@ -80,6 +80,8 @@ const api = {
         Array<{
           serverHash: string;
           url: string;
+          /** 用户在本机起的显示名（'' = 未设，UI 回退显示 url）。 */
+          name: string;
           accounts: Array<{
             memberId: string;
             username: string;
@@ -105,6 +107,9 @@ const api = {
         ipcRenderer.invoke('platform:teamServers:logout', input),
       switchAccount: (input: { serverHash: string; memberId: string }): Promise<{ ok: true }> =>
         ipcRenderer.invoke('platform:teamServers:switchAccount', input),
+      /** 本机重命名（name trim 落盘，空 = 清除回退显示 url）；只存本机。 */
+      rename: (input: { serverHash: string; name: string }): Promise<{ ok: true }> =>
+        ipcRenderer.invoke('platform:teamServers:rename', input),
       connect: (input: { serverHash: string }): Promise<{ ok: true }> =>
         ipcRenderer.invoke('platform:teamServers:connect', input),
       disconnect: (input: { serverHash: string }): Promise<{ ok: true }> =>

@@ -67,7 +67,8 @@
       }
       result.push({
         serverHash: server.serverHash,
-        serverName: contacts.teamSources[server.serverHash]?.serverName || server.url,
+        // 设置里本机命名的服务器名称优先；未命名回退显示地址。
+        serverName: server.name || server.url,
         status,
         rows,
         roster,

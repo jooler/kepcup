@@ -4340,6 +4340,8 @@ export const zhCN = {
   'team.fusionToggle': '在此窗口融合',
   'team.logout': '登出',
   'team.removeServer': '移除服务器',
+  'team.renameServer': '重命名',
+  'team.serverNamePlaceholder': '服务器名称（留空显示地址）',
   'team.removeServerConfirm': '移除 {url}？本设备保存的该服务器账号与融合配置将一并删除，该服务器的本地缓存（全部成员分区）也会清除。',
   'team.offlineReadOnly': '离线只读——内容来自本地缓存，联网后自动同步',
   'team.offlineReadOnlyHint': '当前离线：发送与写操作暂不可用，内容来自本地缓存。',

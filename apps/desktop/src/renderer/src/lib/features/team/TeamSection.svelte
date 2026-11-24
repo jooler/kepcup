@@ -10,7 +10,6 @@
   import { teamContext } from './team-context.svelte';
   import { teamCacheSync } from './cache-sync.svelte';
   import { getDesktopTeamCacheExtras } from './team-cache-store';
-  import { contacts } from '$lib/stores/contacts.svelte';
   import { ENDPOINT_KIND } from '$lib/features/web-shell/endpoint';
 
   /**
@@ -41,15 +40,14 @@
         connected: true,
       });
     }
-    // 桌面融合视图：各已融合服务器。
+    // 桌面融合视图：各已融合服务器。标题与左栏同链：本机命名优先、地址兜底。
     for (const server of connections.servers) {
       const hash = server.serverHash;
       const status = connections.get(teamSourceId(hash)).status;
-      const slice = contacts.teamSources[hash];
       list.push({
         key: hash,
         source: teamSourceId(hash),
-        title: slice?.serverName || server.url,
+        title: server.name || server.url,
         connected: status === 'connected',
       });
     }

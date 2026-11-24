@@ -4603,6 +4603,8 @@ export const enUS = {
   'team.fusionToggle': 'Fuse in this window',
   'team.logout': 'Sign out',
   'team.removeServer': 'Remove server',
+  'team.renameServer': 'Rename',
+  'team.serverNamePlaceholder': 'Server name (blank shows address)',
   'team.removeServerConfirm': 'Remove {url}? Accounts saved for this server and its fusion preference will be deleted, and the local cache of this server (every member partition) will be cleared.',
   'team.offlineReadOnly': 'Offline read-only — content comes from the local cache and syncs once reconnected',
   'team.offlineReadOnlyHint': 'You are offline: sending and write actions are unavailable; content comes from the local cache.',

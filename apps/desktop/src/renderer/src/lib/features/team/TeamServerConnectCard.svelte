@@ -39,6 +39,9 @@
    *
    * 密码只在提交瞬间经 platform 调用传主进程（token / 密码不落任何渲染层
    * 存储）。web 端点没有 platform.teamServers：整卡不渲染（desktopOnly）。
+   *
+   * 已保存条目支持本机重命名（名称只存 team-servers.json，不上传服务器；
+   * 左栏等显示处名称优先、地址兜底）。
    */
 
   const desktopOnly = ENDPOINT_KIND === 'desktop';
@@ -65,6 +68,10 @@
 
   let removeTarget = $state<TeamServerEntry | null>(null);
   let busyHash = $state<string | null>(null);
+
+  /** 内联重命名（null = 未在编辑）；草稿为空保存 = 清除名称（回退显示地址）。 */
+  let renamingHash = $state<string | null>(null);
+  let nameDraft = $state('');
 
   const servers = $derived(connections.servers);
   const loginServer = $derived(
@@ -224,6 +231,60 @@
     pref.setEnabled(server.serverHash, enabled);
     if (enabled) await connections.requestConnect(server.serverHash);
     else await connections.requestDisconnect(server.serverHash);
+  }
+
+  // --- 服务器名称（仅本机：设置里改名，左栏等显示处名称优先、地址兜底） -------
+
+  function displayNameOf(server: TeamServerEntry): string {
+    return server.name !== '' ? server.name : server.url;
+  }
+
+  /**
+   * 内联重命名同时只开一处（renamingHash 单值）：点另一台的「重命名」会直接
+   * 换编辑对象、丢弃未保存草稿——列表场景下不做二次确认。
+   */
+  function startRename(server: TeamServerEntry): void {
+    renamingHash = server.serverHash;
+    nameDraft = server.name;
+  }
+
+  function cancelRename(): void {
+    renamingHash = null;
+    nameDraft = '';
+  }
+
+  async function saveRename(server: TeamServerEntry): Promise<void> {
+    const api = getTeamServersApi();
+    if (api === null || busyHash === server.serverHash) return;
+    busyHash = server.serverHash;
+    try {
+      await api.rename({ serverHash: server.serverHash, name: nameDraft });
+      cancelRename();
+      await refresh();
+    } catch (error) {
+      toast.error(errorTextOf(error));
+    } finally {
+      busyHash = null;
+    }
+  }
+
+  function onRenameKeydown(server: TeamServerEntry, event: KeyboardEvent): void {
+    // 输入法合成中的 Enter / Escape 是候选操作，不触发保存 / 取消（同
+    // ProviderDetail.onNameKeydown 的 IME 约定）。
+    if (event.isComposing) return;
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      void saveRename(server);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelRename();
+    }
+  }
+
+  /** 重命名输入框挂载即聚焦并全选现名（改名最高频动作是整体替换）。 */
+  function focusRenameInput(node: HTMLInputElement): void {
+    node.focus();
+    node.select();
   }
 
   async function retryConnect(server: TeamServerEntry): Promise<void> {
@@ -429,9 +490,51 @@
                     : 'bg-zinc-400'}"
                 data-testid="team-server-status-dot"
               ></span>
-              <span class="min-w-0 flex-1 truncate text-sm" title={server.url}>{server.url}</span>
-              <span class="shrink-0 text-xs text-muted-foreground">{statusText(server)}</span>
+              {#if renamingHash === server.serverHash}
+                <!-- 内联重命名：Enter 保存、Escape 取消；清空保存 = 回退显示地址。 -->
+                <input
+                  class="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:border-ring"
+                  type="text"
+                  maxlength="100"
+                  placeholder={t('team.serverNamePlaceholder')}
+                  bind:value={nameDraft}
+                  onkeydown={(event) => onRenameKeydown(server, event)}
+                  use:focusRenameInput
+                  data-testid={`team-server-name-input-${server.serverHash}`}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="h-7 px-2 text-xs"
+                  disabled={busyHash === server.serverHash}
+                  onclick={() => void saveRename(server)}
+                  data-testid={`team-server-name-save-${server.serverHash}`}
+                >
+                  {t('common.save')}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  class="h-7 px-2 text-xs"
+                  disabled={busyHash === server.serverHash}
+                  onclick={cancelRename}
+                  data-testid={`team-server-name-cancel-${server.serverHash}`}
+                >
+                  {t('contacts.cancel')}
+                </Button>
+              {:else}
+                <span class="min-w-0 flex-1 truncate text-sm" title={server.url}>
+                  {displayNameOf(server)}
+                </span>
+                <span class="shrink-0 text-xs text-muted-foreground">{statusText(server)}</span>
+              {/if}
             </div>
+            {#if server.name !== '' && renamingHash !== server.serverHash}
+              <!-- 已命名：名称为主、地址保留一行小字（设置里始终能看到真实地址）。 -->
+              <p class="mt-0.5 truncate font-mono text-xs text-muted-foreground" title={server.url}>
+                {server.url}
+              </p>
+            {/if}
             {#if activeName !== ''}
               <p class="mt-1 truncate text-xs text-muted-foreground" data-testid="team-server-account">
                 {t('team.serverActiveAccount', { name: activeName })}
@@ -511,6 +614,18 @@
                 {t('team.fusionToggle')}
               </label>
               <span class="flex-1"></span>
+              {#if renamingHash !== server.serverHash}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  class="h-7 px-2 text-xs"
+                  disabled={busyHash === server.serverHash}
+                  onclick={() => startRename(server)}
+                  data-testid={`team-server-rename-${server.serverHash}`}
+                >
+                  {t('team.renameServer')}
+                </Button>
+              {/if}
               {#if server.activeMemberId !== null}
                 <Button
                   variant="ghost"

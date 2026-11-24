@@ -55,6 +55,8 @@ declare global {
             Array<{
               serverHash: string;
               url: string;
+              /** 用户在本机起的显示名（'' = 未设，UI 回退显示 url）。 */
+              name: string;
               accounts: Array<{
                 memberId: string;
                 username: string;
@@ -67,6 +69,8 @@ declare global {
           >;
           add(input: { url: string }): Promise<{ serverHash: string }>;
           remove(input: { serverHash: string }): Promise<{ ok: true }>;
+          /** 本机重命名（name trim 落盘，空 = 清除回退显示 url）；只存本机。 */
+          rename(input: { serverHash: string; name: string }): Promise<{ ok: true }>;
           login(input: {
             serverHash: string;
             username: string;

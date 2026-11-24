@@ -464,6 +464,11 @@ export const teamServerEntrySchema = z.object({
   serverHash: z.string().min(1),
   /** Normalized origin + path（同 resolveRemoteMode 的清洗规则）。 */
   url: z.string(),
+  /**
+   * 用户在本机给服务器起的显示名（仅本机设置，不上传服务器；'' = 未设——
+   * UI 显示回退到 url）。
+   */
+  name: z.string(),
   accounts: z.array(teamServerAccountSchema),
   /** 同一时刻每服务器只激活一个账号；null = 已登出 / 未登录。 */
   activeMemberId: z.string().nullable(),
@@ -482,6 +487,15 @@ export const platformTeamServersAddOutputSchema = z.object({ serverHash: z.strin
 
 export const platformTeamServersServerHashInputSchema = z.object({
   serverHash: z.string().min(1),
+});
+
+/**
+ * 本机重命名服务器（设置 - 团队服务器）：name trim 后落 team-servers.json；
+ * 空串 = 清除名称（UI 回退显示 url）。名字只存本机，不上传服务器。
+ */
+export const platformTeamServersRenameInputSchema = z.object({
+  serverHash: z.string().min(1),
+  name: z.string().max(100),
 });
 
 export const platformTeamServersLoginInputSchema = z.object({
@@ -3466,6 +3480,10 @@ export const rpcMethodSchemas = {
     input: platformTeamServersSwitchAccountInputSchema,
     output: okOutput,
   },
+  'platform.teamServers.rename': {
+    input: platformTeamServersRenameInputSchema,
+    output: okOutput,
+  },
   'platform.teamServers.connect': {
     input: platformTeamServersServerHashInputSchema,
     output: okOutput,
@@ -4223,6 +4241,7 @@ export const PLATFORM_RPC_METHODS: readonly RpcMethodName[] = [
   'platform.teamServers.login',
   'platform.teamServers.logout',
   'platform.teamServers.switchAccount',
+  'platform.teamServers.rename',
   'platform.teamServers.connect',
   'platform.teamServers.disconnect',
   'platform.teamServers.probe',
