@@ -318,6 +318,31 @@ function worktreePointerError(worktreePath: string): string {
   }
 }
 
+/**
+ * Host-side git env: drop GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE and similar
+ * overrides inherited from the process, then apply `extra` (apply/merge may
+ * set a private GIT_INDEX_FILE).
+ */
+function gitProcessEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of [
+    'GIT_DIR',
+    'GIT_WORK_TREE',
+    'GIT_COMMON_DIR',
+    'GIT_INDEX_FILE',
+    'GIT_OBJECT_DIRECTORY',
+    'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+    'GIT_PREFIX',
+    'GIT_NAMESPACE',
+  ]) {
+    delete env[key];
+  }
+  env.GIT_TERMINAL_PROMPT = '0';
+  env.GIT_OPTIONAL_LOCKS = '1';
+  if (extra !== undefined) Object.assign(env, extra);
+  return env;
+}
+
 /** Runs git without a shell; stdout/stderr are captured (bounded). */
 function git(
   args: string[],
@@ -327,12 +352,7 @@ function git(
   return new Promise((resolve) => {
     const child = spawn('git', args, {
       ...(cwd !== undefined ? { cwd } : {}),
-      env: {
-        ...process.env,
-        GIT_TERMINAL_PROMPT: '0',
-        GIT_OPTIONAL_LOCKS: '1',
-        ...(options.env ?? {}),
-      },
+      env: gitProcessEnv(options.env),
       stdio: [options.stdin !== undefined ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     });
     if (options.stdin !== undefined) {
@@ -367,8 +387,20 @@ function git(
     child.on('error', (error: Error) =>
       finish({ code: 127, stdout, stderr: `${stderr}\n${String(error)}` }),
     );
-    child.on('exit', (code) => finish({ code, stdout, stderr }));
+    // `close` fires after stdio has drained. `exit` can resolve first and
+    // drop a short sha / fatal line — under CI load that made `worktree add`
+    // run with an empty oid and report only "git exited with 128".
+    child.on('close', (code) => finish({ code: code ?? 1, stdout, stderr }));
   });
+}
+
+/** First 40–64 hex token in git output (rev-parse / stash create). */
+function parseCommitOid(text: string): string {
+  for (const line of text.trim().split(/\r?\n/)) {
+    const token = line.trim();
+    if (/^[0-9a-f]{40,64}$/i.test(token)) return token.toLowerCase();
+  }
+  return '';
 }
 
 /** Last non-empty lines of a git failure (the task's error message). */
@@ -430,23 +462,30 @@ export class WorktreeService {
         `读取工作区当前状态失败：${gitFailure(stash)}`,
       );
     }
-    let baseOid = stash.stdout.trim();
+    let baseOid = parseCommitOid(stash.stdout);
     if (baseOid.length === 0) {
       const head = await git(['-C', workdirPath, 'rev-parse', 'HEAD']);
-      if (head.code !== 0) {
+      baseOid = parseCommitOid(head.stdout);
+      if (head.code !== 0 || baseOid.length === 0) {
         throw new AppError(
           'WORKTREE_CREATE_FAILED',
           `仓库还没有提交，无法创建隔离目录：${gitFailure(head)}`,
         );
       }
-      baseOid = head.stdout.trim();
     }
     const added = await git(['-C', workdirPath, 'worktree', 'add', '--detach', target, baseOid]);
     if (added.code !== 0) {
+      const list = await git(['-C', workdirPath, 'worktree', 'list']);
       await this.#cleanupFailed(workdirPath, target);
+      const listed = list.stdout
+        .trim()
+        .split(/\r?\n/)
+        .filter((line) => line.length > 0)
+        .slice(-6)
+        .join(' / ');
       throw new AppError(
         'WORKTREE_CREATE_FAILED',
-        `创建 git worktree 失败：${gitFailure(added)}`,
+        `创建 git worktree 失败：${gitFailure(added)}（base=${baseOid}${listed.length > 0 ? `；${listed}` : ''}）`,
       );
     }
     let meta: { gitCommonDir: string; gitWorktreeMeta: string } | null;
@@ -1227,7 +1266,11 @@ function gitPathSync(workdirPath: string, name: string): string | null {
 }
 
 function spawnSyncGit(args: string[]): GitResult {
-  const result = spawnSync('git', args, { encoding: 'utf8', maxBuffer: GIT_MAX_BUFFER });
+  const result = spawnSync('git', args, {
+    encoding: 'utf8',
+    maxBuffer: GIT_MAX_BUFFER,
+    env: gitProcessEnv(),
+  });
   return {
     code: result.status ?? 127,
     stdout: result.stdout ?? '',
