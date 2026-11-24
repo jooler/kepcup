@@ -217,7 +217,7 @@ describe('分区库：加密与密钥', () => {
     const cache = track(new TeamCacheService({
       baseDir: () => dir,
       safeStorage: unavailableSafeStorage,
-    });
+    }));
     expect(() => cache.open({ serverHash: HASH, memberId: MEMBER })).toThrow(/safeStorage/);
     // 读路径静默退化（空集），绝不落明文库。
     expect(cache.getConversations({ serverHash: HASH, memberId: MEMBER }).conversations).toEqual([]);
@@ -368,7 +368,7 @@ describe('put/get 往返与 replace 对账', () => {
 describe('附件 LRU 与用量', () => {
   it('LRU：小上限淘汰最久未用；get 触碰保活；clearPartition/clearServer', () => {
     let clock = 0;
-    const cache = track(new TeamCacheService({ ...serviceDeps(dir), now: () => (clock += 1) });
+    const cache = track(new TeamCacheService({ ...serviceDeps(dir), now: () => (clock += 1) }));
     cache.setAttachmentLimit({ limitBytes: 120 });
     const b64 = (size: number): string => Buffer.alloc(size, 1).toString('base64');
     cache.putAttachment({ serverHash: HASH, memberId: MEMBER, key: 'a', bytes: b64(50) });
@@ -529,7 +529,7 @@ describe('分区重建不外溢（T8 审查补齐）', () => {
 
   it('LRU 淘汰只动当前分区：A 超限淘汰不触碰 B 的附件', () => {
     let clock = 0;
-    const cache = track(new TeamCacheService({ ...serviceDeps(dir), now: () => (clock += 1) });
+    const cache = track(new TeamCacheService({ ...serviceDeps(dir), now: () => (clock += 1) }));
     cache.setAttachmentLimit({ limitBytes: 120 });
     const b64 = (size: number): string => Buffer.alloc(size, 1).toString('base64');
     // B 先放一个附件（accessed_at 更早）。
