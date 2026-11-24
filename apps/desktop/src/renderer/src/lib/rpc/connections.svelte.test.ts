@@ -379,7 +379,9 @@ describe('真·在线边沿（onTeamOnline）', () => {
       });
       const server = createTeamServer({});
       connections.attachTeamPort('h1', server.clientPort as unknown as MessagePort);
-      expect(conn.status).toBe('connected'); // 数据面就绪（帧会排队）
+      // bind 先按「数据面就绪」记 connected，随即被平台清单（connecting）扳回
+      // 重连中：端口与帧队列保留（重连中不拦调用），只是标签诚实。
+      expect(conn.status).toBe('reconnecting');
       expect(onlineCount).toBe(0); // 但对端未确认在线：不触发
 
       await connections.refreshServers(); // 平台仍 connecting：仍不触发
@@ -427,6 +429,32 @@ describe('真·在线边沿（onTeamOnline）', () => {
       hang = false;
       const result = (await conn.call('system.info')) as { version: string };
       expect(result.version).toBe('1');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('窗口重载补发端口不翻回 connected：清单已 unreachable 时 bind 后仍是「服务器不可用」', async () => {
+    // 桥对重试中的连接同样补发端口（refreshPorts）：窗口重载时 list 先返回
+    //（unreachable 已入账），端口消息后到——bind 的 connected 若不被平台状态
+    // 扳回，unreachable 稳态没有后续 onChanged 来校正，侧栏会永远显示绿点 +
+    // 本地缓存名册（服务器实际离线）。
+    h.platformStatus = 'unreachable';
+    try {
+      await startWithPlatform();
+      const conn = connections.get('team:h1');
+      expect(conn.status).toBe('offline'); // 端口未到：离线占位
+
+      const server = createTeamServer({});
+      connections.attachTeamPort('h1', server.clientPort as unknown as MessagePort);
+      expect(conn.status).toBe('unreachable');
+      // 数据面守卫同步生效：unreachable 不发新帧。
+      await expect(conn.call('system.info')).rejects.toThrow('team source unreachable');
+
+      // 服务器恢复：清单报 connected → 端口还在，直接恢复数据面。
+      h.platformStatus = 'connected';
+      await connections.refreshServers();
+      expect(conn.status).toBe('connected');
     } finally {
       vi.unstubAllGlobals();
     }

@@ -417,10 +417,35 @@ class ConnectionsRegistry {
       const server = this.serverOf(serverHash);
       if (server?.activeMemberId != null) team.memberId = server.activeMemberId;
       team.bind(port);
+      // bind 把「端口交付」记成 connected（首连窗口的数据面就绪语义）；但桥对
+      // 重试中的连接（connecting / error / unreachable）同样补发端口（窗口重载
+      // refreshPorts）——若清单已收敛到 unreachable，这个 connected 没有任何后续
+      // onChanged 来校正（稳态不再翻状态），侧栏会永远显示绿点 + 本地缓存名册。
+      // 按最近一次平台清单状态把 presence 标签扳回真相；数据面（端口 / RPC）不动。
+      const platform = this.#platformStatus.get(serverHash);
+      if (platform !== undefined) this.#applyPlatformStatus(team, platform);
       // 端口晚于平台 connected 状态到达（窗口重载时 WS 是活的）：此刻补检在线边沿。
       this.#maybeNotifyOnline(serverHash);
     }
     this.#notifySourcesChanged();
+  }
+
+  /**
+   * 平台状态 → 连接状态标签的唯一映射（#refresh 与 attachTeamPort 共用，防两处
+   * 漂移）：connected 恢复数据面；connecting / error 标记重连中、unreachable
+   * 标记「服务器不可用」（桥复用同一端口）；idle / unauthenticated 才是真断开，
+   * 销毁客户端。
+   */
+  #applyPlatformStatus(team: TeamConnection, status: TeamServerStatus): void {
+    if (status === 'connected') {
+      team.markConnected();
+    } else if (status === 'idle' || status === 'unauthenticated') {
+      team.markOffline(false);
+    } else if (status === 'unreachable') {
+      team.markUnreachable();
+    } else {
+      team.markOffline(true);
+    }
   }
 
   /** 测试 /  teardown：拆掉全部团队连接。 */
@@ -457,20 +482,9 @@ class ConnectionsRegistry {
       this.#platformStatus.set(server.serverHash, server.status);
       const fused = fusionPref().isEnabled(server.serverHash);
       const team = this.#teams.get(server.serverHash);
-      // 平台状态同步：connected 恢复数据面；connecting / error 标记重连中、
-      // unreachable 标记「服务器不可用」（桥复用同一端口）；idle / unauthenticated
-      // 才是真断开，销毁客户端。
       if (team !== undefined) {
         team.memberId = server.activeMemberId;
-        if (server.status === 'connected') {
-          team.markConnected();
-        } else if (server.status === 'idle' || server.status === 'unauthenticated') {
-          team.markOffline(false);
-        } else if (server.status === 'unreachable') {
-          team.markUnreachable();
-        } else {
-          team.markOffline(true);
-        }
+        this.#applyPlatformStatus(team, server.status);
       }
       this.#maybeNotifyOnline(server.serverHash);
       // 融合开着、已登录、还没连：请求一次连接（主进程负责实际的 WS 与重连）。
