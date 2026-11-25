@@ -277,7 +277,7 @@ export class CuaDriverActions {
         const text = stringParam(params, 'text')
         await this.callActionTool('clipboard_write', { text })
         structured = await this.callActionTool('hotkey', {
-          keys: ['cmd', 'v'],
+          keys: pasteChord(),
           target: windowTarget(resolvedApp.pid, windowId),
           delivery_mode: 'background'
         })
@@ -562,6 +562,11 @@ export function parseHotkeyKeys(chord: string): string[] {
     .split('+')
     .map((key) => key.trim())
     .filter((key) => key.length > 0)
+}
+
+/** 剪贴板粘贴弦：darwin 是 cmd+v，win/linux 是 ctrl+v（上游 driver 按 OS 翻译键义）。 */
+function pasteChord(): string[] {
+  return process.platform === 'darwin' ? ['cmd', 'v'] : ['ctrl', 'v']
 }
 
 function windowTarget(pid: number, windowId: number): Record<string, unknown> {

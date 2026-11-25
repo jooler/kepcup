@@ -8,10 +8,11 @@ import {
   readCapabilitiesRecord,
 } from './computer/capabilities-record';
 
-const { capabilitiesMock, shutdownSidecarMock, probeCaptureMock } = vi.hoisted(() => ({
+const { capabilitiesMock, shutdownSidecarMock, probeCaptureMock, driverPermissionsMock } = vi.hoisted(() => ({
   capabilitiesMock: vi.fn(),
   shutdownSidecarMock: vi.fn(),
   probeCaptureMock: vi.fn(),
+  driverPermissionsMock: vi.fn(),
 }));
 
 vi.mock('./computer/sidecar-client', () => ({
@@ -19,6 +20,8 @@ vi.mock('./computer/sidecar-client', () => ({
   callComputerSidecarAction: vi.fn(),
   // P-B2 直采自检：设置页「检测截屏」经 sidecar 让 CuaDriver 真抓一帧。
   callComputerSidecarDirectCaptureProbe: probeCaptureMock,
+  // 三端启用修订：win/linux 权限面板状态源（daemon check_permissions）。
+  callComputerSidecarPermissionsStatus: driverPermissionsMock,
   // P-B1 WP6：ComputerHostImpl 构造时注入 cua socket 目录父级。
   setComputerSidecarUserDataDirectory: vi.fn(),
   // P-B2：stop / permissionsOpen 通过它终止 sidecar（provider 跑在子进程里）。
@@ -94,6 +97,7 @@ describe('ComputerHost permissions (P-B2: host TCC via systemPreferences)', () =
     capabilitiesMock.mockReset();
     shutdownSidecarMock.mockReset();
     probeCaptureMock.mockReset();
+    driverPermissionsMock.mockReset();
   });
 
   afterEach(() => {
@@ -105,13 +109,14 @@ describe('ComputerHost permissions (P-B2: host TCC via systemPreferences)', () =
       isTrustedAccessibilityClient?: (prompt: boolean) => boolean;
       getMediaAccessStatus?: (mediaType: 'screen') => string;
     } = {},
+    platform: 'darwin' | 'win32' | 'linux' = 'darwin',
   ) {
     const apiMock = {
       isTrustedAccessibilityClient: vi.fn(api.isTrustedAccessibilityClient ?? (() => true)),
       getMediaAccessStatus: vi.fn(api.getMediaAccessStatus ?? (() => 'granted')),
     };
     const openExternal = vi.fn(async () => undefined);
-    return { api: apiMock, shell: { openExternal }, platform: 'darwin' as const };
+    return { api: apiMock, shell: { openExternal }, platform };
   }
 
   it('maps host TCC states', async () => {
@@ -194,6 +199,109 @@ describe('ComputerHost permissions (P-B2: host TCC via systemPreferences)', () =
       screenRecording: 'unknown',
       directCapture: 'unknown',
     });
+  });
+
+  // --- 三端启用修订：win/linux 状态源是 daemon 的 check_permissions -------------
+
+  it('maps daemon-reported states on win32 (no TCC to read)', async () => {
+    driverPermissionsMock.mockResolvedValue({
+      accessibility: true,
+      screenRecording: true,
+      directCapture: 'granted',
+      attribution: 'host',
+    });
+    const host = createComputerHost(() => userDataDir, permissionDeps({}, 'win32'));
+
+    await expect(host.permissionsStatus()).resolves.toEqual({
+      accessibility: 'granted',
+      screenRecording: 'granted',
+      directCapture: 'granted',
+    });
+    // 不读宿主 TCC（win 上没有对应概念）。
+    expect(driverPermissionsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('maps daemon-reported states on linux', async () => {
+    driverPermissionsMock.mockResolvedValue({
+      accessibility: false,
+      screenRecording: false,
+      directCapture: 'unknown',
+      attribution: 'host',
+    });
+    const host = createComputerHost(() => userDataDir, permissionDeps({}, 'linux'));
+
+    await expect(host.permissionsStatus()).resolves.toEqual({
+      accessibility: 'not-granted',
+      screenRecording: 'not-granted',
+      directCapture: 'unknown',
+    });
+  });
+
+  it('reports unknown on win/linux when the daemon is unreachable', async () => {
+    driverPermissionsMock.mockRejectedValue(new Error('cua-driver runtime was not found'));
+    const host = createComputerHost(() => userDataDir, permissionDeps({}, 'win32'));
+
+    await expect(host.permissionsStatus()).resolves.toEqual({
+      accessibility: 'unknown',
+      screenRecording: 'unknown',
+      directCapture: 'unknown',
+    });
+  });
+
+  it('keeps the probe path working on non-darwin platforms', async () => {
+    probeCaptureMock.mockResolvedValue({ state: 'granted', reason: null });
+    // 非 darwin 的状态源是 daemon：探针后 permissionsStatus 读 daemon 的最新结论。
+    driverPermissionsMock.mockResolvedValue({
+      accessibility: true,
+      screenRecording: true,
+      directCapture: 'granted',
+      attribution: 'host',
+    });
+    const host = createComputerHost(() => userDataDir, permissionDeps({}, 'win32'));
+
+    await expect(host.permissionsProbeCapture()).resolves.toMatchObject({
+      status: { accessibility: 'granted', screenRecording: 'granted', directCapture: 'granted' },
+      reason: null,
+    });
+    expect(probeCaptureMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a real-frame probe verdict win over the daemon read-only verdict on win32', async () => {
+    // Windows 实测：check_permissions 的 screen_recording_capturable 不可靠
+    // （报 unknown 的同时真帧采集成功）——探针 granted 必须覆盖 daemon verdict。
+    probeCaptureMock.mockResolvedValue({ state: 'granted', reason: null });
+    driverPermissionsMock.mockResolvedValue({
+      accessibility: false,
+      screenRecording: false,
+      directCapture: 'unknown',
+      attribution: null,
+    });
+    const host = createComputerHost(() => userDataDir, permissionDeps({}, 'win32'));
+
+    const result = await host.permissionsProbeCapture();
+    expect(result.status.directCapture).toBe('granted');
+    expect(result.reason).toBeNull();
+    // 后续只读状态沿用真帧结论，不被 daemon verdict 打回 unknown。
+    await expect(host.permissionsStatus()).resolves.toMatchObject({ directCapture: 'granted' });
+  });
+
+  it('keeps a failed probe verdict visible on win32 (reason surfaced)', async () => {
+    probeCaptureMock.mockResolvedValue({
+      state: 'not-granted',
+      reason: 'capture blocked: no on-screen window',
+    });
+    driverPermissionsMock.mockResolvedValue({
+      accessibility: false,
+      screenRecording: false,
+      directCapture: 'unknown',
+      attribution: null,
+    });
+    const host = createComputerHost(() => userDataDir, permissionDeps({}, 'win32'));
+
+    const result = await host.permissionsProbeCapture();
+    // 真抓失败的 not-granted 同样优先于 daemon 的 unknown——如实显示失败。
+    expect(result.status.directCapture).toBe('not-granted');
+    expect(result.reason).toBe('capture blocked: no on-screen window');
   });
 
   it('prompts for accessibility and opens the Privacy pane', async () => {

@@ -8,6 +8,7 @@ import {
   callComputerSidecarAction,
   callComputerSidecarCapabilities,
   callComputerSidecarDirectCaptureProbe,
+  callComputerSidecarPermissionsStatus,
   setComputerSidecarUserDataDirectory,
   shutdownComputerSidecar,
 } from './computer/sidecar-client';
@@ -147,6 +148,24 @@ class ComputerHostImpl implements ComputerHost {
   async permissionsStatus(): Promise<ComputerPermissionsStatus> {
     if (isHostShuttingDown()) {
       return { accessibility: 'unknown', screenRecording: 'unknown', directCapture: 'unknown' };
+    }
+    // 三端启用修订：win/linux 没有 TCC——状态源是 daemon 的 check_permissions
+    // （embedded 只读）。读不到（daemon 没起 / 启动失败）就如实报 unknown，
+    // 不伪装成「已授权」。会启动 sidecar：设置页刷新本来就是握手级开销。
+    if ((this.#permissionDeps?.platform ?? process.platform) !== 'darwin') {
+      try {
+        const driver = await callComputerSidecarPermissionsStatus();
+        return {
+          accessibility: driver.accessibility ? 'granted' : 'not-granted',
+          screenRecording: driver.screenRecording ? 'granted' : 'not-granted',
+          // 真帧自检的结论（抓到过一帧 = granted / 真抓失败 = not-granted）是
+          // 地面真相，优先于 daemon 的只读 verdict（Windows 上
+          // screen_recording_capturable 不可靠，实测与真采结果矛盾）。
+          directCapture: this.#directCapture !== 'unknown' ? this.#directCapture : driver.directCapture,
+        };
+      } catch {
+        return { accessibility: 'unknown', screenRecording: 'unknown', directCapture: 'unknown' };
+      }
     }
     if (!this.#permissionDeps) {
       return { accessibility: 'unknown', screenRecording: 'unknown', directCapture: 'unknown' };

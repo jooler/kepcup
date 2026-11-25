@@ -2607,7 +2607,7 @@ export const zhCN = {
   // --- D105 计算机操控 --------------------------------------------------------
   'settings.computerUseSectionTitle': '计算机操控',
   'settings.computerUseSectionHint':
-    '让 Bot 在任务中读取并操作本机桌面应用：无障碍树优先，截屏与键鼠兜底，不抢焦点。首次使用需给 KepCup 授予辅助功能与屏幕录制权限（仅 macOS，默认关闭）。',
+    '让 Bot 在任务中读取并操作本机桌面应用：无障碍树优先，截屏与键鼠兜底，不抢焦点。默认关闭；macOS 首次使用需给 KepCup 授予辅助功能与屏幕录制权限。',
   // web 端点（remote）：CuaDriver 与被操控桌面都在本机，功能整体不适用，只提示。
   'settings.computerUseWebOnlyHint': '此功能需要在 KepCup 客户端使用',
   'settings.computerUseGranted': '已授权',
@@ -2620,6 +2620,8 @@ export const zhCN = {
   'settings.computerUseAccessibility': '辅助功能（读取与操作应用界面）',
   'settings.computerUseScreenRecording': '屏幕录制（截取应用窗口）',
   'settings.computerUseDirectCapture': '直接采集（macOS 26+ 截屏可用性）',
+  // 非 macOS（三端启用修订）：Windows 无需系统授权，Linux 依赖桌面环境辅助功能。
+  'settings.computerUseCapture': '截屏采集（截取应用窗口可用性）',
   'settings.computerUseProbeCapture': '检测截屏',
   'settings.computerUseProbingCapture': '正在截屏…',
   'settings.computerUseOpenSettings': '打开系统设置',
@@ -2627,6 +2629,10 @@ export const zhCN = {
   'settings.computerUseRefresh': '刷新状态',
   'settings.computerUsePermissionHint':
     '授权对象是 KepCup 主应用（CuaDriver 以 embedded 模式运行，不再使用独立助手）。「检测截屏」会真抓一帧确认截屏是否可用；macOS 26+ 首次可能弹出系统同意框，选允许即可。授权后如未生效，请重启 KepCup。',
+  'settings.computerUsePermissionHintOther':
+    '状态由 CuaDriver（embedded 模式）实时上报：Windows 无需系统授权；Linux 依赖桌面环境的辅助功能支持（GNOME AT-SPI，Wayland 会话需要 wayland-helper），部分桌面只在前台可用。「检测截屏」会真抓一帧确认截屏可用。',
+  'settings.computerUsePermissionHintWindows':
+    'Windows 无需系统授权，可用性就绪即可直接使用（以管理员身份运行的应用可能无法操控）。「检测截屏」会真抓一帧确认截屏可用。',
   // --- D96 远程遥控 -----------------------------------------------------------
   'settings.navRemote': '远程遥控',
   'settings.remoteSectionTitle': '远程遥控',

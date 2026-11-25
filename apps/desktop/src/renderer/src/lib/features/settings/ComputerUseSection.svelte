@@ -6,14 +6,15 @@
   import { ENDPOINT_KIND, endpointSupports } from '$lib/features/web-shell/endpoint';
 
   /**
-   * 设置页「计算机操控」独立分区（D105 / P-B2，docs/design/52 §6）：开关走设置目录
-   * 的标量条目（`computer.control`）；下方是 CuaDriver 的状态与宿主 TCC 权限引导——
-   * 可用性行（`computer:capabilities-status`，重新握手并把结果落盘 userData，
-   * 「本次能不能用」与 TCC 分开呈现，2026-10-31 冒烟反馈）+ TCC 权限三态
-   * （已授权 / 未授权 / 未知，`computer:permissions-status`，直接读 KepCup 的
-   * systemPreferences）与「打开系统设置」深链（`computer:permissions-open`，
-   * AX 会触发系统提示，屏幕录制只开面板）。远程端点按 desktop-only 能力置灰
-   * （'computer-use'）。
+   * 设置页「计算机操控」独立分区（D105 / P-B2 + 2026-11 三端启用修订，
+   * docs/design/52 §6）：开关走设置目录的标量条目（`computer.control`）；下方是
+   * CuaDriver 的状态与权限引导——可用性行（`computer:capabilities-status`，重新
+   * 握手并把结果落盘 userData，「本次能不能用」与权限分开呈现，2026-10-31 冒烟
+   * 反馈）+ 权限三态（已授权 / 未授权 / 未知，`computer:permissions-status`）。
+   * 状态源按平台：darwin 直接读宿主 TCC（systemPreferences），win/linux 由
+   * daemon 的 check_permissions 上报。「打开系统设置」深链（`computer:permissions-open`）
+   * 只有 darwin 有对应物；「检测截屏」探针全平台可用。远程端点按 desktop-only
+   * 能力置灰（'computer-use'）。
    *
    * web 端点（remote）整段不可实现——CuaDriver 与被操控的桌面都在本机，web
    * 用户更不能远程操控服务器：分区只留标题 + 「需要在 KepCup 客户端使用」
@@ -27,6 +28,7 @@
   const webEndpoint = $derived(ENDPOINT_KIND !== 'desktop');
   const canUseHelper = $derived(endpointSupports('computer-use'));
 
+  let hostPlatform = $state<string | null>(null);
   let accessibility = $state<PermissionState>('unknown');
   let screenRecording = $state<PermissionState>('unknown');
   let directCapture = $state<PermissionState>('unknown');
@@ -36,6 +38,17 @@
   let requestingCapture = $state(false);
   let captureError = $state<string | null>(null);
   let opening = $state<'accessibility' | 'screen-recording' | null>(null);
+
+  /** darwin 有 TCC 面板与「打开系统设置」；win/linux 状态全部由 daemon 上报。 */
+  const isDarwin = $derived(hostPlatform === 'darwin');
+  /**
+   * Windows 没有「辅助功能 / 屏幕录制」的 OS 授权概念，driver 的
+   * check_permissions 在 win 上也没有对应检测物（实测恒报 false，而 UIA 与
+   * 截屏实际可用）——这两行在 win 上整行隐藏，只留真实能力自检（可用性 +
+   * 检测截屏）；darwin 是 TCC 真状态，linux 保留（GNOME AT-SPI 是真实依赖）。
+   * 平台未读到（首帧）时同样隐藏，避免 win 上闪现两行再收起。
+   */
+  const showTccRows = $derived(hostPlatform === 'darwin' || hostPlatform === 'linux');
 
   async function refresh(): Promise<void> {
     if (!canUseHelper || !window.kepcup?.computerPermissionStatus) return;
@@ -96,6 +109,16 @@
   }
 
   onMount(() => {
+    if (window.kepcup?.platform?.info) {
+      void window.kepcup.platform
+        .info()
+        .then((info) => {
+          hostPlatform = info.platform;
+        })
+        .catch(() => {
+          hostPlatform = null;
+        });
+    }
     void refresh();
   });
 
@@ -147,58 +170,66 @@
         {availabilityError}
       </p>
     {/if}
-    <div class="flex items-center justify-between gap-2">
-      <span class="text-sm">{t('settings.computerUseAccessibility')}</span>
-      <div class="flex items-center gap-2">
-        <span
-          class="text-xs {accessibility === 'granted'
-            ? 'text-emerald-600'
-            : accessibility === 'not-granted'
-              ? 'text-destructive'
-              : 'text-muted-foreground'}"
-          data-testid="computer-use-accessibility-state"
-        >
-          {stateLabel(accessibility)}
-        </span>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={!canUseHelper || opening !== null}
-          onclick={() => open('accessibility')}
-        >
-          {opening === 'accessibility'
-            ? t('settings.computerUseOpening')
-            : t('settings.computerUseOpenSettings')}
-        </Button>
+    {#if showTccRows}
+      <div class="flex items-center justify-between gap-2">
+        <span class="text-sm">{t('settings.computerUseAccessibility')}</span>
+        <div class="flex items-center gap-2">
+          <span
+            class="text-xs {accessibility === 'granted'
+              ? 'text-emerald-600'
+              : accessibility === 'not-granted'
+                ? 'text-destructive'
+                : 'text-muted-foreground'}"
+            data-testid="computer-use-accessibility-state"
+          >
+            {stateLabel(accessibility)}
+          </span>
+          {#if isDarwin}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!canUseHelper || opening !== null}
+              onclick={() => open('accessibility')}
+            >
+              {opening === 'accessibility'
+                ? t('settings.computerUseOpening')
+                : t('settings.computerUseOpenSettings')}
+            </Button>
+          {/if}
+        </div>
       </div>
-    </div>
-    <div class="flex items-center justify-between gap-2">
-      <span class="text-sm">{t('settings.computerUseScreenRecording')}</span>
-      <div class="flex items-center gap-2">
-        <span
-          class="text-xs {screenRecording === 'granted'
-            ? 'text-emerald-600'
-            : screenRecording === 'not-granted'
-              ? 'text-destructive'
-              : 'text-muted-foreground'}"
-          data-testid="computer-use-screen-state"
-        >
-          {stateLabel(screenRecording)}
-        </span>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={!canUseHelper || opening !== null}
-          onclick={() => open('screen-recording')}
-        >
-          {opening === 'screen-recording'
-            ? t('settings.computerUseOpening')
-            : t('settings.computerUseOpenSettings')}
-        </Button>
+      <div class="flex items-center justify-between gap-2">
+        <span class="text-sm">{t('settings.computerUseScreenRecording')}</span>
+        <div class="flex items-center gap-2">
+          <span
+            class="text-xs {screenRecording === 'granted'
+              ? 'text-emerald-600'
+              : screenRecording === 'not-granted'
+                ? 'text-destructive'
+                : 'text-muted-foreground'}"
+            data-testid="computer-use-screen-state"
+          >
+            {stateLabel(screenRecording)}
+          </span>
+          {#if isDarwin}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!canUseHelper || opening !== null}
+              onclick={() => open('screen-recording')}
+            >
+              {opening === 'screen-recording'
+                ? t('settings.computerUseOpening')
+                : t('settings.computerUseOpenSettings')}
+            </Button>
+          {/if}
+        </div>
       </div>
-    </div>
+    {/if}
     <div class="flex items-center justify-between gap-2">
-      <span class="text-sm">{t('settings.computerUseDirectCapture')}</span>
+      <span class="text-sm">
+        {isDarwin ? t('settings.computerUseDirectCapture') : t('settings.computerUseCapture')}
+      </span>
       <div class="flex items-center gap-2">
         <span
           class="text-xs {directCapture === 'granted'
@@ -229,7 +260,15 @@
     {/if}
     <div class="flex items-center justify-between">
       <p class="text-xs text-muted-foreground">
-        {canUseHelper ? t('settings.computerUsePermissionHint') : t('botTemplate.desktopOnly')}
+        {#if !canUseHelper}
+          {t('botTemplate.desktopOnly')}
+        {:else if isDarwin}
+          {t('settings.computerUsePermissionHint')}
+        {:else if hostPlatform === 'win32'}
+          {t('settings.computerUsePermissionHintWindows')}
+        {:else}
+          {t('settings.computerUsePermissionHintOther')}
+        {/if}
       </p>
       <Button
         variant="ghost"

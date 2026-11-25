@@ -834,9 +834,9 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     id: 'computer.control',
     group: 'computer',
     title: '计算机操控',
-    summary: '让 Bot 在任务中读取并操作本机桌面应用（无障碍树优先，截屏与键鼠兜底；仅 macOS）',
+    summary: '让 Bot 在任务中读取并操作本机桌面应用（无障碍树优先，截屏与键鼠兜底；macOS / Windows / Linux，Linux 部分桌面受限）',
     enables: ['操控本机桌面应用', '读取应用界面', '后台点击与输入'],
-    keywords: ['计算机操控', '桌面自动化', '辅助功能', 'computer use', '键鼠', '无障碍树'],
+    keywords: ['计算机操控', '桌面自动化', '辅助功能', 'computer use', '键鼠', '无障碍树', 'windows', 'linux'],
     scope: 'global',
     // 安全开关：user-only——Bot 可出卡，但宿主不采用 values（D89 惯例，AGENTS.md）。
     // 与 plugins.marketplace 同形态：user-only + generic 且不出权限（widensPermission

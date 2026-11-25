@@ -111,7 +111,7 @@ WP0 是**止损点**：它回答不了的问题，后面全是猜的。WP3 与 W
 文件（新）：`apps/desktop/resources/cua-driver.lock.json`、`apps/desktop/scripts/fetch-cua-driver.mjs`、`apps/desktop/src/main/computer/cua-driver-paths.ts`、`cua-driver-process.ts`、`apps/desktop/electron-builder.yml`。
 
 - [x] **pin 文件**：`{ version, tag, repository, assets: { "<os>-<arch>": { asset, assetSha256, files: { name: sha256 } } }, license, licenseSha256 }`。校验失败拒绝使用，不做「警告后继续」。
-- [x] **fetch 脚本**：`dev` / CI 用，缓存 `~/.cache/kepcup/cua-driver/<version>/`，输出 `apps/desktop/resources/cua-driver/<os>-<arch>/`（gitignore）。支持 `--offline` 只用缓存。非 darwin 直接 exit 0。
+- [x] **fetch 脚本**：`dev` / CI 用，缓存 `~/.cache/kepcup/cua-driver/<version>/`，输出 `apps/desktop/resources/cua-driver/<os>-<arch>/`（gitignore）。支持 `--offline` 只用缓存。非 darwin 直接 exit 0。**（2026-11-26 三端启用修订：exit 0 早退已删除，`--os darwin|win|linux` + `--arch` 交叉获取三端资产；win 资产 zip 用 PowerShell Expand-Archive，lock files pin 主二进制 + 关键 helper。）**
 - [x] **启动**：`serve --embedded --socket <私有目录>/driver.sock --no-overlay`（embedded 必须，findings Q6）；socket 目录 `0700`、socket `0600`，启动前检查路径长度上限（Unix socket 有 104 字节限制）。
 - [x] **环境**：`CUA_DRIVER_EMBEDDED=1`、`CUA_DRIVER_PARENT_LIVENESS_STDIN=1`（保持 stdin 打开，父进程死则 daemon 死）、`CUA_DRIVER_RS_TELEMETRY_ENABLED=0`、`CUA_DRIVER_RS_UPDATE_CHECK=0`。
 - [x] **孤儿清理**：启动前探测并 `stop` 上一次残留的 daemon；退出走 SIGTERM → 2s → SIGKILL，随后删 socket 目录（参照 `macos-native-provider-process-reaping.ts` 既有做法）。

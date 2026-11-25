@@ -1,5 +1,5 @@
 {
-  "$comment": "cua-driver (trycua/cua, MIT) 版本 pin——P-B1 适配器唯一事实来源。升版按季度吸收：改 version/tag/asset/assetSha256/files，校验失败拒绝使用（无「警告后继续」）。assetSha256 对 GitHub Release 资产 tarball；files 覆盖解包后 CuaDriver.app 内的关键文件（AMFI 要求 bundle 形态，见 todo/computer-use-cua-adapter-findings.md）。licenseSha256 对上游 tag 里的 LICENSE.md。哈希由 scripts/fetch-cua-driver.mjs --record 生成后回填。",
+  "$comment": "cua-driver (trycua/cua, MIT) 版本 pin——P-B1 适配器唯一事实来源。升版按季度吸收：改 version/tag/asset/assetSha256/files，校验失败拒绝使用（无「警告后继续」）。assetSha256 对 GitHub Release 资产压缩包；files 覆盖解包后的关键文件（darwin 为 CuaDriver.app 内的主二进制——AMFI 要求 bundle 形态，见 todo/computer-use-cua-adapter-findings.md；win/linux 为主二进制 + 运行时根顶层 helper/SDK 文件）。licenseSha256 对上游 tag 里的 LICENSE.md。哈希由 scripts/fetch-cua-driver.mjs --record 生成后回填。",
   "version": "0.46.1",
   "tag": "cua-driver-rs-v0.46.1",
   "repository": "trycua/cua",
@@ -16,6 +16,42 @@
       "assetSha256": "5eb85dad74bcdb690a54ff09a68e87c5e1e55a0bfe57eea12ddd61b71a5b58d2",
       "files": {
         "CuaDriver.app/Contents/MacOS/cua-driver": "b6a541934c6d925688a6a0e6c7d1e01f52b5712b638ff8b501a2b08f8be1ebb7"
+      }
+    },
+    "win-x64": {
+      "asset": "cua-driver-rs-0.46.1-windows-x86_64.zip",
+      "assetSha256": "c8671c27b7000a45611e1d1b00c89f4a230d1ba907c015259c1c130c1d50e341",
+      "files": {
+        "cua-driver.exe": "bb986c06a3e2b2b1619b8e2116bc8af5fa438bc11744758eca43cfa60e5d6248",
+        "cua-driver-uia.exe": "4e8c4c86a1e76a9c507f000df8985f758addb56f30882b7f2e26aac2d2bc684d",
+        "cua_driver_sdk.dll": "0e96d26c83e6a956d177ca5de49fdd729df6c8a6b8210adce8b55c373a38c2b0"
+      }
+    },
+    "win-arm64": {
+      "asset": "cua-driver-rs-0.46.1-windows-arm64.zip",
+      "assetSha256": "e3f709a7d29845d2e60600f2aaa42b22984082331e608561792f00a21318880f",
+      "files": {
+        "cua-driver.exe": "33889ecf687af06884947a581695dc971de89a94eefa15aced33b40b2696d9b7",
+        "cua-driver-uia.exe": "289ef1a2a82f4157c379439d9f4144cadba13d4e7eb673bf57d0a2af7368cfab",
+        "cua_driver_sdk.dll": "18f637a10e5d8ca812d716b6455f86b1d68c79fe3e458cc75f99b2d67da52d03"
+      }
+    },
+    "linux-x64": {
+      "asset": "cua-driver-rs-0.46.1-linux-x86_64.tar.gz",
+      "assetSha256": "bef6115ae96dc2adc62c85019f0853f3336b3dce21205372c7741addc607acd0",
+      "files": {
+        "cua-driver": "a1262fc097c78bdce8ad0b7f58131d0a2ce32206c8b4f2caa32aeb6d45e8d73d",
+        "cua-cursor-theme": "fa16d7ad1557502423e6e74f59b6d5ce8a95bfa23c5839c08b9e2de04fba99dc",
+        "libcua_driver_sdk.so": "22cb85b777d75096e45a570b437da8831d819ec6ccdc669df840cb3e37caca51"
+      }
+    },
+    "linux-arm64": {
+      "asset": "cua-driver-rs-0.46.1-linux-arm64.tar.gz",
+      "assetSha256": "9f5cdb05c400bde60a8075cf33077d24851e4620b85dde4d89963bf139af647b",
+      "files": {
+        "cua-driver": "755c3e9d5a9e6c8300f794f6da86a81e836230a6981b81effd71e1f20814102a",
+        "cua-cursor-theme": "d851c30a8d4323a274c8771e5c9ab49216872384f1f3604705f8803e96a04a67",
+        "libcua_driver_sdk.so": "e029e2199a7bde4efb0c27d2e4b9629df0088565d512d216ff993520312fb177"
       }
     }
   },

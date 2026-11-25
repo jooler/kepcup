@@ -134,23 +134,48 @@ if (macArches.length > 0) {
 }
 
 /**
- * 0c. macOS 的 CuaDriver provider（P-B2，docs/design/52 §7）。
+ * 0c. CuaDriver provider（P-B2 + 2026-11 三端启用修订，docs/design/52 §7）。
  *
- *     CuaDriver 是计算机操控的唯一 provider：每个目标架构都从 pinned release
- *     获取并校验（scripts/fetch-cua-driver.mjs --arch），命中缓存则秒回。
- *     上游产物带自己的签名，**禁止重签**（会破坏 AMFI / 公证链）。
+ *     CuaDriver 是计算机操控的唯一 provider（darwin / win / linux）：每个目标
+ *     平台 × 架构都从 pinned release 获取并校验（scripts/fetch-cua-driver.mjs
+ *     --os/--arch），命中缓存则秒回。
+ *     上游 darwin 产物带自己的签名，**禁止重签**（会破坏 AMFI / 公证链）；
+ *     win/linux 是未签名运行时目录，主二进制与同级 helper / SDK 库必须同目录
+ *     部署（extraResources 平铺到 <resources>/cua-driver/）。
  *     KEPCUP_SKIP_COMPUTER_USE=1 可整段跳过（与 pack-hooks.cjs 的同名豁免一致，
  *     产物将不具备计算机操控能力）。
  */
-if (macArches.length > 0) {
+function linuxArchsFromArgs() {
+  if (!builderArgs.includes('--linux')) return [];
+  const archs = [];
+  if (builderArgs.includes('--x64')) archs.push('x64');
+  if (builderArgs.includes('--arm64')) archs.push('arm64');
+  if (archs.length === 0) {
+    // 无架构参数：electron-builder 的 linux target 用宿主架构，这里对齐。
+    archs.push(process.arch === 'arm64' ? 'arm64' : 'x64');
+  }
+  return archs;
+}
+
+const cuaDriverFetchTargets = [
+  ...macArches.map((arch) => ({ os: 'darwin', arch })),
+  ...winArchsFromArgs().map((arch) => ({ os: 'win', arch })),
+  ...linuxArchsFromArgs().map((arch) => ({ os: 'linux', arch })),
+];
+if (cuaDriverFetchTargets.length > 0) {
   if (process.env.KEPCUP_SKIP_COMPUTER_USE === '1') {
     console.warn(
       '[dist] KEPCUP_SKIP_COMPUTER_USE=1——跳过 CuaDriver 获取，产物不带计算机操控能力。',
     );
   } else {
-    for (const arch of macArches) {
-      console.log(`[dist] 获取 CuaDriver（${arch}）`);
-      run(process.execPath, ['scripts/fetch-cua-driver.mjs', '--arch', arch]);
+    for (const { os, arch } of cuaDriverFetchTargets) {
+      console.log(`[dist] 获取 CuaDriver（${os}-${arch}）`);
+      run(process.execPath, [
+        'scripts/fetch-cua-driver.mjs',
+        ...(os === 'darwin' ? [] : ['--os', os]),
+        '--arch',
+        arch,
+      ]);
     }
   }
 }

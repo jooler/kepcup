@@ -6,7 +6,7 @@
  * 可行动错误、不阻塞其它开发——运行时会把 computer-use 报为不可用），
  * 再走原有的 patch-dev-electron.cjs + electron-vite dev 链。
  *
- * `--rebuild` 会先删除 resources/cua-driver/darwin-<arch> 再重新 fetch；
+ * `--rebuild` 会先删除 resources/cua-driver/<os>-<arch>（本机平台）再重新 fetch；
  * 其余参数原样透传给 electron-vite（保持 `electron-vite dev [options] [-- app args]`
  * 语义不变）。KEPCUP_SKIP_COMPUTER_USE=1 跳过整个获取步骤。
  *
@@ -30,8 +30,10 @@ if (process.env.KEPCUP_SKIP_COMPUTER_USE === '1') {
   console.log('[dev] KEPCUP_SKIP_COMPUTER_USE=1，跳过 CuaDriver 获取');
 } else {
   if (rebuild) {
+    // 三端启用修订：删本机平台的运行时目录（darwin/win/linux 前缀与 fetch 产物一致）。
+    const osDir = process.platform === 'darwin' ? 'darwin' : process.platform === 'win32' ? 'win' : 'linux';
     const arch = process.arch === 'x64' ? 'x64' : 'arm64';
-    rmSync(path.join(scriptDir, '..', 'resources', 'cua-driver', `darwin-${arch}`), {
+    rmSync(path.join(scriptDir, '..', 'resources', 'cua-driver', `${osDir}-${arch}`), {
       recursive: true,
       force: true,
     });

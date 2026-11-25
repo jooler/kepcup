@@ -8,8 +8,16 @@ describe('computerProviderUnavailableMessage', () => {
     expect(message).toMatch(/fetch-cua-driver\.mjs/)
   })
 
-  it('names the platform when the provider is not enabled', () => {
-    expect(computerProviderUnavailableMessage('linux')).toMatch(/not enabled on linux/)
-    expect(computerProviderUnavailableMessage('win32')).toMatch(/not enabled on win32/)
+  it.each(['win32', 'linux'] as const)('names %s and points at the pinned runtime fetch', (platform) => {
+    const message = computerProviderUnavailableMessage(platform)
+    expect(message).toMatch(new RegExp(`no provider on ${platform}`))
+    expect(message).toMatch(/pinned cua-driver runtime was not found/)
+    expect(message).toMatch(/fetch-cua-driver\.mjs/)
+  })
+
+  it('says unsupported (not fetch guidance) for platforms outside the three targets', () => {
+    const message = computerProviderUnavailableMessage('freebsd')
+    expect(message).toMatch(/not supported on freebsd/)
+    expect(message).not.toMatch(/fetch-cua-driver\.mjs/)
   })
 })

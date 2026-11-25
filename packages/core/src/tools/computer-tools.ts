@@ -80,8 +80,12 @@ function computerErrorHint(error: unknown): { message: string; code: string } {
         return { message: '计算机操控宿主不可用（仅桌面端支持；服务端 / 远程场景无此能力）。', code: error.code };
       case 'PERMISSION_DENIED':
         return {
+          // 三端启用修订：macOS 是 TCC 授权（辅助功能 / 屏幕录制）；win/linux 无
+          // 系统授权概念，PERMISSION_DENIED 多来自 driver 的桌面环境限制
+          // （Linux AT-SPI 未启用 / Wayland 缺 wayland-helper 等），统一引导到
+          // 设置页权限面板看 driver 上报的具体状态。
           message:
-            '系统权限不足：需要给 KepCup 授予辅助功能与屏幕录制权限。请让用户到 设置 › 计算机操控 的权限引导里授权后重试。权限被拒后不会改用其他自动化方式。',
+            '系统权限不足：macOS 需要给 KepCup 授予辅助功能与屏幕录制权限；Windows / Linux 请在权限面板里查看 CuaDriver 上报的具体状态（Linux 需要桌面环境的辅助功能支持）。请让用户到 设置 › 计算机操控 的权限引导里处理后重试。权限被拒后不会改用其他自动化方式。',
           code: error.code,
         };
       case 'APP_NOT_FOUND':
@@ -441,7 +445,7 @@ export function buildComputerTools(deps: ComputerToolDeps): ToolDefinition[] {
     delivery?: 'background' | 'foreground';
   }> = {
     name: 'computer_drag',
-    description: `从一个元素 / 坐标拖到另一个元素 / 坐标。默认前台投递（会短暂置前目标窗口并移动真实指针）；后台合成拖拽拿不到系统拖放会话（Finder / 桌面里文件根本不会动），只有确定目标能后台拖动时才传 delivery: 'background'。系统级文件拖放仍可能失败，改用应用自带的「移动到」菜单或文件系统操作。${ADDRESS_RULE}${OBSERVE_RULE}${SCOPE_RULE}`,
+    description: `从一个元素 / 坐标拖到另一个元素 / 坐标。默认前台投递（会短暂置前目标窗口并移动真实指针）；后台合成拖拽拿不到系统拖放会话（文件管理器 / 桌面里文件根本不会动），只有确定目标能后台拖动时才传 delivery: 'background'。系统级文件拖放仍可能失败，改用应用自带的「移动到」菜单或文件系统操作。${ADDRESS_RULE}${OBSERVE_RULE}${SCOPE_RULE}`,
     parameters: Type.Object({
       app: appParam,
       from_element_index: Type.Optional(elementIndexParam),

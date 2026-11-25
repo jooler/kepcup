@@ -2,10 +2,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CuaDriverProviderClient } from './cua-driver-provider-client'
 
-// provider 选择（P-B2）：计算机操控只使用 CuaDriver（macOS）。
-// 其它平台暂不启用（上游虽支持三端，但本期只接 macOS）；cua 的启动前置检查
-// （bundle + lock + socket）在 provider.ensureStarted 里做，失败原因由首次调用
-// 以 COMPUTER_UNAVAILABLE 抛出，不做静默回落。
+// provider 选择（P-B2，2026-11 三端启用修订）：计算机操控只使用 CuaDriver，
+// darwin / win32 / linux 三端启用（上游同一 tag 分发三端运行时）。cua 的启动
+// 前置检查（运行时 + lock + socket 端点）在 provider.ensureStarted 里做，失败
+// 原因由首次调用以 COMPUTER_UNAVAILABLE 抛出，不做静默回落。
 
 type ComputerProvider = CuaDriverProviderClient
 
@@ -29,7 +29,7 @@ export class ComputerProviderLifecycle {
   constructor(private readonly deps: ComputerProviderLifecycleDeps = defaultDeps) {}
 
   current(platform: NodeJS.Platform = process.platform): ComputerProvider | null {
-    if (platform !== 'darwin') {
+    if (platform !== 'darwin' && platform !== 'win32' && platform !== 'linux') {
       return null
     }
     if (this.cuaDriverProvider) {

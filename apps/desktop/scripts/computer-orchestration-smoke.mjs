@@ -25,10 +25,17 @@ import { createRequire } from 'node:module';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const appDir = path.dirname(scriptDir);
-const electronBinary = path.join(
+const electronDist = path.join(
   path.dirname(createRequire(path.join(appDir, 'package.json')).resolve('electron/package.json')),
-  'dist/Electron.app/Contents/MacOS/Electron',
+  'dist',
 );
+// 三端启用修订：Electron 二进制路径按平台（macOS 必须是 .app 内的可执行体）。
+const electronBinary =
+  process.platform === 'darwin'
+    ? path.join(electronDist, 'Electron.app/Contents/MacOS/Electron')
+    : process.platform === 'win32'
+      ? path.join(electronDist, 'electron.exe')
+      : path.join(electronDist, 'electron');
 
 function fail(message) {
   console.error(`[smoke2] ${message}`);

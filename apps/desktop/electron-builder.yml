@@ -146,6 +146,16 @@ win:
       to: tray
     - from: resources/bin/win-${arch}
       to: bin/win-${arch}
+    # CuaDriver 是计算机操控的唯一 provider（scripts/fetch-cua-driver.mjs 产物，
+    # gitignored；win 是运行时目录：cua-driver.exe 与同级 cua-driver-uia.exe /
+    # cua_driver_sdk.dll 必须同目录部署）。发布包必需，缺失时 pack-hooks.cjs
+    # 硬校验失败。
+    - from: resources/cua-driver/win-${arch}
+      to: cua-driver
+    # 版本 pin 随包：打包版 readCuaDriverLock() 从 process.resourcesPath 读取；
+    # 不随包会让运行时直接判「provider 不可用」。
+    - from: resources/cua-driver.lock.json
+      to: cua-driver.lock.json
     # WSL 私有发行版 rootfs（CI 产出，P12/P13）：按本 pass 目标架构取子目录
     # （x64|arm64 各含 rootfs.tar + manifest；打包后经 core-host 的
     # KEPCUP_WSL_ROOTFS 注入被 core 读取）。原单文件 resources/wsl 整目录
@@ -182,6 +192,16 @@ linux:
       to: tray
     - from: resources/bin/linux-${arch}
       to: bin/linux-${arch}
+    # CuaDriver 是计算机操控的唯一 provider（scripts/fetch-cua-driver.mjs 产物，
+    # gitignored；linux 是运行时目录：cua-driver 与同级 cua-cursor-theme /
+    # libcua_driver_sdk.so / wayland-helper/ 必须同目录部署）。发布包必需，
+    # 缺失时 pack-hooks.cjs 硬校验失败。
+    - from: resources/cua-driver/linux-${arch}
+      to: cua-driver
+    # 版本 pin 随包：打包版 readCuaDriverLock() 从 process.resourcesPath 读取；
+    # 不随包会让运行时直接判「provider 不可用」。
+    - from: resources/cua-driver.lock.json
+      to: cua-driver.lock.json
     # 内置插件目录已随市场改造移除（见 win 块注释）。
 
 # --- Linux RPM（RHEL 9 / RHEL 10） --------------------------------------------

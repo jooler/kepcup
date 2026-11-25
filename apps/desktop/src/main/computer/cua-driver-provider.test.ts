@@ -739,7 +739,7 @@ describe('CuaDriverProviderClient（伪 daemon）', () => {
     expect(hotkeyCall?.args.keys).toEqual(['cmd', 'a'])
   })
 
-  it('pasteText = clipboard_write + hotkey(cmd+v)，验证恒为 unverified/clipboard_paste', async () => {
+  it('pasteText = clipboard_write + 平台粘贴弦 hotkey，验证恒为 unverified/clipboard_paste', async () => {
     const { provider, daemon } = await withProvider(
       standardHandlers({
         clipboard_write: () => ({ supported: true, written_type: 'text', types: ['public.utf8-plain-text'] }),
@@ -752,7 +752,9 @@ describe('CuaDriverProviderClient（伪 daemon）', () => {
     // 动作后先失效窗口缓存：补观察的 list_windows 会重新取一次（判窗口尺寸是否变化）。
     expect(names).toEqual(['list_apps', 'list_windows', 'get_window_state', 'clipboard_write', 'hotkey', 'get_window_state', 'list_windows'])
     expect(daemon.calls.find((c) => c.name === 'clipboard_write')?.args.text).toBe('secret-payload')
-    expect(daemon.calls.find((c) => c.name === 'hotkey')?.args.keys).toEqual(['cmd', 'v'])
+    // darwin 是 cmd+v，win/linux 是 ctrl+v（上游 driver 按 OS 翻译键义）。
+    const pasteKeys = process.platform === 'darwin' ? ['cmd', 'v'] : ['ctrl', 'v']
+    expect(daemon.calls.find((c) => c.name === 'hotkey')?.args.keys).toEqual(pasteKeys)
     const parsed = computerActionResultSchema.parse(result)
     expect(parsed.action?.path).toBe('clipboard')
     expect(parsed.action?.verification).toEqual({ state: 'unverified', reason: 'clipboard_paste' })
