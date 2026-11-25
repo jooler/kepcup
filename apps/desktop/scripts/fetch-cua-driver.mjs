@@ -215,7 +215,19 @@ const realStagedRuntime = realpathSync(stagedRuntime);
 if (!realStagedRuntime.startsWith(`${realStaging}${sep}`)) {
   fail('release archive escaped the staging directory');
 }
-const stagedExecutable = join(stagedRuntime, ...mainExecutableRel.split('/'));
+// findCuaDriverBundle 返回 CuaDriver.app 本身；lock 与 mainExecutableRel
+// 则以运行时根为基准（前缀 CuaDriver.app/）。win/linux 的 stagedRuntime 就是运行时根。
+function pathFromRuntimeRoot(rel) {
+  if (isDarwin) {
+    const prefix = 'CuaDriver.app/';
+    if (!rel.startsWith(prefix)) {
+      fail(`darwin 路径必须位于 CuaDriver.app/ 下：${rel}`);
+    }
+    return join(stagedRuntime, ...rel.slice(prefix.length).split('/'));
+  }
+  return join(stagedRuntime, ...rel.split('/'));
+}
+const stagedExecutable = pathFromRuntimeRoot(mainExecutableRel);
 if (!lstatSync(stagedExecutable).isFile()) {
   fail('cua-driver executable is not a regular file');
 }
@@ -239,7 +251,7 @@ if (record) {
   );
 } else {
   for (const [rel, sha] of Object.entries(pinnedFiles)) {
-    const path = join(stagedRuntime, ...rel.split('/'));
+    const path = pathFromRuntimeRoot(rel);
     if (!validSha256(sha)) {
       fail(`lock file has no valid pinned sha256 for ${rel}; run with --record and commit the value`);
     }

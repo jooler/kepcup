@@ -48,7 +48,8 @@ if (arch !== 'x64' && arch !== 'arm64') {
   fail(`unsupported --arch ${arch ?? '(missing)'}`);
 }
 
-const desktopDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+const desktopDir = path.resolve(scriptDir, '..', '..');
 const releaseDir = path.join(desktopDir, 'release');
 const repoLock = JSON.parse(
   readFileSync(path.join(desktopDir, 'resources', 'cua-driver.lock.json'), 'utf8'),
