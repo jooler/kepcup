@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Approval, ApprovalDuration } from '@kepcup/shared';
   import {
+    accessApprovalPayloadSchema,
     agentToolApprovalPayloadSchema,
     butlerProposalPayloadSchema,
     computerControlApprovalPayloadSchema,
@@ -10,6 +11,7 @@
     skillImportApprovalPayloadSchema,
     skillPresetApprovalPayloadSchema,
     mcpToolApprovalPayloadSchema,
+    worktreeApplyApprovalPayloadSchema,
     type SkillImportApprovalPayload,
   } from '@kepcup/shared';
   import {
@@ -69,6 +71,8 @@
   }: { approval: Approval; autofocus?: boolean; variant?: 'card' | 'folded' } = $props();
 
   const pending = $derived(approval.status === 'pending');
+  /** T8 离线只读：团队来源断线 → 决定按钮置灰（路由来源在 permissions 内）。 */
+  const approvalOffline = $derived(pending && permissions.approvalSourceOffline(approval.id));
   /** D121：另一位客户端做的决定；本机做的决定不重复标注。 */
   const decidedBy = $derived(
     approval.decision?.decidedBy !== undefined &&
@@ -76,10 +80,42 @@
       ? approval.decision.decidedBy
       : null,
   );
+  // D140 §1.2: access cards carry `paths` (multi-path batch) — `path`/`access`
+  // stay for historical single-path rows.
+  const accessPayload = $derived.by(() => {
+    if (approval.kind !== 'access') return null;
+    const parsed = accessApprovalPayloadSchema.safeParse(approval.payload);
+    return parsed.success ? parsed.data : null;
+  });
+  const accessPaths = $derived.by(() => {
+    if (accessPayload === null) return [];
+    if (accessPayload.paths !== undefined && accessPayload.paths.length > 0) {
+      return accessPayload.paths;
+    }
+    if (accessPayload.path !== undefined && accessPayload.access !== undefined) {
+      return [{ path: accessPayload.path, access: accessPayload.access }];
+    }
+    return [];
+  });
   const access = $derived(
-    approval.kind === 'access' ? (approval.payload['access'] === 'write' ? 'write' : 'read') : null,
+    approval.kind === 'access'
+      ? accessPaths.length > 0
+        ? accessPaths.every((entry) => entry.access === 'read')
+          ? 'read'
+          : 'write'
+        : (approval.payload['access'] === 'write' ? 'write' : 'read')
+      : null,
   );
-  const path = $derived(String(approval.payload['path'] ?? ''));
+  const path = $derived(
+    accessPaths.length > 1
+      ? t('approvals.pathsSummary', {
+          count: accessPaths.length,
+          first: accessPaths[0]!.path,
+        })
+      : accessPaths.length === 1
+        ? accessPaths[0]!.path
+        : String(approval.payload['path'] ?? ''),
+  );
   const command = $derived(String(approval.payload['command'] ?? ''));
   const cwd = $derived(String(approval.payload['cwd'] ?? ''));
   const reason = $derived(String(approval.payload['reason'] ?? ''));
@@ -118,6 +154,12 @@
     const parsed = mailSendApprovalPayloadSchema.safeParse(approval.payload);
     return parsed.success ? parsed.data : null;
   });
+  // D140-4：worktree 任务结算后的「应用到工作目录」卡（改动摘要 + 路径）。
+  const worktreeApply = $derived.by(() => {
+    if (approval.kind !== 'worktree_apply') return null;
+    const parsed = worktreeApplyApprovalPayloadSchema.safeParse(approval.payload);
+    return parsed.success ? parsed.data : null;
+  });
   /** D73 P3：由 MCP 应用界面（而非模型）发起的操作，卡片上明示来源。 */
   const fromAppUi = $derived(
     approval.kind === 'mcp_tool' && approval.payload['origin'] === 'app_ui',
@@ -136,11 +178,17 @@
     const parsed = agentToolApprovalPayloadSchema.safeParse(approval.payload);
     return parsed.success ? parsed.data : null;
   });
-  /** 路径类 agent_tool 可选「本对话内」（记为访问授权）；命令类只有「仅这一次」。 */
+  /**
+   * 路径类 agent_tool 按桥提供的 durations 选时长（D140 §1.2 起含「本任务内」，
+   * 记为访问授权）；命令 / config 类只有「仅这一次」。
+   */
+  const agentToolDurOptions = $derived<ApprovalDuration[]>(
+    agentTool !== null && agentTool.kind !== 'config'
+      ? mcpDurationOptions({ durations: agentTool.durations })
+      : ['once'],
+  );
   const agentToolDurations = $derived(
-    agentTool !== null &&
-      agentTool.kind !== 'config' &&
-      agentTool.durations.includes('conversation'),
+    agentTool !== null && agentTool.kind !== 'config' && agentToolDurOptions.length > 1,
   );
   /**
    * D73：连接应用的 mcp_tool 卡按 `payload.durations` 渲染时长（写入档三档，破坏性档只有
@@ -190,9 +238,23 @@
     approval.kind === 'computer_control' &&
       mcpChoosesDuration(approval.payload as { durations?: ApprovalDuration[] }),
   );
-  /** 卡片是否显示时长选择（access：仅这一次 / 本对话内；agent_tool 路径类；应用工具按 durations）。 */
+  /**
+   * D140 §1.2：access 卡按 payload.durations 选时长（仅这一次 / 本任务内 /
+   * 本对话内）。旧单路径行（含历史已决卡）没有 durations → 沿用旧卡形态的
+   * 两档（仅这一次 / 本对话内），与 decide() 对旧卡的 conversation 兼容一致
+   * （task 仍只认提供过它的卡）。
+   */
+  const accessDurations = $derived<ApprovalDuration[]>(
+    approval.kind !== 'access'
+      ? ['once']
+      : approval.payload['durations'] === undefined
+        ? ['once', 'conversation']
+        : mcpDurationOptions(approval.payload as { durations?: ApprovalDuration[] }),
+  );
+  const accessChoosesDur = $derived(approval.kind === 'access' && accessDurations.length > 1);
+  /** 卡片是否显示时长选择（access / agent_tool 路径类 / 应用工具按 durations）。 */
   const choosesDuration = $derived(
-    access !== null ||
+    accessChoosesDur ||
       agentToolDurations ||
       mcpChoosesDur ||
       egressChoosesDur ||
@@ -327,7 +389,11 @@
             ? clampDuration(duration, egressDurations)
             : gitRemoteChoosesDur
               ? clampDuration(duration, gitRemoteDurations)
-              : duration
+              : accessChoosesDur
+                ? clampDuration(duration, accessDurations)
+                : agentToolDurations
+                  ? clampDuration(duration, agentToolDurOptions)
+                  : duration
         : undefined,
       undefined,
       boundHash,
@@ -417,6 +483,12 @@
       if (picked !== null) duration = picked;
     } else if (gitRemoteChoosesDur) {
       const picked = durationForKey(gitRemoteDurations, event.key);
+      if (picked !== null) duration = picked;
+    } else if (accessChoosesDur) {
+      const picked = durationForKey(accessDurations, event.key);
+      if (picked !== null) duration = picked;
+    } else if (agentToolDurations) {
+      const picked = durationForKey(agentToolDurOptions, event.key);
       if (picked !== null) duration = picked;
     } else if (choosesDuration && event.key === '1') {
       duration = 'once';
@@ -526,13 +598,15 @@
                           : t('approvals.mcpToolTitle')
                         : approval.kind === 'agent_tool'
                           ? agentToolTitle
-                          : approval.kind === 'butler_proposal'
+                            : approval.kind === 'butler_proposal'
                             ? butlerProposal?.proposalType === 'project'
                               ? t('approvals.butlerProjectTitle')
                               : butlerProposal?.proposalType === 'bot'
                                 ? t('approvals.butlerBotTitle')
                                 : t('approvals.butlerTeamTitle')
-                            : t('approvals.commandTitle'),
+                            : approval.kind === 'worktree_apply'
+                              ? t('approvals.worktreeApplyTitle')
+                              : t('approvals.commandTitle'),
   );
 </script>
 
@@ -554,6 +628,8 @@
         <span>{title} · {t(foldedApprovedKey(approval.decision.duration))}</span>
       {:else if choosesDuration && approval.decision?.duration === 'conversation'}
         <span>{title} · {t('approvals.foldedApprovedConversation')}</span>
+      {:else if choosesDuration && approval.decision?.duration === 'task'}
+        <span>{title} · {t('approvals.foldedApprovedTask')}</span>
       {:else if choosesDuration && approval.decision?.duration === 'bot'}
         <span>{title} · {t('approvals.foldedApprovedBot')}</span>
       {:else if choosesDuration && approval.decision?.duration === 'command'}
@@ -625,7 +701,13 @@
                               )
                               .map((bot) => bot.name)
                               .join(listSeparator()) ?? '')
-                        : command}
+                        : approval.kind === 'worktree_apply'
+                          ? `${t('approvals.worktreeApplyStats', {
+                              insertions: worktreeApply?.insertions ?? 0,
+                              deletions: worktreeApply?.deletions ?? 0,
+                              count: worktreeApply?.fileCount ?? 0,
+                            })} · ${worktreeApply?.worktreePath ?? ''}`
+                          : command}
       </code>
     {/if}
     {#if effectLine !== null}
@@ -685,6 +767,8 @@
       {:else if approval.kind === 'agent_tool'}
         {#if agentTool?.sensitive}<FileWarning class="size-4 text-destructive" aria-hidden="true" />
         {:else}<Bot class="size-4 text-amber-600" aria-hidden="true" />{/if}
+      {:else if approval.kind === 'worktree_apply'}
+        <ShieldAlert class="size-4 text-amber-600" aria-hidden="true" />
       {:else}
         <TerminalSquare class="size-4 text-amber-600" aria-hidden="true" />
       {/if}
@@ -718,7 +802,21 @@
     {#if access !== null}
       <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
         <span class="text-muted-foreground">{t('approvals.path')}</span>
-        <code class="break-all" data-testid="approval-path">{path}</code>
+        {#if accessPaths.length > 1}
+          <!-- D140 §1.2：一条命令拦多个路径 → 一张卡逐路径列出（各带访问方式） -->
+          <span class="grid gap-0.5" data-testid="approval-paths">
+            {#each accessPaths as entry, index (index)}
+              <span class="flex items-baseline gap-1.5">
+                <code class="min-w-0 flex-1 break-all">{entry.path}</code>
+                <Badge variant="outline" class="shrink-0 text-[10px]"
+                  >{t(entry.access === 'write' ? 'approvals.accessWrite' : 'approvals.accessRead')}</Badge
+                >
+              </span>
+            {/each}
+          </span>
+        {:else}
+          <code class="break-all" data-testid="approval-path">{path}</code>
+        {/if}
         <span class="text-muted-foreground">{t('approvals.botPrefix')}</span>
         <span>{t(access === 'write' ? 'approvals.accessWrite' : 'approvals.accessRead')}</span>
         {#if reason.length > 0}
@@ -734,29 +832,23 @@
           {t('approvals.sensitiveWarning')}
         </p>
       {/if}
-      <div class="mt-2 flex items-center gap-2 text-xs" data-testid="approval-duration">
-        <button
-          type="button"
-          class="rounded-md border px-2 py-1 {duration === 'once'
-            ? 'border-amber-500 bg-amber-100 dark:bg-amber-900/50'
-            : ''}"
-          onclick={() => (duration = 'once')}
-          data-testid="duration-once"
-        >
-          1 · {t('approvals.once')}
-        </button>
-        <button
-          type="button"
-          class="rounded-md border px-2 py-1 {duration === 'conversation'
-            ? 'border-amber-500 bg-amber-100 dark:bg-amber-900/50'
-            : ''}"
-          onclick={() => (duration = 'conversation')}
-          data-testid="duration-conversation"
-        >
-          2 · {t('approvals.conversation')}
-        </button>
-        <span class="text-muted-foreground">{t('approvals.durationHint')}</span>
-      </div>
+      {#if accessChoosesDur}
+        <div class="mt-2 flex flex-wrap items-center gap-2 text-xs" data-testid="approval-duration">
+          {#each accessDurations as option, index (option)}
+            <button
+              type="button"
+              class="rounded-md border px-2 py-1 {duration === option
+                ? 'border-amber-500 bg-amber-100 dark:bg-amber-900/50'
+                : ''}"
+              onclick={() => (duration = option)}
+              data-testid={`duration-${option}`}
+            >
+              {index + 1} · {t(APPROVAL_DURATION_LABEL_KEYS[option])}
+            </button>
+          {/each}
+          <span class="text-muted-foreground">{t('approvals.durationHint')}</span>
+        </div>
+      {/if}
     {:else if approval.kind === 'environment'}
       <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1" data-testid="approval-environment">
         <span class="text-muted-foreground">{t('approvals.environmentItem')}</span>
@@ -1152,27 +1244,19 @@
           : t('approvals.agentToolRisk')}
       </p>
       {#if agentToolDurations}
-        <div class="mt-2 flex items-center gap-2 text-xs" data-testid="approval-duration">
-          <button
-            type="button"
-            class="rounded-md border px-2 py-1 {duration === 'once'
-              ? 'border-amber-500 bg-amber-100 dark:bg-amber-900/50'
-              : ''}"
-            onclick={() => (duration = 'once')}
-            data-testid="duration-once"
-          >
-            1 · {t('approvals.once')}
-          </button>
-          <button
-            type="button"
-            class="rounded-md border px-2 py-1 {duration === 'conversation'
-              ? 'border-amber-500 bg-amber-100 dark:bg-amber-900/50'
-              : ''}"
-            onclick={() => (duration = 'conversation')}
-            data-testid="duration-conversation"
-          >
-            2 · {t('approvals.conversation')}
-          </button>
+        <div class="mt-2 flex flex-wrap items-center gap-2 text-xs" data-testid="approval-duration">
+          {#each agentToolDurOptions as option, index (option)}
+            <button
+              type="button"
+              class="rounded-md border px-2 py-1 {duration === option
+                ? 'border-amber-500 bg-amber-100 dark:bg-amber-900/50'
+                : ''}"
+              onclick={() => (duration = option)}
+              data-testid={`duration-${option}`}
+            >
+              {index + 1} · {t(APPROVAL_DURATION_LABEL_KEYS[option])}
+            </button>
+          {/each}
           <span class="text-muted-foreground">{t('approvals.durationHint')}</span>
         </div>
       {/if}
@@ -1390,6 +1474,45 @@
           {/each}
         </div>
       {/if}
+    {:else if approval.kind === 'worktree_apply' && worktreeApply !== null}
+      <!-- D140-4：把隔离目录的改动三方合并回工作目录（冲突时保留隔离目录） -->
+      <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1" data-testid="approval-worktree-apply">
+        <span class="text-muted-foreground">{t('approvals.worktreeApplyWorktree')}</span>
+        <code class="break-all" data-testid="approval-worktree-path">{worktreeApply.worktreePath}</code>
+        <span class="text-muted-foreground">{t('approvals.worktreeApplyTarget')}</span>
+        <code class="break-all" data-testid="approval-worktree-workdir">{worktreeApply.workdirPath}</code>
+        <span class="text-muted-foreground">{t('approvals.worktreeApplyFiles')}</span>
+        <span data-testid="approval-worktree-stats"
+          >{t('approvals.worktreeApplyStats', {
+            insertions: worktreeApply.insertions,
+            deletions: worktreeApply.deletions,
+            count: worktreeApply.fileCount,
+          })}</span
+        >
+      </div>
+      {#if worktreeApply.files.length > 0}
+        <ul
+          class="mt-2 max-h-40 list-inside list-disc overflow-auto rounded bg-muted/50 px-2 py-1 font-mono text-xs"
+          data-testid="approval-worktree-files"
+        >
+          {#each worktreeApply.files as file (file)}
+            <li class="truncate">{file}</li>
+          {/each}
+          {#if worktreeApply.fileCount > worktreeApply.files.length}
+            <li class="text-muted-foreground">
+              {t('task.run.changesMore', {
+                count: worktreeApply.fileCount - worktreeApply.files.length,
+              })}
+            </li>
+          {/if}
+        </ul>
+      {/if}
+      <p
+        class="mt-2 rounded bg-amber-500/10 px-2 py-1 text-xs text-amber-800 dark:text-amber-300"
+        data-testid="approval-worktree-hint"
+      >
+        {t('approvals.worktreeApplyHint')}
+      </p>
     {:else}
       <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
         <span class="text-muted-foreground">{t('approvals.command')}</span>
@@ -1482,7 +1605,8 @@
           <Button
             size="sm"
             onclick={() => void addAllowlistAndApprove()}
-            disabled={allowlistBusy ||
+            disabled={approvalOffline ||
+              allowlistBusy ||
               allowlistPattern.trim().length === 0 ||
               allowlistPatternProblem !== null}
             data-testid="approval-allowlist-confirm">{t('allowlist.addAndApprove')}</Button
@@ -1498,24 +1622,32 @@
       </div>
     {:else}
       <div class="mt-3 flex flex-wrap items-center gap-2">
+        <!-- T8 离线只读：团队来源断线 → 决定按钮置灰（permissions.approvalSourceOffline）。 -->
         <Button
           size="sm"
           onclick={approve}
-          disabled={approval.kind === 'butler_proposal' &&
+          disabled={approvalOffline ||
+            (approval.kind === 'butler_proposal' &&
             butlerProposal !== null &&
             butlerProposal.proposalType !== 'project' &&
-            butlerKept.length === 0}
+            butlerKept.length === 0)}
           data-testid="approval-approve"
           >{approval.kind === 'butler_proposal'
             ? t('approvals.butlerConfirm')
-            : approval.kind === 'egress'
-              ? egressChoosesDur
-                ? t('approvals.approve')
-                : t('approvals.egress.allowOnce')
-              : t('approvals.approve')}</Button
+            : approval.kind === 'worktree_apply'
+              ? t('approvals.worktreeApplyApprove')
+              : approval.kind === 'egress'
+                ? egressChoosesDur
+                  ? t('approvals.approve')
+                  : t('approvals.egress.allowOnce')
+                : t('approvals.approve')}</Button
         >
-        <Button size="sm" variant="outline" onclick={deny} data-testid="approval-deny"
-          >{t('approvals.deny')}</Button
+        <Button
+          size="sm"
+          variant="outline"
+          onclick={deny}
+          disabled={approvalOffline}
+          data-testid="approval-deny">{t('approvals.deny')}</Button
         >
         {#if canAddAllowlist}
           <Button

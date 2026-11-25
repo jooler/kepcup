@@ -6,7 +6,7 @@ import {
   type CollabPresenceListOutput,
   type CollabPresenceState,
 } from '@kepcup/shared';
-import { core } from '$lib/rpc/client.svelte';
+import { connections, type SourceId } from '$lib/rpc/connections.svelte';
 import { clientIdentity } from './client-identity';
 
 /**
@@ -40,22 +40,32 @@ class PresenceState {
   #sources: Source[] = [];
   #sourceConversations = new Map<Source, string | null>();
   #started = false;
+  #subscribedOrigin: SourceId | null = null;
   #heartbeat: ReturnType<typeof setInterval> | null = null;
   #typingTimer: ReturnType<typeof setTimeout> | null = null;
   #unsubscribe: (() => void) | null = null;
   #unsubscribeStatus: (() => void) | null = null;
+  /**
+   * 当前会话的来源（T7 融合视图）：团队会话的 presence 经该团队连接上报，
+   * 身份用该来源自己的协作身份。'local'（缺省）行为不变。
+   */
+  #origin: SourceId = 'local';
 
   start(): void {
-    if (this.#started) return;
+    if (this.#started && this.#subscribedOrigin === this.#origin) return;
     this.#started = true;
-    this.#unsubscribe = core.onEvent('collab.presenceChanged', (payload) => {
+    this.#unsubscribe?.();
+    this.#unsubscribeStatus?.();
+    const conn = connections.get(this.#origin);
+    this.#subscribedOrigin = this.#origin;
+    this.#unsubscribe = conn.onEvent('collab.presenceChanged', (payload) => {
       const data = payload as CollabPresenceChangedPayload;
       // null 会话是「在线但不在任何会话」的全局列表，不在输入区展示。
       if (this.#conversationId === null || data.conversationId !== this.#conversationId) return;
       this.entries = data.entries;
     });
     // core 重启 / 重连后在线表在服务端已清空：重新拉快照并重报自己。
-    this.#unsubscribeStatus = core.onEvent('core.status', (payload) => {
+    this.#unsubscribeStatus = conn.onEvent('core.status', (payload) => {
       if ((payload as { status?: string }).status !== 'ready') return;
       void this.#refresh();
       this.#send();
@@ -71,7 +81,11 @@ class PresenceState {
   }
 
   /** 进入会话（幂等）；同一客户端切会话时服务端自动把条目挪到新会话。 */
-  enter(conversationId: string | null, source: Source): void {
+  enter(conversationId: string | null, source: Source, origin: SourceId = 'local'): void {
+    if (this.#origin !== origin) {
+      this.#origin = origin;
+      this.start();
+    }
     // 同一输入框实例 + 同一会话：effect 会因草稿变化频繁重跑，这里必须直接返回，
     // 否则每次击键都会多发 list/update 两个 RPC。
     if (this.#conversationId === conversationId && this.#source === source) return;
@@ -158,6 +172,7 @@ class PresenceState {
   stop(): void {
     if (!this.#started) return;
     this.#started = false;
+    this.#subscribedOrigin = null;
     if (this.#heartbeat !== null) {
       clearInterval(this.#heartbeat);
       this.#heartbeat = null;
@@ -198,11 +213,20 @@ class PresenceState {
     this.#leaveServer();
   };
 
+  #conn(): ReturnType<typeof connections.get> {
+    return connections.get(this.#origin);
+  }
+
+  #identity(): { id: string; name: string; connectionId: string } {
+    return this.#origin === 'local' ? clientIdentity : this.#conn().clientIdentity;
+  }
+
   #leaveServer(): void {
-    void core
+    const identity = this.#identity();
+    void this.#conn()
       .call('collab.presence.leave', {
-        clientId: clientIdentity.id,
-        connectionId: clientIdentity.connectionId,
+        clientId: identity.id,
+        connectionId: identity.connectionId,
       })
       .catch(() => {
         // 页面正在卸载：送达与否由服务端 TTL 兜底。
@@ -215,7 +239,7 @@ class PresenceState {
       this.entries = [];
       return;
     }
-    void core
+    void this.#conn()
       .call('collab.presence.list', { conversationId })
       .then((result) => {
         if (this.#conversationId !== conversationId) return;
@@ -227,11 +251,12 @@ class PresenceState {
   }
 
   #send(): void {
-    void core
+    const identity = this.#identity();
+    void this.#conn()
       .call('collab.presence.update', {
-        clientId: clientIdentity.id,
-        clientName: clientIdentity.name,
-        connectionId: clientIdentity.connectionId,
+        clientId: identity.id,
+        clientName: identity.name,
+        connectionId: identity.connectionId,
         conversationId: this.#conversationId,
         state: this.#state,
         // 显式 null：服务端把“缺省”理解为保持旧值，光标必须能被清掉。

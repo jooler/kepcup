@@ -156,6 +156,12 @@ export class WorkdirsService {
     return rows.map(rowToWorkdir);
   }
 
+  /** Every registered workdir (D140-4: the worktree reaper scans their homes). */
+  listAll(): Workdir[] {
+    const rows = this.#db.prepare('select * from workdirs').all() as WorkdirRow[];
+    return rows.map(rowToWorkdir);
+  }
+
   /** Refreshes `status` from disk; returns the updated record. */
   refreshStatus(id: string): Workdir {
     const workdir = this.getOrThrow(id);

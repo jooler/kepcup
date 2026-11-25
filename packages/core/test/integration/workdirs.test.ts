@@ -252,15 +252,13 @@ function recordingSandbox(core: TestStack['core']): RecordedExec[] {
 }
 
 describe('workdirs (P04)', () => {
-  // D75 §5.1: writes happen in write tasks that pin the cwd lease before
-  // they start; a second write task on the same workdir — from another
-  // conversation too — is held back by the task layer (submitted, queue
-  // reason naming the holder), never reaching the lease (DEV-015). The old
-  // case had two reply runs meet on the lease (waiting_lease + lease.waiting).
-  it('serializes write tasks of two conversations on one workdir: the second stays submitted until the first ends', async () => {
+  // D140-1 修订 D75 §5 / DEV-015：写任务默认并行——两个对话的写任务在同
+  // workdir 上共享租约同时执行，互斥由文件级自动认领承担（各自写各自的
+  // 文件互不阻塞）；不再有任务层的「等写域」排队，也没有租约等待。
+  it('runs write tasks of two conversations on one workdir in parallel (D140-1)', async () => {
     const { core, llm } = await start();
     const botA = await makeBot(core, '先行');
-    const botB = await makeBot(core, '后行');
+    const botB = await makeBot(core, '并行');
     const convA = await openDirect(core, botA.id);
     const convB = await openDirect(core, botB.id);
     const workdir = await bindWorkdir(core, convA.id, makeWorkdir());
@@ -268,13 +266,16 @@ describe('workdirs (P04)', () => {
     const runtime = core.services.workdirRuntime!;
 
     const aHeld = step().hold().replyText('A 完成');
-    const bWrite = step().replyToolCall('write', { path: 'b.txt', content: 'B-wrote' });
+    const bHeld = step().hold().replyText('B 完成');
     llm.script('mock-main', [
       ...forBot(
         '先行',
         inWriteTask([step().replyToolCall('write', { path: 'a.txt', content: 'A-wrote' }), aHeld], 'RELAY-A'),
       ),
-      ...forBot('后行', inWriteTask([bWrite, step().replyText('B 完成')], 'RELAY-B')),
+      ...forBot(
+        '并行',
+        inWriteTask([step().replyToolCall('write', { path: 'b.txt', content: 'B-wrote' }), bHeld], 'RELAY-B'),
+      ),
     ]);
     const leaseWaits: unknown[] = [];
     stoppers.push(core.onEvent('lease.waiting', (payload) => leaseWaits.push(payload)));
@@ -285,34 +286,24 @@ describe('workdirs (P04)', () => {
     const aTask = (await taskRuns(core, convA.id))[0]!;
     expect(runtime.holdsLease(taskIdentity(aTask), workdir.path)).toBe(true);
 
+    // B starts at once (shared lease) and writes its own file while A is held.
     await sendBatch(core, convB.id, ['B 也来']);
-    const bTask = await waitFor(async () => (await taskRuns(core, convB.id))[0] ?? null, {
-      label: 'B task submitted',
-      timeoutMs: 30_000,
-    });
-    const queued = await waitFor(
-      () => taskViews(core, botB.id, convB.id).find((t) => t.taskId === bTask.id && t.queueReason !== null) ?? null,
-      { label: 'B queue reason', timeoutMs: 30_000 },
-    );
-    expect(queued.state).toBe('submitted');
-    expect(queued.queueReason).toBe(`等写域（任务 ${aTask.id} 持有 整目录）`);
-    // Held in the task layer: still `queued`, not on the lease (no waiting_lease, no lease.waiting).
-    expect(runOf(core, bTask.id).status).toBe('queued');
+    await waitFor(() => (bHeld.consumed ? true : null), { label: 'B task wrote and is held', timeoutMs: 60_000 });
+    const bTask = (await taskRuns(core, convB.id))[0]!;
+    expect(runtime.holdsLease(taskIdentity(bTask), workdir.path)).toBe(true);
+    expect(readFileSync(path.join(workdir.path, 'b.txt'), 'utf8')).toBe('B-wrote');
+    expect(runOf(core, bTask.id).status).toBe('running');
     expect(leaseWaits).toEqual([]);
-    expect(bWrite.consumed).toBe(false);
-    expect(existsSync(path.join(workdir.path, 'b.txt'))).toBe(false);
 
     aHeld.release();
+    bHeld.release();
     await waitRelay(core, convA.id, 'RELAY-A');
     await waitRelay(core, convB.id, 'RELAY-B');
-    expect(readFileSync(path.join(workdir.path, 'b.txt'), 'utf8')).toBe('B-wrote');
-    expect(runOf(core, aTask.id).status).toBe('completed');
-    expect(runOf(core, bTask.id).status).toBe('completed');
     expect(toolResult(await stepsOf(core, bTask.id), 'write')?.ok).toBe(true);
     expect(leaseWaits).toEqual([]);
-    // Change tracking retired: files stay on disk; no run_changes rows.
-    expect(await changedFiles(core, aTask.id)).toBeNull();
-    expect(await changedFiles(core, bTask.id)).toBeNull();
+    // D140-1: each task's shadow window recorded its own file.
+    expect(await changedFiles(core, aTask.id)).toEqual(['a.txt:added']);
+    expect(await changedFiles(core, bTask.id)).toEqual(['b.txt:added']);
     expect(existsSync(path.join(workdir.path, 'a.txt'))).toBe(true);
     expect(existsSync(path.join(workdir.path, 'b.txt'))).toBe(true);
   }, 180_000);
@@ -409,9 +400,14 @@ describe('workdirs (P04)', () => {
     expect(existsSync(path.join(workdir.path, 'with-lease.txt'))).toBe(true);
     expect(existsSync(path.join(workdir.path, 'with-lease-bash.txt'))).toBe(true);
     expect(llm.requestBodiesContain('acquire_workdir_write')).toBe(true);
-    // The lease ends with the task; disk writes stay (no run_changes row).
+    // The lease ends with the task; disk writes stay (D140-1: the task's
+    // shadow window recorded them — the file tool by attribution, the command
+    // write by the span diff).
     expect(runtime.holdsLease(taskIdentity(task), workdir.path)).toBe(false);
-    expect(await changedFiles(core, task.id)).toBeNull();
+    expect(await changedFiles(core, task.id)).toEqual([
+      'with-lease-bash.txt:added',
+      'with-lease.txt:added',
+    ]);
   }, 120_000);
 
   it('commands get a read-only workdir mount in read-only tasks and a writable one in write tasks (gateway policy)', async () => {
@@ -532,9 +528,10 @@ describe('workdirs (P04)', () => {
     expect(secondRead?.ok).toBe(true);
   }, 240_000);
 
-  // Change summary / diff / whole-run revert UX retired: writes stay on disk,
-  // no run_changes card or row is created.
-  it('a write task keeps disk changes without a run_changes card or record', async () => {
+  // D140-1: the per-task shadow window records run_changes again (file detail
+  // on the task page); the chat-side change card and whole-run revert stay
+  // retired — no card in the conversation.
+  it('a write task keeps disk changes; run_changes is recorded, no chat card', async () => {
     const { core, llm } = await start();
     const bot = await makeBot(core, '小改');
     const conv = await openDirect(core, bot.id);
@@ -562,15 +559,15 @@ describe('workdirs (P04)', () => {
       (m) => m.kind === 'card' && 'cardType' in m.content && m.content.cardType === 'run_changes',
     );
     expect(card).toBeUndefined();
-    expect(await changedFiles(core, task.id)).toBeNull();
+    expect(await changedFiles(core, task.id)).toEqual([
+      'created.txt:added',
+      'existing.txt:modified',
+    ]);
     expect(existsSync(path.join(workdir.path, 'created.txt'))).toBe(true);
     expect(readFileSync(path.join(workdir.path, 'existing.txt'), 'utf8')).toBe('modified-content\n');
-    await expect(core.rpc.call('workdirs.revert', { runId: task.id })).rejects.toMatchObject({
-      code: 'NOT_FOUND',
-    });
   }, 180_000);
 
-  it.skipIf(process.platform === 'win32')('command-made workdir writes stay on disk without a run_changes record', async () => {
+  it.skipIf(process.platform === 'win32')('command-made workdir writes land in run_changes via the span diff (D140-1)', async () => {
     const { core, llm } = await start();
     const bot = await makeBot(core, '小令');
     const conv = await openDirect(core, bot.id);
@@ -595,7 +592,12 @@ describe('workdirs (P04)', () => {
     const task = (await taskRuns(core, conv.id))[0]!;
     expect(toolResult(await stepsOf(core, task.id), 'bash')?.ok).toBe(true);
 
-    expect(await changedFiles(core, task.id)).toBeNull();
+    // No parallel writer was open: the span-diff files are attributed to the
+    // task without an interleaved flag.
+    expect(await changedFiles(core, task.id)).toEqual([
+      'created.txt:added',
+      'existing.txt:modified',
+    ]);
     expect(existsSync(path.join(workdir.path, 'created.txt'))).toBe(true);
     expect(readFileSync(path.join(workdir.path, 'existing.txt'), 'utf8')).toContain('modified-content');
   }, 120_000);
@@ -860,7 +862,7 @@ describe('workdirs (P04)', () => {
     ).rejects.toMatchObject({ code: 'PATH_OUT_OF_SCOPE' });
   }, 120_000);
 
-  it('removing a workdir unbinds conversations (no run_changes are created anymore)', async () => {
+  it('removing a workdir unbinds conversations and clears its run_changes', async () => {
     const { core, llm } = await start();
     const bot = await makeBot(core, '小删');
     const conv = await openDirect(core, bot.id);
@@ -876,7 +878,9 @@ describe('workdirs (P04)', () => {
     await sendBatch(core, conv.id, ['写一个']);
     const run = await waitForRun(core, conv.id, 'completed', { timeoutMs: 120_000, loopType: 'task' });
     await waitRelay(core, conv.id, 'RELAY-GONE');
-    expect((await runChangesRow(core, run.id)).change).toBeNull();
+    // D140-1: the task's window recorded its write; the conversation delete
+    // cascades the row away.
+    expect(await changedFiles(core, run.id)).toEqual(['gone.txt:added']);
     expect(existsSync(path.join(workdir.path, 'gone.txt'))).toBe(true);
 
     await core.rpc.call('conversations.delete', { id: conv.id });
@@ -1033,7 +1037,7 @@ describe('workdirs (P04)', () => {
 
     await waitRelay(core, convB.id, 'RELAY-B');
     expect(readFileSync(path.join(workdir.path, 'b.txt'), 'utf8')).toBe('B-change');
-    expect(await changedFiles(core, bTask.id)).toBeNull();
+    expect(await changedFiles(core, bTask.id)).toEqual(['b.txt:added']);
 
     await runtime.releaseRun(holder.runId);
     expect(runtime.changesOf(holder.runId)).toBeNull();
@@ -1046,66 +1050,64 @@ describe('workdirs (P04)', () => {
     expect(existsSync(path.join(workdir.path, 'a.txt'))).toBe(true);
   }, 180_000);
 
-  // DEV-015 (待确认): a write task queued in the task layer behind another
-  // conversation's write task is not released by a force revoke — the revoke
-  // only closes the holder task's window; the queued task starts when the
-  // holder ends (or is cancelled on its card).
-  it('force revoke does not release a task-layer queue: the second write task waits for the holder task (DEV-015)', async () => {
+  // D140-1 修订 DEV-015：任务层排队不复存在。两个对话的写任务共享租约并行，
+  // 「强制收回」只停掉发起对话自己的共享写任务（它的后续写入 RUN_READ_ONLY），
+  // 另一个对话的任务继续持有租约写入。
+  it('force revoke stops only the revoking conversation\'s shared write task (D140-1)', async () => {
     const { core, llm } = await start();
-    const botA = await makeBot(core, '先占');
-    const botB = await makeBot(core, '后等');
+    const botA = await makeBot(core, '被收');
+    const botB = await makeBot(core, '照写');
     const convA = await openDirect(core, botA.id);
     const convB = await openDirect(core, botB.id);
     const workdir = await bindWorkdir(core, convA.id, makeWorkdir());
     await bindWorkdir(core, convB.id, workdir.path);
     const runtime = core.services.workdirRuntime!;
 
-    const aHeld = step().hold().replyText('甲停住');
-    const bWrite = step().replyToolCall('write', { path: 'b.txt', content: 'B-change' });
+    // A: writes a.txt, then a held request whose reply would write a2.txt.
+    const aSecond = step().hold().replyToolCall('write', { path: 'a2.txt', content: 'A2' });
+    const bHeld = step().hold().replyText('乙写完');
     llm.script('mock-main', [
       ...forBot(
-        '先占',
-        inWriteTask([step().replyToolCall('write', { path: 'a.txt', content: 'A-change' }), aHeld], 'RELAY-A'),
+        '被收',
+        inWriteTask(
+          [step().replyToolCall('write', { path: 'a.txt', content: 'A-change' }), aSecond, step().replyText('甲写不了了')],
+          'RELAY-A',
+        ),
       ),
-      ...forBot('后等', inWriteTask([bWrite, step().replyText('乙写完')], 'RELAY-B')),
+      ...forBot('照写', inWriteTask([step().replyToolCall('write', { path: 'b.txt', content: 'B-change' }), bHeld], 'RELAY-B')),
     ]);
     await sendBatch(core, convA.id, ['甲开始']);
-    await waitFor(() => (aHeld.consumed ? true : null), { label: 'A task wrote and is held', timeoutMs: 60_000 });
+    await waitFor(() => (aSecond.consumed ? true : null), { label: 'A wrote a.txt, second write held', timeoutMs: 60_000 });
     const aTask = (await taskRuns(core, convA.id))[0]!;
-    await sendBatch(core, convB.id, ['乙也要写']);
-    const bTask = await waitFor(async () => (await taskRuns(core, convB.id))[0] ?? null, {
-      label: 'B task submitted',
-      timeoutMs: 30_000,
-    });
-    const reason = `等写域（任务 ${aTask.id} 持有 整目录）`;
-    await waitFor(
-      () => (taskViews(core, botB.id, convB.id).find((t) => t.taskId === bTask.id)?.queueReason === reason ? true : null),
-      { label: 'B queued behind A', timeoutMs: 30_000 },
-    );
+    await sendBatch(core, convB.id, ['乙也写']);
+    await waitFor(() => (bHeld.consumed ? true : null), { label: 'B wrote b.txt and is held', timeoutMs: 60_000 });
+    const bTask = (await taskRuns(core, convB.id))[0]!;
+    expect(runtime.holdsLease(taskIdentity(aTask), workdir.path)).toBe(true);
+    expect(runtime.holdsLease(taskIdentity(bTask), workdir.path)).toBe(true);
 
-    // The revoke closes A's window (A's own change recorded) …
-    const revoked = (await core.rpc.call('workdirs.revokeLease', { conversationId: convB.id })) as {
+    // Revoke from A's conversation: only A stops.
+    const revoked = (await core.rpc.call('workdirs.revokeLease', { conversationId: convA.id })) as {
       revoked: boolean;
     };
     expect(revoked.revoked).toBe(true);
     expect(runtime.holdsLease(taskIdentity(aTask), workdir.path)).toBe(false);
-    expect(await changedFiles(core, aTask.id)).toBeNull();
-    // … but B stays submitted behind A in the task layer.
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    expect(taskViews(core, botB.id, convB.id).find((t) => t.taskId === bTask.id)).toMatchObject({
-      state: 'submitted',
-      queueReason: reason,
-    });
-    expect(bWrite.consumed).toBe(false);
-    expect(existsSync(path.join(workdir.path, 'b.txt'))).toBe(false);
+    expect(runtime.writeDenial(taskIdentity(aTask))).toContain('收回');
+    expect(runtime.holdsLease(taskIdentity(bTask), workdir.path)).toBe(true);
 
-    // A ends (no further writes) → B starts and writes.
-    aHeld.release();
+    // A's held second write now fails with the revoke reason; B finishes fine.
+    aSecond.release();
+    bHeld.release();
     await waitRelay(core, convA.id, 'RELAY-A');
     await waitRelay(core, convB.id, 'RELAY-B');
+    expect(existsSync(path.join(workdir.path, 'a2.txt'))).toBe(false);
     expect(readFileSync(path.join(workdir.path, 'b.txt'), 'utf8')).toBe('B-change');
-    expect(await changedFiles(core, aTask.id)).toBeNull();
-    expect(await changedFiles(core, bTask.id)).toBeNull();
+    const aSteps = await stepsOf(core, aTask.id);
+    const aSecondWrite = aSteps
+      .map((step_) => toolResult([step_], 'write'))
+      .filter((result) => result?.ok === false);
+    expect(aSecondWrite.some((result) => result?.content.includes('写入租约已被用户收回'))).toBe(true);
+    expect(await changedFiles(core, aTask.id)).toEqual(['a.txt:added']);
+    expect(await changedFiles(core, bTask.id)).toEqual(['b.txt:added']);
     expect(existsSync(path.join(workdir.path, 'a.txt'))).toBe(true);
   }, 180_000);
 

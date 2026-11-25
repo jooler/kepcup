@@ -31,6 +31,7 @@ interface WatchRow {
   version: number;
   created_at: number;
   updated_at: number;
+  owner_principal_id: string | null;
 }
 
 /**
@@ -40,6 +41,12 @@ interface WatchRow {
 export interface StoredWatch extends Watch {
   lastText: string | null;
   alertTimes: number[];
+  /**
+   * 62.11 C13：归属主体（创建调用者），缺省 / null = 单用户现状（无归属的
+   * 行不带该键，映射形状不变）。提醒唤醒的 run 主体与 watch.updated 载荷的
+   * ownerPrincipalId 都取自它。
+   */
+  ownerPrincipalId?: string | null;
 }
 
 function parseJson(text: string): unknown {
@@ -86,6 +93,7 @@ function rowToWatch(row: WatchRow): StoredWatch | string {
     version: row.version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    ...(row.owner_principal_id !== null ? { ownerPrincipalId: row.owner_principal_id } : {}),
   };
 }
 
@@ -102,6 +110,8 @@ export interface InsertWatchInput {
   condition: WatchCondition;
   intervalSec: number;
   nextCheckAt: number;
+  /** 62.11 C13：归属主体（创建调用者）。缺省 / null = 单用户现状（NULL 行）。 */
+  ownerPrincipalId?: string | null;
 }
 
 /** Fields a CAS write may change (`version` and `updated_at` are bumped by the store). */
@@ -165,8 +175,8 @@ export class WatchesStore {
       .prepare(
         `insert into watches
            (id, bot_id, conversation_id, source_json, condition_json, interval_sec, status,
-            next_check_at, version, created_at, updated_at)
-         values (?, ?, ?, ?, ?, ?, 'active', ?, 0, ?, ?)`,
+            next_check_at, version, created_at, updated_at, owner_principal_id)
+         values (?, ?, ?, ?, ?, ?, 'active', ?, 0, ?, ?, ?)`,
       )
       .run(
         id,
@@ -178,6 +188,7 @@ export class WatchesStore {
         input.nextCheckAt,
         now,
         now,
+        input.ownerPrincipalId ?? null,
       );
     const row = this.get(id);
     if (row === null) throw new Error(`watch ${id} disappeared after insert`);
@@ -295,18 +306,25 @@ export class WatchesStore {
     return row.n;
   }
 
-  /** Live (not stopped) watches, optionally of one conversation, newest first. */
-  listLive(conversationId?: string): StoredWatch[] {
-    const rows =
-      conversationId === undefined
-        ? this.db
-            .prepare("select * from watches where status != 'stopped' order by created_at desc")
-            .all()
-        : this.db
-            .prepare(
-              "select * from watches where status != 'stopped' and conversation_id = ? order by created_at desc",
-            )
-            .all(conversationId);
+  /**
+   * Live (not stopped) watches, optionally of one conversation, newest first.
+   * 62.11 C13：`ownerPrincipalId` 传入时只返回该主体拥有的行；缺省 = 不过滤
+   * （单用户现状）。
+   */
+  listLive(conversationId?: string, ownerPrincipalId?: string): StoredWatch[] {
+    const where = ["status != 'stopped'"];
+    const params: string[] = [];
+    if (conversationId !== undefined) {
+      where.push('conversation_id = ?');
+      params.push(conversationId);
+    }
+    if (ownerPrincipalId !== undefined) {
+      where.push('owner_principal_id = ?');
+      params.push(ownerPrincipalId);
+    }
+    const rows = this.db
+      .prepare(`select * from watches where ${where.join(' and ')} order by created_at desc`)
+      .all(...params);
     return this.#rows(rows as WatchRow[]);
   }
 

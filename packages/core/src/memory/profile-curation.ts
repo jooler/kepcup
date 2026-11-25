@@ -31,21 +31,25 @@ export interface CurationJobDeps extends LoopUsageDeps {
  * profile_curation background loop (docs/dev/phases/P07-memory.md 任务 8):
  * the ONLY writer of profile_items besides the user's direct edits. Applies
  * the model's operations to pending proposals and recompiles the card.
+ * C11 (62.05 §2): the job payload carries the principal key — the loop sees
+ * and touches exactly that principal's profile domain.
  */
 export async function runProfileCurationJob(deps: CurationJobDeps): Promise<void> {
   const store = deps.memory.profileStore;
-  const pending = store.pendingProposals();
-  const activeItems = store.list('active');
+  const payload = safeParsePayload(deps.job.payload_json);
+  const principalKey = payload.principalKey ?? '';
+  const pending = store.pendingProposals(principalKey);
+  const activeItems = store.list('active', undefined, principalKey);
   // A direct edit / retraction changes entries without a proposal; the card
   // must still be recompiled (docs/design/04-memory.md 画像整理).
-  const stale = store.cardIsStale();
+  const stale = store.cardIsStale(principalKey);
   if (pending.length === 0 && !stale) return;
   // D72 P4 / P6：没有内置模型、也没有可用于后台的外部 Agent 时跳过（提议
   // 留待下次整理），不产生失败 run。
   const route = routeFor(deps, 'profile_curation', null);
   if (route === null) {
     deps.logger.info(
-      { pending: pending.length, stale },
+      { pending: pending.length, stale, principalKey },
       'profile curation skipped: no model for background calls',
     );
     return;
@@ -83,9 +87,9 @@ export async function runProfileCurationJob(deps: CurationJobDeps): Promise<void
       onUsage: (usage) => recordLoopUsage(deps, run.id, 'profile_curation', mainRef, usage),
     });
 
-    applyOperations(deps, output);
+    applyOperations(deps, output, principalKey);
     const card = truncateToBudget(output.card, PROFILE_CARD_TOKEN_BUDGET);
-    store.setCard(card.text);
+    store.setCard(card.text, principalKey);
     deps.runs.update(run.id, { status: 'completed' });
   } catch (error) {
     deps.runs.update(run.id, {
@@ -96,13 +100,32 @@ export async function runProfileCurationJob(deps: CurationJobDeps): Promise<void
   }
 }
 
+/** Curation job payload (legacy rows carry `{}` = the single-user bucket). */
+function safeParsePayload(payloadJson: string): { principalKey?: string } {
+  try {
+    const parsed = JSON.parse(payloadJson === '' ? '{}' : payloadJson) as Record<string, unknown>;
+    return typeof parsed['principalKey'] === 'string'
+      ? { principalKey: parsed['principalKey'] }
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Applies curation operations; unknown ids are ignored (logged). The card is
  * written even when every operation was invalid — an explicit empty card is
- * a valid curation outcome.
+ * a valid curation outcome. Every operation is confined to the job's
+ * principal bucket: items of another principal are out of reach.
  */
-function applyOperations(deps: CurationJobDeps, output: CurationOutput): void {
+function applyOperations(deps: CurationJobDeps, output: CurationOutput, principalKey: string): void {
   const store = deps.memory.profileStore;
+  /** The item must exist inside this job's principal bucket. */
+  const itemOfBucket = (itemId: string) => {
+    const item = store.getItem(itemId);
+    if (item === null || item.principalKey !== principalKey) return null;
+    return item;
+  };
   /** Evidence with the conversation backfilled from the message (BR-P07-010). */
   const evidenceOf = (messageIds: string[]) =>
     messageIds.map((messageId) => ({
@@ -113,7 +136,12 @@ function applyOperations(deps: CurationJobDeps, output: CurationOutput): void {
     switch (operation.op) {
       case 'add': {
         const proposal = store.getProposal(operation.proposalId);
-        if (proposal === null || proposal.op !== 'add' || proposal.status !== 'pending') {
+        if (
+          proposal === null ||
+          proposal.op !== 'add' ||
+          proposal.status !== 'pending' ||
+          proposal.principalKey !== principalKey
+        ) {
           deps.logger.warn({ proposalId: operation.proposalId }, 'curation add: unknown proposal');
           continue;
         }
@@ -129,15 +157,18 @@ function applyOperations(deps: CurationJobDeps, output: CurationOutput): void {
           store.markProposal(operation.proposalId, 'rejected', { reason: 'credential pattern' });
           continue;
         }
-        store.insert({
-          category: operation.category,
-          content: operation.content,
-          source: payload.source ?? 'inferred',
-          evidence: evidenceOf(payload.evidenceMessageIds ?? []),
-          contributedBy: proposal.botId,
-          confidence: payload.confidence ?? 0.5,
-          validUntil: payload.validUntil ?? null,
-        });
+        store.insert(
+          {
+            category: operation.category,
+            content: operation.content,
+            source: payload.source ?? 'inferred',
+            evidence: evidenceOf(payload.evidenceMessageIds ?? []),
+            contributedBy: proposal.botId,
+            confidence: payload.confidence ?? 0.5,
+            validUntil: payload.validUntil ?? null,
+          },
+          principalKey,
+        );
         store.markProposal(operation.proposalId, 'applied', {
           op: 'add',
           category: operation.category,
@@ -145,7 +176,7 @@ function applyOperations(deps: CurationJobDeps, output: CurationOutput): void {
         break;
       }
       case 'update': {
-        const item = store.getItem(operation.itemId);
+        const item = itemOfBucket(operation.itemId);
         if (item === null) {
           deps.logger.warn({ itemId: operation.itemId }, 'curation update: unknown item');
           continue;
@@ -156,7 +187,7 @@ function applyOperations(deps: CurationJobDeps, output: CurationOutput): void {
           store.markProposal(operation.proposalId, 'rejected', { reason: 'credential pattern' });
           continue;
         }
-        store.updateContent(operation.itemId, operation.content);
+        store.updateContent(operation.itemId, operation.content, principalKey);
         store.markProposal(operation.proposalId, 'applied', {
           op: 'update',
           itemId: operation.itemId,
@@ -164,7 +195,7 @@ function applyOperations(deps: CurationJobDeps, output: CurationOutput): void {
         break;
       }
       case 'supersede': {
-        const item = store.getItem(operation.itemId);
+        const item = itemOfBucket(operation.itemId);
         if (item === null) {
           deps.logger.warn({ itemId: operation.itemId }, 'curation supersede: unknown item');
           continue;
@@ -177,19 +208,22 @@ function applyOperations(deps: CurationJobDeps, output: CurationOutput): void {
         const payload = proposal?.payload as
           | { source?: 'explicit' | 'inferred'; evidenceMessageIds?: string[]; confidence?: number }
           | undefined;
-        store.supersede(operation.itemId);
-        store.insert({
-          category: item.category,
-          content: operation.content,
-          source: payload?.source ?? item.source,
-          evidence: evidenceOf(
-            payload?.evidenceMessageIds ??
-              item.evidence.map((e) => e.messageId).filter((id): id is string => id !== null),
-          ),
-          contributedBy: proposal?.botId ?? item.contributedBy,
-          confidence: payload?.confidence ?? item.confidence,
-          supersedes: item.id,
-        });
+        store.supersede(operation.itemId, principalKey);
+        store.insert(
+          {
+            category: item.category,
+            content: operation.content,
+            source: payload?.source ?? item.source,
+            evidence: evidenceOf(
+              payload?.evidenceMessageIds ??
+                item.evidence.map((e) => e.messageId).filter((id): id is string => id !== null),
+            ),
+            contributedBy: proposal?.botId ?? item.contributedBy,
+            confidence: payload?.confidence ?? item.confidence,
+            supersedes: item.id,
+          },
+          principalKey,
+        );
         store.markProposal(operation.proposalId, 'applied', {
           op: 'supersede',
           itemId: operation.itemId,
@@ -197,12 +231,13 @@ function applyOperations(deps: CurationJobDeps, output: CurationOutput): void {
         break;
       }
       case 'keep_both': {
-        const item = store.getItem(operation.itemId);
+        const item = itemOfBucket(operation.itemId);
         const proposal = store.getProposal(operation.proposalId);
         if (
           item === null ||
           proposal === null ||
           proposal.op !== 'add' ||
+          proposal.principalKey !== principalKey ||
           proposal.botId === null
         ) {
           continue;
@@ -214,14 +249,17 @@ function applyOperations(deps: CurationJobDeps, output: CurationOutput): void {
           evidenceMessageIds?: string[];
           confidence?: number;
         };
-        store.insert({
-          category: item.category,
-          content: payload.content ?? '',
-          source: payload.source ?? 'inferred',
-          evidence: evidenceOf(payload.evidenceMessageIds ?? []),
-          contributedBy: proposal.botId,
-          confidence: payload.confidence ?? 0.5,
-        });
+        store.insert(
+          {
+            category: item.category,
+            content: payload.content ?? '',
+            source: payload.source ?? 'inferred',
+            evidence: evidenceOf(payload.evidenceMessageIds ?? []),
+            contributedBy: proposal.botId,
+            confidence: payload.confidence ?? 0.5,
+          },
+          principalKey,
+        );
         void deps.memory
           .writeReflectionMemory(proposal.botId, null, {
             kind: 'self_note',
@@ -232,6 +270,8 @@ function applyOperations(deps: CurationJobDeps, output: CurationOutput): void {
             confidence: 1,
             sensitivity: 'normal',
             evidenceRunId: null,
+            // C12: the self_note stays inside the proposal principal's audience.
+            sourcePrincipalId: principalKey.length > 0 ? principalKey : null,
           })
           .catch(() => {});
         store.markProposal(operation.proposalId, 'applied', {
@@ -249,12 +289,14 @@ function applyOperations(deps: CurationJobDeps, output: CurationOutput): void {
       }
     }
   }
-  // Retract proposals that the model did not mention explicitly.
-  for (const pending of store.pendingProposals()) {
+  // Retract proposals that the model did not mention explicitly (this bucket
+  // only — other principals' pending retracts belong to their own jobs).
+  for (const pending of store.pendingProposals(principalKey)) {
     if (pending.op === 'retract') {
       const target = pending.targetItemId;
-      if (target !== null && store.getItem(target) !== null) {
-        store.retract(target);
+      const targetItem = target !== null ? itemOfBucket(target) : null;
+      if (target !== null && targetItem !== null) {
+        store.retract(target, principalKey);
         store.markProposal(pending.id, 'applied', { op: 'retract', itemId: target });
       } else {
         store.markProposal(pending.id, 'applied', { op: 'retract', note: 'target gone' });

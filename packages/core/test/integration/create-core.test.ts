@@ -124,6 +124,7 @@ describe('createCore (integration)', () => {
     // 删 setup_state）；0041 = D92 T1a WP2（chains 删除，episodes 协作回合）；
     // 0042 = D92 T1a WP4（todos 执行者列）；0043 = D73 P2 后续（egress_allows）。
     // 0050 = D103 看板表；0051 = D103 卡片会话（conversations 重建，type 增 card）。
+    // ... 0083 = D140 W0（approvals / grants 的 task 时长与多路径 payload）。
     expect(services.mainDb!.pragma('user_version', { simple: true })).toBe(
       migrationTargetVersion(migrationsUrl('main')),
     );
@@ -147,8 +148,13 @@ describe('createCore (integration)', () => {
     // + 0013 task_cwd（D92 T0-1，D75 任务执行根目录改名）
     // + 0014 runs 的连锁绑定两列改名 episode_id/episode_hop（D92 T1a WP2）
     // + 0015 task_write_domains（D123 声明写域）
-    // + 0016 task_retry_attempts / task_retry_at（任务失败自动重试退避计划）。
-    expect(services.runsDb!.pragma('user_version', { simple: true })).toBe(16);
+    // + 0016 task_retry_attempts / task_retry_at（任务失败自动重试退避计划）
+    // + 0017 runs.principal_id（62.11 C7 运行归属主体，团队服务器 T1）
+    // + 0018 任务的 worktree 隔离列（D140-4：worktree_path / worktree_base / task_cwd）。
+    // 与 main 同口径：从迁移目录推导，不写死版本号。
+    expect(services.runsDb!.pragma('user_version', { simple: true })).toBe(
+      migrationTargetVersion(migrationsUrl('runs')),
+    );
     const runsTables = services
       .runsDb!.prepare("select name from sqlite_master where type='table'")
       .all() as Array<{ name: string }>;

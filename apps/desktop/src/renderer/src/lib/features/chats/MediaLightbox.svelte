@@ -7,6 +7,7 @@
   import { Button } from '$lib/components/ui/button';
   import { mediaViewer, isLocalMedia } from './media-viewer.svelte';
   import { attachmentUrl, downloadAttachment } from './attachments.svelte';
+  import { getChatSession } from './chat-session-context';
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
 
   /**
@@ -33,6 +34,8 @@
   let ty = $state(0);
   let dragging = $state(false);
 
+  // 会话在组件初始化时取（getContext 约束）；source 随会话切换由 getter 读。
+  const session = getChatSession();
   const current = $derived(mediaViewer.current);
   const kind = $derived(
     current === null
@@ -49,7 +52,7 @@
       ? Promise.resolve('')
       : isLocalMedia(current)
         ? Promise.resolve(current.url)
-        : attachmentUrl(current),
+        : attachmentUrl(current, session.source),
   );
 
   function zoomBy(factor: number): void {
@@ -128,7 +131,7 @@
       anchor.remove();
       return;
     }
-    await downloadAttachment(current);
+    await downloadAttachment(current, session.source);
   }
 </script>
 

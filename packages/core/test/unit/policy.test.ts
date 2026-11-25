@@ -5,7 +5,13 @@ import { describe, expect, it } from 'vitest';
 
 import { canonicalPath, resolvePaths } from '../../src/infra/paths.js';
 import { buildSandboxPolicy, alwaysDeniedAddresses, alwaysDeniedDomainEntries } from '../../src/sandbox/policy.js';
-import { allowMacosStartupSysctls, childEnvFor, srtNetworkConfigFor } from '../../src/sandbox/backend-srt.js';
+import {
+  allowMacosStartupSysctls,
+  childEnvFor,
+  srtFilesystemFor,
+  srtNetworkConfigFor,
+} from '../../src/sandbox/backend-srt.js';
+import { sensitivePaths } from '../../src/sandbox/sensitive-paths.js';
 import type { SandboxNetworkPolicy } from '../../src/sandbox/types.js';
 const paths = resolvePaths('/tmp/kepcup-policy-test');
 
@@ -28,7 +34,8 @@ describe('buildSandboxPolicy', () => {
     expect(policy.readWrite).toContain(workspace());
     expect(policy.readWrite).toContain(paths.cacheNpmDir);
     // os.tmpdir() is an ancestor of the data home in tests; allowing it would
-    // un-do the home deny in the sandbox profile. srt manages TMPDIR itself.
+    // un-do the data-home deny in the sandbox profile. srt manages TMPDIR
+    // itself.
     expect(policy.readWrite).not.toContain(os.tmpdir());
     expect(policy.readWrite).toContain(paths.cachePipDir);
     expect(policy.readWrite).toContain(paths.cacheXdgDir);
@@ -37,14 +44,17 @@ describe('buildSandboxPolicy', () => {
     expect(policy.readWrite).toContain(paths.cachePycacheDir);
   });
 
-  it('denies the user home, the data home and system locations from reading', () => {
+  it('reads the whole machine but denies the data home and every sensitive location (D140-2)', () => {
     const policy = policyFor({ mode: 'open', allowDomains: [] });
-    // The canonical user home itself (BR-P02-001), not just the data home:
-    // ~/Documents, shell history and source trees must stay unreadable.
-    expect(policy.denyRead).toContain(canonicalPath(os.homedir()));
+    // D140-2 read-wide: the canonical user home itself is NOT denied anymore
+    // — ~/Documents, shell history and other checkouts are readable, matching
+    // the file tools. Only the data home and the sensitive list stay denied.
+    expect(policy.denyRead).not.toContain(canonicalPath(os.homedir()));
     expect(policy.denyRead).toContain(paths.home);
-    expect(policy.denyRead.length).toBeGreaterThanOrEqual(2);
-    // The workspace is under the denied home but re-exposed via readWrite.
+    for (const sensitive of sensitivePaths(process.platform)) {
+      expect(policy.denyRead).toContain(sensitive);
+    }
+    // The workspace is writable as before.
     expect(policy.readWrite).toContain(workspace());
   });
 
@@ -109,7 +119,7 @@ describe('buildSandboxPolicy', () => {
       expect(policy.readWrite).not.toContain(dir);
       expect(policy.readOnly).toContain(dir);
     }
-    // Still readable (re-exposed under the denied home) and the app caches
+    // Still readable (the machine is readable by default) and the app caches
     // stay writable (package-manager caches, not user files).
     expect(policy.denyRead).not.toContain(workspace());
     expect(policy.readWrite).toContain(paths.cacheNpmDir);
@@ -208,24 +218,37 @@ describe('buildSandboxPolicy', () => {
     expect(Object.keys(child)).not.toContain('APP_SUPER_SECRET');
   });
 
-  it('re-allows only ~/.CFUserTextEncoding on darwin and keeps the home denied', () => {
-    const encoding = path.join(canonicalPath(os.homedir()), '.CFUserTextEncoding');
-    const darwin = buildSandboxPolicy({
-      platform: 'darwin',
-      paths,
-      workspacePath: workspace(),
-      network: { mode: 'none', allowDomains: [] },
-    });
-    expect(darwin.readOnly).toContain(encoding);
-    expect(darwin.readWrite).not.toContain(encoding);
-    expect(darwin.denyRead).toContain(canonicalPath(os.homedir()));
-    const linux = buildSandboxPolicy({
-      platform: 'linux',
-      paths,
-      workspacePath: workspace(),
-      network: { mode: 'none', allowDomains: [] },
-    });
-    expect(linux.readOnly.some((entry) => entry.endsWith('.CFUserTextEncoding'))).toBe(false);
+  it('keeps no ~/.CFUserTextEncoding re-allow and never denies the home (D140-2)', () => {
+    // The re-allow existed only because the home was denied; with the whole
+    // machine readable the file is readable along with the rest of the home.
+    const home = canonicalPath(os.homedir());
+    for (const platform of ['darwin', 'linux'] as const) {
+      const policy = buildSandboxPolicy({
+        platform,
+        paths,
+        workspacePath: workspace(),
+        network: { mode: 'none', allowDomains: [] },
+      });
+      expect(policy.readOnly.some((entry) => entry.endsWith('.CFUserTextEncoding'))).toBe(false);
+      expect(policy.readWrite.some((entry) => entry.endsWith('.CFUserTextEncoding'))).toBe(false);
+      expect(policy.denyRead).not.toContain(home);
+    }
+  });
+
+  it('pins srt default convenience write paths closed in denyWrite (D140-2)', () => {
+    const home = canonicalPath(os.homedir());
+    const policy = policyFor({ mode: 'none', allowDomains: [] });
+    const filesystem = srtFilesystemFor(policy);
+    // srt's getDefaultWritePaths auto-allows ~/.npm/_logs and ~/.claude/debug
+    // once the home is not read-denied; the write surface must stay
+    // byte-for-byte what it was, so both are denied explicitly.
+    expect(filesystem.denyWrite).toEqual([
+      path.join(home, '.npm', '_logs'),
+      path.join(home, '.claude', 'debug'),
+    ]);
+    expect(filesystem.allowWrite).toBe(policy.readWrite);
+    expect(filesystem.allowRead).toEqual([...policy.readOnly, ...policy.readWrite]);
+    expect(filesystem.denyRead).toBe(policy.denyRead);
   });
 });
 
@@ -268,6 +291,80 @@ describe('D123 write-domain narrowing', () => {
     });
     expect(policy.readWrite).toContain(workdir.path);
     expect(policy.readWrite).toContain(workspace());
+  });
+});
+
+describe('D140-4 worktree (two-root) policy', () => {
+  const base = {
+    platform: process.platform,
+    paths,
+    workspacePath: workspace(),
+    network: { mode: 'open', allowDomains: [] } as SandboxNetworkPolicy,
+  };
+  const workdir = {
+    path: '/tmp/kepcup-policy-test/proj',
+    // The task's lease is keyed on the tree, not the workdir.
+    hasLease: false,
+    denyReadGlobs: ['/tmp/kepcup-policy-test/proj/.env', '/tmp/kepcup-policy-test/proj/**/.env'],
+  };
+  const taskWorktree = {
+    path: '/tmp/kepcup-policy-test/.worktree/proj-3f9a1c2d',
+    gitWorktreeMeta: '/tmp/kepcup-policy-test/proj/.git/worktrees/proj-3f9a1c2d',
+    gitObjectsDir: '/tmp/kepcup-policy-test/proj/.git/objects',
+    denyReadGlobs: [
+      '/tmp/kepcup-policy-test/.worktree/proj-3f9a1c2d/.env',
+      '/tmp/kepcup-policy-test/.worktree/proj-3f9a1c2d/**/.env',
+    ],
+  };
+
+  it('makes the tree and its precise .git subtrees writable, the workdir read-only', () => {
+    const policy = buildSandboxPolicy({ ...base, workdir, taskWorktree });
+    expect(policy.readWrite).toContain(taskWorktree.path);
+    expect(policy.readWrite).toContain(taskWorktree.gitWorktreeMeta);
+    expect(policy.readWrite).toContain(taskWorktree.gitObjectsDir);
+    expect(policy.readWrite).not.toContain(workdir.path);
+    expect(policy.readOnly).toContain(workdir.path);
+    // The workdir's whole .git is NOT opened by the worktree entries.
+    expect(policy.readWrite).not.toContain('/tmp/kepcup-policy-test/proj/.git');
+    expect(policy.readWrite).not.toContain('/tmp/kepcup-policy-test/proj/.git/config');
+  });
+
+  it('re-applies the workdir protect globs anchored at the tree root', () => {
+    const policy = buildSandboxPolicy({ ...base, workdir, taskWorktree });
+    expect(policy.denyRead).toContain('/tmp/kepcup-policy-test/.worktree/proj-3f9a1c2d/.env');
+    expect(policy.denyRead).toContain(
+      '/tmp/kepcup-policy-test/.worktree/proj-3f9a1c2d/**/.env',
+    );
+    // The workdir's own globs stay in place too (the dir remains readable).
+    expect(policy.denyRead).toContain('/tmp/kepcup-policy-test/proj/.env');
+    // Sibling trees under the same home are other tasks' private areas; the
+    // task's own tree re-opens itself through readWrite (deny-then-allow).
+    expect(policy.denyRead).toContain('/tmp/kepcup-policy-test/.worktree');
+    expect(policy.readWrite).toContain(taskWorktree.path);
+  });
+
+  it('narrows a tree-rooted write domain to its expressible dirs', () => {
+    const policy = buildSandboxPolicy({
+      ...base,
+      workdir,
+      taskWorktree,
+      writeDomain: { root: taskWorktree.path, patterns: ['apps/**'] },
+    });
+    expect(policy.readWrite).toContain(path.join(taskWorktree.path, 'apps'));
+    expect(policy.readWrite).toContain(taskWorktree.gitWorktreeMeta);
+    expect(policy.readWrite).not.toContain(taskWorktree.path);
+    expect(policy.readWrite).not.toContain(workspace());
+  });
+
+  it('keeps a read-only run read-only (no tree write mount) but keeps the read denies', () => {
+    const policy = buildSandboxPolicy({ ...base, workdir, taskWorktree, readOnlyRun: true });
+    expect(policy.readWrite).not.toContain(taskWorktree.path);
+    expect(policy.readWrite).not.toContain(taskWorktree.gitWorktreeMeta);
+    // A read-only subagent still reads the tree (re-opened inside the denied
+    // home) and the protect rules follow it in.
+    expect(policy.readOnly).toContain(taskWorktree.path);
+    expect(policy.denyRead).toContain('/tmp/kepcup-policy-test/.worktree/proj-3f9a1c2d/.env');
+    expect(policy.denyRead).toContain('/tmp/kepcup-policy-test/.worktree');
   });
 });
 

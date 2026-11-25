@@ -114,10 +114,10 @@ describe('D123 write-domain scheduling', () => {
     await waitStatus(stack, b.taskId, 'completed', 'B completed');
   }, 30_000);
 
-  it('intersecting domains queue the later task and start it when the holder settles', async () => {
+  it('intersecting domains also run in parallel (D140-1: the mutex is the file-level claim)', async () => {
     const stack = await start();
     const { core, llm } = stack;
-    const bot = await makeBot(core, '串行');
+    const bot = await makeBot(core, '共享区');
     const conv = await openDirect(core, bot.id);
     const heldA = step().expect(isTaskRequest('TASK-C')).hold().replyText('C 完成');
     const heldB = step().expect(isTaskRequest('TASK-D')).hold().replyText('D 完成');
@@ -136,28 +136,25 @@ describe('D123 write-domain scheduling', () => {
       writes: ['apps/renderer/**'],
     });
 
+    // D140-1 修订 D123：域相交不再排队——两个写任务共享租约并行，冲突由
+    // 文件级认领（首次写入先到先得）在执行期拦截。
     expect(b.state).toBe('submitted');
-    expect(b.queueReason).toContain(`等写域（任务 ${a.taskId} 持有 apps/`);
-    expect(b.queueReason).toContain('apps/**');
+    expect(b.queueReason ?? '').not.toContain('等写域');
     await waitRunning(stack, a.taskId, 'A running');
-    expect(runOf(stack, b.taskId).status).toBe('queued');
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(llm.requests().some(isTaskRequest('TASK-D'))).toBe(false);
-
+    await waitRunning(stack, b.taskId, 'B running while A holds apps/**');
     heldA.release();
-    await waitRunning(stack, b.taskId, 'B starts after A settles');
     heldB.release();
+    await waitStatus(stack, a.taskId, 'completed', 'A completed');
     await waitStatus(stack, b.taskId, 'completed', 'B completed');
-    expect(runOf(stack, a.taskId).status).toBe('completed');
   }, 30_000);
 
-  it('delivers a peer message to a still-queued task through its brief', async () => {
+  it('delivers a peer message to a just-started parallel task (D140-1)', async () => {
     const stack = await start();
     const { core, llm } = stack;
-    const bot = await makeBot(core, '排队消息');
+    const bot = await makeBot(core, '并行消息');
     const conv = await openDirect(core, bot.id);
     const heldA = step().expect(isTaskRequest('TASK-QA')).hold().replyText('A 完成');
-    const heldB = step().expect(isTaskRequest('TASK-QB')).replyText('B 完成');
+    const heldB = step().expect(isTaskRequest('TASK-QB')).hold().replyText('B 完成');
     llm.script('mock-main', [heldA, heldB]);
     const turn = turnIdentity(bot.id, conv.id);
     const a = host(stack).start(turn, {
@@ -180,29 +177,28 @@ describe('D123 write-domain scheduling', () => {
       loopType: 'task',
     };
 
-    // Not briefed yet: the receipt is `queued` and the durable entry is folded
-    // into the brief when the task starts (design 59 §4.2).
-    expect(host(stack).send(aIdentity, { taskId: b.taskId, text: '我方在改 apps/shared' }).delivery).toBe(
-      'queued',
+    // B launches at once (parallel); its brief was built synchronously and the
+    // message is buffered for the engine run (receipt: delivered, §4.2).
+    const receipt = host(stack).send(aIdentity, {
+      taskId: b.taskId,
+      text: '我方在改 apps/shared',
+    });
+    expect(['delivered', 'queued']).toContain(receipt.delivery);
+
+    await waitFor(
+      () =>
+        (llm.requests().some((req) => req.lastUserText().includes('我方在改 apps/shared'))
+          ? true
+          : null),
+      { label: 'B received the peer message', timeoutMs: 20_000 },
     );
-    // Waiting on a task queued behind this task's own write domain would only
-    // end when this task settles — refused instead of blocking for the TTL.
-    await expect(
-      host(stack).wait(aIdentity, { taskId: b.taskId }, new AbortController().signal),
-    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    const request = llm
+      .requests()
+      .find((req) => req.lastUserText().includes('我方在改 apps/shared'));
+    expect(request?.lastUserText()).toContain('<peer_task_message');
 
     heldA.release();
-    await waitRunning(stack, b.taskId, 'B starts after A settles');
-    await waitFor(() => (llm.requests().some(isTaskRequest('TASK-QB')) ? true : null), {
-      label: 'B request sent',
-      timeoutMs: 20_000,
-    });
-    const request = llm.requests().find(isTaskRequest('TASK-QB'));
-    expect(request?.lastUserText()).toContain('<peer_task_message');
-    expect(request?.lastUserText()).toContain('我方在改 apps/shared');
-
     heldB.release();
-    await waitStatus(stack, b.taskId, 'completed', 'B completed');
   }, 30_000);
 
   it('refuses a declared write domain with cwd: "workspace"', async () => {
@@ -221,15 +217,14 @@ describe('D123 write-domain scheduling', () => {
     ).toThrow(/写域任务不能使用 cwd/);
   }, 30_000);
 
-  it('writes: true (whole cwd) conflicts with any declared domain', async () => {
+  it('writes: true (whole cwd) runs in parallel with a declared domain (D140-1)', async () => {
     const stack = await start();
     const { core, llm } = stack;
     const bot = await makeBot(core, '全域');
     const conv = await openDirect(core, bot.id);
-    llm.script('mock-main', [
-      step().expect(isTaskRequest('TASK-WHOLE')).hold().replyText('全域完成'),
-      step().expect(isTaskRequest('TASK-SCOPED')).replyText('分域完成'),
-    ]);
+    const heldWhole = step().expect(isTaskRequest('TASK-WHOLE')).hold().replyText('全域完成');
+    const heldScoped = step().expect(isTaskRequest('TASK-SCOPED')).hold().replyText('分域完成');
+    llm.script('mock-main', [heldWhole, heldScoped]);
     const turn = turnIdentity(bot.id, conv.id);
     const whole = host(stack).start(turn, {
       title: '整目录',
@@ -244,8 +239,16 @@ describe('D123 write-domain scheduling', () => {
       writes: ['docs/**'],
     });
     expect(scoped.state).toBe('submitted');
-    expect(scoped.queueReason).toContain(`等写域（任务 ${whole.taskId} 持有 整目录）`);
+    expect(scoped.queueReason ?? '').not.toContain('等写域');
     expect(runOf(stack, whole.taskId).taskWriteDomains).toBeNull();
+    await waitFor(() => (heldWhole.consumed && heldScoped.consumed ? true : null), {
+      label: 'whole + scoped running in parallel',
+      timeoutMs: 20_000,
+    });
+    heldWhole.release();
+    heldScoped.release();
+    await waitStatus(stack, whole.taskId, 'completed', 'whole completed');
+    await waitStatus(stack, scoped.taskId, 'completed', 'scoped completed');
   }, 30_000);
 
   it('cross-conversation tasks on one workdir: disjoint domains parallel, intersecting queue', async () => {
@@ -287,12 +290,14 @@ describe('D123 write-domain scheduling', () => {
     await waitStatus(stack, a.taskId, 'completed', 'A completed');
     await waitStatus(stack, b.taskId, 'completed', 'B completed');
 
-    // Intersecting domains on the same workdir queue even across conversations.
-    const heldC = step().expect(isTaskRequest('TASK-Z')).hold().replyText('Z 完成');
-    llm.script('mock-main', [heldC]);
+    // D140-1: intersecting domains on the same workdir run in parallel even
+    // across conversations (the file-level claim is what serializes writers).
+    const heldC = step().expect(isTaskRequest('TASK-Z1')).hold().replyText('Z 完成');
+    const heldD = step().expect(isTaskRequest('TASK-Z2')).hold().replyText('Z2 完成');
+    llm.script('mock-main', [heldC, heldD]);
     const c = host(stack).start(turnIdentity(botA.id, convA.id, 'run_c'), {
       title: '共享区',
-      instruction: 'TASK-Z',
+      instruction: 'TASK-Z1',
       sourceMessageIds: [],
       writes: ['apps/**'],
     });
@@ -303,8 +308,14 @@ describe('D123 write-domain scheduling', () => {
       writes: ['apps/renderer/**'],
     });
     expect(d.state).toBe('submitted');
-    expect(d.queueReason).toContain(`等写域（任务 ${c.taskId} 持有 apps/**）`);
+    expect(d.queueReason ?? '').not.toContain('等写域');
+    await waitFor(() => (heldC.consumed && heldD.consumed ? true : null), {
+      label: 'intersecting cross-conversation tasks running in parallel',
+      timeoutMs: 20_000,
+    });
     heldC.release();
+    heldD.release();
     await waitStatus(stack, c.taskId, 'completed', 'C completed');
+    await waitStatus(stack, d.taskId, 'completed', 'D completed');
   }, 45_000);
 });

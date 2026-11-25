@@ -6,7 +6,6 @@ import {
   createTestStack,
   makeBot,
   openDirect,
-  waitFor,
   waitForEvent,
   type TestStack,
 } from '@kepcup/testkit';
@@ -56,8 +55,8 @@ function taskIdentity(
   return { runId: run.id, botId, conversationId, loopType: 'task' };
 }
 
-describe('workspace write lease (D75 §5.2)', () => {
-  it('serializes two write tasks on one workspace: the second waits, then gets the lease', async () => {
+describe('workspace write lease (D75 §5.2; D140-1 shared)', () => {
+  it('two shared write tasks on one workspace coexist; an exclusive acquirer still serializes', async () => {
     const stack = await start();
     const { core } = stack;
     const bot = await makeBot(core, '写手');
@@ -68,40 +67,45 @@ describe('workspace write lease (D75 §5.2)', () => {
     const a = taskIdentity(stack, bot.id, conv.id, true);
     const b = taskIdentity(stack, bot.id, conv.id, true);
 
-    // A pins the workspace root for the whole task (W1-A contract).
-    const held = await runtime.ensureWriteLease(a, workspace, { pin: true });
+    // A pins the workspace root for the whole task (W1-A contract), shared.
+    const held = await runtime.ensureWriteLease(a, workspace, { pin: true, shared: true });
     expect(held).toEqual({ key: `ws:${bot.id}:${conv.id}`, workdir: null });
     // Re-acquiring (any path inside the same workspace) passes straight through.
-    await expect(runtime.ensureWriteLease(a, path.join(workspace, 'sub', 'f.txt'))).resolves.toEqual(held);
+    await expect(
+      runtime.ensureWriteLease(a, path.join(workspace, 'sub', 'f.txt'), { pin: true, shared: true }),
+    ).resolves.toEqual(held);
 
+    // D140-1: B's shared lease is granted at once — both hold the workspace.
+    const bTarget = await runtime.ensureWriteLease(b, workspace, { pin: true, shared: true });
+    expect(bTarget).toEqual({ key: `ws:${bot.id}:${conv.id}`, workdir: null });
+    expect(runs.get(b.runId)?.status).toBe('running');
+
+    // An exclusive acquirer (host operation / non-task acquire) still waits:
+    // shared × exclusive conflicts.
+    const host: RunIdentity = { runId: 'run_host_ws', botId: bot.id, conversationId: conv.id, loopType: 'host' };
     const waiting = waitForEvent<{ runId: string; path: string; holder: { runId: string } }>(
       core,
       'lease.waiting',
-      (payload) => payload.runId === b.runId,
+      (payload) => payload.runId === host.runId,
     );
-    let bGranted = false;
-    const bAcquire = runtime.ensureWriteLease(b, workspace, { pin: true }).then((target) => {
-      bGranted = true;
+    let hostGranted = false;
+    const hostAcquire = runtime.ensureWriteLease(host, workspace).then((target) => {
+      hostGranted = true;
       return target;
     });
     const event = await waiting;
-    expect(event.path).toBe(`ws:${bot.id}:${conv.id}`);
     expect(event.holder.runId).toBe(a.runId);
-    await waitFor(async () => (runs.get(b.runId)?.status === 'waiting_lease' ? true : null), {
-      label: 'B waiting_lease',
-    });
-    expect(bGranted).toBe(false);
-
-    // A ends (the settle path releases the lease) → B is promoted.
+    expect(hostGranted).toBe(false);
+    // Both shared holders end → the exclusive waiter is promoted.
     await runtime.releaseRun(a.runId);
-    await expect(bAcquire).resolves.toEqual({ key: `ws:${bot.id}:${conv.id}`, workdir: null });
-    expect(runs.get(b.runId)?.status).toBe('running');
-    // No checkpoint for workspaces: releasing B records no run_changes.
     await runtime.releaseRun(b.runId);
+    await expect(hostAcquire).resolves.toEqual({ key: `ws:${bot.id}:${conv.id}`, workdir: null });
+    // No checkpoint for workspaces: releasing records no run_changes.
     expect(runtime.changesOf(b.runId)).toBeNull();
+    await runtime.releaseRun(host.runId);
   }, 60_000);
 
-  it('cancelling a queued writer leaves the queue without a lease', async () => {
+  it('cancelling a queued exclusive writer leaves the queue without a lease', async () => {
     const stack = await start();
     const { core } = stack;
     const bot = await makeBot(core, '排队');
@@ -110,9 +114,9 @@ describe('workspace write lease (D75 §5.2)', () => {
     const workspace = workspacePathFor(resolvePaths(core.services.paths.home), bot.id, conv.id);
     const a = taskIdentity(stack, bot.id, conv.id, true);
     const b = taskIdentity(stack, bot.id, conv.id, true);
-    await runtime.ensureWriteLease(a, workspace, { pin: true });
+    await runtime.ensureWriteLease(a, workspace, { pin: true, shared: true });
     const controller = new AbortController();
-    const queued = runtime.ensureWriteLease(b, workspace, { pin: true, signal: controller.signal });
+    const queued = runtime.ensureWriteLease(b, workspace, { signal: controller.signal });
     controller.abort();
     await expect(queued).rejects.toMatchObject({ code: 'APPROVAL_DENIED' });
     await runtime.releaseRun(a.runId);

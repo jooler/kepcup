@@ -11,7 +11,9 @@
     type LucideIcon,
   } from '@lucide/svelte';
   import { t } from '$lib/i18n';
+  import type { SourceId } from '$lib/rpc/connections.svelte';
   import { attachmentUrl, downloadAttachment } from './attachments.svelte';
+  import { getChatSession } from './chat-session-context';
   import { mediaViewer } from './media-viewer.svelte';
   import AudioPlayer from './AudioPlayer.svelte';
 
@@ -59,10 +61,15 @@
     return loaded[attachment.id] ?? { url: null, failed: false };
   }
 
+  /** 本消息所属会话的来源（T7：团队会话的附件字节经团队连接拉取）。 */
+  function sourceOf(): SourceId {
+    return getChatSession().source;
+  }
+
   function ensureLoaded(attachment: Attachment): void {
     if (loaded[attachment.id] !== undefined) return;
     loaded[attachment.id] = { url: null, failed: false };
-    attachmentUrl(attachment)
+    attachmentUrl(attachment, sourceOf())
       .then((url) => {
         loaded[attachment.id] = { url, failed: false };
       })
@@ -131,7 +138,7 @@
         {@render fileChip({
           kind: 'video',
           fileName: attachment.fileName,
-          onDownload: () => void downloadAttachment(attachment),
+          onDownload: () => void downloadAttachment(attachment, sourceOf()),
         })}
       {:else}
         <button
@@ -164,7 +171,7 @@
         {@render fileChip({
           kind: 'audio',
           fileName: attachment.fileName,
-          onDownload: () => void downloadAttachment(attachment),
+          onDownload: () => void downloadAttachment(attachment, sourceOf()),
         })}
       {:else}
         <!-- 文件名可能是无断行长 token：chip 收在容器内并截断，与 fileChip 同规 -->
@@ -183,7 +190,7 @@
         kind: 'file',
         fileName: attachment.fileName,
         size: attachment.size,
-        onDownload: () => void downloadAttachment(attachment),
+        onDownload: () => void downloadAttachment(attachment, sourceOf()),
       })}
     {/if}
   {/each}

@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { homedir, userInfo } from 'node:os';
+import { userInfo } from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 
@@ -139,16 +139,13 @@ export abstract class ContainerSandboxBackend implements SandboxBackend {
     }
 
     // 红线：authorization walk + cwd coverage; rejections refuse the command.
+    // (D140-2: the policy no longer re-allows ~/.CFUserTextEncoding — the
+    // home is not read-denied anymore, so no skipReadOnlyRoots carve-out is
+    // needed here.)
     const resolved = resolvePolicyMounts(req.policy, {
       cwd: req.cwd,
       registration: this.opts.registration,
       trustedReadOnlyRoots: readOnlyRoots(this.opts.platform),
-      // macOS policy re-allows this one file out of the denied home (srt does
-      // the same). It is already visible through the home mount — no bind and
-      // no rejection (same carve-out as the WSL image-owned roots).
-      ...(this.opts.platform === 'darwin'
-        ? { skipReadOnlyRoots: [path.join(homedir(), '.CFUserTextEncoding')] }
-        : {}),
     });
     const rejections = cwdCoverageRejections(req.cwd, resolved.entries, this.opts.platform);
     if (resolved.rejections.length > 0 || rejections.length > 0) {

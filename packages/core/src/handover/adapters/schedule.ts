@@ -37,9 +37,15 @@ export interface ScheduleAdapterDeps {
   conversations: {
     get(conversationId: string): Conversation | null;
     memberBotIds(conversationId: string): string[];
-    /** The bot's direct chat id (opened when missing). */
-    directIdFor(botId: string): string;
+    /**
+     * The bot's direct chat id (opened when missing). `ownerPrincipalId`
+     * (62.11 C3) scopes the chat to a human principal — the handover's source
+     * conversation owner; omitted = the single-user (owner-less) chat.
+     */
+    directIdFor(botId: string, ownerPrincipalId?: string | null): string;
   };
+  /** 62.11 C3: the source conversation's owner of a handover (null = single-user). Absent in stripped setups = the owner-less chat. */
+  ownerPrincipalOfHandover?: ((handoverId: string) => string | null) | undefined;
   /**
    * D90：工作台事项的排期随移交搬走（`origin` 与 `todo_id` 原样保留，见
    * `ScheduleService.transferTo`），事项的执行者改到接手方。
@@ -173,7 +179,10 @@ export class ScheduleAdapter implements HandoverAdapter {
       return { result: { resumed: true } };
     }
     const conversationId = this.#isDirectOf(row.conversationId, row.botId)
-      ? this.#deps.conversations.directIdFor(ctx.toBot.id)
+      ? this.#deps.conversations.directIdFor(
+          ctx.toBot.id,
+          this.#deps.ownerPrincipalOfHandover?.(ctx.handoverId) ?? null,
+        )
       : row.conversationId;
     let commitmentId: string | undefined;
     if (row.commitmentId !== null) {

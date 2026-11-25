@@ -29,7 +29,20 @@ export interface PermissionModeDeps {
   resolveScope?: (conversationId: string) => string;
   /** Global unattended switch — when on, every conversation runs at `bypass`. */
   unattended?: { effective(): { enabled: boolean } };
+  /**
+   * 62.11 C14 host ceiling: a `set` above this level throws
+   * `PERMISSION_CEILING` (e.g. the host forbids the sandbox-escaping
+   * `bypass`). Absent = unrestricted (single-user status quo).
+   */
+  ceiling?: PermissionMode;
 }
+
+/** Strength order used by the host ceiling comparison (C14). */
+const MODE_STRENGTH: Readonly<Record<PermissionMode, number>> = {
+  manual: 0,
+  auto: 1,
+  bypass: 2,
+};
 
 /** The mode a conversation actually runs at, with inheritance resolved. */
 export interface EffectivePermissionMode {
@@ -131,6 +144,15 @@ export class PermissionModeService {
     if (input.mode === 'manual') return this.#clear(scope, input.conversationId);
     if (input.acknowledgeRisk !== true) {
       throw new AppError('INVALID_INPUT', '提升权限级别需要在弹框中确认风险');
+    }
+    // 62.11 C14: the host may cap the highest selectable level (e.g. forbid
+    // the sandbox-escaping `bypass`). Lowering / clearing is always allowed.
+    const ceiling = this.#deps.ceiling;
+    if (ceiling !== undefined && MODE_STRENGTH[input.mode] > MODE_STRENGTH[ceiling]) {
+      throw new AppError(
+        'PERMISSION_CEILING',
+        `授权级别超出允许的上限：本环境不允许使用「${input.mode}」这一级`,
+      );
     }
     const now = this.#deps.clock.now();
     const hours = input.hours ?? null;

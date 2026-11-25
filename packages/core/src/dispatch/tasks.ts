@@ -43,8 +43,8 @@ import {
 import { capabilityIdOfSetup } from '../capabilities/catalog.js';
 import { claimWithinDomain } from '../workdir/domains.js';
 import type { TaskClaimRegistry } from '../workdir/claims.js';
+import type { WorktreeService } from '../workdir/worktree.js';
 import {
-  domainsConflict,
   formatWriteDomain,
   inspectDeclaredDomains,
   type AbsDomain,
@@ -323,6 +323,12 @@ export interface TaskHostDeps {
   /** D123 §5: in-memory path claims (shared with the gateway's write check). */
   claims?: TaskClaimRegistry;
   /**
+   * D140-4: worktree isolation. The host creates the tree before the task
+   * starts (orchestrator `#startTask`), and this service projects the apply
+   * state / reaps orphans. Absent = isolation unavailable.
+   */
+  worktrees?: WorktreeService;
+  /**
    * The engine slot a task occupies beyond the task caps (design 30 §8.5:
    * task concurrency = min(TASK_CONCURRENCY_*, `agent:{id}` concurrency)):
    * an external-agent task takes `{ key: 'agent:{id}', limit }`; null = no
@@ -589,6 +595,11 @@ interface PeerWait {
 }
 
 const ACTIVE_STATUSES: RunStatus[] = ['queued', 'running', 'waiting_approval', 'waiting_lease'];
+
+/** D140-1: claim paths carried on a TaskView (auto-claims may hold thousands). */
+const TASK_VIEW_CLAIM_PATHS_MAX = 12;
+/** D140-1: claim paths shown per task in `<peer_tasks>` / `<tasks>`. */
+const TASK_PEER_CLAIM_PATHS_MAX = 4;
 
 /** The visible card a task gets in its conversation (design 30 §4.3). */
 export const TASK_CARD = 'task';
@@ -1001,7 +1012,43 @@ export class TaskHost implements TaskToolFacade {
         '写域任务不能使用 cwd: "workspace"：写域按任务 cwd 解析，需与工具的相对路径基准（绑定工作目录）一致',
       );
     }
+    // D140-4: worktree isolation is opt-in, write tasks of the built-in engine
+    // only (an external agent's cwd / lease / permission bridge is not wired
+    // for the tree). A continuation does not inherit it: its cwd is resolved
+    // from scratch, so a previous task's tree never leaks into the new one.
+    const isolation = input.isolation ?? null;
+    if (isolation !== null) {
+      if (declaration.writes !== true) {
+        throw new AppError('INVALID_INPUT', 'worktree 隔离只用于写任务（writes: true 或写域）');
+      }
+      if (input.cwd === 'workspace') {
+        throw new AppError(
+          'INVALID_INPUT',
+          'worktree 隔离需要 cwd 为绑定的工作目录（不能用 workspace）',
+        );
+      }
+      if ((this.#deps.taskEngine?.(botId) ?? null) !== null) {
+        throw new AppError(
+          'INVALID_INPUT',
+          'worktree 隔离只支持内置引擎：外部智能体任务不能使用 isolation: "worktree"',
+        );
+      }
+      if (this.#deps.worktrees === undefined) {
+        throw new AppError('INVALID_INPUT', '当前环境不支持 worktree 隔离');
+      }
+    }
     const cwd = this.#deps.resolveCwd(botId, conversationId, input.cwd);
+    if (isolation !== null) {
+      let workdirPath: string | null;
+      try {
+        workdirPath = this.#deps.resolveCwd(botId, conversationId, 'workdir');
+      } catch {
+        workdirPath = null;
+      }
+      if (workdirPath === null || cwd !== workdirPath) {
+        throw new AppError('INVALID_INPUT', 'worktree 隔离需要对话绑定可用的工作目录');
+      }
+    }
     // Persist first (§3.1): a crash after this line leaves a submitted row that
     // is re-queued on restart; a crash before it means no task at all.
     const task = this.#deps.runs.create({
@@ -1014,6 +1061,7 @@ export class TaskHost implements TaskToolFacade {
       taskWrites: declaration.writes,
       taskCwd: cwd,
       ...(declaration.domains !== null ? { taskWriteDomains: declaration.domains } : {}),
+      ...(isolation !== null ? { isolation } : {}),
       ...(capabilities.length > 0 ? { taskCapabilities: capabilities } : {}),
       originRunId: identity.runId,
       ...this.#engineFields(botId),
@@ -1409,14 +1457,6 @@ export class TaskHost implements TaskToolFacade {
     }
     if (target.id === self.id) throw new AppError('INVALID_INPUT', '不能等待自己');
     if (isTerminalStatus(target.status)) return this.#terminalWaitResult(target);
-    if (target.status !== 'running' && this.#domainBlocker(target)?.taskId === self.id) {
-      // Waiting on a task queued behind this task's own write domain can only
-      // end when this task settles — refuse instead of blocking for the TTL.
-      throw new AppError(
-        'INVALID_INPUT',
-        `任务 ${target.id} 正在排队等你的写域；先结束或收缩写域后再等，否则不会结束`,
-      );
-    }
     if (this.#peerWaits.get(target.id)?.some((waiter) => waiter.waiterRunId === self.id) === true) {
       throw new AppError('INVALID_INPUT', `已经在等待任务 ${target.id}`);
     }
@@ -1586,17 +1626,22 @@ export class TaskHost implements TaskToolFacade {
     const reason = input.reason.trim().slice(0, 200) || '未说明';
     const since = this.#deps.clock.now();
     // Claims accumulate: a second claim adds to the set instead of silently
-    // replacing it (design §5: same-task re-claim is idempotent).
+    // replacing it (design §5: same-task re-claim is idempotent). D140-1: the
+    // 16-path cap bounds one call's new globs — auto-claimed paths already in
+    // the entry are exempt (a busy task may hold thousands of them).
     const existing = registry.entryOf(task.id);
     const merged = existing === null ? [...paths] : [...existing.paths];
+    let added = 0;
     for (const claimPath of paths) {
-      if (!merged.includes(claimPath)) merged.push(claimPath);
-    }
-    if (merged.length > TASK_CLAIM_PATHS_MAX) {
-      throw new AppError(
-        'INVALID_INPUT',
-        `合并后的认领路径超过 ${TASK_CLAIM_PATHS_MAX} 条；先 release 一部分再认领`,
-      );
+      if (merged.includes(claimPath)) continue;
+      added += 1;
+      if (added > TASK_CLAIM_PATHS_MAX) {
+        throw new AppError(
+          'INVALID_INPUT',
+          `单次最多新增 ${TASK_CLAIM_PATHS_MAX} 条认领路径；先分批认领或 release 一部分`,
+        );
+      }
+      merged.push(claimPath);
     }
     registry.set({
       taskId: task.id,
@@ -2033,7 +2078,13 @@ export class TaskHost implements TaskToolFacade {
             .find((candidate) => candidate.continuedFromRunIds.includes(task.id))?.id ?? null)
         : null;
     const summary = this.#summary(task);
-    const claim = this.#deps.claims?.entryOf(task.id) ?? null;
+    // D140-1: auto-claims can hold thousands of paths — the view carries a
+    // readable head of the set, the tool surface stays the source of truth.
+    const claimEntry = this.#deps.claims?.entryOf(task.id) ?? null;
+    const claim =
+      claimEntry === null
+        ? null
+        : { ...claimEntry, paths: claimEntry.paths.slice(0, TASK_VIEW_CLAIM_PATHS_MAX) };
     // §3.7 执行归属映射：审批卡 / 提问卡的归属会话与卡片落点同一 resolver
     // （委派任务 → 发起方 A 的私聊；普通任务 / 未接线 → 任务自己的会话），
     // 详情页据此取审批条与提问条。
@@ -2065,7 +2116,14 @@ export class TaskHost implements TaskToolFacade {
       // D123: declared write domains + this task's runtime claim.
       writeDomains: task.taskWriteDomains,
       claims: claim === null ? [] : [claim],
-      cwdKind: cwd?.kind ?? null,
+      cwdKind: task.isolation === 'worktree' ? 'worktree' : (cwd?.kind ?? null),
+      // D140-4: the isolated tree and its「应用到工作目录」state. Non-worktree
+      // tasks project null / `none` (consumers fall back).
+      worktreePath: task.worktreePath,
+      applyState:
+        task.isolation === 'worktree'
+          ? (this.#deps.worktrees?.applyStateFor(task, terminal) ?? 'none')
+          : 'none',
       queueReason: terminal ? null : summary.queueReason,
       awaitingInput: task.awaitingInput,
       questionMessageId: task.awaitingInput ? questionMessageId : null,
@@ -2469,6 +2527,19 @@ export class TaskHost implements TaskToolFacade {
     const title = task.taskTitle ?? brief.title ?? '';
     const writes = task.taskWrites === true;
     const capabilities = this.#retryCapabilities(task);
+    // D140-4: a worktree task's retry starts in the main workdir again — the
+    // old tree path must not be carried into the new row (that tree belongs to
+    // the previous attempt; `#startTask` replaces the cwd with the NEW tree).
+    let retryCwd = task.taskCwd;
+    if (task.isolation === 'worktree') {
+      try {
+        retryCwd = this.#deps.resolveCwd(botId, conversationId, 'workdir');
+      } catch {
+        // No usable workdir right now: the row is still created and the start
+        // fails with WORKTREE_CREATE_FAILED — never pointing at another tree.
+        retryCwd = null;
+      }
+    }
     const retried = this.#deps.runs.create({
       botId,
       conversationId,
@@ -2477,8 +2548,12 @@ export class TaskHost implements TaskToolFacade {
       triggerMessageIds: sourceIds,
       taskTitle: title,
       taskWrites: writes,
-      taskCwd: task.taskCwd,
+      taskCwd: retryCwd,
       ...(task.taskWriteDomains !== null ? { taskWriteDomains: task.taskWriteDomains } : {}),
+      // D140-4: a worktree task is retried in a NEW tree (the old one keeps
+      // its changes; the reaper collects it). `#startTask` recreates it and
+      // rebases on the then-current HEAD.
+      ...(task.isolation !== null ? { isolation: task.isolation } : {}),
       // D91: a retry keeps the capabilities the failed task declared (plus the app it just got
       // connected, see #retryCapabilities).
       ...(capabilities.length > 0 ? { taskCapabilities: capabilities } : {}),
@@ -3137,12 +3212,6 @@ export class TaskHost implements TaskToolFacade {
     if (inConversation >= this.#limits.perConversation) {
       return `等并发额度（本对话 ${inConversation}/${this.#limits.perConversation}）`;
     }
-    if (task.taskWrites === true && task.taskCwd !== null) {
-      const blocker = this.#domainBlocker(task);
-      if (blocker !== null) {
-        return `等写域（任务 ${blocker.taskId} 持有 ${formatWriteDomain(blocker.domain?.patterns ?? ['**'])}）`;
-      }
-    }
     const slot = this.#launchSlot(task);
     if (slot !== null) {
       let onSlot = 0;
@@ -3152,22 +3221,6 @@ export class TaskHost implements TaskToolFacade {
       if (onSlot >= slot.limit) {
         return `等智能体并发额度（${slot.key} ${onSlot}/${slot.limit}）`;
       }
-    }
-    return null;
-  }
-
-  /** The live task whose write domain blocks `task`, or null. */
-  #domainBlocker(task: Run): LaunchedTask | null {
-    if (task.taskWrites !== true || task.taskCwd === null) return null;
-    const domain: AbsDomain = {
-      root: task.taskCwd,
-      patterns: task.taskWriteDomains ?? ['**'],
-    };
-    for (const launched of this.#launched.values()) {
-      // A launched task conflicts with itself, and `#waitReasonText` asks while
-      // the task itself is already in `#launched`: never name it its own blocker.
-      if (launched.taskId === task.id) continue;
-      if (launched.domain !== null && domainsConflict(launched.domain, domain)) return launched;
     }
     return null;
   }
@@ -3184,19 +3237,6 @@ export class TaskHost implements TaskToolFacade {
       );
       return null;
     }
-  }
-
-  /**
-   * D123 ③: the startup snapshot's wait text. `等写入租约` is the executor's
-   * coarse reason; when another task's write domain is the blocker, name it
-   * (same wording as `#blockedBy`), so the task can tell what it waited for.
-   */
-  #waitReasonText(task: Run, reason: string): string {
-    if (reason !== '等写入租约' || task.taskWrites !== true || task.taskCwd === null) return reason;
-    const blocker = this.#domainBlocker(task);
-    return blocker === null
-      ? reason
-      : `等写域（任务 ${blocker.taskId} 持有 ${formatWriteDomain(blocker.domain?.patterns ?? ['**'])}）`;
   }
 
   /** D123 ③: attribute the open wait span to its reason. */
@@ -3321,7 +3361,7 @@ export class TaskHost implements TaskToolFacade {
           // attributed to the reason it actually waited on.
           this.#closeQueueSpan(launched, now);
           launched.queueSegmentSince = now;
-          launched.queueSegmentReason = this.#waitReasonText(task, reason);
+          launched.queueSegmentReason = reason;
         } else if (launched.queueStartedAt !== null && launched.startupQueueMs === null) {
           // The model run is about to start: freeze how long it queued and why
           // (D123 ③ — the task itself then reads it in `<peer_tasks>`). A pause
@@ -3915,7 +3955,23 @@ export class TaskHost implements TaskToolFacade {
       injectable: !terminal,
       lastProgress,
       error: task.error,
+      // D140-1: the first paths this task claimed / auto-claimed (capped —
+      // peers only need the shape, not the whole set).
+      ...this.#peerClaimPaths(task, terminal),
       ...(task.taskCapabilities !== null ? { capabilities: task.taskCapabilities } : {}),
     };
+  }
+
+  /** D140-1: the capped claim-path head shown to peers (plus a "more" flag). */
+  #peerClaimPaths(task: Run, terminal: boolean): { claimedPaths?: string[]; claimedPathsMore?: boolean } {
+    if (this.#deps.claims === undefined || terminal) return {};
+    const paths = this.#deps.claims.entryOf(task.id)?.paths ?? [];
+    const head = paths.slice(0, TASK_PEER_CLAIM_PATHS_MAX);
+    return head.length === 0
+      ? {}
+      : {
+          claimedPaths: head,
+          ...(paths.length > head.length ? { claimedPathsMore: true } : {}),
+        };
   }
 }

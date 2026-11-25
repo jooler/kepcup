@@ -46,6 +46,11 @@ export interface UpdateGateDeps {
   /** Performs the actual restart+install (autoUpdater.quitAndInstall). */
   quitAndInstall(): void;
   now?(): number;
+  /**
+   * 跨启动恢复的「用户取消并跳过」的版本（持久化见 update-skip.ts）。
+   * 缺省空——被跳过的版本静默不下载，更新的版本恢复正常流程。
+   */
+  skippedVersions?: readonly string[];
 }
 
 export type GatePhase = UpdateStatusPayload['phase'];
@@ -59,12 +64,15 @@ export class UpdateGate {
   #version: string | undefined;
   #percent: number | undefined;
   #message: string | undefined;
+  /** 用户取消过的版本：后续同名版本的一切事件（进度/完成）都被静默挡掉。 */
+  #skippedVersions: Set<string>;
   /** Generation counter: installNow/cancelDuringWait invalidates stale polls. */
   #generation = 0;
   #waiting = false;
 
   constructor(deps: UpdateGateDeps) {
     this.#deps = deps;
+    this.#skippedVersions = new Set(deps.skippedVersions ?? []);
   }
 
   get phase(): GatePhase {
@@ -106,7 +114,25 @@ export class UpdateGate {
     this.#setPhase('checking');
   }
 
+  /**
+   * electron-updater update-available（自动下载时代由 updater 层直接
+   * onDownloading；如今下载按此返回值手动启动）。被用户取消过的版本静默
+   * 跳过——否则 24h 定时重查会立刻把同一版本下回来，「取消更新」就名存实
+   * 亡；其它版本立即切 downloading（手动检查查到更新后，检查按钮马上让位
+   * 给进度，不等首包）并返回 true = 允许开始下载。决策相位的 sticky 语义见
+   * onDownloading：此时切换被忽略，但允许下载新版本顶替（下载完成后
+   * evaluate 会重新走排空决策）。
+   */
+  onUpdateAvailable(version: string): boolean {
+    if (this.#skippedVersions.has(version)) return false;
+    this.onDownloading(version);
+    return true;
+  }
+
   onDownloading(version: string, percent?: number): void {
+    // 取消后迟到的进度事件：同名版本的一切后续推送都静默忽略（见
+    // cancelDownload）。
+    if (this.#skippedVersions.has(version)) return;
     // Decision/drain phases are sticky (header comment): a redundant
     // download-progress event — e.g. the 24h scheduled re-check re-emitting
     // progress for the already-downloaded artifact — must not knock the apply
@@ -154,6 +180,9 @@ export class UpdateGate {
    */
   async evaluate(version: string): Promise<void> {
     if (this.#phase === 'installing') return;
+    // 取消的竞态尾巴：token 取消时下载其实已经完成，update-downloaded 照样
+    // 到达。跳过的版本绝不进入 ready（用户已经明确表达过「不要这个版本」）。
+    if (this.#skippedVersions.has(version)) return;
     this.#version = version;
     await this.#waitForDrain({ deadline: UPDATE_WAIT_RUNS_TIMEOUT_MS });
   }
@@ -207,6 +236,23 @@ export class UpdateGate {
     }
     this.#setPhase('installing');
     this.#deps.quitAndInstall();
+  }
+
+  /**
+   * 「取消更新」（用户在 downloading 相位点）：停下、回 idle、把这个版本
+   * 记入跳过集合（持久化由 updater 层负责）。返回被跳过的版本，其它相位返回
+   * undefined（相位守卫，与 installNow 的 BR-P13-005 同风格——任何迟到/过期
+   * 的点击都是 no-op，绝不作为取消源）。跳过集合挡住该版本的一切后续事件：
+   * 迟到的 download-progress 不把 idle 拉回 downloading，取消竞态下到达的
+   * update-downloaded（evaluate）不产生 ready。
+   */
+  cancelDownload(): string | undefined {
+    if (this.#phase !== 'downloading') return undefined;
+    const version = this.#version;
+    this.#setPhase('idle');
+    this.#version = undefined;
+    if (version !== undefined) this.#skippedVersions.add(version);
+    return version;
   }
 
   /**

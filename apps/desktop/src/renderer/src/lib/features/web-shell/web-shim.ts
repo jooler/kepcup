@@ -1,16 +1,83 @@
 import type { PlatformInfo } from '$lib/shim';
+import type { SensorKind, SensorPermissionStatus } from '@kepcup/shared';
 
 /**
  * `window.kepcup` 的 web 垫片（D96 WP5，web-main.ts 在动态 import ./main.ts 之前
  * 安装——静态 import 会被提升，垫片必须先于任何 renderer 模块执行）。
  *
  * 原则：全 API 降级实现，绝不让调用点抛错——
- *  - 桌面专属能力（文件对话框 / 打开外部 / 通知 / 更新 / 自启 / 传感器权限）返回
+ *  - 桌面专属能力（文件对话框 / 打开外部 / 通知 / 更新 / 自启）返回
  *    空值或 no-op resolve，对应 UI 入口在 web 端点按 capabilities 置灰（endpoint.ts）；
+ *  - 传感器权限（2026-11-22 反馈修正）：不再写死 unknown 桩——走浏览器标准
+ *    权限面（Permissions API，不支持时回退 enumerateDevices 的 label 探测），
+ *    授权经 getUserMedia 拉起浏览器站点权限弹框。前提是安全上下文
+ *    （HTTPS 域名部署或 localhost）：非安全上下文浏览器根本不暴露
+ *    navigator.mediaDevices，硬件能力整体不可用，权限恒 unknown。
  *  - 事件监听（on*）注册即返回解绑函数，web 里没有主进程推送；
  *  - `isWeb: true` 是端点形态的唯一定位标记；`portNonce` / `windowMaterial` 给
  *    垫值（port 握手与亚克力判断在 web 里都不会发生）。
  */
+
+/** Permissions API 的媒体权限名（Safari 旧版不支持 → 走 label 探测回退）。 */
+const SENSOR_PERMISSION_NAMES: Record<SensorKind, 'microphone' | 'camera'> = {
+  microphone: 'microphone',
+  camera: 'camera',
+};
+
+function mediaDevices(): MediaDevices | undefined {
+  return globalThis.navigator?.mediaDevices;
+}
+
+/** 浏览器权限态 → 传感器三态（'prompt' 即未询问过）。 */
+function mapPermissionState(state: PermissionStatus['state']): SensorPermissionStatus {
+  if (state === 'granted') return 'granted';
+  if (state === 'denied') return 'denied';
+  return 'not-determined';
+}
+
+/**
+ * 无 Permissions API 时的回退：enumerateDevices 的 label 只有授权后才非空
+ * （浏览器隐私基线）。没有任何设备时按未询问处理（保持授权按钮可见）。
+ */
+async function probeByDeviceLabels(kind: SensorKind): Promise<SensorPermissionStatus> {
+  const deviceKind = kind === 'microphone' ? 'audioinput' : 'videoinput';
+  try {
+    const devices = (await mediaDevices()?.enumerateDevices()) ?? [];
+    return devices.some((device) => device.kind === deviceKind && device.label.length > 0)
+      ? 'granted'
+      : 'not-determined';
+  } catch {
+    return 'not-determined';
+  }
+}
+
+async function sensorPermissionStatus(kind: SensorKind): Promise<SensorPermissionStatus> {
+  // 非安全上下文（局域网 http://IP 直连）：浏览器不暴露 mediaDevices，硬件
+  // 整体不可用——不给出会误导的「去授权」按钮，恒 unknown。
+  if (!globalThis.isSecureContext || mediaDevices() === undefined) return 'unknown';
+  try {
+    const status = await navigator.permissions.query({
+      name: SENSOR_PERMISSION_NAMES[kind],
+    });
+    return mapPermissionState(status.state);
+  } catch {
+    return probeByDeviceLabels(kind);
+  }
+}
+
+/** 授权请求：getUserMedia 真开一帧（浏览器在此弹站点权限框），轨道即取即停。 */
+async function sensorPermissionRequest(kind: SensorKind): Promise<boolean> {
+  const md = mediaDevices();
+  if (md === undefined) return false;
+  try {
+    const stream = await md.getUserMedia(kind === 'microphone' ? { audio: true } : { video: true });
+    for (const track of stream.getTracks()) track.stop();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function installWebShim(version: string): void {
   const noop = (): Promise<void> => Promise.resolve();
   const unbind = (): (() => void) => () => {};
@@ -63,8 +130,10 @@ export function installWebShim(version: string): void {
     // FileViewer 的 HTML 档只在桌面宿主存在，web 里不会走到。
     openExternal: noop,
     sendTestNotification: noop,
-    sensorPermissionStatus: () => Promise.resolve('unknown'),
-    sensorPermissionRequest: () => Promise.resolve(false),
+    // 传感器权限（web 桥）：浏览器标准权限面 + getUserMedia 探测（见顶部注释）。
+    sensorPermissionStatus: (kind) => sensorPermissionStatus(kind),
+    sensorPermissionRequest: (kind) => sensorPermissionRequest(kind),
+    // 浏览器站点权限没有可深链的系统设置页：交给浏览器自身站点权限入口（no-op）。
     sensorOpenSettings: noop,
     onAutostartResult: () => unbind,
     // D105 / P-B2 计算机操控（docs/design/52 §6）：CuaDriver 与被操控的桌面都在本机——
@@ -84,6 +153,7 @@ export function installWebShim(version: string): void {
     installUpdateNow: () => Promise.resolve({ ok: false, message: 'desktop-only' }),
     checkForUpdate: () => Promise.resolve({ ok: false, message: 'desktop-only' }),
     keepWaitingOnUpdate: noop,
+    cancelUpdateDownload: noop,
     onUpdateStatus: () => unbind,
   };
 }

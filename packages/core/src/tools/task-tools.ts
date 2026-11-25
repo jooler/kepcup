@@ -47,6 +47,12 @@ export interface StartTaskInput {
   writes?: boolean | string[];
   /** Cwd root; default = the bound workdir when available, else the workspace. */
   cwd?: 'workspace' | 'workdir' | undefined;
+  /**
+   * D140-4: run the task in an isolated `git worktree` next to the workdir
+   * (`<workdir parent>/.worktree/`). Write tasks only, built-in engine only;
+   * the changes come back through a「应用到工作目录」card.
+   */
+  isolation?: 'worktree' | undefined;
   /** Replay this settled task's process into the new one (D56 budget, §7.1). */
   continuesTaskId?: string | undefined;
   /**
@@ -168,9 +174,13 @@ export interface TaskSummary {
   startupQueueReason?: string | null;
   awaitingInput: boolean;
   injectable: boolean;
-  /** Latest visible progress line of the task (clipped), if any. */
+  /** Latest visible progress line of the task (if any), clipped. */
   lastProgress: string | null;
   error: string | null;
+  /** D140-1: the first paths this task claimed / auto-claimed (capped). */
+  claimedPaths?: string[] | undefined;
+  /** D140-1: the claim set is longer than the carried head. */
+  claimedPathsMore?: boolean | undefined;
   /** D91: the external capability ids the task declared (absent = none). */
   capabilities?: string[] | undefined;
 }
@@ -433,6 +443,7 @@ export function buildTaskTools(input: {
     source_message_ids: string[];
     writes?: boolean | string[];
     cwd?: 'workspace' | 'workdir';
+    isolation?: 'worktree';
     continues_task_id?: string;
     capabilities?: string[];
   }> = {
@@ -442,7 +453,8 @@ export function buildTaskTools(input: {
       '对话轮只有只读查询工具（无 bash / 写入）；任务拥有完整工具面（bash、写文件、浏览器等），执行中会按需申请权限——本轮做不了的，就用 start_task 派任务去做。' +
       '任务完成后它的结果会交回给你，由你决定怎么告诉用户；过程中只有一条状态通知会更新给用户看（不堆消息）。' +
       'instruction 写清要做什么、要什么结果、约束；source_message_ids 填用户的原消息 id（任务会看到原文与附件）。' +
-      'writes=true 表示要改文件（整目录串行，安全默认）；多个写任务各改一块时，可用 writes 传相对 cwd 的 glob 数组（如 ["apps/renderer/**","packages/core/**"]）声明互不相交的写域，互不相交的写任务可并行；域外写入会被拒绝。只读调研用 writes=false。' +
+      'writes=true 表示要改文件——写任务默认并行（多个写任务可同时改同一目录，互斥是文件级认领、先到先得：任务首次写入某路径即认领，后来者收到 WRITE_CLAIMED，由任务间 send_to_task / wait_for_task 协调；因此交代各任务写不同的文件 / 区域）。' +
+      '要收紧边界时可用 writes 传相对 cwd 的 glob 数组（如 ["apps/renderer/**","docs/**"]）声明写域，域外写入会被硬拒。只读调研用 writes=false。' +
       '任务要用 <capabilities> 里的外部能力（连接应用 / 自定义 MCP）时，在 capabilities 里列出它们的 id（如 ["app:github"]）：任务只会挂上你列出的能力，其余能力任务里也能用，但要先查一步，更慢。' +
       '要接着一条已结束的任务重做，用 continues_task_id（先 cancel_task 进行中的那条）。派出后不必再复述「已派出」——任务卡会即时出现在对话里；有排队、能力不可用等用户需要知道的情况时才补一句。',
     parameters: Type.Object(
@@ -457,12 +469,18 @@ export function buildTaskTools(input: {
         writes: Type.Optional(
           Type.Union([Type.Boolean(), Type.Array(Type.String({ description: '相对 cwd 的 glob，如 apps/renderer/**' }))], {
             description:
-              'true = 整目录写任务（安全默认，写任务串行）；glob 数组 = 声明互不相交的写域（如 ["apps/renderer/**"]），域不相交的写任务可并行；false / 省略 = 只读。接续任务省略时继承来源任务',
+              'true = 写任务（默认与其他写任务并行，文件级先到先得认领）；glob 数组 = 声明写域（如 ["apps/renderer/**"]），域外写入会被拒绝；false / 省略 = 只读。接续任务省略时继承来源任务',
           }),
         ),
         cwd: Type.Optional(
           Type.Union([Type.Literal('workspace'), Type.Literal('workdir')], {
             description: '工作目录：workdir（对话绑定的工作目录，缺省时有绑定即用）或 workspace',
+          }),
+        ),
+        isolation: Type.Optional(
+          Type.Literal('worktree', {
+            description:
+              'worktree = 在绑定的工作目录旁边建一个独立的 git worktree，任务在那个隔离目录里执行（只支持内置引擎的写任务）；改动先落在隔离目录，任务结束后由用户决定是否应用到工作目录。多个任务同时改同一目录又互不影响时使用',
           }),
         ),
         continues_task_id: Type.Optional(
@@ -497,6 +515,9 @@ export function buildTaskTools(input: {
         if (params.cwd !== undefined && params.cwd !== 'workspace' && params.cwd !== 'workdir') {
           return fail('INVALID_INPUT', 'cwd 只能是 workspace 或 workdir');
         }
+        if (params.isolation !== undefined && params.isolation !== 'worktree') {
+          return fail('INVALID_INPUT', 'isolation 目前只支持 worktree');
+        }
         const capabilities = capabilityIds(params.capabilities);
         if (typeof capabilities === 'string') return fail('INVALID_INPUT', capabilities);
         const started = tasks.start(identity, {
@@ -505,6 +526,7 @@ export function buildTaskTools(input: {
           sourceMessageIds: ids,
           ...(writes !== undefined ? { writes } : {}),
           ...(params.cwd !== undefined ? { cwd: params.cwd } : {}),
+          ...(params.isolation !== undefined ? { isolation: params.isolation } : {}),
           ...(params.continues_task_id !== undefined && params.continues_task_id.trim() !== ''
             ? { continuesTaskId: params.continues_task_id.trim() }
             : {}),
@@ -735,8 +757,8 @@ export function buildClaimTools(input: {
   const claimPaths: ToolDefinition<{ paths: string[]; reason: string }> = {
     name: 'claim',
     description:
-      '认领本任务写域内的一小片路径（相对 cwd 的 glob），让其他任务写到这里时被拒绝（WRITE_CLAIMED）——只用于你们确实要碰同一块区域时，先认领再动手。' +
-      `一次最多 ${TASK_CLAIM_PATHS_MAX} 条；必须在自己的写域内。完成或改道后 release；任务结束会自动释放。这是协调原语，不是永久锁。`,
+      '认领本任务写域内的一小片路径（相对 cwd 的 glob），让其他任务写到这里时被拒绝（WRITE_CLAIMED）——写任务默认并行，你首次成功写入的路径会被自动认领（先到先得），这个工具用于提前整块占用。' +
+      `一次最多 ${TASK_CLAIM_PATHS_MAX} 条；必须在自己的写域内；对同一目录下所有并行任务生效（含其他对话派出的）。完成或改道后 release；任务结束会自动释放。这是协调原语，不是永久锁。`,
     parameters: Type.Object(
       {
         paths: Type.Array(Type.String(), {

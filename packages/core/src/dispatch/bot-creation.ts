@@ -39,12 +39,15 @@ export interface CreatedBotRecord {
 /**
  * 只写库：建 Bot 行并打开私聊，不推送事件（调用方可以把它放进事务，提交后再
  * `announceCreatedBot`）。`runtime` 覆盖模型相关字段（D88；缺省 = 跟随设置默认）。
+ * `ownerPrincipalId`（62.11 C3）：提议确认发生在某个会话里——新建 Bot 的私聊
+ * 归该会话的 owner（缺省 / null = 单用户桶，行为不变）。
  */
 export function createProposedBotRecord(
   deps: Pick<ProposedBotDeps, 'bots' | 'conversations'>,
   item: ButlerProposedBot,
   slot: number,
   runtime?: Partial<Pick<BotProfile['runtime'], 'model' | 'light_model' | 'agent'>>,
+  ownerPrincipalId?: string | null,
 ): CreatedBotRecord {
   // 只写 Profile 的配置值（'' = 跟随设置默认）；选取仍由 llm-router 负责。
   const overrides = runtime ?? (item.model.length > 0 ? { model: item.model } : undefined);
@@ -53,7 +56,12 @@ export function createProposedBotRecord(
     role: { expertise: item.expertise, responsibilities: item.responsibilities },
     ...(overrides !== undefined ? { runtime: { ...overrides } as BotProfile['runtime'] } : {}),
   });
-  const { conversation, created } = deps.conversations.openDirect(bot.id);
+  const { conversation, created } = deps.conversations.openDirect(
+    bot.id,
+    ownerPrincipalId != null && ownerPrincipalId.length > 0
+      ? { ownerPrincipalId }
+      : undefined,
+  );
   return { bot, conversation, opened: created };
 }
 

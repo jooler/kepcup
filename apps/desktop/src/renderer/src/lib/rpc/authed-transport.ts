@@ -15,6 +15,14 @@ export interface AuthProbe {
   mode: 'password' | 'pairing';
   /** password 模式下当前 Cookie 是否已登录。 */
   authenticated: boolean;
+  /**
+   * 团队端点标记（T5，62.08 §3）：whoami 200 的 body 带 `member` 即团队服务器
+   * （个人版服务器 200 返回 `{mode,username}`，无 member）。个人版路径完全不带
+   * 这些字段——休眠铁律：非团队上下文行为不变。
+   */
+  member?: { id: string; displayName: string };
+  /** 团队端点：管理员重置过密码，登录门应先进改密视图（/api/auth/password）。 */
+  mustChangePassword?: boolean;
 }
 
 let probeCache: Promise<AuthProbe | null> | null = null;
@@ -33,21 +41,53 @@ function whoamiProbeUrl(): string {
 }
 
 /**
+ * 解析 whoami 200 body 里的团队端点标记（T5）：`member: {id, displayName}` 是
+ * 团队服务器的唯一标识（个人版返回 `{mode, username}`）。body 缺失 / 坏 JSON /
+ * 字段形状不对都按「个人版」处理——绝不因为 body 读不到而改变既有三态语义。
+ */
+function teamMemberOf(body: unknown): AuthProbe['member'] | undefined {
+  if (typeof body !== 'object' || body === null) return undefined;
+  const member = (body as { member?: unknown }).member;
+  if (typeof member !== 'object' || member === null) return undefined;
+  const { id, displayName } = member as { id?: unknown; displayName?: unknown };
+  if (typeof id !== 'string' || id.length === 0 || typeof displayName !== 'string') {
+    return undefined;
+  }
+  return { id, displayName };
+}
+
+/**
  * 探测服务器认证模型（成功结果记忆化，CoreConnection 与 Gate 共享同一次请求）：
  * `/api/auth/whoami` 404 = 配对模式（无此路由）；401/200 = 密码模式。
  * 其余一律返回 null（不定论，不记忆）——网络失败，或反代在服务重启/上游未起时
  * 回的 5xx（审查 P3：原先 502 也被当 password，登录页对着网关错误死磕）。
  * null 不记忆，下次调用重新探测。
+ * 200 时顺带解析 body：带 `member` 即团队端点（401 的两种服务器 body 都没有
+ * member，无需读），`mustChangePassword` 随标志透传给登录门。
  */
 export function probeServerAuth(): Promise<AuthProbe | null> {
   if (probeCache !== null) return probeCache;
   const pending = fetch(whoamiProbeUrl(), { cache: 'no-store' })
-    .then((response): AuthProbe | null => {
+    .then(async (response): Promise<AuthProbe | null> => {
       if (response.status === 404) {
         return { mode: 'pairing', authenticated: false };
       }
-      if (response.status === 200 || response.status === 401) {
-        return { mode: 'password', authenticated: response.status === 200 };
+      if (response.status === 200) {
+        const body = await response.json().catch(() => null);
+        const member = teamMemberOf(body);
+        if (member !== undefined) {
+          return {
+            mode: 'password',
+            authenticated: true,
+            member,
+            mustChangePassword:
+              (body as { mustChangePassword?: unknown } | null)?.mustChangePassword === true,
+          };
+        }
+        return { mode: 'password', authenticated: true };
+      }
+      if (response.status === 401) {
+        return { mode: 'password', authenticated: false };
       }
       return null;
     })
@@ -109,6 +149,13 @@ export class AuthedWsTransport implements RpcTransport {
   #linkState: AuthedLinkState = 'connecting';
   #stateHandlers = new Set<(state: AuthedLinkState) => void>();
   #dataHandler: ((data: unknown) => void) | null = null;
+  /**
+   * handler 注册前到达的入站帧缓冲。发起连接（gate）与绑定 birpc（CoreConnection
+   * #startWeb）分属两条 await 链，WS 升级完成、服务端 attach 即推 `core.status`
+   * 快照，可能早于 birpc 的 onData 注册——直接丢帧的话 App 永远停在「核心服务
+   * 启动中…」（服务端只在 attach 与状态变化时推）。注册时按序重放补收。
+   */
+  #pendingFrames: string[] = [];
   #backoffMs = 1_000;
   #reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   #closed = false;
@@ -145,6 +192,9 @@ export class AuthedWsTransport implements RpcTransport {
   connect(): void {
     if (this.#closed) return;
     if (this.#ws !== null) return;
+    // 缓冲帧属于旧 socket 生命周期：新连接的服务端 attach 会重推最新快照，
+    // 旧帧（可能过期）不跨连接重放。
+    this.#pendingFrames = [];
     this.#setLinkState(this.#linkState === 'unauthenticated' ? 'connecting' : this.#linkState);
     const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
     let ws: WebSocket;
@@ -163,6 +213,11 @@ export class AuthedWsTransport implements RpcTransport {
     ws.onmessage = (event) => {
       this.#lastInboundAt = Date.now();
       if (typeof event.data !== 'string') return;
+      // birpc 未绑定（onData 未注册）先缓冲，注册时重放——不丢 attach 快照帧。
+      if (this.#dataHandler === null) {
+        this.#pendingFrames.push(event.data);
+        return;
+      }
       try {
         this.#dataHandler?.(JSON.parse(event.data));
       } catch {
@@ -225,6 +280,16 @@ export class AuthedWsTransport implements RpcTransport {
 
   onData(handler: (data: unknown) => void): () => void {
     this.#dataHandler = handler;
+    // 重放注册前缓冲的帧（attach 快照竞态补收，见 #pendingFrames 注释）。
+    const pending = this.#pendingFrames;
+    this.#pendingFrames = [];
+    for (const text of pending) {
+      try {
+        handler(JSON.parse(text));
+      } catch {
+        // 服务端不会发非 JSON；坏帧丢弃。
+      }
+    }
     return () => {
       if (this.#dataHandler === handler) this.#dataHandler = null;
     };

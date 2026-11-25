@@ -72,6 +72,35 @@
     void webGate.login(loginUser.trim(), loginPass);
   }
 
+  // --- 团队端点改密（T5）：管理员重置过密码，登录门先进改密视图。
+  let changeCurrent = $state('');
+  let changeNext = $state('');
+  let changeConfirm = $state('');
+
+  const CHANGE_ERROR_KEYS = {
+    invalid: 'web.changePassword.invalid',
+    weak: 'web.changePassword.weak',
+    ratelimited: 'web.changePassword.ratelimited',
+    error: 'web.changePassword.error',
+  } as const;
+  const changeErrorKey = $derived(
+    webGate.changePasswordError !== null ? CHANGE_ERROR_KEYS[webGate.changePasswordError] : null,
+  );
+  const changeMismatch = $derived(
+    changeNext.length > 0 && changeConfirm.length > 0 && changeNext !== changeConfirm,
+  );
+  const changeReady = $derived(
+    changeCurrent.length > 0 &&
+      changeNext.length >= 8 &&
+      changeNext === changeConfirm &&
+      !webGate.changePasswordPending,
+  );
+
+  function submitPasswordChange(): void {
+    if (!changeReady) return;
+    void webGate.submitPasswordChange(changeCurrent, changeNext);
+  }
+
   // --- 页内扫码（D96 配对体验）：系统相机扫完一关浏览器地址就找不回来（微信内置
   // 浏览器尤甚），页内扫码让配对链接全程不离开本页。iOS Safari 没有 BarcodeDetector，
   // 直接用 jsQR 全平台一条路径；getUserMedia 需 HTTPS（PWA 部署域满足）。
@@ -217,25 +246,30 @@
     <!-- 自定义标题栏：远程模式的壳没有原生标题栏（macOS hiddenInset / win-linux hidden），
          窗口拖拽由这条 drag 区域承担。logo + 标题居中，天然避开左上角的 mac 红绿灯与
          右上角的 Windows 原生 caption 三键，三平台无需分别留白；浏览器里
-         -webkit-app-region 不生效，退化成普通页头。 -->
-    <header
-      class="app-drag relative flex h-12 shrink-0 items-center justify-center gap-2 select-none"
-    >
-      <img src="/icon.svg" alt="" class="size-6 rounded-md" />
-      <span class="text-sm font-medium">{t('web.gate.title')}</span>
-      <!-- 原生壳:门状态页的断开出口(D122),右上角避开居中的 logo/标题。 -->
-      {#if NATIVE_SHELL && ENDPOINT_KIND === 'remote'}
-        <button
-          type="button"
-          class="absolute top-1/2 right-3 -translate-y-1/2 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted"
-          title={t('web.shell.disconnectHint')}
-          onclick={disconnectToHome}
-          data-testid="web-shell-disconnect"
-        >
-          {t('web.shell.disconnect')}
-        </button>
-      {/if}
-    </header>
+         -webkit-app-region 不生效，退化成普通页头。
+         登录视图例外：它是独立认证页（login-card 模板），品牌区（logo + 产品名）
+         直接长在卡片上方，壳头会重复——整个隐藏。桌面 Electron 是 desktop 端点
+         不进登录视图，原生壳无窗口拖拽需求，无副作用。 -->
+    {#if view !== 'login'}
+      <header
+        class="app-drag relative flex h-12 shrink-0 items-center justify-center gap-2 select-none"
+      >
+        <img src="/icon.svg" alt="" class="size-6 rounded-md" />
+        <span class="text-sm font-medium">{t('web.gate.title')}</span>
+        <!-- 原生壳:门状态页的断开出口(D122),右上角避开居中的 logo/标题。 -->
+        {#if NATIVE_SHELL && ENDPOINT_KIND === 'remote'}
+          <button
+            type="button"
+            class="absolute top-1/2 right-3 -translate-y-1/2 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted"
+            title={t('web.shell.disconnectHint')}
+            onclick={disconnectToHome}
+            data-testid="web-shell-disconnect"
+          >
+            {t('web.shell.disconnect')}
+          </button>
+        {/if}
+      </header>
+    {/if}
 
     <main class="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6 pb-10">
       {#if scanning}
@@ -258,51 +292,143 @@
           </button>
         </div>
       {:else if view === 'login'}
-        <div class="w-full max-w-sm space-y-4" data-testid="web-gate-login">
-          <h1 class="text-lg font-semibold">{t('web.login.title')}</h1>
-          <p class="text-sm text-muted-foreground">{t('web.login.body')}</p>
+        <!-- login-card 模板（astryx templates?preview=login-card）的 Svelte/Tailwind
+             对应实现：品牌区（logo + 产品名）→ 登录卡（居中标题 + 副标题、大号输入、
+             通栏主按钮）→ 卡下法务行。模板里「Or continue with」分隔、第三方登录与
+             注册入口不渲染——headless 直连只支持账号密码，无第三方登录与自主注册。
+             法务行两个链接开新标签（服务条款 / 隐私政策，public/ 静态页）。 -->
+        <div class="flex w-full max-w-sm flex-col items-center gap-5" data-testid="web-gate-login">
+          <div class="flex flex-col items-center gap-2">
+            <img src="/icon.svg" alt="" class="size-9 rounded-xl" />
+            <span class="text-xl font-bold">KepCup</span>
+          </div>
+          <div class="w-full rounded-xl border border-border bg-card p-8">
+            <div class="flex flex-col items-center gap-1 text-center">
+              <h1 class="text-2xl font-semibold">{t('web.login.title')}</h1>
+              <p class="text-sm text-muted-foreground">{t('web.login.body')}</p>
+            </div>
+            <form
+              class="mt-6 space-y-3"
+              onsubmit={(event) => {
+                event.preventDefault();
+                submitLogin();
+              }}
+            >
+              <input
+                class="h-11 w-full rounded-lg border border-input bg-transparent px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring"
+                type="text"
+                autocomplete="username"
+                spellcheck="false"
+                placeholder={t('web.login.user')}
+                bind:value={loginUser}
+                data-testid="web-login-user"
+              />
+              <input
+                class="h-11 w-full rounded-lg border border-input bg-transparent px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring"
+                type="password"
+                autocomplete="current-password"
+                placeholder={t('web.login.password')}
+                bind:value={loginPass}
+                data-testid="web-login-password"
+              />
+              {#if loginErrorKey !== null}
+                <p class="text-xs text-destructive" data-testid="web-login-error">
+                  {t(loginErrorKey)}
+                </p>
+              {/if}
+              <button
+                type="submit"
+                class="h-11 w-full rounded-lg bg-primary text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                disabled={webGate.loginPending ||
+                  loginUser.trim().length === 0 ||
+                  loginPass.length === 0}
+                data-testid="web-login-submit"
+              >
+                {webGate.loginPending ? t('web.login.pending') : t('web.login.submit')}
+              </button>
+            </form>
+          </div>
+          <p class="text-center text-sm text-muted-foreground">
+            {t('web.login.legal.pre')}
+            <a
+              href="/terms.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="text-foreground underline-offset-2 hover:underline"
+            >
+              {t('web.login.legal.terms')}
+            </a>
+            {t('web.login.legal.and')}
+            <a
+              href="/privacy.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="text-foreground underline-offset-2 hover:underline"
+            >
+              {t('web.login.legal.privacy')}
+            </a>
+            {t('web.login.legal.suffix')}
+          </p>
+        </div>
+      {:else if view === 'change-password'}
+        <div class="w-full max-w-sm space-y-4" data-testid="web-gate-change-password">
+          <h1 class="text-lg font-semibold">{t('web.changePassword.title')}</h1>
+          <p class="text-sm text-muted-foreground">{t('web.changePassword.body')}</p>
           <form
             class="space-y-3"
             onsubmit={(event) => {
               event.preventDefault();
-              submitLogin();
+              submitPasswordChange();
             }}
           >
             <label class="grid gap-1.5">
-              <span class="text-xs text-muted-foreground">{t('web.login.user')}</span>
-              <input
-                class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:border-ring"
-                type="text"
-                autocomplete="username"
-                spellcheck="false"
-                bind:value={loginUser}
-                data-testid="web-login-user"
-              />
-            </label>
-            <label class="grid gap-1.5">
-              <span class="text-xs text-muted-foreground">{t('web.login.password')}</span>
+              <span class="text-xs text-muted-foreground">{t('web.changePassword.current')}</span>
               <input
                 class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:border-ring"
                 type="password"
                 autocomplete="current-password"
-                bind:value={loginPass}
-                data-testid="web-login-password"
+                bind:value={changeCurrent}
+                data-testid="web-change-current"
               />
             </label>
-            {#if loginErrorKey !== null}
-              <p class="text-xs text-destructive" data-testid="web-login-error">
-                {t(loginErrorKey)}
+            <label class="grid gap-1.5">
+              <span class="text-xs text-muted-foreground">{t('web.changePassword.next')}</span>
+              <input
+                class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:border-ring"
+                type="password"
+                autocomplete="new-password"
+                bind:value={changeNext}
+                data-testid="web-change-next"
+              />
+            </label>
+            <label class="grid gap-1.5">
+              <span class="text-xs text-muted-foreground">{t('web.changePassword.confirm')}</span>
+              <input
+                class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:border-ring"
+                type="password"
+                autocomplete="new-password"
+                bind:value={changeConfirm}
+                data-testid="web-change-confirm"
+              />
+            </label>
+            {#if changeMismatch}
+              <p class="text-xs text-destructive" data-testid="web-change-mismatch">
+                {t('web.changePassword.mismatch')}
+              </p>
+            {:else if changeErrorKey !== null}
+              <p class="text-xs text-destructive" data-testid="web-change-error">
+                {t(changeErrorKey)}
               </p>
             {/if}
             <button
               type="submit"
               class="h-10 w-full rounded-md bg-primary text-sm font-medium text-primary-foreground hover:bg-primary/80 disabled:opacity-50"
-              disabled={webGate.loginPending ||
-                loginUser.trim().length === 0 ||
-                loginPass.length === 0}
-              data-testid="web-login-submit"
+              disabled={!changeReady}
+              data-testid="web-change-submit"
             >
-              {webGate.loginPending ? t('web.login.pending') : t('web.login.submit')}
+              {webGate.changePasswordPending
+                ? t('web.changePassword.pending')
+                : t('web.changePassword.submit')}
             </button>
           </form>
         </div>

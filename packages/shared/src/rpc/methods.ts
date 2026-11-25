@@ -205,6 +205,9 @@ import {
   effectStatusSchema,
   conversationSchema,
   providerInstanceSchema,
+  // T8 缓存视图类型（镜像 conversation/message 的服务端形状）。
+  type Conversation,
+  type Message,
   capabilityModelsSchema,
   embeddingStatusSchema,
   envInstallSchema,
@@ -426,6 +429,229 @@ export const diagnosticsOutputSchema = z.object({
 });
 export type DiagnosticsOutput = z.infer<typeof diagnosticsOutputSchema>;
 export type SystemShutdownOutput = z.infer<typeof systemShutdownOutputSchema>;
+
+// --- T7 桌面融合视图（62.08 §3 / T7 §2 凭据与多账号，PLATFORM_RPC_METHODS 契约）--
+// Desktop-only: the MAIN process owns team-server credentials (safeStorage 加密
+// 落 <userData>/team-servers.json) and the fusion WS bridge（web 端不实现——T5 的
+// 同源 web 上下文不经这些方法；core 也不实现）。渲染层经桌面 preload 桥调用。
+// token 永不出主进程：list 的输出没有 token 字段，也不存在把 token 交给渲染层的
+// 方法（含 remember=false 的会话内存 token）。
+
+/** T7：某服务器上曾登录过的成员账号（登录选择器数据，62.10 §4「微信式」）。 */
+export const teamServerAccountSchema = z.object({
+  memberId: z.string().min(1),
+  username: z.string(),
+  displayName: z.string(),
+  /** true = token 已加密落盘可跨重启使用；false = 仅本次会话（内存）持有。 */
+  remembered: z.boolean(),
+});
+export type TeamServerAccount = z.infer<typeof teamServerAccountSchema>;
+
+/** T7：桥接状态机（任何变化经 ipc 事件 team-servers:changed 通知渲染层）。 */
+export const teamServerStatusSchema = z.enum([
+  'idle',
+  'connecting',
+  'connected',
+  'unauthenticated',
+  'error',
+  /** 连续多次握手 / 重试未果：UI 显示「服务器不可用」；桥仍后台退避重试。 */
+  'unreachable',
+]);
+export type TeamServerStatus = z.infer<typeof teamServerStatusSchema>;
+
+/** T7：list() 的单条目（serverHash = sha256(url) 前 16 hex，同 remoteProfileHash）。 */
+export const teamServerEntrySchema = z.object({
+  serverHash: z.string().min(1),
+  /** Normalized origin + path（同 resolveRemoteMode 的清洗规则）。 */
+  url: z.string(),
+  /**
+   * 用户在本机给服务器起的显示名（仅本机设置，不上传服务器；'' = 未设——
+   * UI 显示回退到 url）。
+   */
+  name: z.string(),
+  accounts: z.array(teamServerAccountSchema),
+  /** 同一时刻每服务器只激活一个账号；null = 已登出 / 未登录。 */
+  activeMemberId: z.string().nullable(),
+  status: teamServerStatusSchema,
+});
+export type TeamServerEntry = z.infer<typeof teamServerEntrySchema>;
+
+export const platformTeamServersListOutputSchema = z.array(teamServerEntrySchema);
+export type PlatformTeamServersListOutput = z.infer<typeof platformTeamServersListOutputSchema>;
+
+export const platformTeamServersAddInputSchema = z.object({
+  /** Team server URL（http/https、无内嵌凭据；query / hash 由主进程剥离）。 */
+  url: z.string().min(1),
+});
+export const platformTeamServersAddOutputSchema = z.object({ serverHash: z.string().min(1) });
+
+export const platformTeamServersServerHashInputSchema = z.object({
+  serverHash: z.string().min(1),
+});
+
+/**
+ * 本机重命名服务器（设置 - 团队服务器）：name trim 后落 team-servers.json；
+ * 空串 = 清除名称（UI 回退显示 url）。名字只存本机，不上传服务器。
+ */
+export const platformTeamServersRenameInputSchema = z.object({
+  serverHash: z.string().min(1),
+  name: z.string().max(100),
+});
+
+export const platformTeamServersLoginInputSchema = z.object({
+  serverHash: z.string().min(1),
+  username: z.string().min(1),
+  password: z.string().min(1),
+  /** false = token 仅内存持有；safeStorage 不可用时主进程强制按 false 处理。 */
+  remember: z.boolean(),
+});
+export const platformTeamServersLoginOutputSchema = z.object({
+  member: z.object({ id: z.string().min(1), displayName: z.string() }),
+});
+
+export const platformTeamServersSwitchAccountInputSchema = z.object({
+  serverHash: z.string().min(1),
+  memberId: z.string().min(1),
+});
+
+/**
+ * T5 连接流程（健康检查）：添加服务器时先探测 `GET /api/auth/whoami`（主进程
+ * fetch，6s 超时）再登记——「确认服务可用，再出现登录表单」。分类口径与
+ * authed-transport 的 probeServerAuth 一致：401/403 = 团队服务器密码模式未登录；
+ * 200 + member = 已认证（携 token 场景）；404 = 配对模式（headless 个人服务器，
+ * 不是团队服务器）；其它 / 非 JSON = unknown；网络错误 = unreachable。
+ */
+export const platformTeamServersProbeInputSchema = z.object({
+  url: z.string().min(1),
+});
+export const platformTeamServersProbeOutputSchema = z.object({
+  reachable: z.boolean(),
+  /** 'team' = KepCup 团队服务器；'personal' = 配对模式个人服务器；'unknown' = 非 KepCup 服务。 */
+  kind: z.enum(['team', 'personal', 'unknown']),
+  /** kind='team' 且会话有效时 true（whoami 200 + member）。 */
+  authenticated: z.boolean().optional(),
+  member: z.object({ id: z.string().min(1), displayName: z.string() }).optional(),
+  /**
+   * 失败 / 未识别时的可读原因（网络错误文本、HTTP 状态等）。设置界面的
+   * 「无法连接」弹框直接展示，便于用户区分「服务器没起」「端口不对」「不是
+   * 团队服务器」。成功探测（kind='team'）不带该字段。
+   */
+  detail: z.string().optional(),
+});
+export type PlatformTeamServersProbeOutput = z.infer<typeof platformTeamServersProbeOutputSchema>;
+
+// --- T8 客户端本地缓存（62.10 D136 / T8 §2，PLATFORM_RPC_METHODS 契约）--------
+// Desktop-only: the MAIN process owns the encrypted per-partition mirror
+// (<userData>/team-cache/<serverHash>/<memberId>/cache.db, better-sqlite3-
+// multiple-ciphers 整库加密 + safeStorage 保护的分区密钥；附件逐文件 AEAD)。
+// web 端不实现——web 的缓存走渲染层 IndexedDB 适配器（同名 TeamCacheStore 接口，
+// 不加密，平台限制文档明示）；core 也不实现。渲染层经桌面 preload 桥调用。
+// 缓存是只读镜像：这里没有任何把本地改动回写服务端的通路；分区只服务当前
+// 登录成员（成员资格由渲染层同步引擎保证——分区库内部不再校验成员）。
+
+/** 缓存的会话视图：与 team.bootstrap / conversations.list 的字段完全一致（镜像）。 */
+export const conversationCacheSchema = conversationSchema;
+export type ConversationCache = Conversation;
+
+/** 缓存的消息视图：与 messages.list 的字段完全一致（含卡片内容的原样 JSON）。 */
+export const messageCacheSchema = messageSchema;
+export type MessageCache = Message;
+
+/**
+ * 分区标识的格式钉死（T8 审查修正）：serverHash / memberId 会拼进文件系统路径
+ * （`<userData>/team-cache/<serverHash>/<memberId>/`），必须在 schema 层拒绝
+ * `..` / `/` / `\` / 绝对路径等任何路径注入形状——serverHash 恰为
+ * `teamServerHash`（= remoteProfileHash，sha256(url) 前 16 位小写 hex，同
+ * remote-mode.ts 的 REMOTE_PROFILE_PATTERN）；memberId 为团队服务器铸造的
+ * `mbr_` 前缀 + 白名单字符集（数字 / 字母，ULID 兼容）。service.ts 再做一道
+ * 同款校验（双保险：直连 in-process 调用不过 zod）。
+ */
+export const TEAM_CACHE_SERVER_HASH_PATTERN = /^[0-9a-f]{16}$/;
+export const TEAM_CACHE_MEMBER_ID_PATTERN = /^mbr_[0-9A-Za-z]{1,64}$/;
+
+const platformTeamCachePartitionInputSchema = z.object({
+  serverHash: z.string().regex(TEAM_CACHE_SERVER_HASH_PATTERN),
+  memberId: z.string().regex(TEAM_CACHE_MEMBER_ID_PATTERN),
+});
+
+export const platformTeamCacheOpenInputSchema = platformTeamCachePartitionInputSchema;
+export const platformTeamCacheOpenOutputSchema = z.object({ ok: z.literal(true) });
+
+export const platformTeamCacheCloseInputSchema = platformTeamCachePartitionInputSchema;
+export const platformTeamCacheCloseOutputSchema = z.object({ ok: z.literal(true) });
+
+export const platformTeamCachePutConversationsInputSchema =
+  platformTeamCachePartitionInputSchema.extend({
+    /** Upsert 全量；replace=true = 对账（删除列表里不存在的行，bootstrap 收敛用）。 */
+    conversations: z.array(conversationCacheSchema),
+    replace: z.boolean().optional(),
+  });
+export const platformTeamCachePutConversationsOutputSchema = z.object({ ok: z.literal(true) });
+
+export const platformTeamCachePutMessagesInputSchema =
+  platformTeamCachePartitionInputSchema.extend({
+    conversationId: z.string().min(1),
+    /** 按 seq upsert；replace=true = 该会话全量重置（损坏 / seq 越界重拉用）。 */
+    messages: z.array(messageCacheSchema),
+    replace: z.boolean().optional(),
+  });
+export const platformTeamCachePutMessagesOutputSchema = z.object({ ok: z.literal(true) });
+
+export const platformTeamCacheGetConversationsInputSchema = platformTeamCachePartitionInputSchema;
+export const platformTeamCacheGetConversationsOutputSchema = z.object({
+  conversations: z.array(conversationCacheSchema),
+});
+
+export const platformTeamCacheGetMessagesInputSchema = platformTeamCachePartitionInputSchema.extend({
+  conversationId: z.string().min(1),
+  /** seq < beforeSeq（上滑分页）；缺省 = 最新一页。语义对齐 core messages.list。 */
+  beforeSeq: z.number().int().optional(),
+  limit: z.number().int().min(1).max(200).default(60),
+});
+export const platformTeamCacheGetMessagesOutputSchema = z.object({
+  /** 按 seq 升序返回（core messages.list 同款：desc 取页后再反转）。 */
+  messages: z.array(messageCacheSchema),
+});
+
+export const platformTeamCachePutAttachmentInputSchema =
+  platformTeamCachePartitionInputSchema.extend({
+    /** 附件 id（attachments.get 的 id；文件名落盘前先哈希，防路径注入）。 */
+    key: z.string().min(1),
+    /** base64 字节；主进程写盘前按分区密钥派生子密钥 AEAD 加密（AAD 绑定 key）。 */
+    bytes: z.string().min(1),
+  });
+export const platformTeamCachePutAttachmentOutputSchema = z.object({ ok: z.literal(true) });
+
+export const platformTeamCacheGetAttachmentInputSchema =
+  platformTeamCachePartitionInputSchema.extend({
+    key: z.string().min(1),
+  });
+export const platformTeamCacheGetAttachmentOutputSchema = z.union([
+  z.object({ bytes: z.string() }),
+  z.object({ missing: z.literal(true) }),
+]);
+
+export const platformTeamCacheClearPartitionInputSchema = platformTeamCachePartitionInputSchema;
+export const platformTeamCacheClearPartitionOutputSchema = z.object({ ok: z.literal(true) });
+
+export const platformTeamCacheClearServerInputSchema = z.object({
+  serverHash: z.string().regex(TEAM_CACHE_SERVER_HASH_PATTERN),
+});
+export const platformTeamCacheClearServerOutputSchema = z.object({ ok: z.literal(true) });
+
+/** 设置卡「缓存占用」：分区占用（库 + 附件文件）与附件上限读数。 */
+export const platformTeamCacheUsageInputSchema = platformTeamCachePartitionInputSchema;
+export const platformTeamCacheUsageOutputSchema = z.object({
+  /** 分区尚未建立（从未缓存过）时为 null。 */
+  cacheBytes: z.number().nullable(),
+  attachmentLimitBytes: z.number(),
+});
+
+/** 设置卡「附件上限」：写 <userData>/team-cache/prefs.json（非敏感，不进设置目录）。 */
+export const platformTeamCacheSetAttachmentLimitInputSchema = z.object({
+  limitBytes: z.number().int().min(1),
+});
+export const platformTeamCacheSetAttachmentLimitOutputSchema = z.object({ ok: z.literal(true) });
 
 // --- update gate (P13 任务 2, port B platform methods) ----------------------
 // The main process owns electron-updater; the core only answers "is anything
@@ -1077,6 +1303,32 @@ export const botsDeletionPreviewOutputSchema = z.object({
   /** Projects this bot leads (D92 T1a): the lead must be replaced first. */
   ledProjects: z.array(z.object({ id: z.string(), title: z.string().nullable() })),
 });
+
+/**
+ * 代答场景的一次性轻量生成（T10 / 62.06 §3）：宿主给一段对话记录与要求，让
+ * 指定 Bot 以自己的人设产出一条不调用任何工具的回复文本。通用能力——任何宿主
+ * 都可用（分身代回只是其中一种调用方），core 不解释调用场景。
+ *
+ * - `transcript` ≤ 50 条、每条 ≤ 4000 字：足够覆盖一次代答的上下文，同时把
+ *   单次调用的上下文体量压在轻量模型预算内；
+ * - `instructions` ≤ 2000 字：调用方对本轮生成的要求（口吻 / 边界），core 原样
+ *   注入，不追加任何本机数据（记忆 / 画像原文都不注入——调用方自担内容边界）。
+ */
+export const botsComposeReplyTranscriptEntrySchema = z.strictObject({
+  /** 说话者标签：建议用人名（如成员 / 同事的显示名）或 'user' / 'assistant'。 */
+  speaker: z.string().min(1).max(120),
+  /** 该说话者的一轮发言原文。 */
+  text: z.string().min(1).max(4000),
+});
+export const botsComposeReplyInputSchema = z.strictObject({
+  botId: z.string().min(1),
+  transcript: z.array(botsComposeReplyTranscriptEntrySchema).min(1).max(50),
+  instructions: z.string().min(1).max(2000),
+});
+export const botsComposeReplyOutputSchema = z.strictObject({
+  /** 生成的回复文本（模型原文；调用方负责长度裁剪与发送）。 */
+  text: z.string(),
+});
 export const interviewStartOutputSchema = z.object({
   conversationId: z.string().min(1),
 });
@@ -1159,9 +1411,26 @@ export const projectsCreateInputSchema = z
     title: z.string().min(1).max(PROJECT_TITLE_MAX),
     goal: z.string().max(PROJECT_GOAL_MAX_CHARS).optional(),
     leadBotId: z.string().min(1),
-    memberBotIds: z.array(z.string().min(1)).min(2),
+    memberBotIds: z.array(z.string().min(1)),
+    /**
+     * Human principals joining the project (62.11 C3). A non-empty list relaxes
+     * the bot-member floor from 2 to 1 — the human participants keep the group
+     * collaborative on their own. The binding layer enrolls the caller as the
+     * project lead when a caller context is present; any further client-supplied
+     * ids are a team-layer concern (T4 enrolls members only via
+     * `team.projects.addMembers`).
+     */
+    principalIds: z.array(z.string().min(1)).optional(),
   })
   .superRefine((input, ctx) => {
+    const hasPrincipals = Array.isArray(input.principalIds) && input.principalIds.length > 0;
+    if (input.memberBotIds.length < (hasPrincipals ? 1 : 2)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['memberBotIds'],
+        message: '项目组成员 Bot 数量不足',
+      });
+    }
     if (!input.memberBotIds.includes(input.leadBotId)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -1218,13 +1487,47 @@ export const episodesStopOutputSchema = episodesGetOutputSchema;
 
 // --- messages -------------------------------------------------------------
 
-export const messagesListInputSchema = z.object({
-  conversationId: z.string().min(1),
-  /** Load messages with seq < beforeSeq (pagination); omitted = latest page. */
-  beforeSeq: z.number().int().optional(),
-  limit: z.number().int().min(1).max(200).default(60),
+export const messagesListInputSchema = z
+  .object({
+    conversationId: z.string().min(1),
+    /** Load messages with seq < beforeSeq (pagination); omitted = latest page. */
+    beforeSeq: z.number().int().optional(),
+    /**
+     * Load messages with seq > afterSeq (62.11 C6 incremental pull): ascending
+     * order, capped by `limit`.
+     */
+    afterSeq: z.number().int().optional(),
+    /**
+     * Incremental pull by content-change time (UTC ms, 62.11 C6): returns the
+     * visible messages with coalesce(updatedAt, createdAt) > changedSince —
+     * including edited / recalled rows — capped at the conversation's current
+     * lastSeq. Feed the previous page's output `cursor` back in here.
+     */
+    changedSince: z.number().int().optional(),
+    limit: z.number().int().min(1).max(200).default(60),
+  })
+  .superRefine((input, ctx) => {
+    // The pagination / incremental cursors are mutually exclusive.
+    const provided = (['beforeSeq', 'afterSeq', 'changedSince'] as const).filter(
+      (key) => input[key] !== undefined,
+    );
+    if (provided.length > 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [...provided.slice(1)],
+        message: 'beforeSeq / afterSeq / changedSince 不能同时使用',
+      });
+    }
+  });
+export const messagesListOutputSchema = z.object({
+  messages: z.array(messageSchema),
+  /**
+   * Present on `changedSince` pulls (62.11 C6): the batch's max
+   * coalesce(updatedAt, createdAt), the value to pass as the next pull's
+   * `changedSince`. Absent on ordinary pages.
+   */
+  cursor: z.number().optional(),
 });
-export const messagesListOutputSchema = z.object({ messages: z.array(messageSchema) });
 export const messagesEditInputSchema = z.object({
   id: z.string().min(1),
   text: z.string().min(1).max(100_000),
@@ -1252,6 +1555,14 @@ export const messagesSendInputSchema = z.object({
    * 上下文据此标注（不派 transcribe_audio，回复将由客户端自动转语音播报）。
    */
   voiceMode: z.boolean().optional(),
+  /**
+   * 62.06 / 62.04 §3（团队服务器 T1）：本端分身代用户发出的消息（senderType 仍是
+   * 'user'，经成员本人连接发出）。core 据此在 content 记 origin: 'avatar'；单一
+   * 运行端的强制由团队层负责（T10）。休眠：不传 = 现状。
+   */
+  origin: z.literal('avatar').optional(),
+  /** origin = 'avatar' 时：代回的本端 Bot 名（bot id 属本端，服务端只存名）。 */
+  avatar: z.object({ botName: z.string() }).optional(),
   /** D121：发这条消息的客户端（设备），UI 显示「来自 X」。 */
   client: collabClientRefSchema.optional(),
 });
@@ -2766,6 +3077,11 @@ export const rpcMethodSchemas = {
   'user.avatar.data': { input: userAvatarDataInputSchema, output: userAvatarDataOutputSchema },
   'bots.delete': { input: botIdInputSchema, output: okOutput },
   'bots.deletionPreview': { input: botIdInputSchema, output: botsDeletionPreviewOutputSchema },
+  /** 代答场景的一次性无工具轻量生成（T10；模型链与记账同 light-judgement 先例）。 */
+  'bots.composeReply': {
+    input: botsComposeReplyInputSchema,
+    output: botsComposeReplyOutputSchema,
+  },
   /** 模板导出/导入（docs/design/48-bot-template-export.md）：导出前摘要。 */
   'bots.templatePreview': {
     input: botsTemplatePreviewInputSchema,
@@ -3138,6 +3454,101 @@ export const rpcMethodSchemas = {
   },
   'share.failed.discard': { input: shareFailedDiscardInputSchema, output: okOutput },
 
+  // T7 桌面融合视图：凭据与多账号管理 + 桥接启停（桌面主进程实现，preload 桥到
+  // ipcMain；core / web 端不实现，名称登记在 PLATFORM_RPC_METHODS）。
+  'platform.teamServers.list': {
+    input: voidInput,
+    output: platformTeamServersListOutputSchema,
+  },
+  'platform.teamServers.add': {
+    input: platformTeamServersAddInputSchema,
+    output: platformTeamServersAddOutputSchema,
+  },
+  'platform.teamServers.remove': {
+    input: platformTeamServersServerHashInputSchema,
+    output: okOutput,
+  },
+  'platform.teamServers.login': {
+    input: platformTeamServersLoginInputSchema,
+    output: platformTeamServersLoginOutputSchema,
+  },
+  'platform.teamServers.logout': {
+    input: platformTeamServersServerHashInputSchema,
+    output: okOutput,
+  },
+  'platform.teamServers.switchAccount': {
+    input: platformTeamServersSwitchAccountInputSchema,
+    output: okOutput,
+  },
+  'platform.teamServers.rename': {
+    input: platformTeamServersRenameInputSchema,
+    output: okOutput,
+  },
+  'platform.teamServers.connect': {
+    input: platformTeamServersServerHashInputSchema,
+    output: okOutput,
+  },
+  'platform.teamServers.disconnect': {
+    input: platformTeamServersServerHashInputSchema,
+    output: okOutput,
+  },
+  'platform.teamServers.probe': {
+    input: platformTeamServersProbeInputSchema,
+    output: platformTeamServersProbeOutputSchema,
+  },
+
+  // T8 客户端本地缓存（62.10 D136）：桌面主进程实现（分区整库加密 + 附件 AEAD
+  // + LRU）；web 端不实现（渲染层 IndexedDB 适配器同接口），core 不实现。
+  'platform.teamCache.open': {
+    input: platformTeamCacheOpenInputSchema,
+    output: platformTeamCacheOpenOutputSchema,
+  },
+  'platform.teamCache.close': {
+    input: platformTeamCacheCloseInputSchema,
+    output: platformTeamCacheCloseOutputSchema,
+  },
+  'platform.teamCache.putConversations': {
+    input: platformTeamCachePutConversationsInputSchema,
+    output: platformTeamCachePutConversationsOutputSchema,
+  },
+  'platform.teamCache.putMessages': {
+    input: platformTeamCachePutMessagesInputSchema,
+    output: platformTeamCachePutMessagesOutputSchema,
+  },
+  'platform.teamCache.getConversations': {
+    input: platformTeamCacheGetConversationsInputSchema,
+    output: platformTeamCacheGetConversationsOutputSchema,
+  },
+  'platform.teamCache.getMessages': {
+    input: platformTeamCacheGetMessagesInputSchema,
+    output: platformTeamCacheGetMessagesOutputSchema,
+  },
+  'platform.teamCache.putAttachment': {
+    input: platformTeamCachePutAttachmentInputSchema,
+    output: platformTeamCachePutAttachmentOutputSchema,
+  },
+  'platform.teamCache.getAttachment': {
+    input: platformTeamCacheGetAttachmentInputSchema,
+    output: platformTeamCacheGetAttachmentOutputSchema,
+  },
+  'platform.teamCache.clearPartition': {
+    input: platformTeamCacheClearPartitionInputSchema,
+    output: platformTeamCacheClearPartitionOutputSchema,
+  },
+  'platform.teamCache.clearServer': {
+    input: platformTeamCacheClearServerInputSchema,
+    output: platformTeamCacheClearServerOutputSchema,
+  },
+  // 设置卡（T8 步骤 5）：占用读数与附件上限（prefs.json，非敏感不入设置目录）。
+  'platform.teamCache.usage': {
+    input: platformTeamCacheUsageInputSchema,
+    output: platformTeamCacheUsageOutputSchema,
+  },
+  'platform.teamCache.setAttachmentLimit': {
+    input: platformTeamCacheSetAttachmentLimitInputSchema,
+    output: platformTeamCacheSetAttachmentLimitOutputSchema,
+  },
+
   // D96 远程遥控：全部 app 方法（本机与远程端点功能对等，同一 handlers）。
   'remote.status': { input: voidInput, output: remoteStatusOutputSchema },
   'remote.createPairing': { input: voidInput, output: remoteCreatePairingOutputSchema },
@@ -3453,7 +3864,13 @@ export const WIDGET_PREVIEW_RPC_METHODS = [
   'widgetPreview.run',
 ] as const satisfies readonly RpcMethodName[];
 
-const APP_METHODS = [
+/**
+ * Every app RPC method name core serves on port A (the renderer surface). Kept
+ * as a literal tuple so `AppMethodName` below is a literal union; the team
+ * server's method-policy table classifies this whole list exhaustively at
+ * compile time (62-team-server T4, "未归类即拒绝").
+ */
+export const APP_METHODS = [
   'system.ping',
   'system.info',
   'diagnostics.get',
@@ -3565,6 +3982,7 @@ const APP_METHODS = [
   'bots.accent.color',
   'bots.delete',
   'bots.deletionPreview',
+  'bots.composeReply',
   'bots.templatePreview',
   'bots.templateExport',
   'bots.templateInspect',
@@ -3799,6 +4217,10 @@ const APP_METHODS = [
 ] as const satisfies readonly RpcMethodName[];
 
 export const APP_RPC_METHODS: readonly RpcMethodName[] = APP_METHODS;
+
+/** Literal union of every app RPC method name (compile-time classification surface for the team layer). */
+export type AppMethodName = (typeof APP_METHODS)[number];
+
 export const PLATFORM_RPC_METHODS: readonly RpcMethodName[] = [
   'system.shutdown',
   'unattended.disable',
@@ -3812,6 +4234,30 @@ export const PLATFORM_RPC_METHODS: readonly RpcMethodName[] = [
   'files.previewResource',
   'share.targets',
   'share.consume',
+  // T7 桌面融合视图：凭据 / 多账号 / 桥接启停（桌面主进程实现，同上）。
+  'platform.teamServers.list',
+  'platform.teamServers.add',
+  'platform.teamServers.remove',
+  'platform.teamServers.login',
+  'platform.teamServers.logout',
+  'platform.teamServers.switchAccount',
+  'platform.teamServers.rename',
+  'platform.teamServers.connect',
+  'platform.teamServers.disconnect',
+  'platform.teamServers.probe',
+  // T8 客户端本地缓存（62.10 D136）：桌面主进程实现，web / core 不实现。
+  'platform.teamCache.open',
+  'platform.teamCache.close',
+  'platform.teamCache.putConversations',
+  'platform.teamCache.putMessages',
+  'platform.teamCache.getConversations',
+  'platform.teamCache.getMessages',
+  'platform.teamCache.putAttachment',
+  'platform.teamCache.getAttachment',
+  'platform.teamCache.clearPartition',
+  'platform.teamCache.clearServer',
+  'platform.teamCache.usage',
+  'platform.teamCache.setAttachmentLimit',
   // D96 远程遥控：托盘读状态 / 切开关 / 发起配对（主进程 → core，端口 B）。
   'remote.status',
   'remote.createPairing',

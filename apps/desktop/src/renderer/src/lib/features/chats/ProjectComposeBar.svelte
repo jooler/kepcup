@@ -5,6 +5,7 @@
   import { chat } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { createNamedBot } from '$lib/features/bot-setup';
+  import { teamContext } from '$lib/features/team/team-context.svelte';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import { composeCandidates, composeEnterAction, composePool, stepHighlight } from './project-compose';
 
@@ -40,6 +41,17 @@
   );
   const filtered = $derived(composeCandidates(pool, excludedIds, query));
   const activeOption = $derived(highlight >= 0 ? filtered[highlight] : undefined);
+
+  // 成员面收尾（member-bots B4）：web 团队端点上 core `bots.create` 对成员恒拒
+  //（B2 只放开 team.bots.create）——「输入新名字回车快速建 Bot」在该端点改为
+  // 提示，不再发必拒 RPC；本机 / 非团队端点零变化（allowQuickCreate 缺省 true）。
+  const teamActive = $derived(teamContext.active);
+  const leadPlaceholder = $derived(
+    teamActive ? t('projectCompose.leadPlaceholderNoCreate') : t('projectCompose.leadPlaceholder'),
+  );
+  const emptyListText = $derived(
+    teamActive ? t('projectCompose.emptyListNoCreate') : t('projectCompose.emptyList'),
+  );
 
   // On a phase switch (including mount): reset input, hint and highlight, refocus the input.
   $effect(() => {
@@ -82,6 +94,7 @@
       memberIds: chat.composeMemberIds,
       candidates: filtered,
       highlight,
+      allowQuickCreate: !teamActive,
     });
     switch (action.kind) {
       case 'selectLead':
@@ -110,6 +123,15 @@
       }
       // The input stays readonly (not disabled) while busy, keeping focus; put it back on failure too.
       await tick();
+        inputEl?.focus();
+        return;
+      }
+      case 'createUnavailable': {
+        // 团队端点：快速建 Bot 对成员不可用（core bots.create 恒拒）——清输入、
+        // 提示走「+」菜单的团队分组创建，不发 RPC。
+        query = '';
+        hint = t('projectCompose.createUnavailable', { name: action.name });
+        await tick();
         inputEl?.focus();
         return;
       }
@@ -257,9 +279,7 @@
       bind:this={inputEl}
       bind:value={query}
       class="h-8 min-w-32 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-      placeholder={chat.composePhase === 'lead'
-        ? t('projectCompose.leadPlaceholder')
-        : t('projectCompose.membersPlaceholder')}
+      placeholder={chat.composePhase === 'lead' ? leadPlaceholder : t('projectCompose.membersPlaceholder')}
       readonly={busy}
       aria-busy={busy}
       role="combobox"
@@ -328,7 +348,7 @@
         {/each}
       </div>
     {:else}
-      <p class="px-3 py-2 text-sm text-muted-foreground">{t('projectCompose.emptyList')}</p>
+      <p class="px-3 py-2 text-sm text-muted-foreground">{emptyListText}</p>
     {/if}
   </div>
   {#if hint}

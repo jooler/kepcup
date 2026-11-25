@@ -6,6 +6,7 @@ import {
   AppError,
   CHECKPOINT_RETENTION_DAYS,
   newId,
+  newUlid,
   type LoopType as SharedLoopType,
   type Workdir,
   type Run,
@@ -18,6 +19,7 @@ import { encodeWriteDomainKey, absolutePatterns, formatWriteDomain, type AbsDoma
 import type { CheckpointService } from './checkpoints.js';
 import { buildWorkdirSection, WORKDIR_SECTION_BUDGET } from './context.js';
 import { gitCliAvailable, runGitRemote, type GitRemoteOperation } from './git-remote.js';
+import { readWorktreeMeta, isWorktreePathOf, type WorktreeService } from './worktree.js';
 import type { WorkdirsService } from '../domain/workdirs.js';
 import type { ConversationsService } from '../domain/conversations.js';
 import { projectScopeOf } from '../domain/project-scope.js';
@@ -44,6 +46,11 @@ export interface WorkdirRuntimeDeps {
   grants: GrantsService;
   leases: LeaseService;
   checkpoints: CheckpointService;
+  /**
+   * D140-4: worktree isolation. Absent = feature off (unit tests); the task
+   * host never creates one and `isolation: 'worktree'` is refused.
+   */
+  worktrees?: WorktreeService;
   publish: <K extends keyof CoreEventsMap>(event: K, payload: CoreEventsMap[K]) => void;
   /**
    * P11: pushes the new loopback policy to the conversation's already-open
@@ -51,6 +58,15 @@ export interface WorkdirRuntimeDeps {
    * open have nothing to update, and tools re-send the context on every call).
    */
   onBindingChanged?: (conversationId: string, allowLoopback: boolean) => void;
+  /**
+   * 62.11 C9 workdir root constraint (`CoreServicesOptions.workdirRoots`): when
+   * set, only paths under one of these roots can be bound (`select`) or used
+   * as a task cwd; anything else fails with `PATH_OUT_OF_SCOPE`. The roots are
+   * canonicalized (realpath) once here; member paths are compared segment-wise
+   * so `/a/b` never covers `/a/bc`. Absent / empty = unrestricted (status quo).
+   * The first root is also where {@link provisionWorkdir} creates directories.
+   */
+  roots?: string[];
 }
 
 export interface LeaseTarget {
@@ -61,6 +77,22 @@ export interface LeaseTarget {
   key: string;
   /** Set when the lease key is the bound workdir (checkpoints apply). */
   workdir: Workdir | null;
+}
+
+/**
+ * D140-4: a task's isolated tree, as the sandbox / gateway / command cwd see
+ * it. `gitWorktreeMeta` and `gitObjectsDir` are the only `.git` subtrees the
+ * sandbox may write (the linked worktree's index / HEAD live in the former,
+ * new objects in the latter — see DEV-152); `denyReadGlobs` re-applies the
+ * workdir's protect rules inside the tree.
+ */
+export interface TaskWorktree {
+  path: string;
+  workdirPath: string;
+  gitCommonDir: string;
+  gitWorktreeMeta: string;
+  gitObjectsDir: string;
+  denyReadGlobs: string[];
 }
 
 /**
@@ -116,15 +148,50 @@ interface RunLeaseState {
    * Agent 仍在写它）。
    */
   pinned?: boolean;
+  /**
+   * D140-1：内置引擎写任务取共享租约（同根多任务并存）；独占为缺省——
+   * 外部智能体 run、宿主操作与非任务的 acquire_workdir_write。
+   */
+  shared?: boolean;
 }
+
+/**
+ * D140-1 per-run shadow-snapshot window: opened when a write task starts (a
+ * `before` snapshot while it holds the lease) and closed at its release point
+ * (an `after` snapshot + the run's `run_changes` row, with files another
+ * parallel task also changed marked `interleaved`).
+ */
+interface TaskWindowState {
+  workdirId: string;
+  beforeOid: string;
+  /**
+   * Relative paths written by other task windows that overlapped this one (a
+   * peer that closed while ours was open). They are excluded from our span
+   * diff (the peer's own row owns them) and mark our own writes interleaved.
+   */
+  otherFiles: Set<string>;
+}
+
+/** What one run's file tools actually wrote (attribution for run_changes). */
+export interface RunWriteAttribution {
+  /** Absolute paths this run wrote through the gateway's file tools. */
+  own: ReadonlyArray<{ path: string; change: 'created' | 'modified' | 'deleted' }>;
+  /** Absolute paths other still-running tasks wrote (interleaved marking). */
+  others: ReadonlySet<string>;
+}
+
+/** fs-state's per-file change kind → run_changes spelling. */
+const toChangeKind = (change: 'created' | 'modified' | 'deleted'): RunChangeFile['change'] =>
+  change === 'created' ? 'added' : change;
 
 /**
  * Workdir runtime (docs/dev/phases/P04-project.md): binding lifecycle, write
  * leases with waiting/running state transitions, and git remote execution.
- * Change-summary cards / run_changes persistence / whole-run revert UX are
- * retired — disk writes stay; lease windows no longer snapshot or record.
- * The gateway consults it for path decisions and sandbox policy input; RPC
- * binds user actions here. Diff/revert RPCs remain only for legacy rows.
+ * D140-1: write tasks open a per-run shadow-snapshot window whose close records
+ * `run_changes` (file list + `interleaved` marks) on the task detail page; the
+ * chat-side change card and whole-run revert UX stay retired. The gateway
+ * consults it for path decisions and sandbox policy input; RPC binds user
+ * actions here.
  */
 export class WorkdirRuntime {
   readonly #deps: WorkdirRuntimeDeps;
@@ -141,9 +208,33 @@ export class WorkdirRuntime {
    * the same key join the first instead of releasing + cancelling it.
    */
   readonly #acquiring = new Map<string, { key: string; promise: Promise<LeaseTarget> }>();
+  /** D140-1: open per-task shadow-snapshot windows (run id → window). */
+  readonly #taskWindows = new Map<string, TaskWindowState>();
+  /**
+   * Closes in flight per workdir: closing windows one at a time lets the peer
+   * still open hand its files over (exclusion + interleaved marks) instead of
+   * two concurrent closes each claiming the other's writes.
+   */
+  readonly #windowClosings = new Map<string, Promise<void>>();
+  /** Run windows currently closing (a second release waits for the first). */
+  readonly #closingWindows = new Map<string, Promise<void>>();
+  /** Releases in flight per run (a re-acquire waits for the old release). */
+  readonly #releasing = new Map<string, Promise<void>>();
+  /** C9: canonicalized root paths (empty = unrestricted). */
+  #roots: readonly string[];
 
   constructor(deps: WorkdirRuntimeDeps) {
     this.#deps = deps;
+    this.#roots = (deps.roots ?? []).map((root) => canonicalPath(root));
+  }
+
+  /**
+   * C9 roots 的运行期替换（团队服务器「用户工作根目录」切换后调用——根目录迁移
+   * 是管理台运行时操作，不能要求重启）。语义与构造参数完全一致：规范化后整组
+   * 替换；空数组 = 不设根约束。只影响后续的 select / 断言，已绑定会话不受影响。
+   */
+  setRoots(roots: readonly string[]): void {
+    this.#roots = roots.map((root) => canonicalPath(root));
   }
 
   // --- lookups ---------------------------------------------------------------
@@ -217,6 +308,14 @@ export class WorkdirRuntime {
   }
 
   /**
+   * D140-4: whether any run currently holds a lease conflicting with this
+   * root — the apply callback refuses to wait behind a writing task.
+   */
+  workdirBusy(workdirPath: string): boolean {
+    return this.#deps.leases.conflictingHolders(workdirPath).length > 0;
+  }
+
+  /**
    * D123 §3.6: null when the writing task's resolved path stays inside its
    * declared write domain, else the refusal reason. Read-only identities and
    * undeclared domains (`writes: true`) always pass. Fail-closed: a missing
@@ -264,10 +363,8 @@ export class WorkdirRuntime {
     return { root: task.taskCwd, patterns };
   }
 
-  /**
-   * The task row that writes for `identity` (subagent → owning task), or
-   * `'missing'` when the subagent chain cannot be resolved.
-   */
+  /** The task row that writes for `identity` (subagent → owning task), or
+   * `'missing'` when the subagent chain cannot be resolved. */
   #writingTask(identity: RunIdentity): Run | null | 'missing' {
     let loopType: RunIdentity['loopType'] | SharedLoopType = identity.loopType;
     let runId = identity.runId;
@@ -285,41 +382,115 @@ export class WorkdirRuntime {
     return this.#deps.runs.get(runId) ?? 'missing';
   }
 
+  /** D140-4: the owning task's isolation mode (null = not a task / not isolated). */
+  #owningIsolation(identity: RunIdentity): Run['isolation'] {
+    const task = this.#writingTask(identity);
+    if (task === null || task === 'missing') return null;
+    return task.isolation;
+  }
+
   /** Sandbox policy input for the executing identity (null = no workdir). */
   policyInfo(identity: RunIdentity): {
     path: string;
     hasLease: boolean;
     allowedPorts: Workdir['allowedPorts'];
     denyReadGlobs: string[];
+    /**
+     * D140-4: the command cwd — the task's worktree root when it runs in one,
+     * else null (the caller falls back to `path`). The main workdir stays a
+     * read-only reference for a worktree task.
+     */
+    cwd: string | null;
+    worktree: TaskWorktree | null;
   } | null {
     const workdir = this.boundWorkdir(identity.conversationId);
     if (workdir === null || workdir.status === 'missing') return null;
+    const worktree = this.taskWorktree(identity, workdir);
     return {
       path: workdir.path,
       hasLease: this.holdsLease(identity, workdir.path),
       allowedPorts: workdir.allowedPorts,
       denyReadGlobs: this.denyReadGlobs(workdir),
+      cwd: worktree?.path ?? null,
+      worktree,
+    };
+  }
+
+  /** D140-4: the worktree a task (or its subagent) executes in, null otherwise. */
+  taskWorktree(
+    identity: RunIdentity,
+    workdir: Workdir | null = this.boundWorkdir(identity.conversationId),
+  ): TaskWorktree | null {
+    if (workdir === null || workdir.status !== 'available') return null;
+    const task = this.#writingTask(identity);
+    if (task === null || task === 'missing' || task.isolation !== 'worktree') return null;
+    if (task.worktreePath === null || task.taskCwd === null) return null;
+    return this.#taskWorktreeOf(workdir, task.worktreePath);
+  }
+
+  /** Relative-path base of the identity's tools: its worktree, else null. */
+  taskWorktreePath(identity: RunIdentity): string | null {
+    return this.taskWorktree(identity)?.path ?? null;
+  }
+
+  /**
+   * D140-4: whether the identity belongs to a task isolated in a worktree.
+   * Row-only (no metadata read): the gateway uses it to keep the main workdir
+   * closed even when the tree's own metadata is unreadable.
+   */
+  isWorktreeTask(identity: RunIdentity): boolean {
+    return this.#owningIsolation(identity) === 'worktree';
+  }
+
+  /** D140-4: the worktree of an explicit task row (orchestrator / task host). */
+  taskWorktreeOfTask(task: Run): TaskWorktree | null {
+    if (task.isolation !== 'worktree' || task.worktreePath === null || task.taskCwd === null) {
+      return null;
+    }
+    const workdir = this.boundWorkdir(task.conversationId);
+    if (workdir === null || workdir.status !== 'available') return null;
+    return this.#taskWorktreeOf(workdir, task.worktreePath);
+  }
+
+  #taskWorktreeOf(workdir: Workdir, worktreePath: string): TaskWorktree | null {
+    const meta = readWorktreeMeta(worktreePath);
+    if (meta === null) return null;
+    return {
+      path: worktreePath,
+      workdirPath: workdir.path,
+      gitCommonDir: meta.gitCommonDir,
+      gitWorktreeMeta: meta.gitWorktreeMeta,
+      gitObjectsDir: path.join(meta.gitCommonDir, 'objects'),
+      denyReadGlobs: this.denyReadGlobs(workdir, worktreePath),
     };
   }
 
   /** Absolute glob patterns of the workdir's deny-read rules (policy denyRead). */
-  denyReadGlobs(workdir: Workdir): string[] {
+  denyReadGlobs(workdir: Workdir, root: string = workdir.path): string[] {
     const patterns: string[] = [];
     for (const pattern of workdir.protectRules.denyRead) {
       if (pattern.includes('/')) {
-        patterns.push(`${workdir.path}/${pattern}`);
+        patterns.push(`${root}/${pattern}`);
       } else {
         // Slash-less patterns match the file name at any depth.
-        patterns.push(`${workdir.path}/${pattern}`);
-        patterns.push(`${workdir.path}/**/${pattern}`);
+        patterns.push(`${root}/${pattern}`);
+        patterns.push(`${root}/**/${pattern}`);
       }
     }
     return patterns;
   }
 
-  /** True when `resolvedPath` hits a protection rule of the workdir. */
-  matchesProtectRule(workdir: Workdir, resolvedPath: string, mode: 'read' | 'write'): boolean {
-    return matchProtectRule(workdir.protectRules, workdir.path, resolvedPath, mode);
+  /**
+   * True when `resolvedPath` hits a protection rule of the workdir. `root`
+   * overrides the anchor (D140-4: the same rules apply inside a worktree).
+   */
+  matchesProtectRule(
+    workdir: Workdir,
+    resolvedPath: string,
+    mode: 'read' | 'write',
+    root: string = workdir.path,
+  ): boolean {
+    return matchProtectRule(workdir.protectRules, root, resolvedPath, mode);
   }
 
   // --- lease orchestration ---------------------------------------------------
@@ -330,12 +501,13 @@ export class WorkdirRuntime {
    * or the longest covering write grant outside both. Parks the run in
    * `waiting_lease` (publishing `lease.waiting`) while queued. Aborting the
    * signal leaves the queue cleanly. Read-only identities (writeDenial) are
-   * refused with RUN_READ_ONLY. Lease windows no longer snapshot / record
-   * run_changes (change-summary UX retired).
+   * refused with RUN_READ_ONLY. D140-1: `shared` requests coexist with other
+   * shared holders (built-in write tasks); the default is exclusive.
    *
    * Workspace writes never *require* the lease (the gateway allows them
    * outright); only callers that ask for it — D75 write tasks, pinned for the
-   * whole task — take it, so they serialize among themselves.
+   * whole task — take it. The per-run shadow window is opened separately by
+   * `beginTaskWindow` once the lease is held.
    */
   async ensureWriteLease(
     identity: RunIdentity,
@@ -346,6 +518,11 @@ export class WorkdirRuntime {
       /** D72：整 run 持有、不可被替换（外部智能体 run，见 RunLeaseState.pinned）。 */
       pin?: boolean;
       /**
+       * D140-1：取共享租约（同根多任务并存，内置引擎写任务）。缺省独占——
+       * 外部智能体 run、宿主操作与非任务的 acquire_workdir_write 不共享。
+       */
+      shared?: boolean;
+      /**
        * D123: declared write-domain globs of a pinned write task. Encoded into
        * the lease key so two tasks on one root with disjoint domains coexist.
        * Null / omitted = the whole root (`['**']`, today's behavior).
@@ -355,6 +532,12 @@ export class WorkdirRuntime {
   ): Promise<LeaseTarget> {
     const denial = this.writeDenial(identity);
     if (denial !== null) throw new AppError('RUN_READ_ONLY', denial);
+    // A retried run may still be releasing its previous lease/window (the
+    // settle path is fire-and-forget): joining it here keeps the early
+    // "already held" return from handing the task a lease that is about to be
+    // released under it.
+    const releasing = this.#releasing.get(identity.runId);
+    if (releasing !== undefined) await releasing.catch(() => {});
     const target = this.#leaseTarget(identity, resolvedPath, options.domains ?? null);
     if (target === null) {
       throw new AppError('INVALID_INPUT', '该路径不涉及 workdir 或 workspace，无需写入租约');
@@ -399,13 +582,14 @@ export class WorkdirRuntime {
   async #acquireLease(
     identity: RunIdentity,
     target: LeaseTarget,
-    options: { signal?: AbortSignal; pin?: boolean },
+    options: { signal?: AbortSignal; pin?: boolean; shared?: boolean },
   ): Promise<LeaseTarget> {
     // One lease per run: close out the previous window first.
     await this.releaseRun(identity.runId);
 
     await this.#deps.leases.acquire(identity, target.key, {
       signal: options.signal,
+      shared: options.shared === true,
       onWaiting: (holder) => {
         this.#setRunStatus(identity.runId, 'waiting_lease');
         this.#deps.publish('lease.waiting', {
@@ -422,13 +606,15 @@ export class WorkdirRuntime {
       throw new AppError('APPROVAL_DENIED', '执行已取消，未取得写入租约');
     }
 
-    // Track the lease window for revoke / pin only — no before snapshot.
-    // Change cards and run_changes persistence were retired.
+    // Track the lease window for revoke / pin only. D140-1's before snapshot is
+    // the per-task shadow window (`beginTaskWindow`), opened by the executor
+    // after this lease is held.
     this.#runLeases.set(identity.runId, {
       key: target.key,
       workdir: target.workdir,
       beforeOid: null,
       ...(options.pin === true ? { pinned: true } : {}),
+      ...(options.shared === true ? { shared: true } : {}),
     });
 
     this.#setRunStatus(identity.runId, 'running');
@@ -436,17 +622,265 @@ export class WorkdirRuntime {
   }
 
   /**
-   * Ends the run's lease window: cancels queued waits and releases the lease.
-   * Idempotent; safe to call from every settle path.
-   * No after-snapshot / run_changes / summary card — that UX was retired.
+   * Ends the run's lease window: cancels queued waits, closes the D140-1
+   * shadow-snapshot window (after-snapshot + run_changes), and releases the
+   * lease. The after-snapshot is taken while the lease is still held — a
+   * promoted waiter (the next writer) must not be able to start before the
+   * span ends, or its writes would pollute this run's diff. Idempotent and
+   * concurrency-safe: a second caller waits for the in-flight close (the lease
+   * is released only after the snapshot, on every path).
    */
-  async releaseRun(runId: string): Promise<void> {
+  async releaseRun(runId: string, writes?: RunWriteAttribution): Promise<void> {
+    const inFlight = this.#releasing.get(runId);
+    if (inFlight !== undefined) {
+      await inFlight.catch(() => {});
+      return;
+    }
+    const release = this.#doReleaseRun(runId, writes);
+    this.#releasing.set(runId, release);
+    try {
+      await release;
+    } finally {
+      if (this.#releasing.get(runId) === release) this.#releasing.delete(runId);
+    }
+  }
+
+  async #doReleaseRun(runId: string, writes?: RunWriteAttribution): Promise<void> {
     this.#deps.leases.cancelWaitersOfRun(runId);
-    this.#deps.leases.release(runId);
-    this.#runLeases.delete(runId);
+    try {
+      // A close in flight is awaited first; a retried run may already have a
+      // NEW window by then (same run id), so re-check instead of skipping it.
+      // The bound keeps a pathological retry loop from hanging the release.
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const closing = this.#closingWindows.get(runId);
+        if (closing !== undefined) {
+          await closing.catch(() => {});
+          if (this.#closingWindows.get(runId) === closing) this.#closingWindows.delete(runId);
+          continue;
+        }
+        if (!this.#taskWindows.has(runId)) break;
+        let attribution = writes;
+        if (attribution === undefined && this.#attributionOf !== null) {
+          try {
+            attribution = this.#attributionOf(runId);
+          } catch (error) {
+            this.#deps.logger.warn(
+              { runId, error: error instanceof Error ? error.message : String(error) },
+              'task window write attribution failed',
+            );
+          }
+        }
+        const closingPromise = this.#endTaskWindow(runId, attribution);
+        this.#closingWindows.set(runId, closingPromise);
+        try {
+          await closingPromise;
+        } finally {
+          if (this.#closingWindows.get(runId) === closingPromise) {
+            this.#closingWindows.delete(runId);
+          }
+        }
+      }
+    } finally {
+      // The lease is always released, even when the snapshot bookkeeping failed.
+      this.#deps.leases.release(runId);
+      this.#runLeases.delete(runId);
+    }
+  }
+
+  /**
+   * D140-1: the orchestrator's per-run write attribution (its own file-tool
+   * writes and those of parallel open-window tasks). Release paths without
+   * executor context (the revoke RPC, eviction) fall back to it so a window
+   * closed outside the executor still attributes files correctly.
+   */
+  setWriteAttributionSource(source: ((runId: string) => RunWriteAttribution) | null): void {
+    this.#attributionOf = source;
+  }
+
+  #attributionOf: ((runId: string) => RunWriteAttribution) | null = null;
+
+  // --- per-task shadow window (D140-1) ----------------------------------------
+
+  /** The open task windows (run id + workdir), for interleaved attribution. */
+  openTaskWindows(): Array<{ runId: string; workdirId: string }> {
+    return [...this.#taskWindows.entries()].map(([runId, window]) => ({
+      runId,
+      workdirId: window.workdirId,
+    }));
+  }
+
+  /**
+   * D140-1: opens the task's shadow-snapshot window — a `before` snapshot of
+   * the workdir taken while the task holds its lease. Write tasks on a bound
+   * workdir only (workspace / read-only tasks and turns never open one); an
+   * external agent's write task opens it too (its exclusive lease still
+   * serializes it, but run_changes is still recorded).
+   */
+  async beginTaskWindow(task: Run): Promise<void> {
+    if (task.taskWrites !== true || task.conversationId === null) return;
+    const workdir = this.boundWorkdir(task.conversationId);
+    if (workdir === null || workdir.status !== 'available') return;
+    if (task.taskCwd === null || !isInsidePath(task.taskCwd, workdir.path)) return;
+    try {
+      const before = await this.#deps.checkpoints.snapshot(workdir);
+      this.#taskWindows.set(task.id, {
+        workdirId: workdir.id,
+        beforeOid: before.oid,
+        otherFiles: new Set(),
+      });
+    } catch (error) {
+      // A missing git / broken shadow repo must not fail the task: the window
+      // is bookkeeping, run_changes is simply absent for it.
+      this.#deps.logger.warn(
+        { taskId: task.id, workdirId: workdir.id, error: error instanceof Error ? error.message : String(error) },
+        'task window begin snapshot failed',
+      );
+    }
+  }
+
+  /**
+   * D140-1: closes the window — after-snapshot, then the run's `run_changes`:
+   * files are the task's own gateway-recorded writes (exact attribution) plus
+   * span-diff files no other overlapping task wrote (bash writes; marked
+   * `interleaved` when another window was open — a parallel task may have
+   * written them). A file another overlapping task also wrote is marked
+   * `interleaved`; files of a task whose window already closed while ours was
+   * open are excluded too (their own row owns them), so a finished parallel
+   * task's work is never attributed to this one.
+   *
+   * Closes run one at a time per workdir (windows stay registered until their
+   * turn), which is what makes the hand-over deterministic. A retried run
+   * re-opens a window with the same run id: its new files merge into the row
+   * instead of replacing the earlier attempt's.
+   */
+  async #endTaskWindow(runId: string, writes?: RunWriteAttribution): Promise<void> {
+    const window = this.#taskWindows.get(runId);
+    if (window === undefined) return;
+    const workdirId = window.workdirId;
+    const previous = this.#windowClosings.get(workdirId) ?? Promise.resolve();
+    const closing = previous
+      .catch(() => {})
+      .then(() => this.#closeTaskWindow(runId, window, writes));
+    this.#windowClosings.set(workdirId, closing);
+    try {
+      await closing;
+    } finally {
+      if (this.#windowClosings.get(workdirId) === closing) this.#windowClosings.delete(workdirId);
+    }
+  }
+
+  async #closeTaskWindow(
+    runId: string,
+    window: TaskWindowState,
+    writes?: RunWriteAttribution,
+  ): Promise<void> {
+    // A retried run may have opened a NEW window under the same id while this
+    // close was queued: only this exact window is closed/removed.
+    if (this.#taskWindows.get(runId) === window) this.#taskWindows.delete(runId);
+    const overlapping = [...this.#taskWindows.entries()].filter(
+      ([id, other]) => id !== runId && other.workdirId === window.workdirId,
+    );
+    let workdirForLog: string = window.workdirId;
+    try {
+      const task = this.#deps.runs.get(runId);
+      const workdir = this.#deps.workdirs.get(window.workdirId);
+      if (workdir === null) return;
+      workdirForLog = workdir.id;
+      const after = await this.#deps.checkpoints.snapshot(workdir);
+      const span = await this.#deps.checkpoints.diffFiles(workdir.id, window.beforeOid, after.oid);
+      const own = new Map<string, RunChangeFile['change']>();
+      for (const file of writes?.own ?? []) {
+        const rel = path.relative(workdir.path, file.path).replaceAll('\\', '/');
+        if (rel.length === 0 || rel.startsWith('../')) continue;
+        own.set(rel, toChangeKind(file.change));
+      }
+      const others = new Set<string>(window.otherFiles);
+      for (const absolute of writes?.others ?? []) {
+        const rel = path.relative(workdir.path, absolute).replaceAll('\\', '/');
+        if (rel.length > 0 && !rel.startsWith('../')) others.add(rel);
+      }
+      // A task that started while the snapshot was running overlaps too.
+      const laterOpen = [...this.#taskWindows.entries()].filter(
+        ([id, other]) => id !== runId && other.workdirId === window.workdirId,
+      );
+      const parallel = new Map<string, TaskWindowState>([...overlapping, ...laterOpen]);
+      const files: RunChangeFile[] = [];
+      for (const [rel, change] of own) {
+        const interleaved = others.has(rel);
+        files.push({ path: rel, change, ...(interleaved ? { interleaved: true } : {}) });
+      }
+      for (const file of span) {
+        if (own.has(file.path) || others.has(file.path)) continue;
+        // Not attributed to any overlapping task's file tools: a bash write of
+        // this run (or, when a parallel writer was open, possibly theirs).
+        files.push({
+          path: file.path,
+          change: file.change,
+          ...(parallel.size > 0 ? { interleaved: true } : {}),
+        });
+      }
+      files.sort((a, b) => a.path.localeCompare(b.path));
+      // A retried run (same run id) keeps the union of its attempts' files: the
+      // previous row's before-oid stays the earliest, the after-oid advances.
+      const previous = this.#deps.workdirs.getChange(runId);
+      const merged = new Map<string, RunChangeFile>();
+      for (const file of previous?.files ?? []) merged.set(file.path, file);
+      for (const file of files) merged.set(file.path, file);
+      const allFiles = [...merged.values()].sort((a, b) => a.path.localeCompare(b.path));
+      if (allFiles.length > 0) {
+        this.#deps.workdirs.recordChange({
+          runId,
+          workdirId: workdir.id,
+          conversationId: task?.conversationId ?? null,
+          beforeOid: previous?.beforeOid ?? window.beforeOid,
+          afterOid: after.oid,
+          files: allFiles,
+        });
+      }
+      // Overlapping windows exclude this run's files from their own span diffs
+      // and mark them interleaved: whoever closes last must not claim the other.
+      for (const other of parallel.values()) {
+        for (const file of allFiles) other.otherFiles.add(file.path);
+      }
+    } catch (error) {
+      this.#deps.logger.warn(
+        { runId, workdirId: workdirForLog, error: error instanceof Error ? error.message : String(error) },
+        'task window end snapshot failed',
+      );
+    }
   }
 
   // --- binding -----------------------------------------------------------------
+
+  /**
+   * C9: whether the canonical `candidate` sits at or below one of the
+   * configured roots. Segment-wise comparison: `/a/b` must not cover `/a/bc`,
+   * so the prefix is always a root plus a path separator (or the root itself).
+   */
+  #inRoots(candidate: string): boolean {
+    if (this.#roots.length === 0) return true;
+    return this.#roots.some((root) => {
+      if (candidate === root) return true;
+      const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+      if (candidate.startsWith(prefix)) return true;
+      // D140-4: a workdir's isolated trees live next to it, not under it
+      // (`<workdir parent>/.worktree/`). Only this root's own trees are
+      // opened up — the home is shared with sibling roots.
+      return isWorktreePathOf(root, candidate);
+    });
+  }
+
+  /**
+   * C9: throws `PATH_OUT_OF_SCOPE` when workdir roots are configured and
+   * `candidate` is not under any of them (no-op when unrestricted).
+   */
+  assertInRoots(candidate: string): void {
+    if (this.#inRoots(canonicalPath(candidate))) return;
+    throw new AppError(
+      'PATH_OUT_OF_SCOPE',
+      `路径不在允许的工作目录根之下：${candidate}（本环境只允许在配置的 workdir 根目录内选择工作目录）`,
+    );
+  }
 
   /**
    * Binds the conversation to `dir` (RPC `workdirs.select` and the interview
@@ -455,15 +889,30 @@ export class WorkdirRuntime {
    * (`workdirs.boundOf`), so a binding that only publishes
    * `conversation.updated` leaves the right-panel Bot detail showing
    * 「未设置」 until a full refresh re-lists the workdirs.
+   *
+   * `opts.displayPath`（团队服务器成员面）：绑定系统消息里的路径展示——服务器
+   * 真实主机路径不出服务端，调用方给「相对成员本人子树的相对地址」，消息只落
+   * 该展示值（无括注原名）。缺省（本机 / 管理面）= 现行为 `name（path）`。
    */
-  select(conversationId: string, dir: string): Workdir {
+  select(
+    conversationId: string,
+    dir: string,
+    opts?: { displayPath?: string | null } | undefined,
+  ): Workdir {
     const conv = this.#deps.conversations.getOrThrow(conversationId);
     this.#assertNoActiveRuns(conversationId);
+    // C9: validate the canonical path BEFORE the (row-creating) registration
+    // so an out-of-scope path leaves no workdirs row behind.
+    this.assertInRoots(dir);
     const workdir = this.#deps.workdirs.ensureByPath(dir, this.#deps.paths.home);
     const previousId = conv.workdirId;
     this.#deps.conversations.setWorkdir(conversationId, workdir.id);
     const previous = previousId !== null ? this.#deps.workdirs.get(previousId) : null;
-    const label = `${workdir.name}（${workdir.path}）`;
+    const display = opts?.displayPath;
+    const label =
+      display != null && display.length > 0
+        ? display
+        : `${workdir.name}（${workdir.path}）`;
     if (previousId === workdir.id) {
       this.#systemMessage(conversationId, `工作目录已确认为 ${label}`);
     } else if (previousId === null) {
@@ -503,6 +952,34 @@ export class WorkdirRuntime {
     return workdir;
   }
 
+  /**
+   * C15 host write entry (`principalOps.provisionWorkdir`): creates a fresh
+   * directory under the first configured root (`<slug>-<ulid tail>`), binds it
+   * to the conversation and returns it. Throws `INVALID_INPUT` when no roots
+   * are configured (the host must opt in to directory provisioning). The bind
+   * goes through {@link select} — the C9 root check passes by construction.
+   */
+  provisionWorkdir(conversationId: string, name: string): Workdir {
+    const root = this.#roots[0];
+    if (root === undefined) {
+      throw new AppError(
+        'INVALID_INPUT',
+        '本环境没有配置工作目录根（workdirRoots），无法自动创建工作目录',
+      );
+    }
+    // Filesystem-safe slug of the human name, bounded so the tail stays visible.
+    const slug =
+      name
+        .normalize('NFKD')
+        .replace(/[^\p{L}\p{N}]+/gu, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 48)
+        .replace(/-+$/g, '') || 'workdir';
+    const dir = path.join(root, `${slug}-${newUlid().slice(-6)}`);
+    mkdirSync(dir, { recursive: true });
+    return this.select(conversationId, dir);
+  }
+
   /** Remove-from-recent cascade (docs/dev/03-data-model.md): records, checkpoints, bindings. */
   async remove(workdirId: string): Promise<void> {
     const workdir = this.#deps.workdirs.getOrThrow(workdirId);
@@ -526,19 +1003,43 @@ export class WorkdirRuntime {
   }
 
   /**
-   * User force-revoke of the lease held on the conversation's workdir. The
-   * holder's lease window is closed first so a later settle of the revoked
-   * run cannot re-take a pinned lease (BR-P04-001 / design 30 §5.1).
+   * User force-revoke on the conversation's workdir (D140-1 semantics): with
+   * shared leases several write tasks hold the same root, so the revoke picks
+   * a **built-in write task of this conversation** among the shared holders —
+   * only that task loses its write permission (`#revokedPinned`, design 30
+   * §5.1); other tasks on the directory continue. No such holder (the waiter
+   * is blocked by an exclusive holder — an external agent run, a host
+   * operation): fall back to revoking that holder outright. The released
+   * window is closed first so a later settle of the revoked run cannot re-take
+   * a pinned lease (BR-P04-001).
    */
   async revokeLease(conversationId: string): Promise<boolean> {
     const workdir = this.boundWorkdir(conversationId);
     if (workdir === null) return false;
-    const holder = this.#deps.leases.conflictingHolder(workdir.path);
-    if (holder === null) return false;
-    // A pinned holder (a write task) loses its write permission for good
-    // (design 30 §5.1): its next write fails instead of re-taking the lease
-    // as a new window — otherwise the revoke would not take effect.
-    if (this.#runLeases.get(holder.runId)?.pinned === true) {
+    const holders = this.#deps.leases.conflictingHolders(workdir.path);
+    if (holders.length === 0) return false;
+    const sharedTask = holders.find((holder) => {
+      if (!holder.shared) return false;
+      const run = this.#deps.runs.get(holder.runId);
+      return (
+        run !== null &&
+        run.loopType === 'task' &&
+        run.taskWrites === true &&
+        run.conversationId === conversationId
+      );
+    });
+    // No own write task holds the root: the waiter is blocked by an EXCLUSIVE
+    // holder (external agent run, host operation). Never pick another
+    // conversation's shared task here — shared waiters are not blocked by
+    // shared holders, so stopping one would be an unrelated user's task.
+    const exclusive = holders.find((holder) => !holder.shared);
+    const holder = sharedTask ?? exclusive;
+    if (holder === undefined) return false;
+    // A pinned holder (a write task — shared or exclusive alike) loses its
+    // write permission for good (design 30 §5.1): its next write fails instead
+    // of re-taking the lease as a new window — otherwise the revoke would not
+    // take effect.
+    if (sharedTask !== undefined || this.#runLeases.get(holder.runId)?.pinned === true) {
       if (this.#revokedPinned.size >= REVOKED_RUNS_REMEMBERED) {
         const oldest = this.#revokedPinned.values().next().value;
         if (oldest !== undefined) this.#revokedPinned.delete(oldest);
@@ -691,6 +1192,15 @@ export class WorkdirRuntime {
     input: { operation: GitRemoteOperation; args: string[]; reason: string },
     options: { signal?: AbortSignal; requestApproval: (payload: Record<string, unknown>) => Promise<'approved' | 'denied' | 'cancelled'> },
   ): Promise<{ exitCode: number | null; output: string }> {
+    // D140-4: a worktree is a detached HEAD — push / pull / fetch have no
+    // meaningful target and would cross the main checkout. Apply the changes
+    // first, then operate on the workdir.
+    if (this.#owningIsolation(identity) === 'worktree') {
+      throw new AppError(
+        'INVALID_INPUT',
+        'worktree 任务不支持远程操作：请先把改动应用到工作目录，再在主工作目录执行 git 远程操作',
+      );
+    }
     const workdir = this.boundWorkdir(identity.conversationId);
     if (workdir === null) {
       throw new AppError('INVALID_INPUT', '当前对话未绑定 workdir，无法执行 git 远程操作');
@@ -724,19 +1234,24 @@ export class WorkdirRuntime {
   /** `<workdir>` system prompt section (null when nothing bound). */
   async promptSection(
     conversationId: string | null,
-    options: { skipGuideFiles?: readonly string[] } = {},
+    options: { skipGuideFiles?: readonly string[]; root?: string | null } = {},
   ): Promise<string | null> {
     const workdir = this.boundWorkdir(conversationId);
     if (workdir === null || workdir.status !== 'available') return null;
+    // D140-4: a worktree task's context is built from its tree (listing, git
+    // status, AGENTS.md). Ignore verdicts only come from the workdir's shadow
+    // repo — the tree is a fresh checkout, nothing there is ignored.
+    const root = options.root ?? workdir.path;
+    const usesWorkdir = root === workdir.path;
     // Ignore verdicts come from the shadow repo (libgit2, exact semantics);
     // it is created lazily here — it lives in the data directory only.
-    const repo = await this.#deps.checkpoints.ensureOpen(workdir);
+    const repo = usesWorkdir ? await this.#deps.checkpoints.ensureOpen(workdir) : null;
     const isIgnored =
       repo !== null && workdir.path === (repo.workdir()?.replace(/\/+$/, '') ?? workdir.path)
         ? (relative: string) => repo.isPathIgnored(relative)
         : null;
     const section = await buildWorkdirSection({
-      path: workdir.path,
+      path: root,
       budget: WORKDIR_SECTION_BUDGET,
       isIgnored,
       ...(options.skipGuideFiles !== undefined ? { skipGuideFiles: options.skipGuideFiles } : {}),
@@ -763,12 +1278,32 @@ export class WorkdirRuntime {
   ): LeaseTarget | null {
     const keyOf = (base: string): string =>
       domains !== null ? encodeWriteDomainKey(base, domains) : base;
+    // D140-4: a worktree task leases its own tree root (exclusive, one task
+    // per tree). The tree is a sibling of the workdir, so the shared lease of
+    // the main workdir never conflicts with it.
+    const worktree = this.taskWorktree(identity);
+    if (
+      worktree !== null &&
+      (resolvedPath === worktree.path || isInsidePath(resolvedPath, worktree.path))
+    ) {
+      return { key: keyOf(worktree.path), workdir: null };
+    }
     const workdir = this.boundWorkdir(identity.conversationId);
     if (
       workdir !== null &&
       workdir.status === 'available' &&
       isInsidePath(resolvedPath, workdir.path)
     ) {
+      // D140-4: an isolated task never leases the main workdir. Silently
+      // acquiring that lease here would (a) let the task write — and thus
+      // bypass the apply card — and (b) replace its own tree lease (one lease
+      // per run), opening the tree to the next task.
+      if (this.#owningIsolation(identity) === 'worktree') {
+        throw new AppError(
+          'INVALID_INPUT',
+          'worktree 任务的写入租约就是隔离目录本身：请直接写隔离目录里的相对路径，主工作目录的改动在任务结束后应用',
+        );
+      }
       return { key: keyOf(workdir.path), workdir };
     }
     // D75 §5.2: the identity's own workspace (realpath-normalized on both

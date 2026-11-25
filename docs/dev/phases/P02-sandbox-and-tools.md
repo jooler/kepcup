@@ -46,9 +46,9 @@ P01。
 3. **文件工具**：用 pi-coding-agent 的工具工厂创建工具，替换其文件操作接口为网关实现；工具结果按 `TOOL_OUTPUT_MAX_CHARS` 截断并包在 `<untrusted>` 中。
 4. **沙箱**（`sandbox/`）
    - `backend-srt.ts`：以库方式调用 srt（`initialize` → 包装命令 → 执行 → 收集违规）；初始化失败返回不可用。
-   - `policy.ts`：按 [design/10-sandbox.md](../../design/10-sandbox.md#文件系统规则) 生成策略（本阶段：workspace 读写；应用缓存与临时目录读写；系统目录与工具链目录只读；用户主目录其他位置禁止读取；敏感位置禁止；`~/.kepcup` 其他部分禁止）。
+   - `policy.ts`：按 [design/10-sandbox.md](../../design/10-sandbox.md#文件系统规则) 生成策略（本阶段：workspace 读写；应用缓存与临时目录读写；系统目录与工具链目录只读；用户主目录其他位置禁止读取；敏感位置禁止；`~/.kepcup` 其他部分禁止。**D140-2 修订**：用户主目录不再整目录禁读——沙箱可读整机，仅禁敏感清单、`~/.kepcup` 与保护规则；写侧不变并由 `srtFilesystemFor` 显式锁死 srt 默认便利写路径）。
    - 网络：按 Profile 设置；`deniedResolvedAddresses` 加入 RFC1918、链路本地、`169.254.169.254` 等元数据地址、回环地址。
-   - 环境变量：`npm_config_cache`、`PIP_CACHE_DIR`、`XDG_CACHE_HOME`、`CARGO_HOME` 指向 `~/.kepcup/cache/` 下对应目录；`HOME` 保持真实值（许多工具依赖）但主目录受读取限制。
+   - 环境变量：`npm_config_cache`、`PIP_CACHE_DIR`、`XDG_CACHE_HOME`、`CARGO_HOME` 指向 `~/.kepcup/cache/` 下对应目录；`HOME` 保持真实值（许多工具依赖）。**D140-2 修订**：主目录不再整目录禁读，读限制收窄为敏感清单与 `~/.kepcup`（写侧不变）。
    - `probe()`：检测 srt 依赖、Linux 用户命名空间（失败时返回 `fixHint`：需要执行的 sudo 命令）。
    - 命令超时（默认 10 分钟，可在调用参数中缩短）；`AbortSignal` 取消时结束进程树。
 5. **bash 工具**：cwd 为 workspace；输出合并 stdout / stderr，截断；返回退出码与违规摘要（例如“被沙箱拦截：读取 ~/.ssh/id_rsa”）。

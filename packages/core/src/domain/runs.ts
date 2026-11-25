@@ -5,6 +5,7 @@ import {
   runStepSchema,
   type LoopType,
   type Run,
+  type RunIsolation,
   type RunStatus,
   type RunStep,
   type SetupRequirement,
@@ -39,6 +40,9 @@ interface RunRow {
   task_cwd: string | null;
   task_write_domains: string | null;
   task_capabilities: string | null;
+  task_isolation: string | null;
+  task_worktree_path: string | null;
+  task_worktree_base: string | null;
   task_retry_attempts: number;
   task_retry_at: number | null;
   origin_run_id: string | null;
@@ -47,6 +51,7 @@ interface RunRow {
   created_at: number;
   started_at: number | null;
   ended_at: number | null;
+  principal_id: string | null;
 }
 
 const ACTIVE_STATUSES_SQL = "('queued', 'running', 'waiting_approval', 'waiting_lease')";
@@ -185,6 +190,11 @@ function rowToRun(row: RunRow): Run {
     taskWriteDomains: writeDomains.domains,
     ...(writeDomains.corrupt ? { taskWriteDomainsCorrupt: true } : {}),
     taskCapabilities: parseCapabilities(row.task_capabilities),
+    // D140: a bad isolation value reads as null (fail-open to "not isolated";
+    // W5's gateway branch treats only 'worktree' specially).
+    isolation: row.task_isolation === 'worktree' ? 'worktree' : null,
+    worktreePath: row.task_worktree_path,
+    worktreeBase: row.task_worktree_base,
     taskRetryAttempts: row.task_retry_attempts,
     taskRetryAt: row.task_retry_at,
     originRunId: row.origin_run_id,
@@ -208,6 +218,10 @@ export interface StoredTriggerPart {
 
 /** runs.db persistence: run rows and their (redacted) steps. */
 export class RunsService {
+  /** LRU cap for {@link principalOf} lookups (62.11 C7). */
+  static readonly #PRINCIPAL_CACHE_MAX = 512;
+  readonly #principalCache = new Map<string, string | null>();
+
   constructor(
     private readonly db: SqliteDatabase,
     private readonly clock: Clock,
@@ -241,6 +255,15 @@ export class RunsService {
     taskWriteDomains?: string[] | null;
     /** D91: external capability ids the task declared (`start_task.capabilities`); omitted = none. */
     taskCapabilities?: string[] | null;
+    /**
+     * D140-4 worktree isolation. `worktreePath` / `worktreeBase` are written by
+     * `setWorktree` right after the host created the tree; a row created before
+     * that step stores nulls (and a retry names the main workdir, never another
+     * run's tree). TaskView projects both (dispatch/tasks.ts `view()`).
+     */
+    isolation?: RunIsolation | null;
+    worktreePath?: string | null;
+    worktreeBase?: string | null;
     /** The supervisor turn that started the task. */
     originRunId?: string | null;
     /** Replay sources (`start_task({continues_task_id})`, D56). */
@@ -249,12 +272,31 @@ export class RunsService {
     triggerParts?: StoredTriggerPart[];
     /** A retried turn: the failed turn it re-runs (D75 审查 L6). */
     retryOfRunId?: string | null;
+    /**
+     * 62.11 C7: the human principal the run is attributed to (dialogue turn =
+     * speaker, task = inherited from the initiating turn, background job =
+     * source run's principal or NULL). Null / omitted = single-user status
+     * quo. When omitted but the input references a parent run
+     * (`originRunId` / `parentRunId`), the principal is inherited from it —
+     * so task / subagent / widget call sites need no change.
+     */
+    principalId?: string | null;
   }): Run {
     const id = newId('run');
     const now = this.clock.now();
+    // 62.11 C7 inheritance: an explicit principalId wins (null included);
+    // otherwise a parent reference (the supervisor turn that started a task,
+    // the delegating run of a subagent / widget) lends its own.
+    const principalId =
+      input.principalId !== undefined
+        ? input.principalId
+        : (input.originRunId ?? input.parentRunId) !== undefined &&
+            (input.originRunId ?? input.parentRunId) !== null
+          ? this.principalOf((input.originRunId ?? input.parentRunId) as string)
+          : null;
     this.db
       .prepare(
-        'insert into runs (id, bot_id, conversation_id, loop_type, status, trigger_reason, trigger_message_ids_json, episode_id, episode_hop, parent_run_id, provider, model, engine, task_title, task_writes, task_cwd, task_write_domains, task_capabilities, origin_run_id, continued_from_run_ids_json, trigger_parts_json, retry_of_run_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'insert into runs (id, bot_id, conversation_id, loop_type, status, trigger_reason, trigger_message_ids_json, episode_id, episode_hop, parent_run_id, provider, model, engine, task_title, task_writes, task_cwd, task_write_domains, task_capabilities, task_isolation, task_worktree_path, task_worktree_base, origin_run_id, continued_from_run_ids_json, trigger_parts_json, retry_of_run_id, principal_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         id,
@@ -287,6 +329,9 @@ export class RunsService {
           input.taskCapabilities.length > 0
           ? JSON.stringify(input.taskCapabilities)
           : null,
+        input.isolation ?? null,
+        input.isolation === 'worktree' ? (input.worktreePath ?? null) : null,
+        input.isolation === 'worktree' ? (input.worktreeBase ?? null) : null,
         input.originRunId ?? null,
         input.continuedFromRunIds !== undefined && input.continuedFromRunIds.length > 0
           ? JSON.stringify(input.continuedFromRunIds)
@@ -295,9 +340,34 @@ export class RunsService {
           ? JSON.stringify(input.triggerParts)
           : null,
         input.retryOfRunId ?? null,
+        principalId,
         now,
       );
     return this.getOrThrow(id);
+  }
+
+  /**
+   * The principal the run is attributed to (62.11 C7), or null. The column is
+   * write-once, so a small LRU keeps the per-usage-record lookups cheap
+   * (UsageService resolves it inside `record`; both databases are local).
+   */
+  principalOf(runId: string): string | null {
+    const cached = this.#principalCache.get(runId);
+    if (cached !== undefined) {
+      // Re-insert to keep the LRU order fresh.
+      this.#principalCache.delete(runId);
+      this.#principalCache.set(runId, cached);
+      return cached;
+    }
+    const row = this.db.prepare('select principal_id from runs where id = ?').get(runId) as
+      { principal_id: string | null } | undefined;
+    const principalId = row?.principal_id ?? null;
+    this.#principalCache.set(runId, principalId);
+    if (this.#principalCache.size > RunsService.#PRINCIPAL_CACHE_MAX) {
+      const oldest = this.#principalCache.keys().next().value;
+      if (oldest !== undefined) this.#principalCache.delete(oldest);
+    }
+    return principalId;
   }
 
   /**
@@ -579,6 +649,28 @@ export class RunsService {
       )
       .all() as RunRow[];
     return rows.map(rowToRun);
+  }
+
+  /**
+   * D140-4: records the task's worktree right after the host created it — the
+   * tree becomes the execution root (`task_cwd`). A row that never reaches
+   * this call keeps nulls and fails with WORKTREE_CREATE_FAILED instead.
+   */
+  setWorktree(
+    id: string,
+    input: {
+      worktreePath: string;
+      worktreeBase: string;
+      /** The tree replaces the task cwd; null = keep the current cwd. */
+      taskCwd?: string | null;
+    },
+  ): Run {
+    this.db
+      .prepare(
+        'update runs set task_isolation = ?, task_worktree_path = ?, task_worktree_base = ?, task_cwd = coalesce(?, task_cwd) where id = ?',
+      )
+      .run('worktree', input.worktreePath, input.worktreeBase, input.taskCwd ?? null, id);
+    return this.getOrThrow(id);
   }
 
   /** Settled tasks whose result no supervisor turn has consumed yet (§3.2 reconciliation). */

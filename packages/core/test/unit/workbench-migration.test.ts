@@ -196,7 +196,8 @@ describe('main 0037 workbench', () => {
     const after = db.prepare('select * from schedules order by id').all() as Array<
       Record<string, unknown>
     >;
-    expect(after).toEqual(before.map((row) => ({ ...row, todo_id: null })));
+    // 0082 在 0037 之后给表加了 owner_principal_id（62.11 C13）：升级后按新列展开。
+    expect(after).toEqual(before.map((row) => ({ ...row, todo_id: null, owner_principal_id: null })));
 
     // Indexes survive / are rebuilt.
     const indexes = db.prepare("pragma index_list('schedules')").all() as Array<{ name: string }>;

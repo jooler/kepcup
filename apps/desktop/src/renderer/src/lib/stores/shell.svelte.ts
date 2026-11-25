@@ -18,13 +18,13 @@ import type {
 import { resolveExtensionCenterTarget } from '$lib/features/extension-center/tabs';
 import { PROJECT_MODULES, type ProjectModuleId, type ProjectSettingsSection } from '@kepcup/shared';
 import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
-import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
 import {
   resolveSettingsSection,
   settingsSectionExtensionTarget,
 } from '$lib/features/settings/sections';
 import { NARROW_HIDDEN_SETTINGS_SECTIONS } from '$lib/features/shell/narrow-layout';
 import { loadLastMainView, saveLastMainView } from '$lib/features/shell/last-main-view-persist';
+import { isTeamHidden } from '$lib/features/team/surface-gate';
 
 export type { SettingsSectionId } from '$lib/features/settings/sections';
 export type {
@@ -231,8 +231,11 @@ class ShellState {
       this.narrowSettingsOpen = true;
       return;
     }
-    // 旧深链别名已在上面改开扩展中心，到这里的一定是真实分区。
-    this.settingsSection = (section ?? 'general') as SettingsPageSection;
+    // 旧深链别名已在上面改开扩展中心，到这里的一定是真实分区。团队端点（T5）
+    // 分区被拒 surfaces 时回落到第一个可见分区（与窄屏的 resolveSettingsSection
+    // 同口径——设置卡深链是导航的旁路）；非团队上下文 resolveSettingsSection
+    // 是恒等映射，行为与现状一致。
+    this.settingsSection = resolveSettingsSection(section ?? 'general').section;
     this.settingsAnchor = anchor ?? null;
     this.settingsOpen = true;
   }
@@ -321,11 +324,12 @@ class ShellState {
 
   /**
    * 打开 Bot 详情并切到页签、滚到锚点（对话内设置卡的「在设置中打开」，
-   * todo/conversational-app-setup.md §6.1）。窄屏 / 宽屏放不下并排右栏时右栏是覆盖层
-   * （BotDetailOverlay），其余展开右栏。
+   * todo/conversational-app-setup.md §6.1）。窄屏右栏是全屏覆盖层
+   * （BotDetailOverlay）；宽屏不管并排还是覆盖抽屉都展开 rightPanelCollapsed
+   * 即可，形态由渲染层按窗口宽自适。
    */
   openBotPanel(tab: string, anchor?: string): void {
-    if (sidebarLayout.panelAsOverlay) narrowLayout.openBotDetail();
+    if (narrowLayout.narrow) narrowLayout.openBotDetail();
     else this.rightPanelCollapsed = false;
     this.rightPanelTabRequest = tab;
     this.botPanelAnchor = anchor ?? null;
@@ -338,6 +342,10 @@ class ShellState {
   workdirSettingsRequest = $state<{ anchor: string | null } | null>(null);
 
   openWorkdirSettings(anchor?: string): void {
+    // 团队端点（T5）：'workdir-pick' 被拒 surfaces 时入口不存在——深链回落为
+    // no-op（工作目录只能由服务端 workdirRoots 供给，成员不得注册主机路径，
+    // 62.08 §2）。非团队上下文 isTeamHidden 恒 false，行为与现状一致。
+    if (isTeamHidden('workdir-pick')) return;
     this.openBotPanel('profile');
     this.workdirSettingsRequest = { anchor: anchor ?? null };
   }

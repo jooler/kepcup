@@ -10,8 +10,10 @@ import type {
   PermissionModeState,
 } from '@kepcup/shared';
 import { errorText, t } from '$lib/i18n';
+import { teamContext } from '$lib/features/team/team-context.svelte';
 import { core } from '$lib/rpc/client.svelte';
-import { clientIdentity } from '$lib/features/collab/client-identity';
+import { connections, type SourceId } from '$lib/rpc/connections.svelte';
+import { clientIdentity, clientIdentityFor } from '$lib/features/collab/client-identity';
 import { toast } from 'svelte-sonner';
 import { mergeApprovalUpdate } from '$lib/features/approvals/approval-effect';
 
@@ -55,6 +57,11 @@ class PermissionsState {
   #seenAutoApprovals = 0;
   /** Grants loaded per conversation, so a dialog and the main view can both be open. */
   #grantsByConversation = $state<Record<string, Grant[]>>({});
+  /**
+   * 审批卡所属来源（T7 融合视图）：`apv_*` ULID 全局唯一，这里只记「在哪条
+   * 连接上见到它」，decide 时按来源路由（团队会话的审批经团队连接裁决）。
+   */
+  readonly #approvalSource = new Map<string, SourceId>();
   /** Whose grants `this.grants` mirrors (the main view). */
   #foregroundConversationId: string | null = null;
   /** Loaded once per boot for the banner; refreshed on unattended.changed. */
@@ -116,17 +123,25 @@ class PermissionsState {
    * Loads pending approvals + grants for a conversation. `foreground` (the
    * main view) also updates {@link grants}, which the right panel reads.
    * A second session passes `foreground: false` so it does not steal that list.
+   *
+   * T7 融合视图：团队来源的会话经 `options.call` 走该团队连接（审批卡 / 授权
+   * 面板按会话来源）；缺省仍是本机 core 单例（既有调用点零改动）。
    */
   async loadForConversation(
     conversationId: string,
-    options: { foreground?: boolean } = {},
+    options: {
+      foreground?: boolean;
+      call?: (method: string, input?: unknown) => Promise<unknown>;
+      source?: SourceId;
+    } = {},
   ): Promise<void> {
     const foreground = options.foreground !== false;
+    const call = options.call ?? ((method: string, input?: unknown) => core.call(method, input));
     if (foreground) this.#foregroundConversationId = conversationId;
     const [approvalsResult, grantsResult, modeResult] = await Promise.all([
-      core.call('approvals.list', { conversationId }) as Promise<{ approvals: Approval[] }>,
-      core.call('grants.list', { conversationId }) as Promise<{ grants: Grant[] }>,
-      core.call('permissions.mode.get', { conversationId }) as Promise<PermissionModeState>,
+      call('approvals.list', { conversationId }) as Promise<{ approvals: Approval[] }>,
+      call('grants.list', { conversationId }) as Promise<{ grants: Grant[] }>,
+      call('permissions.mode.get', { conversationId }) as Promise<PermissionModeState>,
     ]);
     this.#modesByConversation = {
       ...this.#modesByConversation,
@@ -141,6 +156,45 @@ class PermissionsState {
     };
     if (foreground) this.grants = grantsResult.grants;
     this.#recount(conversationId);
+    // 记录本批审批的来源（decide 按它路由）。
+    if (options.source !== undefined && options.source !== 'local') {
+      for (const approval of approvalsResult.approvals) {
+        this.#approvalSource.set(approval.id, options.source);
+      }
+    }
+  }
+
+  /**
+   * 团队连接的审批 / 授权事件转发（T7）：chat-team 切片把团队来源的
+   * approval.* / grant.changed / permissions.mode.changed 事件投进来——同一份
+   * 状态（卡片渲染 / 角标），事件流按来源分开。
+   */
+  ingestSourceEvent(
+    source: SourceId,
+    event: 'approval.created' | 'approval.resolved' | 'grant.changed' | 'permissions.mode.changed',
+    payload: unknown,
+  ): void {
+    if (event === 'approval.created' || event === 'approval.resolved') {
+      const data = payload as { approval: Approval };
+      this.#approvalSource.set(data.approval.id, source);
+      this.#upsert(data.approval);
+      this.#recount(data.approval.conversationId);
+      return;
+    }
+    if (event === 'grant.changed') {
+      const data = payload as { conversationId: string; grants: Grant[] };
+      this.#grantsByConversation = {
+        ...this.#grantsByConversation,
+        [data.conversationId]: data.grants,
+      };
+      if (data.conversationId === this.#foregroundConversationId) this.grants = data.grants;
+      return;
+    }
+    const data = payload as { state: PermissionModeState };
+    this.#modesByConversation = {
+      ...this.#modesByConversation,
+      [data.state.conversationId]: data.state,
+    };
   }
 
   /**
@@ -171,7 +225,23 @@ class PermissionsState {
   }
 
   async refreshUnattended(): Promise<void> {
+    // 团队端点：unattended 模式对成员整体拒绝（C14，T4 方法策略拒掉
+    // `unattended.get`）——不发调用，保持初始未启用态（boot 期裸调用会把
+    // 403 变成 unhandled rejection）。用 endpointIsTeam（同步置位）而非
+    // active（等 bootstrap 才翻转，boot 期竞速漏判）。本地恢复后事件
+    // `unattended.changed` 照常接管。
+    if (teamContext.endpointIsTeam) return;
     this.unattended = (await core.call('unattended.get')) as UnattendedState;
+  }
+
+  /**
+   * 该审批当前路由来源是否「离线」（T8 离线只读）：团队来源断线 → 决定按钮置灰
+   * （离线发不了 decide——写操作在断线时不可用）。本机来源恒 false。
+   */
+  approvalSourceOffline(approvalId: string): boolean {
+    const source = this.#approvalSource.get(approvalId) ?? 'local';
+    if (source === 'local') return false;
+    return connections.get(source).status !== 'connected';
   }
 
   async decide(
@@ -193,8 +263,22 @@ class PermissionsState {
     /** butler_proposal `project` only (D92 T1a WP4): the lead the user picked on the card. */
     leadBotId?: string,
   ): Promise<void> {
+    // T7 融合视图：团队来源会话里的审批卡经该团队连接裁决（D121 的决定者
+    // 标记用该来源自己的协作身份）；本机 / 未知来源仍是 core 单例。
+    const source = this.#approvalSource.get(approvalId) ?? 'local';
+    const identity =
+      source === 'local'
+        ? clientIdentity
+        : clientIdentityFor({
+            serverHash: source.slice('team:'.length),
+            memberId: connections.get(source).memberId,
+          });
+    const call =
+      source === 'local'
+        ? (method: string, input?: unknown) => core.call(method, input)
+        : (method: string, input?: unknown) => connections.get(source).call(method, input);
     try {
-      const result = (await core.call('approvals.decide', {
+      const result = (await call('approvals.decide', {
         id: approvalId,
         approve,
         ...(duration !== undefined ? { duration } : {}),
@@ -204,7 +288,7 @@ class PermissionsState {
         ...(handoverSelection !== undefined ? { handoverSelection } : {}),
         ...(leadBotId !== undefined ? { leadBotId } : {}),
         // D121：多端审批首胜；记录是谁做的决定。
-        client: { id: clientIdentity.id, name: clientIdentity.name },
+        client: { id: identity.id, name: identity.name },
       })) as { approval: Approval };
       this.#upsert(result.approval);
       this.#recount(result.approval.conversationId);

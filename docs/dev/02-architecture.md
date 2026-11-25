@@ -250,7 +250,7 @@ interface SandboxPolicy {
 }
 ```
 
-策略由 `sandbox/policy.ts` 根据执行身份、workspace、workdir（及写入租约）、有效授权、Profile 的网络配置生成，每条命令重新生成。
+策略由 `sandbox/policy.ts` 根据执行身份、workspace、workdir（及写入租约）、有效授权、Profile 的网络配置生成，每条命令重新生成。**D140-2（读宽写窄）**：`denyRead` 只含应用数据目录、敏感凭证清单（`sandbox/sensitive-paths.ts`，主目录读保护的唯一防线）与 workdir 保护规则 globs——沙箱可读整机；写入范围不变，`backend-srt.ts` 的 `srtFilesystemFor` 显式 `denyWrite` srt 默认便利写路径（`~/.npm/_logs`、`~/.claude/debug`）。Podman/WSL 为挂载式（宿主路径不进 guest），读宽不适用；Lima 复用同一规则层。
 
 ### 调度（`scheduler/scheduler.ts`）
 
@@ -440,3 +440,18 @@ stateDiagram-v2
 - 默认 `~/.kepcup/`，环境变量 `KEPCUP_HOME` 可覆盖（测试与开发使用）。
 - 目录结构见 [design/11-storage.md](../design/11-storage.md#数据目录)。
 - 所有路径由 `infra/paths.ts` 统一生成，其他模块不得自行拼接数据目录下的路径。
+
+## 团队服务端（D126–D138，`apps/team-server`，分支 `team-server`）
+
+团队版服务端 = **嵌入与桌面同一份 `@kepcup/core` 的纯 Node 单进程**（无 Electron），团队语义全部在团队层包 `@kepcup/team-server`（bin `kepcup-team-server`）；core 侧只增加通用、默认休眠的「主体」缝 C1–C15（[design/62-team-server/11-core-seams.md](../design/62-team-server/11-core-seams.md)）。设计与运行文档：[design/62-team-server/](../design/62-team-server/README.md)、`apps/team-server/README.md`。
+
+- **装配**（`apps/team-server/src/server.ts` `createTeamServer`）：`createCoreServices({ home, keystore, appVersion, env, principals, toolPolicy, workdirRoots, permissionCeiling, hostTools })` ——五个主体缝注入点（主体目录 / 工具策略 / workdir 根 / 授权上限 / 宿主贡献工具）由团队层实现；core 侧类型在 `packages/core/src/principal/types.ts`，宿主写入口 `CoreServices.principalOps`（`packages/core/src/principal/ops.ts`，进程内不注册 RPC）。
+- **模块**（`apps/team-server/src/`）：
+  - `store/`：加密 `team.db`（主密钥经 core `KEY_INFO.hostDb` 派生）+ 仓储；
+  - `auth/` + `http/`：成员 / 管理员两套独立认证（scrypt 与个人版同参、双 HMAC 密钥、限流、防枚举）；
+  - `hub/member-hub.ts`：`/rpc` 成员会话——每连接 = `appMethods` ∘ 方法门 ∘ `withCaller({principalId})` ∘ `withRemoteSource` ∘ `withClientIdentityBinding`，事件逐连接过事件门，双限额 503 不踢旧；
+  - `policy/`：方法策略表（`satisfies Record<AppMethodName, MethodRule>` 编译期全量归类，未归类即拒）、资源解析器、事件归类表、工具策略（C8）、surfaces 汇总；
+  - `team/`：`team.*` 方法实现（bootstrap / dm / presence / projects / profile / bots / memory / resolutions / usage 等）；
+  - `admin/`：console API（`/api/console/*`）+ 环回 admin API（`/api/admin/*`，Bearer `admin-token`）；`cli.ts` 子命令与之共用 `createAdminActions` 一套动作。
+- **HTTP 面**：`/api/auth/*`（成员）、`/api/console/*`（管理员，`--console-bind` 之外一律 404）、`/api/admin/*`（环回）、`/console/`（`apps/team-console` 静态，vite `base: '/console/'`）、`/`（渲染层 web 构建 SPA）、`/rpc`（WS，cookie 校验同源 Origin、Bearer 跳过）。
+- **与个人版 `apps/server` 的关系**：并行存在、各自演进；个人版行为零改动（不传主体缝选项 = 运行时行为不变，T1–T10 每阶段以「apps/server 测试零改动全绿」为验收项）。团队服务端**不随 release.yml 发布**（见 [06-release.md](06-release.md)「团队服务端」节）；`apps/team-console` 为独立 React 19 + Astryx 新包（渲染层主体仍是 Svelte，管理台不进 KepCup 客户端）。

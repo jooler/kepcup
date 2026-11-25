@@ -7,8 +7,10 @@ import {
   AppError,
   BASH_TIMEOUT_DEFAULT_MS,
   EGRESS_TARGET_MAX_CHARS,
+  TASK_AUTO_CLAIM_MAX,
   type ApprovalDuration,
   type EgressChannel,
+  type GrantDuration,
 } from '@kepcup/shared';
 
 import { isInsidePath, readOnlyRoots, sensitivePaths } from '../sandbox/sensitive-paths.js';
@@ -29,6 +31,7 @@ import type { AllowlistService } from '../permissions/allowlist.js';
 import type { UnattendedService } from '../permissions/unattended.js';
 import { gitRemoteGrantTarget, type GitRemoteGrants } from '../permissions/git-remote-grants.js';
 import type { WorkdirRuntime } from '../workdir/service.js';
+import { worktreeDirFor } from '../workdir/worktree.js';
 import type { TaskClaimRegistry } from '../workdir/claims.js';
 import type { McpToolDecision } from '../mcp/policy.js';
 import type { AppToolGrants } from '../apps/grants.js';
@@ -123,9 +126,22 @@ export interface GatewayDeps {
   gitRemoteGrants?: Pick<GitRemoteGrants, 'find' | 'create'> | undefined;
   /**
    * D73 P2 污点外发控制（design 29 §8.3）：应用数据读取后置位；外发通道（web_fetch / web_search /
-   * 浏览器 / 非只读 MCP 工具 / 沙箱 bash / git_remote）据此降级为逐次确认。缺省 = 不做污点控制。
+   * 浏览器 / 非只读 MCP 工具 / git_remote）据此降级为逐次确认；沙箱 bash 的外网被**切断**
+   * （D140-3：断网模型，`request_network` 批准后经 `allowNetwork` / `networkAllowed` 放开）。
+   * 缺省 = 不做污点控制。
    */
-  taint?: Pick<TaintService, 'mark' | 'guard' | 'egressAllowed' | 'allowEgress'> | undefined;
+  taint?:
+    | Pick<
+        TaintService,
+        | 'mark'
+        | 'guard'
+        | 'egressAllowed'
+        | 'allowEgress'
+        | 'allowNetwork'
+        | 'networkAllowed'
+        | 'consumeOnceNetwork'
+      >
+    | undefined;
   platform?: string;
   homeDir?: string;
   /** DI overrides for tests / future policy evolution. */
@@ -239,6 +255,32 @@ export interface GatewayExecRequest {
 }
 
 export type GatewayExecResult = SandboxExecResult & { policyApplied: boolean };
+
+/** D140-3: host cap of one `request_network` application (card + allowlist stay legible). */
+const NETWORK_HOSTS_MAX = 16;
+
+/**
+ * D140-3: normalize / validate `request_network` hosts — bare domain names only
+ * (lowercase letters, digits, `-`, `.`, leading `*.`), no scheme / path / port and
+ * none of the `,` / `|` used by the `egress_allows.scope` encoding. Invalid input
+ * throws `INVALID_INPUT` (the model fixes the list and retries).
+ */
+function normalizeNetworkHosts(hosts: readonly string[] | undefined): string[] {
+  if (hosts === undefined) return [];
+  const normalized: string[] = [];
+  for (const raw of hosts.slice(0, NETWORK_HOSTS_MAX)) {
+    const host = raw.trim().toLowerCase();
+    if (host.length === 0) continue;
+    if (host.length > 253 || !/^[a-z0-9*.-]+$/.test(host) || host.includes('..')) {
+      throw new AppError(
+        'INVALID_INPUT',
+        `hosts 里包含非法主机名：${raw}（只允许域名，可含 *. 前缀；不要带协议、路径或端口）`,
+      );
+    }
+    if (!normalized.includes(host)) normalized.push(host);
+  }
+  return normalized;
+}
 
 /** Case-insensitive comparison on filesystems that need it. */
 function normalizeForCompare(p: string, platform: string): string {
@@ -448,16 +490,50 @@ export class ToolGateway {
   }
 
   /**
-   * D123 §5: the WRITE_CLAIMED reason when another task of the same (bot,
-   * conversation) claimed this resolved path, otherwise null. Claims held by
-   * the writing task itself (subagents included) never block it.
+   * D123 §5 / D140-1: the WRITE_CLAIMED reason when another task claimed this
+   * resolved path. Claims reach every task on an overlapping root — parallel
+   * write tasks of one workdir may belong to different conversations — while
+   * claims held by the writing task itself (subagents included) never block
+   * it. The path match stays anchored to the claiming task's root.
    */
   writeClaimDenial(identity: RunIdentity, resolvedPath: string): string | null {
     const claims = this.#deps.claims;
     if (claims === undefined) return null;
     const task = this.#deps.workdirs.owningTask?.(identity) ?? null;
-    if (task === null || task.botId === null || task.conversationId === null) return null;
-    return claims.denial(task.id, task.botId, task.conversationId, resolvedPath);
+    if (task === null) return null;
+    return claims.denial(task.id, resolvedPath, task.taskCwd);
+  }
+
+  /**
+   * D140-1 auto-claim: registers `resolvedPath` on the writing task's claim
+   * after a successful gateway-mediated write (write / edit / mkdir /
+   * generated artifacts). First writer wins — another task writing the same
+   * path afterwards gets WRITE_CLAIMED. Read-only runs, turns and writes
+   * outside the task's root never register; bash / browser downloads /
+   * external-agent writes do not pass through here (known limitation, task
+   * detail and docs say so). Capped at TASK_AUTO_CLAIM_MAX paths per task.
+   */
+  noteFileWritten(identity: RunIdentity, resolvedPath: string): void {
+    const claims = this.#deps.claims;
+    if (claims === undefined) return;
+    const task = this.#deps.workdirs.owningTask?.(identity) ?? null;
+    if (task === null || task.taskWrites !== true || task.taskCwd === null) return;
+    const relative = path.relative(task.taskCwd, resolvedPath).replaceAll('\\', '/');
+    if (relative.length === 0 || relative.startsWith('../')) return;
+    const outcome = claims.autoClaim({
+      taskId: task.id,
+      botId: task.botId ?? '',
+      conversationId: task.conversationId ?? '',
+      title: task.taskTitle ?? '',
+      root: task.taskCwd,
+      path: relative,
+    });
+    if (outcome === 'capped' && claims.consumeCapNotice(task.id)) {
+      this.#deps.logger.warn(
+        { taskId: task.id, max: TASK_AUTO_CLAIM_MAX },
+        'task auto-claim cap reached; further paths are not claimed',
+      );
+    }
   }
 
   /**
@@ -488,8 +564,12 @@ export class ToolGateway {
     const paths = this.#deps.paths;
     const expanded = expandTilde(inputPath);
     // Relative paths resolve against the workdir when one is bound
-    // (docs/dev/04-agent-runtime.md "工具目录": 相对路径以 workdir 为基准).
-    const base = this.#deps.workdirs.boundWorkdir(identity.conversationId)?.path ?? workspace;
+    // (docs/dev/04-agent-runtime.md "工具目录": 相对路径以 workdir 为基准);
+    // D140-4: a worktree task resolves them against its own tree.
+    const base =
+      this.#deps.workdirs.taskWorktreePath?.(identity) ??
+      this.#deps.workdirs.boundWorkdir(identity.conversationId)?.path ??
+      workspace;
     const absolute = path.isAbsolute(expanded)
       ? path.resolve(expanded)
       : path.resolve(base, expanded);
@@ -534,6 +614,70 @@ export class ToolGateway {
       return { kind: 'allowed', resolvedPath: resolved };
     }
 
+    // 1b. D140-4: the task's isolated worktree (a sibling of the workdir).
+    //     Reads follow the workdir's protect rules anchored at the tree root;
+    //     writes need the task's own lease on the tree root. The workdir's
+    //     step below never sees the tree, so this branch is the only door.
+    const taskWorktree = this.#deps.workdirs.taskWorktree?.(identity) ?? null;
+    if (taskWorktree !== null && isInsidePath(resolvedNorm, norm(taskWorktree.path))) {
+      // The data home is the red line in every branch: a tree that somehow
+      // lives inside it (a bound workdir cannot, but fail closed anyway) must
+      // not re-open it just because this branch precedes step 2.
+      if (isInsidePath(resolvedNorm, norm(paths.home))) {
+        return { kind: 'forbidden', resolvedPath: resolved, reason: '应用数据目录不可访问' };
+      }
+      const bound = this.#deps.workdirs.boundWorkdir(identity.conversationId);
+      if (
+        bound !== null &&
+        this.#deps.workdirs.matchesProtectRule(bound, resolved, mode, taskWorktree.path)
+      ) {
+        return {
+          kind: 'forbidden',
+          resolvedPath: resolved,
+          reason:
+            mode === 'read'
+              ? '被工作目录保护规则禁止读取（可在目录设置中调整）'
+              : '被工作目录保护规则禁止写入（可在目录设置中调整）',
+        };
+      }
+      if (mode === 'read') return { kind: 'allowed', resolvedPath: resolved };
+      if (this.#deps.workdirs.holdsLease(identity, taskWorktree.path)) {
+        // A hard link whose other entries live outside the tree would mutate
+        // an external file through the tree lease (same hazard as the workdir
+        // branch; realpaths stay inside, so only the link count can see it).
+        if (mode === 'write' && hasExternalHardlink(resolved, taskWorktree.path)) {
+          return {
+            kind: 'forbidden',
+            resolvedPath: resolved,
+            reason: '目标文件存在隔离目录之外的硬链接',
+          };
+        }
+        if (isGitControlPath(resolvedNorm)) return this.#gitControlDecision(identity, resolved);
+        return { kind: 'allowed', resolvedPath: resolved };
+      }
+      return {
+        kind: 'needs_lease',
+        resolvedPath: resolved,
+        reason: '隔离目录写入需要先取得写入租约',
+      };
+    }
+
+    // 1c. D140-4: the `.worktree/` home next to the bound workdir is
+    //     KepCup-internal. Another task's tree may hold `.worktreeinclude`
+    //     copies of the very files the protect rules deny, so no identity
+    //     reaches it by path — a worktree task's own tree returned above.
+    const boundForHome = this.#deps.workdirs.boundWorkdir(identity.conversationId);
+    if (boundForHome !== null) {
+      const home = worktreeDirFor(boundForHome.path);
+      if (isInsidePath(resolvedNorm, norm(home))) {
+        return {
+          kind: 'forbidden',
+          resolvedPath: resolved,
+          reason: '隔离目录属于其他任务，不可访问',
+        };
+      }
+    }
+
     // 2. The data directory: everything except the current workspace (above)
     //    and this bot's skill directories (below). Never grantable — checked
     //    before grants on purpose.
@@ -561,6 +705,18 @@ export class ToolGateway {
     //    this run to hold the write lease (P04).
     const workdir = this.#deps.workdirs.boundWorkdir(identity.conversationId);
     if (workdir !== null && isInsidePath(resolvedNorm, norm(workdir.path))) {
+      // D140-4: a worktree task never writes the main workdir directly — its
+      // changes live in the tree and come back through the「应用到工作目录」
+      // card. The tree's lease is keyed on the tree, so the automatic
+      // needs_lease path below could otherwise release it and take the
+      // workdir lease (one lease per run), letting a second task into the tree.
+      if (mode === 'write' && (this.#deps.workdirs.isWorktreeTask?.(identity) ?? false)) {
+        return {
+          kind: 'forbidden',
+          resolvedPath: resolved,
+          reason: 'worktree 任务不能直接写入主工作目录：改动请写在隔离目录，任务结束后应用到工作目录',
+        };
+      }
       if (this.#deps.workdirs.matchesProtectRule(workdir, resolved, mode)) {
         return {
           kind: 'forbidden',
@@ -715,6 +871,9 @@ export class ToolGateway {
    * writes of a read-only run). Denials surface as APPROVAL_DENIED so the bot
    * can adjust.
    *
+   * Single-path wrapper around `ensurePathAccessBatch` (D140 §3.5): the
+   * semantics are the historical ones.
+   *
    * A「仅这一次」grant created here is consumed by the current tool call
    * (D75); `preauthorize` (request_access) leaves it for the next tool call
    * that uses it instead — still bounded by GRANT_ABSOLUTE_TTL_MS.
@@ -726,92 +885,166 @@ export class ToolGateway {
     reason: string,
     options: { signal?: AbortSignal; preauthorize?: boolean } = {},
   ): Promise<string> {
-    const decision = this.checkPath(identity, inputPath, mode);
-    if (decision.kind === 'allowed') return decision.resolvedPath;
-    if (decision.kind === 'forbidden') {
-      throw new AppError(
-        decision.claimed === true
-          ? 'WRITE_CLAIMED'
-          : decision.outOfDomain === true
-            ? 'WRITE_OUT_OF_DOMAIN'
-            : decision.readOnlyRun === true
-              ? 'RUN_READ_ONLY'
-              : 'PATH_OUT_OF_SCOPE',
-        `${decision.reason}：${inputPath}`,
-      );
-    }
-    // Workdir writes go through the write lease, not an access approval
-    // (docs/design/08-workdir.md "并发：写入租约") — acquire, then re-check.
-    if (decision.kind === 'needs_lease') {
-      await this.#deps.workdirs.ensureWriteLease(identity, decision.resolvedPath, {
-        signal: options.signal,
-        reason,
+    const outcome = await this.ensurePathAccessBatch(
+      identity,
+      [{ path: inputPath, mode, reason }],
+      options,
+    );
+    if (outcome.resolved.length > 0) return outcome.resolved[0]!;
+    const first = outcome.denied[0]!;
+    throw new AppError('APPROVAL_DENIED', first.reason, {
+      expired: first.expired,
+      approvalId: outcome.approvalId,
+    });
+  }
+
+  /**
+   * Batch variant of `ensurePathAccess` (D140 §3.5): every grantable item of
+   * one command shares **one** access card — `paths` lists each
+   * `{path, access}` pair and one decision grants them all with the same
+   * duration. `forbidden` items keep the per-item semantics (throw —
+   * RUN_READ_ONLY / WRITE_OUT_OF_DOMAIN / WRITE_CLAIMED / PATH_OUT_OF_SCOPE)
+   * and `needs_lease` items still take the write lease one by one (never a
+   * card). Resolved paths come back as they may now be touched; a refused or
+   * cancelled card denies every requested path (its `reason` is the
+   * APPROVAL_DENIED message naming the path), so the tool can tell the model
+   * per path.
+   */
+  async ensurePathAccessBatch(
+    identity: RunIdentity,
+    items: Array<{ path: string; mode: 'read' | 'write'; reason: string }>,
+    options: { signal?: AbortSignal; preauthorize?: boolean } = {},
+  ): Promise<{
+    resolved: string[];
+    denied: Array<{ path: string; reason: string; expired: boolean }>;
+    /** The approval that decided the card (set once one was raised). */
+    approvalId?: string;
+    /** The duration the user picked (once / task / conversation). */
+    duration?: GrantDuration;
+  }> {
+    const resolved: string[] = [];
+    const grantable: Array<{
+      resolvedPath: string;
+      mode: 'read' | 'write';
+      sensitive: boolean;
+    }> = [];
+    const reasons: string[] = [];
+    for (const item of items) {
+      const decision = this.checkPath(identity, item.path, item.mode);
+      if (decision.kind === 'allowed') {
+        resolved.push(decision.resolvedPath);
+        continue;
+      }
+      if (decision.kind === 'forbidden') {
+        throw new AppError(
+          decision.claimed === true
+            ? 'WRITE_CLAIMED'
+            : decision.outOfDomain === true
+              ? 'WRITE_OUT_OF_DOMAIN'
+              : decision.readOnlyRun === true
+                ? 'RUN_READ_ONLY'
+                : 'PATH_OUT_OF_SCOPE',
+          `${decision.reason}：${item.path}`,
+        );
+      }
+      // Workdir writes go through the write lease, not an access approval
+      // (docs/design/08-workdir.md "并发：写入租约") — acquire, then re-check.
+      if (decision.kind === 'needs_lease') {
+        await this.#deps.workdirs.ensureWriteLease(identity, decision.resolvedPath, {
+          signal: options.signal,
+          reason: item.reason,
+        });
+        const after = this.checkPath(identity, decision.resolvedPath, item.mode);
+        if (after.kind === 'allowed') {
+          resolved.push(after.resolvedPath);
+          continue;
+        }
+        throw new AppError('PATH_OUT_OF_SCOPE', `写入仍被拒绝：${item.path}`);
+      }
+      // D75 §2.1 / §7.3 (审查 M4): a supervisor turn never waits for an access
+      // approval — that would hold the (bot, conversation) mailbox until the
+      // user decides. It fails fast; reading outside the authorized range is a
+      // task's work (request_access inside the task).
+      if (identity.loopType === 'turn') {
+        throw new AppError(
+          'PATH_OUT_OF_SCOPE',
+          `${decision.reason}：${item.path}。对话轮不申请访问授权：需要读取它请用 start_task 派一个任务，在任务里读取（必要时先用 request_access 申请）。`,
+        );
+      }
+      grantable.push({
+        resolvedPath: decision.resolvedPath,
+        mode: item.mode,
+        sensitive: decision.sensitive,
       });
-      const after = this.checkPath(identity, decision.resolvedPath, mode);
-      if (after.kind === 'allowed') return after.resolvedPath;
-      throw new AppError('PATH_OUT_OF_SCOPE', `${'写入仍被拒绝'}：${inputPath}`);
+      if (!reasons.includes(item.reason)) reasons.push(item.reason);
     }
-    // D75 §2.1 / §7.3 (审查 M4): a supervisor turn never waits for an access
-    // approval — that would hold the (bot, conversation) mailbox until the
-    // user decides. It fails fast; reading outside the authorized range is a
-    // task's work (request_access inside the task).
-    if (identity.loopType === 'turn') {
-      throw new AppError(
-        'PATH_OUT_OF_SCOPE',
-        `${decision.reason}：${inputPath}。对话轮不申请访问授权：需要读取它请用 start_task 派一个任务，在任务里读取（必要时先用 request_access 申请）。`,
-      );
-    }
+    if (grantable.length === 0) return { resolved, denied: [] };
     // BR-P03-002: a broad grant (e.g. the user home) would silently cover
-    // sensitive locations downstream, so the card must warn whenever the
+    // sensitive locations downstream, so the card must warn whenever a
     // requested path is or covers one — the user approves them knowingly.
     const norm = (p: string) => normalizeForCompare(p, this.#platform);
-    const coversSensitive = this.#sensitive.some((sensitive) =>
-      isInsidePath(norm(sensitive), norm(decision.resolvedPath)),
+    const sensitive = grantable.some(
+      (item) =>
+        item.sensitive ||
+        this.#sensitive.some((dir) => isInsidePath(norm(dir), norm(item.resolvedPath))),
     );
     const outcome = await this.#deps.approvals.request(
       identity,
       'access',
       {
-        path: decision.resolvedPath,
-        access: mode,
-        reason,
-        sensitive: decision.sensitive || coversSensitive,
+        paths: grantable.map((item) => ({ path: item.resolvedPath, access: item.mode })),
+        reason: reasons.join('；'),
+        sensitive,
+        durations: ['once', 'task', 'conversation'],
       },
       { ...(options.signal !== undefined ? { signal: options.signal } : {}) },
     );
     if (outcome.decision !== 'approved') {
       const expired = outcome.expired === true;
-      throw new AppError(
-        'APPROVAL_DENIED',
-        expired
-          ? `等待用户授权超时（${Math.round(APPROVAL_TTL_MS / 60_000)} 分钟），无法访问该路径；任务未被阻塞，请调整做法或稍后重试`
-          : '用户拒绝或审批已取消，无法访问该路径',
-        { expired, approvalId: outcome.approval.id },
-      );
+      const denial = expired
+        ? `等待用户授权超时（${Math.round(APPROVAL_TTL_MS / 60_000)} 分钟），无法访问该路径；任务未被阻塞，请调整做法或稍后重试`
+        : '用户拒绝或审批已取消，无法访问该路径';
+      return {
+        resolved,
+        denied: grantable.map((item) => ({
+          path: item.resolvedPath,
+          reason: `${denial}：${item.resolvedPath}`,
+          expired,
+        })),
+        approvalId: outcome.approval.id,
+      };
     }
-    // `grants` only ever see once | conversation (decide() confines `bot` to mcp_tool cards).
-    const duration =
-      outcome.approval.decision?.duration === 'conversation' ? 'conversation' : 'once';
-    const grant = this.#deps.grants.create({
-      botId: identity.botId ?? '',
-      conversationId: identity.conversationId ?? '',
-      path: decision.resolvedPath,
-      access: mode,
-      duration,
-      runId: identity.runId,
-      approvalId: outcome.approval.id,
-    });
-    this.#deps.logger.info(
-      { grantId: grant.id, path: decision.resolvedPath, duration },
-      'grant created',
-    );
-    if (options.preauthorize !== true) this.#deps.grants.noteOnceUse(grant);
+    // decide() confines access cards to once | task | conversation.
+    const picked = outcome.approval.decision?.duration;
+    const duration: GrantDuration =
+      picked === 'conversation' || picked === 'task' ? picked : 'once';
+    for (const item of grantable) {
+      const grant = this.#deps.grants.create({
+        botId: identity.botId ?? '',
+        conversationId: identity.conversationId ?? '',
+        path: item.resolvedPath,
+        access: item.mode,
+        duration,
+        runId: identity.runId,
+        approvalId: outcome.approval.id,
+      });
+      this.#deps.logger.info(
+        { grantId: grant.id, path: item.resolvedPath, duration },
+        'grant created',
+      );
+      if (options.preauthorize !== true) this.#deps.grants.noteOnceUse(grant);
+    }
     const conversationId = identity.conversationId ?? '';
     this.#deps.approvals.publishEvent('grant.changed', {
       conversationId,
       grants: this.#deps.grants.listActive(conversationId),
     });
-    return decision.resolvedPath;
+    return {
+      resolved: [...resolved, ...grantable.map((item) => item.resolvedPath)],
+      denied: [],
+      approvalId: outcome.approval.id,
+      duration,
+    };
   }
 
   /**
@@ -893,6 +1126,108 @@ export class ToolGateway {
   }
 
   /**
+   * D140-3 `request_network`：污点期断网后申请放开外网（`tools/index.ts` 的同名工具是
+   * 唯一调用方）。无污点，或已有放行（`all` / `task:<runId>` / `once:<runId>`，且放行的
+   * 主机覆盖本次申请的主机）→ `already`，不弹卡。否则弹**一张** `egress` 卡（channel
+   * `network`、时长 once / task / conversation），批准按所选时长写放行行（有效期夹紧在
+   * 批准时刻的污点窗口内；`mark()` 仍会清空），拒绝抛 `APPROVAL_DENIED`。对话轮 / 子
+   * 代理 / 只读 run 不等待审批（`RUN_READ_ONLY`，与 `egressCheck` 现状一致）。无人值守
+   * 按现状 `egress` 语义自动批准：没有用户时长，按 `once` 写入（只放开一条命令），审计
+   * 走 `egress_tainted`（`approval_auto` 路径已带 channel `network`）。
+   */
+  async requestNetworkAccess(
+    identity: RunIdentity,
+    input: { hosts?: string[] | undefined; reason: string },
+    options: { signal?: AbortSignal | undefined } = {},
+  ): Promise<{
+    already: boolean;
+    duration: ApprovalDuration | null;
+    hosts: string[];
+    autoApproved: boolean;
+  }> {
+    const taint = this.taintOf(identity);
+    const taintService = this.#deps.taint;
+    if (taint === null || taintService === undefined) {
+      return { already: true, duration: null, hosts: [], autoApproved: false };
+    }
+    const hosts = normalizeNetworkHosts(input.hosts);
+    const existing = taintService.networkAllowed(identity);
+    if (existing !== null) {
+      const covered =
+        existing.hosts === undefined || hosts.every((host) => existing.hosts!.includes(host));
+      if (covered) {
+        return {
+          already: true,
+          duration: null,
+          hosts: existing.hosts ?? [],
+          autoApproved: false,
+        };
+      }
+    }
+    // D75：对话轮 / 子代理不占住 mailbox 等卡；只读 run（对话轮、writes:false 任务、
+    // 只读子代理）不放开外网——需要联网由对话轮派一个写任务。对话轮 / 子代理的专用
+    // 拒绝放在只读分支**之前**（`writeDenial` 对轮恒非空，后置会让轮拿到带 ask_user
+    // 指引的通用只读文案；与 `egressCheck` 的轮 / 子代理分支同序）。
+    const readOnlyReason = this.writeDenial(identity);
+    const unattendedOn = this.#deps.unattended.effective?.().enabled === true;
+    if ((identity.loopType === 'turn' || identity.loopType === 'subagent') && !unattendedOn) {
+      throw new AppError(
+        'RUN_READ_ONLY',
+        '本对话读取过连接应用的数据，沙箱命令的外部网络已被切断；对话轮不等待网络授权确认，请用 start_task 派一个任务，在任务里调用 request_network 申请',
+      );
+    }
+    if (readOnlyReason !== null) {
+      throw new AppError(
+        'RUN_READ_ONLY',
+        `${readOnlyReason}。只读执行不能申请网络授权：需要联网请用 ask_user 说明缘由，由对话轮派一个写任务，在任务里调用 request_network`,
+      );
+    }
+    const joined =
+      hosts.length > 0 ? hosts.map((host) => this.#deps.secrets.redact(host)).join('、') : '任意外部主机';
+    const target =
+      joined.length > EGRESS_TARGET_MAX_CHARS
+        ? `${joined.slice(0, EGRESS_TARGET_MAX_CHARS)}…（已截断）`
+        : joined;
+    const outcome = await this.#deps.approvals.request(
+      identity,
+      'egress',
+      {
+        channel: 'network',
+        target,
+        summary:
+          input.reason.length > 0 ? `网络授权：${input.reason}` : '网络授权申请（污点期外网已被切断）',
+        taintedSince: taint.firstAt,
+        durations: ['once', 'task', 'conversation'],
+      },
+      { ...(options.signal !== undefined ? { signal: options.signal } : {}) },
+    );
+    if (outcome.decision !== 'approved') {
+      throw new AppError('APPROVAL_DENIED', '用户拒绝或取消了网络授权请求');
+    }
+    // decide() 把不在卡片时长里的选择降级为 once；无人值守自动批准没有用户时长
+    // （decision 为 null），同样按 once 写——只放开一条命令。
+    const picked = outcome.approval.decision?.duration;
+    const duration: ApprovalDuration =
+      picked === 'task' || picked === 'conversation' ? picked : 'once';
+    taintService.allowNetwork(identity, duration, hosts, taint.expiresAt);
+    this.#deps.logger.info(
+      {
+        conversationId: identity.conversationId,
+        runId: identity.runId,
+        duration,
+        hostCount: hosts.length,
+      },
+      'network allow created',
+    );
+    return {
+      already: false,
+      duration,
+      hosts,
+      autoApproved: outcome.approval.autoApproved === true,
+    };
+  }
+
+  /**
    * Runs a command. Sandbox available: per-command policy (with the effective
    * grants) and sandboxed execution. Sandbox unavailable: confirm mode —
    * allowlisted read-only commands run directly, everything else needs a
@@ -908,7 +1243,13 @@ export class ToolGateway {
     // backend takes over when the enhanced one reports unavailable — the
     // sandbox gate below applies to whichever backend runs).
     let backend = this.#deps.sandbox;
+    // D140-4: worktree isolation is supported by srt only (Lima shares the
+    // srt rule layer; the mount-based Podman/WSL backends would need the tree
+    // registered as a mount). A worktree task always takes the default
+    // backend instead of the enhanced one.
+    const isolated = (this.#deps.workdirs.taskWorktree?.(identity) ?? null) !== null;
     if (
+      !isolated &&
       this.#deps.enhanced !== undefined &&
       identity.botId !== null &&
       (this.#deps.enhancedRouting?.requiredForBot(identity.botId) ?? false)
@@ -922,7 +1263,8 @@ export class ToolGateway {
     const writeDomain = this.#deps.workdirs.writeDomain?.(identity) ?? null;
     // Bound conversation: commands default to the workdir directory and the
     // sandbox permits listening on / reaching localhost (dev servers).
-    const cwd = workdir !== null ? workdir.path : workspace;
+    // D140-4: a worktree task runs its commands in its own tree.
+    const cwd = workdir !== null ? (workdir.cwd ?? workdir.path) : workspace;
     // P06: installed toolchains join every command — sandbox policy env and
     // confirm-mode overlay use the same childEnvFor allowlist + overlay.
     const toolchainPrefix = this.#deps.environment?.toolchainPathPrefix(this.#platform) ?? null;
@@ -931,28 +1273,59 @@ export class ToolGateway {
       policyEnv.PATH = `${toolchainPrefix}${this.#platform === 'win32' ? ';' : ':'}${process.env.PATH ?? ''}`;
       this.#deps.environment?.noteToolchainUse();
     }
+    // D140-3（污点 = 断网）：对话处于污点期时，沙箱命令的外网被切断（保留 localhost /
+    // 开发服务器），不再逐命令弹 `egress` 卡。模型需要联网时调用 `request_network`，
+    // 批准后这里按放行行放开：不限主机 → 恢复 Bot 自己的网络策略；限定主机 →
+    // `allowlist`（主机白名单）。Bot 策略为 `none` 时即使批准了也不放开（用户在 Bot
+    // 配置里的显式收紧不被授权卡覆盖）。已知限制：srt 的网络配置是全局单例，不同
+    // 网络策略的命令不能并发（切换会先 drain 在途命令）。
+    const taint = this.taintOf(identity);
+    const taintService = this.#deps.taint;
+    const networkAllow =
+      taint !== null && taintService !== undefined ? taintService.networkAllowed(identity) : null;
+    let effectiveNetwork: SandboxNetworkPolicy;
+    if (taint === null || networkAllow !== null) {
+      effectiveNetwork = {
+        ...req.network,
+        allowLocalhost: workdir !== null,
+        allowedPorts: workdir?.allowedPorts ?? undefined,
+      };
+      if (
+        networkAllow !== null &&
+        networkAllow.hosts !== undefined &&
+        networkAllow.hosts.length > 0 &&
+        req.network.mode !== 'none'
+      ) {
+        effectiveNetwork = {
+          mode: 'allowlist',
+          allowDomains: [...networkAllow.hosts],
+          allowLocalhost: workdir !== null,
+          allowedPorts: workdir?.allowedPorts ?? undefined,
+        };
+      }
+    } else {
+      effectiveNetwork = {
+        mode: 'none',
+        allowDomains: [],
+        allowLocalhost: workdir !== null,
+        allowedPorts: workdir?.allowedPorts ?? undefined,
+      };
+    }
+    // `once` 的网络放行只对一条命令有效：命中即在此消费（安全侧——与 once 授权并入
+    // 沙箱策略即消费同口径，即使这条命令本身不联网也不保留）。
+    if (taint !== null && networkAllow !== null) taintService?.consumeOnceNetwork(identity);
     // 完全控制（docs/design/13-permissions.md「权限级别」）：跳过审批并脱离沙箱。
-    // 两条不变量不受影响：只读 run 仍只读；Bot 的网络策略不是 open 时保留沙箱
-    // （否则 allowlist / none 会失效）。灾难命令与数据目录由下面的执行入口硬拒。
+    // 三条不变量不受影响：只读 run 仍只读；Bot 的网络策略不是 open 时保留沙箱
+    // （否则 allowlist / none 会失效）；污点期不得脱离沙箱联网（D140-3：断网只能由
+    // `request_network` 的放行解开，沙箱外执行绕不开它）——污点期一律不进 bypass，
+    // 沙箱可用走沙箱断网，沙箱不可用降级到逐条确认（每条命令仍有确认卡）。灾难命令
+    // 与数据目录由下面的执行入口硬拒。
     if (
       this.#deps.permissionMode?.isBypass(identity.conversationId) === true &&
       readOnlyReason === null &&
+      taint === null &&
       (!availability.available || req.network.mode === 'open')
     ) {
-      // 污点期间的沙箱外执行不走 per-command `egress` 卡（完全控制不弹卡），
-      // 这里补一条 `egress_tainted` 审计，Bot 详情的污点外发汇总才不失明（D73 P2）。
-      if (this.taintOf(identity) !== null) {
-        const redacted = this.#deps.secrets.redact(req.command);
-        this.audit(identity, 'egress_tainted', {
-          channel: 'bash',
-          target:
-            redacted.length > EGRESS_TARGET_MAX_CHARS
-              ? `${redacted.slice(0, EGRESS_TARGET_MAX_CHARS)}…（已截断）`
-              : redacted,
-          approved: true,
-          via: 'bypass',
-        });
-      }
       return this.#executeUnsandboxedApproved(
         identity,
         req,
@@ -962,23 +1335,6 @@ export class ToolGateway {
       );
     }
     if (availability.available) {
-      // D73 P2 (design 29 §8.3): while tainted, a sandboxed command with the network
-      // open is a per-command confirmation (`egress`, channel bash) — `allowlist` / `none`
-      // policies keep the original rules (the sandbox itself bounds egress there).
-      // Commands the BUILT-IN read-only allowlist vouches for (ls / cat / grep …: no
-      // network) are not a channel and stay unconfirmed; user-added entries are not
-      // proven read-only (`npm test` may fetch) and get the card (review P1).
-      if (
-        req.network.mode === 'open' &&
-        this.taintOf(identity) !== null &&
-        !(await this.#builtinExempt(identity, req.command, cwd, policyEnv))
-      ) {
-        await this.egressCheck(
-          identity,
-          { channel: 'bash', target: req.command, summary: '沙箱命令（Bot 网络策略为开放）' },
-          { signal: req.signal },
-        );
-      }
       // Effective = conversation grants + once grants this tool call owns or
       // may claim (unclaimed request_access pre-authorizations); once grants
       // owned by a parallel call of the same run are not visible here (D75).
@@ -994,11 +1350,7 @@ export class ToolGateway {
         platform: this.#platform,
         paths: this.#deps.paths,
         workspacePath: workspace,
-        network: {
-          ...req.network,
-          allowLocalhost: workdir !== null,
-          allowedPorts: workdir?.allowedPorts ?? undefined,
-        },
+        network: effectiveNetwork,
         grants,
         workdir:
           workdir !== null
@@ -1006,6 +1358,15 @@ export class ToolGateway {
                 path: workdir.path,
                 hasLease: workdir.hasLease,
                 denyReadGlobs: workdir.denyReadGlobs,
+              }
+            : undefined,
+        taskWorktree:
+          workdir !== null && workdir.worktree !== null
+            ? {
+                path: workdir.worktree.path,
+                gitWorktreeMeta: workdir.worktree.gitWorktreeMeta,
+                gitObjectsDir: workdir.worktree.gitObjectsDir,
+                denyReadGlobs: workdir.worktree.denyReadGlobs,
               }
             : undefined,
         ...(toolchainPrefix !== null ? { toolchainPathPrefix: toolchainPrefix } : {}),
@@ -1137,17 +1498,6 @@ export class ToolGateway {
     return { exempt: true, custom };
   }
 
-  /** Exempt by BUILT-IN entries only (the taint gate's exemption). */
-  async #builtinExempt(
-    identity: RunIdentity,
-    command: string,
-    cwd: string,
-    policyEnv: Record<string, string>,
-  ): Promise<boolean> {
-    const verdict = await this.#exemptVerdict(identity, command, cwd, policyEnv);
-    return verdict.exempt && !verdict.custom;
-  }
-
   /** Directories the Bot can write: their PATH entries never serve exempt commands. */
   #untrustedRoots(identity: RunIdentity): string[] {
     const roots: string[] = [];
@@ -1155,6 +1505,9 @@ export class ToolGateway {
     if (workspace !== null) roots.push(workspace, resolveStandingPath(workspace));
     const workdir = this.#deps.workdirs.boundWorkdir(identity.conversationId);
     if (workdir !== null) roots.push(workdir.path, resolveStandingPath(workdir.path));
+    // D140-4: the task's isolated tree is Bot-writable too.
+    const worktree = this.#deps.workdirs.taskWorktreePath?.(identity) ?? null;
+    if (worktree !== null) roots.push(worktree, resolveStandingPath(worktree));
     return [...new Set(roots)];
   }
 

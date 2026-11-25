@@ -496,8 +496,23 @@
           {#if task.cwdKind !== null}
             <span aria-hidden="true">·</span>
             <span
-              >{task.cwdKind === 'workdir' ? t('task.run.workdir') : t('task.run.workspace')}</span
+              >{task.cwdKind === 'worktree'
+                ? t('task.run.worktree')
+                : task.cwdKind === 'workdir'
+                  ? t('task.run.workdir')
+                  : t('task.run.workspace')}</span
             >
+          {/if}
+          {#if task.worktreePath != null}
+            <!-- D140-4：隔离目录路径 + 应用到工作目录的状态 -->
+            <span aria-hidden="true">·</span>
+            <span class="min-w-0 truncate font-mono" data-testid="task-run-worktree"
+              >{task.worktreePath}</span
+            >
+            {#if task.applyState !== undefined && task.applyState !== 'none'}
+              <span aria-hidden="true">·</span>
+              <span data-testid="task-run-apply-state">{t(`task.applyState.${task.applyState}`)}</span>
+            {/if}
           {/if}
           <span aria-hidden="true">·</span>
           <span>{task.writes ? t('task.run.writes') : t('task.run.readOnly')}</span>
@@ -509,7 +524,8 @@
           {/if}
           {#if metaChips?.claims != null}
             <span aria-hidden="true">·</span>
-            <span data-testid="task-run-claims"
+            <!-- D140-1：首次写入的路径会被自动认领（先到先得），列表只显示开头一部分。 -->
+            <span data-testid="task-run-claims" title={t('task.run.claimsAuto')}
               >{t('task.run.claims', { list: metaChips.claims })}</span
             >
           {/if}
@@ -666,7 +682,7 @@
                     {/if}
                   </div>
                 {:else if entry.kind === 'toolGroup'}
-                  <TaskRunToolGroup tools={entry.tools} {active} />
+                  <TaskRunToolGroup tools={entry.tools} {active} {taskId} />
                 {:else if entry.kind === 'steer'}
                   <div class="flex justify-end" data-testid="task-run-steer">
                     <div class="max-w-[85%] rounded-2xl bg-muted px-3 py-2 text-sm">
@@ -766,6 +782,50 @@
             <div class="text-sm">
               <Markdown content={reportText} />
             </div>
+          </section>
+        {/if}
+
+        {#if task !== null && task.changes?.kind === 'workdir' && (task.changes.files ?? []).length > 0}
+          {@const changes = task.changes}
+          <!-- D140-1：结算后的改动文件（影子快照恢复）；interleaved = 并行任务也改过。 -->
+          <section
+            class="rounded-lg border bg-muted/20 px-4 py-3"
+            data-testid="task-run-changes"
+            data-changes-reverted={changes.reverted ? 'true' : 'false'}
+          >
+            <h3 class="mb-2 text-xs font-medium text-muted-foreground">
+              {t('task.run.changesTitle', {
+                added: changes.added,
+                modified: changes.modified,
+                deleted: changes.deleted,
+              })}
+              {#if changes.reverted}
+                <span class="ml-1 text-emerald-600">{t('task.run.changesReverted')}</span>
+              {/if}
+            </h3>
+            <ul class="space-y-0.5 font-mono text-xs">
+              {#each changes.files ?? [] as file (file.path)}
+                <li class="flex items-baseline gap-2" data-testid="task-run-changes-file">
+                  <span
+                    class="shrink-0 text-muted-foreground"
+                  >{file.change === 'added' ? '+' : file.change === 'deleted' ? '-' : '~'}</span
+                  >
+                  <span class="min-w-0 break-all">{file.path}</span>
+                  {#if file.interleaved === true}
+                    <span
+                      class="ml-auto shrink-0 rounded-full border border-amber-600/40 px-1.5 py-0.5 font-sans text-[10px] text-amber-700 dark:text-amber-400"
+                      title={t('task.run.changesInterleaved')}
+                      >{t('task.run.changesInterleaved')}</span
+                    >
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+            {#if (changes.more ?? 0) > 0}
+              <p class="mt-1 text-[11px] text-muted-foreground">
+                {t('task.run.changesMore', { count: changes.more ?? 0 })}
+              </p>
+            {/if}
           </section>
         {/if}
       {/if}

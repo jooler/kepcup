@@ -41,20 +41,104 @@ export function rrfMerge(
     .sort((a, b) => b.score - a.score || (firstSeen.get(a.id) ?? 0) - (firstSeen.get(b.id) ?? 0));
 }
 
+/**
+ * C12 retrieval audience (62.11 C12, docs/design/62-team-server/
+ * 05-profile-and-memory.md §3): the conversation the injection / display is
+ * being rendered FOR. Absent (`undefined`) = single-user status quo — no
+ * scoping at all, every entry passes.
+ */
+export interface RetrievalAudience {
+  /** The principal the current run speaks for (null = shared / no principal). */
+  principalId: string | null;
+  /** The conversation being served. */
+  conversationId: string;
+  /** The project the current conversation belongs to (card → its project); null = none. */
+  projectConversationId: string | null;
+}
+
 export interface RetrievalFilters {
   /** Project conversations exclude sensitive entries and annotate private origins. */
   isProject: boolean;
   now: number;
   /** User's time zone for the dates on lesson / self_note lines (default: the process zone). */
   timeZone?: string;
+  /**
+   * C12 audience scope. When present, entries are filtered by their source
+   * principal + origin (see {@link passesAudience}); absent = status quo.
+   */
+  audience?: RetrievalAudience;
+  /**
+   * Maps a conversation id to the project it belongs to (card → parent
+   * project). Only consulted when `audience` is present, for the
+   * project-membership mapping of card conversations.
+   */
+  projectScopeResolver?: (conversationId: string) => string | null;
 }
 
-/** status/valid_until/sensitivity filters from the task book. */
+/**
+ * The C12 audience rule for ONE entry (62.05 §3):
+ * - no source principal → shared, passes everywhere (covers legacy single-user
+ *   rows that never carried a source);
+ * - `origin='project'` → visible only inside the project the entry was written
+ *   in (card conversations map to their project via the resolver);
+ * - `origin='private'` with a source → visible only in that principal's own
+ *   direct conversations with the bot (never inside a project group).
+ */
+export function passesAudience(
+  item: Pick<MemoryItem, 'origin' | 'originConversationId'> & {
+    sourcePrincipalId?: string | null;
+  },
+  audience: RetrievalAudience,
+  resolveProjectScope?: (conversationId: string) => string | null,
+): boolean {
+  const source = item.sourcePrincipalId ?? null;
+  if (source === null) return true;
+  if (item.origin === 'project') {
+    if (audience.projectConversationId === null) return false;
+    const originScope =
+      item.originConversationId !== null
+        ? (resolveProjectScope?.(item.originConversationId) ?? item.originConversationId)
+        : null;
+    return originScope === audience.projectConversationId;
+  }
+  return audience.principalId === source && audience.projectConversationId === null;
+}
+
+/** status/valid_until/sensitivity filters from the task book, plus C12 audience. */
 export function passesFilters(item: MemoryItem, filters: RetrievalFilters): boolean {
   if (item.status !== 'active') return false;
   if (item.validUntil !== null && item.validUntil <= filters.now) return false;
   if (filters.isProject && item.sensitivity === 'sensitive') return false;
+  if (filters.audience !== undefined) {
+    return passesAudience(item, filters.audience, filters.projectScopeResolver);
+  }
   return true;
+}
+
+/**
+ * The C12 display judgment for a HUMAN caller viewing a bot's memory list
+ * (Bot 详情「知识与能力 - 记忆」, 62.05 §3 — 检索与展示同一判定): a caller sees
+ * shared entries (no source), entries sourced to themselves, and project
+ * entries of projects they are enrolled in (card conversations resolve to
+ * their parent project). Everything else stays hidden.
+ */
+export function visibleToCaller(
+  item: Pick<MemoryItem, 'origin' | 'originConversationId'> & {
+    sourcePrincipalId?: string | null;
+  },
+  callerPrincipalId: string,
+  callerProjectIds: ReadonlySet<string>,
+  resolveProjectScope?: (conversationId: string) => string | null,
+): boolean {
+  const source = item.sourcePrincipalId ?? null;
+  if (source === null || source === callerPrincipalId) return true;
+  if (item.origin === 'project') {
+    if (item.originConversationId === null) return false;
+    const scope =
+      resolveProjectScope?.(item.originConversationId) ?? item.originConversationId;
+    return scope !== null && callerProjectIds.has(scope);
+  }
+  return false;
 }
 
 /** Kinds whose injected line carries the write date and evidence ids (P1.2). */

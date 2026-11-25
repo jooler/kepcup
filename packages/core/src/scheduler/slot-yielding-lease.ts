@@ -9,7 +9,9 @@ import type { Scheduler } from './scheduler.js';
  * slot back until the lease is granted. Without it a run holding a slot and
  * waiting for a lease, and a lease holder (a write task, a pinned external
  * agent run) waiting for that slot, deadlock — at any provider limit.
- * An immediate grant keeps the slot (no yield).
+ * An immediate grant keeps the slot (no yield). D140-1: shared acquisitions
+ * granted alongside other shared holders take the same fast path — only an
+ * acquisition that actually parked yields its slot.
  */
 export class SlotYieldingLeaseService extends LeaseService {
   #scheduler: Scheduler | null = null;
@@ -26,8 +28,9 @@ export class SlotYieldingLeaseService extends LeaseService {
 
   override acquire(identity: RunIdentity, key: string, hooks: LeaseWaitHooks = {}): Promise<void> {
     const pending = super.acquire(identity, key, hooks);
-    // The fast path grants synchronously inside super.acquire.
-    if (this.holderOf(key)?.runId === identity.runId || hooks.signal?.aborted === true) {
+    // The fast path (free key, coexisting shared holders, or the run's own
+    // key) grants synchronously inside super.acquire, leaving keyOf set.
+    if (this.keyOf(identity.runId) === key || hooks.signal?.aborted === true) {
       return pending;
     }
     return this.#scheduler?.yieldSlotWhile(identity.runId, pending, hooks.signal) ?? pending;

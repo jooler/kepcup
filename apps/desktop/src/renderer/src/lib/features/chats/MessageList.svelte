@@ -8,6 +8,7 @@
   import RunStatusLine from './RunStatusLine.svelte';
   import SelectionPinToolbar from './SelectionPinToolbar.svelte';
   import { isVisibleInTranscript } from './transcript-visibility';
+  import { chatDisplay } from './chat-display.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
   import TaskStatusLine from '$lib/features/tasks/TaskStatusLine.svelte';
 
@@ -28,9 +29,12 @@
   let suppressScrollHandler = false;
 
   // 会话记录可见性：与沟通 tab 徽标共用 isVisibleInTranscript（WP6 步骤 2），
-  // 各条件的语义见该函数的注释。
+  // 各条件的语义见该函数的注释；第三参是对话信息展示设置（设置 → 通用）的
+  // 勾选状态——用户关掉的类目不进列表。
   const messages = $derived(
-    (session.view?.messages ?? []).filter((m) => isVisibleInTranscript(m, permissions.approvals)),
+    (session.view?.messages ?? []).filter((m) =>
+      isVisibleInTranscript(m, permissions.approvals, chatDisplay.prefs),
+    ),
   );
   // 状态行签名：出现/让位/工具名切换都会改变列表末尾的排版。
   const statusSignature = $derived(
@@ -48,7 +52,16 @@
   function chainKey(message: Message): string | null {
     if (message.status === 'recalled') return null;
     if (message.kind === 'text') {
-      if (message.senderType === 'user') return 'user';
+      if (message.senderType === 'user') {
+        // 团队上下文（T5）：用户消息按发送主体分组——同一成员的相邻消息连排，
+        // 不同成员（dm / 项目组）断开。单用户消息 senderPrincipalId 为空，键
+        // 保持 'user'，连排行为不变（休眠铁律）。
+        const principal = message.senderPrincipalId;
+        if (principal !== null && principal !== undefined && principal.length > 0) {
+          return `principal:${principal}`;
+        }
+        return 'user';
+      }
       if (message.senderType === 'bot') return `bot:${message.senderBotId ?? ''}`;
       return null;
     }

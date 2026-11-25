@@ -32,6 +32,11 @@ export const hostCapabilityIdSchema = z.enum([
   'apps',
   'mail',
   'settings',
+  // 62.11 C10：宿主经 `HostToolsProvider` 运行时贡献的工具（名字不在静态登记表
+  // 里）。包内工具列表为空，归属由进程内的宿主工具名登记表判定（见
+  // `registerHostToolNames` / `capabilityOfTool`）；不提供宿主工具的安装上这个
+  // 包不影响任何行为（休眠）。
+  'host',
 ]);
 export type HostCapabilityId = z.infer<typeof hostCapabilityIdSchema>;
 
@@ -323,6 +328,15 @@ export const HOST_CAPABILITIES: readonly HostCapabilityDescriptor[] = [
       },
     ],
   }),
+  // 62.11 C10：宿主贡献工具（HostToolsProvider）的归属包。包内列表恒空：宿主
+  // 工具按 run 动态出现，名字经下方 `hostContributedToolNames` 登记表归入本包
+  // （`capabilityOfTool` 先查登记表）。登记表为空（单用户宿主）时本包对任何
+  // 名字都不命中，行为与从前一致。
+  pack({
+    id: 'host',
+    category: 'host',
+    default: 'inject',
+  }),
 ];
 
 /**
@@ -345,6 +359,29 @@ export const NEVER_INJECTED_TOOLS: readonly string[] = [
   'collect_delegate_results',
 ];
 
+/**
+ * 62.11 C10：宿主贡献工具名的进程内登记表（`HostToolsProvider` 每 run 返回的
+ * 工具名）。归属是纯名字判定（`capabilityOfTool`），登记表只在有宿主工具的
+ * 安装上非空；多 run 之间名字汇入同一集合是安全的——注入起点永远是本次 run
+ * 的工具列表，登记表只决定「查得到包」，不会把别的 run 的工具带进来。
+ */
+const hostContributedToolNames = new Set<string>();
+
+/** Registers the names of tools a run received from `HostToolsProvider` (C10). */
+export function registerHostToolNames(names: readonly string[]): void {
+  for (const name of names) {
+    if (name.length > 0) hostContributedToolNames.add(name);
+  }
+}
+
+/** Whether `toolName` was contributed by the host (C10 registry hit). */
+export function isRegisteredHostToolName(toolName: string): boolean {
+  return hostContributedToolNames.has(toolName);
+}
+
+/** The pack every registered host-contributed tool belongs to. */
+export const HOST_TOOLS_PACK_ID = 'host' as const;
+
 export function hostCapability(id: HostCapabilityId): HostCapabilityDescriptor {
   return HOST_CAPABILITIES.find((entry) => entry.id === id)!;
 }
@@ -366,10 +403,12 @@ export function defaultCapabilities(entry: {
 }
 
 /**
- * 工具所属的能力包（精确名优先，其次前缀；管家专属工具归 `collaboration`）。
+ * 工具所属的能力包（精确名优先，其次前缀；管家专属工具归 `collaboration`；
+ * 62.11 C10：宿主登记过的贡献工具名归 `host` 包，先于静态登记表判定）。
  * 不属于任何包（如访谈专用工具）返回 null——外部 Agent 下不注入。
  */
 export function capabilityOfTool(toolName: string): HostCapabilityDescriptor | null {
+  if (isRegisteredHostToolName(toolName)) return hostCapability(HOST_TOOLS_PACK_ID);
   return (
     HOST_CAPABILITIES.find(
       (capability) =>

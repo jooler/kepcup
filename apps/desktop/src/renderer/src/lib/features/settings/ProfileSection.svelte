@@ -2,8 +2,12 @@
   /**
    * 个人资料（Profile）分区：上层是「头像与名称」身份卡 + 用户画像二级菜单
    * （一个分类一条目，右侧箭头示意可点进），下层是各分类 / 画像卡片预览的
-   * 详情视图（返回按钮回到菜单）。头像上传先经 AvatarCropper 裁成方形再入库；
-   * 名称与头像引用存 settings 行（条目 profile.user-name / profile.user-avatar）。
+   * 详情视图（返回按钮回到菜单）。称呼与头像的事实源按上下文分派：团队上下文
+   * （web 端点）= 服务端成员行（`team.member.updateSelf`，成员侧 settings.update
+   * 是 admin plane 被拒）；桌面端点 = 本机 settings 行（条目 profile.user-name /
+   * profile.user-avatar，头像上传走 `user.avatar.upload`），融合在线时称呼
+   * best-effort 推给团队服务器（self-profile.ts）。画像条目仍走 profile.* RPC
+   * （成员策略放行，按调用者分桶落服务端）。
    */
   import type { ProfileCategory, ProfileItem } from '@kepcup/shared';
   import { ArrowLeft, ChevronRight, ImagePlus, Pencil, UserRound } from '@lucide/svelte';
@@ -14,6 +18,8 @@
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { core } from '$lib/rpc/client.svelte';
+  import { teamContext } from '$lib/features/team/team-context.svelte';
+  import { pushSelfProfileToTeamSources } from '$lib/features/team/self-profile';
   import { avatarImages } from '$lib/avatars/avatar-images.svelte';
   import AvatarCropper from '$lib/avatars/AvatarCropper.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -67,14 +73,31 @@
   let avatarInput: HTMLInputElement | null = $state(null);
   let nameTimer: ReturnType<typeof setTimeout> | undefined;
 
-  const savedName = $derived(settingsStore.settings?.userProfileName ?? '');
+  /**
+   * 称呼 / 头像的事实源按上下文分派（2026-11 web 个人资料）：团队上下文（web
+   * 端点）直接用服务端成员行的显示名与头像（成员侧 settings.update 是 admin
+   * plane 被拒，写走 `team.member.updateSelf`）；桌面端点仍是本机设置
+   * （settings.userProfileName / `upload:` 头像引用），融合连接在线时把变更
+   * best-effort 推给团队服务器（self-profile.ts）。
+   */
+  const teamSelf = $derived(teamContext.active ? teamContext.member : null);
+
+  const savedName = $derived(
+    teamSelf !== null ? teamSelf.displayName : (settingsStore.settings?.userProfileName ?? ''),
+  );
   /** 展示行的文本：编辑中的草稿优先；为空时模板显示占位提示。 */
   const displayName = $derived(nameDraft ?? savedName);
-  const avatarFile = $derived.by(() => {
+  const avatarUrl = $derived.by(() => {
+    if (teamSelf !== null) return teamSelf.avatar ?? null;
     const ref = settingsStore.settings?.userProfileAvatar ?? '';
-    return ref.startsWith('upload:') ? ref.slice('upload:'.length) : null;
+    return ref.startsWith('upload:') ? avatarImages.user(ref.slice('upload:'.length)) : null;
   });
-  const avatarUrl = $derived(avatarFile !== null ? avatarImages.user(avatarFile) : null);
+  /** 头像已设置（控制「移除头像」入口的显隐）。 */
+  const hasAvatar = $derived(
+    teamSelf !== null
+      ? (teamSelf.avatar ?? '').length > 0
+      : (settingsStore.settings?.userProfileAvatar ?? '').startsWith('upload:'),
+  );
 
   $effect(() => {
     void profileStore.refresh();
@@ -162,6 +185,8 @@
   /**
    * 名称随输入自动保存：停顿 600ms 落一次盘，失焦立即落盘；成功不打扰
    * （连续输入时 toast 会刷屏），失败才提示。与已存值相同则只清草稿。
+   * 团队上下文写服务端成员行（`team.member.updateSelf`）；桌面端点写本机
+   * 设置后再把称呼推给已连接的团队服务器（best-effort，失败才提示）。
    */
   async function saveName(): Promise<void> {
     if (nameDraft === null) return;
@@ -171,8 +196,16 @@
       return;
     }
     try {
+      if (teamSelf !== null) {
+        await core.callTeam('team.member.updateSelf', { displayName: next });
+        // member.updated 广播回来要一拍；本地先收敛，输入框立即反映新名。
+        nameDraft = null;
+        return;
+      }
       await settingsStore.update({ userProfileName: next });
       nameDraft = null;
+      const failed = await pushSelfProfileToTeamSources({ displayName: next });
+      if (failed > 0) toast.error(t('settings.profileServerSyncFailed'));
     } catch {
       toast.error(t('common.actionFailed'));
     }
@@ -254,7 +287,15 @@
   async function onCropConfirm(payload: { mime: 'image/png'; bytesBase64: string }): Promise<void> {
     avatarBusy = true;
     try {
-      await core.call('user.avatar.upload', payload);
+      if (teamSelf !== null) {
+        // 团队上下文：裁切结果编码成 data URL 直接进服务端成员行（名册各方经
+        // member.updated 收敛；上限 200k 与 console 成员头像同口径）。
+        await core.callTeam('team.member.updateSelf', {
+          avatar: `data:${payload.mime};base64,${payload.bytesBase64}`,
+        });
+      } else {
+        await core.call('user.avatar.upload', payload);
+      }
       cropFile = null;
       toast.success(t('settings.profileAvatarSaved'));
     } catch {
@@ -266,7 +307,11 @@
 
   async function removeAvatar(): Promise<void> {
     try {
-      await settingsStore.update({ userProfileAvatar: '' });
+      if (teamSelf !== null) {
+        await core.callTeam('team.member.updateSelf', { avatar: null });
+      } else {
+        await settingsStore.update({ userProfileAvatar: '' });
+      }
       toast.success(t('settings.profileAvatarRemoved'));
     } catch {
       toast.error(t('common.actionFailed'));
@@ -299,7 +344,7 @@
             <ImagePlus class="size-4 text-white" aria-hidden="true" />
           </span>
         </button>
-        {#if avatarFile !== null}
+        {#if hasAvatar}
           <button
             type="button"
             class="cursor-pointer text-xs text-destructive transition-colors hover:text-destructive/80 hover:underline"

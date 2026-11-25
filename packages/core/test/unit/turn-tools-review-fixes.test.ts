@@ -307,6 +307,10 @@ describe('a turn never waits for an access approval (审查 M4)', () => {
     );
     expect(taskSensitive.ok).toBe(true);
     expect(approvalRequests.map((request) => request.kind)).toEqual(['access']);
-    expect(approvalRequests[0]!.payload['path']).toBe(canonicalPath(path.join(sensitive, 'id_rsa')));
+    // D140 §3.5: new cards carry the paths form + the three durations.
+    expect(approvalRequests[0]!.payload['paths']).toEqual([
+      { path: canonicalPath(path.join(sensitive, 'id_rsa')), access: 'read' },
+    ]);
+    expect(approvalRequests[0]!.payload['durations']).toEqual(['once', 'task', 'conversation']);
   });
 });

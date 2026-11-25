@@ -161,4 +161,44 @@ describe('pre-migration backup and rollback (P13 任务 5)', () => {
     expect(reason).not.toContain('已恢复升级前的 main.db 备份');
     expect(reason).not.toContain('应用未改动你的数据');
   });
+
+  it('refuses a database written by a newer build without migrating or backing up', async () => {
+    const home = await mkdtemp(path.join(tmpdir(), 'kepcup-migr-newer-'));
+    homes.push(home);
+    const keystore = createMemoryKeystore();
+
+    const first = await createCore({ home, keystore });
+    expect(first.services.status).toBe('ready');
+    const version = readUserVersion(first.services.mainDb!);
+    await first.close();
+
+    const masterKey = Buffer.from(keystore.getSecret()!, 'base64');
+    const bumped = openDatabase({
+      path: path.join(home, 'main.db'),
+      key: deriveKey(masterKey, KEY_INFO.mainDb),
+    });
+    bumped.pragma(`user_version = ${version + 1}`);
+    closeDatabase(bumped);
+
+    const second = await createCore({ home, keystore });
+    cores.push(second);
+    expect(second.services.status).toBe('error');
+    const reason = second.services.statusReason ?? '';
+    expect(reason).toContain('更新版本的 KepCup');
+    expect(reason).toContain(String(version + 1));
+    expect(reason).toContain(String(version));
+    // No pre-migration backup is taken for a database this build cannot open.
+    expect(listBackups(path.join(home, 'backups'), 'main.db')).toHaveLength(0);
+
+    // The on-disk database keeps the newer version (nothing was rewritten).
+    const unchanged = openDatabase({
+      path: path.join(home, 'main.db'),
+      key: deriveKey(masterKey, KEY_INFO.mainDb),
+    });
+    try {
+      expect(readUserVersion(unchanged)).toBe(version + 1);
+    } finally {
+      closeDatabase(unchanged);
+    }
+  });
 });

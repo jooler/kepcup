@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -255,58 +256,83 @@ describe('D75 task layer (TaskHost)', () => {
       held,
       step().expect(isTaskRequest('TASK-Q2')).hold().replyToolCall('skip_reply', { reason: 'x' }),
       step().expect(isTaskRequest('TASK-Q3')).hold().replyToolCall('skip_reply', { reason: 'x' }),
-      step().expect(isTaskRequest('TASK-Q4')).replyToolCall('skip_reply', { reason: 'x' }),
+      step().expect(isTaskRequest('TASK-Q4')).hold().replyToolCall('skip_reply', { reason: 'x' }),
+      step().expect(isTaskRequest('TASK-Q5')).hold().replyToolCall('skip_reply', { reason: 'x' }),
+      step().expect(isTaskRequest('TASK-Q6')).hold().replyToolCall('skip_reply', { reason: 'x' }),
+      step().expect(isTaskRequest('TASK-Q7')).replyToolCall('skip_reply', { reason: 'x' }),
     ]);
+    // D140：TASK_CONCURRENCY_PER_CONVERSATION = 6。默认厂商并发 4（只读任务还要
+    // 给回复留一个空位）会让第 4 个起「等模型并发额度」，先把 mock 厂商的并发
+    // 提到 8，让 6 个任务真正同时 running，才能观测对话级 6/6 的排队。
+    await core.rpc.call('settings.update', {
+      providerConcurrency: { default: 4, 'custom:mock': 8 },
+    });
     const turn1 = turnIdentity(bot.id, conv.id, 'run_turn_q1');
     const turn2 = turnIdentity(bot.id, conv.id, 'run_turn_q2');
     const base = { sourceMessageIds: [], writes: false };
     const t1 = host.start(turn1, { ...base, title: 'q1', instruction: 'TASK-Q1' });
     const t2 = host.start(turn1, { ...base, title: 'q2', instruction: 'TASK-Q2' });
+    const t3 = host.start(turn1, { ...base, title: 'q3', instruction: 'TASK-Q3' });
+    const t4 = host.start(turn1, { ...base, title: 'q4', instruction: 'TASK-Q4' });
     expect(t1.state).toBe('running');
     expect(t2.state).toBe('running');
-    // TASK_START_MAX_PER_TURN = 2
-    expect(() => host.start(turn1, { ...base, title: 'q9', instruction: 'TASK-Q9' })).toThrow(
-      /本轮最多派出 2 个任务/,
-    );
-    const t3 = host.start(turn2, { ...base, title: 'q3', instruction: 'TASK-Q3' });
     expect(t3.state).toBe('running');
-    // TASK_CONCURRENCY_PER_CONVERSATION = 3 → the 4th waits.
-    const t4 = host.start(turn2, { ...base, title: 'q4', instruction: 'TASK-Q4' });
-    expect(t4.state).toBe('submitted');
-    expect(t4.queueReason).toContain('本对话 3/3');
-    expect(runOf(stack, t4.taskId).status).toBe('queued');
-    const listed = host.list(turn2).find((s) => s.taskId === t4.taskId);
+    expect(t4.state).toBe('running');
+    // TASK_START_MAX_PER_TURN = 4（D140）
+    expect(() => host.start(turn1, { ...base, title: 'q9', instruction: 'TASK-Q9' })).toThrow(
+      /本轮最多派出 4 个任务/,
+    );
+    const t5 = host.start(turn2, { ...base, title: 'q5', instruction: 'TASK-Q5' });
+    const t6 = host.start(turn2, { ...base, title: 'q6', instruction: 'TASK-Q6' });
+    expect(t5.state).toBe('running');
+    expect(t6.state).toBe('running');
+    // TASK_CONCURRENCY_PER_CONVERSATION = 6（D140）→ the 7th waits.
+    const t7 = host.start(turn2, { ...base, title: 'q7', instruction: 'TASK-Q7' });
+    expect(t7.state).toBe('submitted');
+    expect(t7.queueReason).toContain('本对话 6/6');
+    expect(runOf(stack, t7.taskId).status).toBe('queued');
+    const listed = host.list(turn2).find((s) => s.taskId === t7.taskId);
     expect(listed).toMatchObject({ state: 'submitted', injectable: true });
     expect(listed?.queueReason).toContain('本对话');
 
-    // Free one slot: q1 finishes (skip_reply → empty result, no wake) → q4 starts.
-    await waitFor(() => (llm.requestsFor('mock-main').length >= 3 ? true : null), {
-      label: 'three task requests held',
+    // Free one slot: q1 finishes (skip_reply → empty result, no wake) → q7 starts.
+    await waitFor(() => (llm.requestsFor('mock-main').length >= 6 ? true : null), {
+      label: 'six task requests held',
     });
     held.release();
     const q1 = await waitRun(stack, t1.taskId, ['completed'], 'q1 completed');
     expect(q1.resultConsumedAt).not.toBeNull(); // empty result: consumed, never woken
-    await waitRun(stack, t4.taskId, ['completed'], 'q4 auto-started and completed');
+    await waitRun(stack, t7.taskId, ['running', 'completed'], 'q7 auto-started');
     expect(entries(stack, t1.taskId).at(-1)).toMatchObject({ phase: 'result', text: '' });
     llm.releaseAll();
     await waitRun(stack, t2.taskId, ['completed'], 'q2 completed');
     await waitRun(stack, t3.taskId, ['completed'], 'q3 completed');
+    await waitRun(stack, t4.taskId, ['completed'], 'q4 completed');
+    await waitRun(stack, t5.taskId, ['completed'], 'q5 completed');
+    await waitRun(stack, t6.taskId, ['completed'], 'q6 completed');
+    await waitRun(stack, t7.taskId, ['completed'], 'q7 completed');
     expect(wakeRuns(stack, conv.id)).toHaveLength(0);
   }, 30_000);
 
-  it('two write tasks on the same cwd: the second stays submitted until the first settles', async () => {
+  it('two undeclared write tasks on the same cwd run in parallel (D140-1)', async () => {
     const stack = await start();
     const { core, llm } = stack;
     const bot = await makeBot(core, '小艾');
     const conv = await openDirect(core, bot.id);
     const host = tasksOf(stack);
-    const held = step().expect(isTaskRequest('TASK-W1')).hold().replyToolCall('skip_reply', {
+    const workdirDir = mkdtempSync(path.join(tmpdir(), 'd140-parallel-'));
+    writeFileSync(path.join(workdirDir, 'README.md'), '# p\n');
+    const bound = (await core.rpc.call('workdirs.select', {
+      conversationId: conv.id,
+      path: workdirDir,
+    })) as { workdir: { path: string } };
+    const heldA = step().expect(isTaskRequest('TASK-W1')).hold().replyToolCall('skip_reply', {
       reason: 'x',
     });
-    llm.script('mock-main', [
-      held,
-      step().expect(isTaskRequest('TASK-W2')).replyToolCall('skip_reply', { reason: 'x' }),
-    ]);
+    const heldB = step().expect(isTaskRequest('TASK-W2')).hold().replyToolCall('skip_reply', {
+      reason: 'x',
+    });
+    llm.script('mock-main', [heldA, heldB]);
     const turn = turnIdentity(bot.id, conv.id);
     const w1 = host.start(turn, {
       title: 'w1',
@@ -320,27 +346,37 @@ describe('D75 task layer (TaskHost)', () => {
       sourceMessageIds: [],
       writes: true,
     });
-    // W1 still takes its write lease when start returns: its true state is
-    // submitted (审查 LOW-7); w2 waits behind w1.
+    // D140-1: both write tasks take the shared lease — neither queues behind
+    // the other at the task layer (the transient「等写入租约」/「等模型并发
+    // 额度」 handoff may still show before the engine starts).
     expect(w1.state).toBe('submitted');
-    // W1's queue reason is the lease-layer waiting string; w2 waits behind w1
-    // at the task layer with the D123 write-domain reason.
-    expect(w1.queueReason).toContain('写入租约');
     expect(w2.state).toBe('submitted');
-    expect(w2.queueReason).toContain(`等写域（任务 ${w1.taskId} 持有 整目录）`);
-    expect(runOf(stack, w1.taskId).taskCwd).toBe(runOf(stack, w2.taskId).taskCwd);
-    await waitRun(stack, w1.taskId, ['running'], 'w1 running');
-    await waitFor(() => (llm.requestsFor('mock-main').length >= 1 ? true : null), {
-      label: 'w1 request held',
+    expect(w2.queueReason ?? '').not.toContain('等写域');
+    expect(runOf(stack, w1.taskId).taskCwd).toBe(bound.workdir.path);
+    expect(runOf(stack, w2.taskId).taskCwd).toBe(bound.workdir.path);
+    // Both engine runs start and each sandbox sees hasLease (shared holders).
+    const runtime = core.services.workdirRuntime!;
+    await waitFor(() => (heldA.consumed && heldB.consumed ? true : null), {
+      label: 'both write tasks running',
     });
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(runOf(stack, w2.taskId).status).toBe('queued');
-    expect(llm.requests().some(isTaskRequest('TASK-W2'))).toBe(false);
-    held.release();
-    const w2Done = await waitRun(stack, w2.taskId, ['completed'], 'w2 completed after w1');
-    const w1Done = runOf(stack, w1.taskId);
-    expect(w1Done.status).toBe('completed');
-    expect(w2Done.startedAt ?? 0).toBeGreaterThanOrEqual(w1Done.endedAt ?? Infinity);
+    const identityOf = (taskId: string) => ({
+      runId: taskId,
+      botId: bot.id,
+      conversationId: conv.id,
+      loopType: 'task' as const,
+    });
+    expect(runtime.policyInfo(identityOf(w1.taskId))?.hasLease).toBe(true);
+    expect(runtime.policyInfo(identityOf(w2.taskId))?.hasLease).toBe(true);
+    heldA.release();
+    heldB.release();
+    await waitRun(stack, w1.taskId, ['completed'], 'w1 completed');
+    await waitRun(stack, w2.taskId, ['completed'], 'w2 completed');
+    // Overlap: the later start precedes the earlier end (真并行，不是先后).
+    const w1Run = runOf(stack, w1.taskId);
+    const w2Run = runOf(stack, w2.taskId);
+    const laterStart = Math.max(w1Run.startedAt ?? 0, w2Run.startedAt ?? 0);
+    const earlierEnd = Math.min(w1Run.endedAt ?? 0, w2Run.endedAt ?? 0);
+    expect(laterStart).toBeLessThan(earlierEnd);
   }, 30_000);
 
   it('cancel_task writes cancel + failure(status=cancelled) entries and never wakes', async () => {

@@ -1,10 +1,15 @@
 import type { Attachment } from '@kepcup/shared';
 import { core } from '$lib/rpc/client.svelte';
+import { connections, type SourceId } from '$lib/rpc/connections.svelte';
+import { teamCacheSync } from '../team/cache-sync.svelte';
 
 /**
  * 消息附件字节的渲染层缓存（docs/design/20-conversation-media.md）：
  * attachments.get 的 base64 → Blob → objectURL，按附件 id 做 LRU
  * （消息气泡与灯箱共用，避免同一次会话里重复拉取同一份字节）。
+ *
+ * T7 融合视图：`source` 指明附件所属会话的来源（团队会话的附件字节经该
+ * 团队连接拉取）；缺省 'local'（既有调用点零改动）。
  */
 
 const MAX_ENTRIES = 64;
@@ -39,18 +44,34 @@ export function cachedAttachmentUrl(attachmentId: string): string | null {
   return null;
 }
 
-export async function attachmentUrl(attachment: Attachment): Promise<string> {
+export async function attachmentUrl(
+  attachment: Attachment,
+  source: SourceId = 'local',
+): Promise<string> {
   const cached = cachedAttachmentUrl(attachment.id);
   if (cached !== null) return cached;
   const inflight = pending.get(attachment.id);
   if (inflight !== undefined) return inflight;
+  const call =
+    source === 'local'
+      ? (method: string, input?: unknown) => core.call(method, input)
+      : connections.get(source).call;
   const load = (async (): Promise<string> => {
-    const result = (await core.call('attachments.get', { id: attachment.id })) as {
-      dataBase64: string;
-    };
+    // T8（62.10 §1 附件按需缓存）：团队来源走 cache-aside——先查本地缓存分区，
+    // miss 且在线时经团队连接下载并回写；离线命中缓存可看、未缓存失败（UI 占位）。
+    let dataBase64: string | null = null;
+    if (source !== 'local') {
+      dataBase64 = await teamCacheSync.attachmentBytesBase64(source, attachment.id);
+    }
+    if (dataBase64 === null) {
+      const result = (await call('attachments.get', { id: attachment.id })) as {
+        dataBase64: string;
+      };
+      dataBase64 = result.dataBase64;
+    }
     // atob 手动解码（CSP 的 connect-src 不含 data:，fetch data URL 会被拦）；
     // 产物是同源 blob URL（img-src/media-src 已放行 blob:）。
-    const binary = atob(result.dataBase64);
+    const binary = atob(dataBase64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
     const url = URL.createObjectURL(new Blob([bytes], { type: attachment.mime }));
@@ -67,8 +88,11 @@ export async function attachmentUrl(attachment: Attachment): Promise<string> {
 }
 
 /** 触发浏览器下载（blob URL + <a download>，无需主进程参与）。 */
-export async function downloadAttachment(attachment: Attachment): Promise<void> {
-  const url = await attachmentUrl(attachment);
+export async function downloadAttachment(
+  attachment: Attachment,
+  source: SourceId = 'local',
+): Promise<void> {
+  const url = await attachmentUrl(attachment, source);
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = attachment.fileName;

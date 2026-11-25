@@ -33,8 +33,11 @@
   import { contacts } from '$lib/stores/contacts.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
+  import { isTeamHidden } from '$lib/features/team/surface-gate';
+  import { teamContext } from '$lib/features/team/team-context.svelte';
   import { Button } from '$lib/components/ui/button';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
+  import MemberAvatar from '$lib/features/team/MemberAvatar.svelte';
   import * as Avatar from '$lib/components/ui/avatar';
   import * as Dialog from '$lib/components/ui/dialog';
 
@@ -89,10 +92,16 @@
     toast.success(t('search.themeApplied', { mode: label }));
   }
 
+  /**
+   * 搜索候选的设置条目（静态清单 + 语言响应）：团队端点（T5）按
+   * `team.bootstrap.surfaces.hidden` 过滤——被拒分区不再从搜索可达（侧栏导航
+   * 已隐藏的入口，搜索是它的旁路；统一经 isTeamHidden 判定，任务书步骤 2.1）。
+   * 非团队上下文集合为空，清单与现状逐项一致。
+   */
   const settingsTargets = $derived.by<SettingsTarget[]>(() => {
     const parent = t('search.settingsEntry');
     const appearance = `${parent} · ${t('settings.appearanceSection')}`;
-    return [
+    const all: SettingsTarget[] = [
       {
         id: 'settings',
         icon: Settings2,
@@ -247,6 +256,7 @@
         section: 'diagnostics',
       },
     ];
+    return all.filter((target) => !isTeamHidden(target.section));
   });
 
   /** 高频设置（产品钦定的 9 条，顺序固定）。 */
@@ -281,6 +291,10 @@
   const QUICK_BOT_CAP = 8;
 
   function conversationTitle(conversation: ConversationView): string {
+    // dm（T5）：对端成员名（自我会话「我」），解析与侧栏同源；非团队上下文无 dm。
+    if (conversation.type === 'dm') {
+      return teamContext.dmPeerView(conversation.peerPrincipalIds).title;
+    }
     return conversation.type === 'project'
       ? (conversation.title ?? conversation.id)
       : (conversation.bot?.name ?? conversation.directBotId ?? conversation.id);
@@ -473,7 +487,17 @@
           {/if}
         </span>
       {:else if row.kind === 'conversation'}
-        {#if row.conversation.type === 'project'}
+        {#if row.conversation.type === 'dm'}
+          <!-- dm（T5）：对端成员头像 + 状态点；自我会话显示自己的显示名（2026-11）。
+               text-base 与 Bot 条目首字母同规格。 -->
+          {@const peer = teamContext.dmPeerView(row.conversation.peerPrincipalIds)}
+          <MemberAvatar
+            name={peer.title}
+            avatar={peer.avatar}
+            state={peer.state}
+            class="size-10 text-base"
+          />
+        {:else if row.conversation.type === 'project'}
           <Avatar.Root class="size-10">
             <Avatar.Fallback class="bg-emerald-600 text-primary-foreground">
               <Users class="size-5" aria-hidden="true" />

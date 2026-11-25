@@ -295,6 +295,13 @@ function spillOption(spill: ToolOutputSpill | undefined): WrapOptions | undefine
 /** srt violation lines: `cat(x) deny(1) file-read-data /path`. */
 const VIOLATION_PATH_PATTERN = /\bfile-(read|write)(?:-data|-metadata|-create)?\s+(.+)$/;
 
+/**
+ * D140-3: srt network violation lines — `deny network-outbound host:port …` /
+ * `deny http-request …`. A hit means the taint cut (mode none / a host-scoped
+ * allowlist) blocked the command's outbound traffic, not a file rule.
+ */
+const NETWORK_VIOLATION_PATTERN = /\bdeny (?:network-outbound|http-request)\b/;
+
 export interface SandboxViolationAccess {
   path: string;
   mode: 'read' | 'write';
@@ -396,11 +403,15 @@ export function buildCodingTools(
         ...(size !== undefined ? { size } : {}),
       });
       gateway.audit(identity, 'fs_write', { path: resolved, tool: 'write' });
+      // D140-1: first writer wins — the successful write auto-claims the path.
+      gateway.noteFileWritten(identity, resolved);
     },
     mkdir: async (dir: string) => {
       const resolved = await checked(identity, gateway, dir, 'write', 'write');
       mkdirSync(resolved, { recursive: true });
       gateway.audit(identity, 'fs_write', { path: resolved, tool: 'write', op: 'mkdir' });
+      // D140-1: claiming the created directory keeps peers out of its subtree.
+      gateway.noteFileWritten(identity, resolved);
     },
   };
 
@@ -497,6 +508,11 @@ export function buildCodingTools(
             `\n[被沙箱拦截 ${result.violations.length} 次，示例]\n${samples.join('\n')}`,
           ];
           const blocked = extractViolationAccesses(result.violations);
+          if (result.violations.some((v) => NETWORK_VIOLATION_PATTERN.test(v.line))) {
+            notes.push(
+              '[提示] 外部网络被污点保护切断。需要联网请调用 request_network（仅这一次 / 本任务内 / 本对话内），批准后重试。',
+            );
+          }
           if (blocked.length > 0) {
             // D123 ④: the step-0 write refusals of `gateway.checkPath` (write
             // domain, another task's claim, a read-only run) are fail-closed and
@@ -547,34 +563,51 @@ export function buildCodingTools(
             // config on startup (macOS python3 reads ~/.CFUserTextEncoding), and
             // blocking a task on a denial the command did not need would hold
             // the mailbox for nothing. A successful command keeps the hint.
+            //
+            // D140 §3.5: every grantable path of this one command shares a
+            // single access card (`ensurePathAccessBatch`) — one decision
+            // grants them all with the same duration.
             if (identity.loopType !== 'turn' && result.exitCode !== 0) {
+              const grantableItems = blocked
+                .filter(
+                  (violation) =>
+                    gateway.checkPath(identity, violation.path, violation.mode).kind ===
+                    'needs_grant',
+                )
+                .map((violation) => ({
+                  path: violation.path,
+                  mode: violation.mode,
+                  reason: '执行 bash 需要访问该路径',
+                }));
               const granted: string[] = [];
               const refused: string[] = [];
-              for (const violation of blocked) {
-                const verdict = gateway.checkPath(identity, violation.path, violation.mode);
-                if (verdict.kind !== 'needs_grant') continue;
-                const what = violation.mode === 'write' ? '读写' : '读取';
-                try {
-                  await checked(identity, gateway, violation.path, violation.mode, 'bash', {
-                    ...(options.signal !== undefined ? { signal: options.signal } : {}),
-                    // The command already ended: leave the grant for the retry.
-                    preauthorize: true,
-                  });
-                  granted.push(violation.path);
-                } catch (error) {
-                  if (error instanceof AppError && error.code === 'APPROVAL_DENIED') {
-                    const expired = (error.details as { expired?: boolean } | undefined)?.expired;
-                    refused.push(
-                      `${violation.path}（${expired === true ? '授权超时' : `用户拒绝${what}`}）`,
-                    );
-                    continue;
-                  }
-                  throw error;
-                }
+              let approvedDuration: 'once' | 'task' | 'conversation' | undefined;
+              if (grantableItems.length > 0) {
+                const outcome = await gateway.ensurePathAccessBatch(identity, grantableItems, {
+                  ...(options.signal !== undefined ? { signal: options.signal } : {}),
+                  // The command already ended: leave the grant for the retry.
+                  preauthorize: true,
+                });
+                granted.push(...outcome.resolved);
+                // Denied entries keep the request order (one decision covers
+                // every requested path), so each maps back to its mode.
+                outcome.denied.forEach((denial, index) => {
+                  const what = grantableItems[index]?.mode === 'write' ? '读写' : '读取';
+                  refused.push(
+                    `${denial.path}（${denial.expired ? '授权超时' : `用户拒绝${what}`}）`,
+                  );
+                });
+                approvedDuration = outcome.duration;
               }
               if (granted.length > 0) {
+                const hold =
+                  approvedDuration === 'task'
+                    ? '本任务内有效'
+                    : approvedDuration === 'conversation'
+                      ? '本对话内一直有效'
+                      : '授权仅对下一次工具调用有效';
                 notes.push(
-                  `[授权] 用户已允许${granted.join('、')}；授权仅对下一次工具调用有效，请重新执行命令。`,
+                  `[授权] 用户已允许${granted.join('、')}；${hold}，请重新执行命令。`,
                 );
               }
               if (refused.length > 0) {

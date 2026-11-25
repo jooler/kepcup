@@ -385,6 +385,11 @@ test('project board: columns, cards, dialog, drag, layout, draft, narrow width',
     const trackBox = await track.boundingBox();
     if (trackBox === null) throw new Error('missing track box');
     const trackHandle = columns(page).first().locator('[data-testid="board-column-handle"]');
+    // 新增列可能把轨道滚到最右，边缘自动滚动就再也走不动。先回到起点，
+    // 与上方卡片列表把 scrollTop 归零同一套路。
+    await track.evaluate((el) => {
+      el.scrollLeft = 0;
+    });
     const beforeTrack = await track.evaluate((el) => el.scrollLeft);
     const trackHandleBox = await trackHandle.boundingBox();
     if (trackHandleBox === null) throw new Error('missing column handle box');

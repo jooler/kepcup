@@ -11,6 +11,7 @@ import type { MessageKey } from '$lib/i18n';
 
 export const APPROVAL_DURATION_LABEL_KEYS: Record<ApprovalDuration, MessageKey> = {
   once: 'approvals.once',
+  task: 'approvals.task',
   conversation: 'approvals.conversation',
   bot: 'approvals.durationBot',
   command: 'approvals.commandDuration',
@@ -87,6 +88,7 @@ export function foldedApprovedKey(
   duration: ApprovalDuration | undefined,
 ):
   | 'approvals.foldedApprovedOnce'
+  | 'approvals.foldedApprovedTask'
   | 'approvals.foldedApprovedConversation'
   | 'approvals.foldedApprovedBot'
   | 'approvals.foldedApprovedCommand' {
@@ -94,7 +96,9 @@ export function foldedApprovedKey(
     ? 'approvals.foldedApprovedBot'
     : duration === 'conversation'
       ? 'approvals.foldedApprovedConversation'
-      : duration === 'command'
-        ? 'approvals.foldedApprovedCommand'
-        : 'approvals.foldedApprovedOnce';
+      : duration === 'task'
+        ? 'approvals.foldedApprovedTask'
+        : duration === 'command'
+          ? 'approvals.foldedApprovedCommand'
+          : 'approvals.foldedApprovedOnce';
 }

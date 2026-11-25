@@ -19,10 +19,17 @@ export interface WatchToolFacade {
     source: unknown;
     condition: unknown;
     intervalSec: number;
+    /** 62.11 C13：归属主体（当前运行主体）。缺省 / null = 单用户现状。 */
+    ownerPrincipalId?: string | null;
   }): Watch;
   listForBotInConversation(botId: string, conversationId: string): Watch[];
   /** Only the bot's own watch of this conversation is stopped. */
-  stopOwn(botId: string, conversationId: string, watchId: string): { ok: boolean; message: string };
+  stopOwn(
+    botId: string,
+    conversationId: string,
+    watchId: string,
+    ownerPrincipalId?: string | null,
+  ): { ok: boolean; message: string };
 }
 
 interface ConditionParams {
@@ -60,8 +67,14 @@ export function buildWatchTools(input: {
    * 外发通道——污点期间创建前要用户确认（目标 = 完整 URL）；缺省 = 不做污点控制。
    */
   egress?: EgressCheck | undefined;
+  /**
+   * 62.11 C13：当前运行主体（runs.principal_id，62.11 C7 经工具面传入）。
+   * 工具创建的监看归属它（提醒 run 的主体）；缺省 / null = 单用户现状（无归属）。
+   */
+  principalId?: string | null | undefined;
 }): ToolDefinition[] {
   const { identity, watch, egress } = input;
+  const owner = input.principalId ?? null;
   const requireContext = (): { botId: string; conversationId: string } | null => {
     if (identity.conversationId === null || identity.botId === null) return null;
     return { botId: identity.botId, conversationId: identity.conversationId };
@@ -145,6 +158,7 @@ export function buildWatchTools(input: {
           },
           condition: conditionFromParams(params.condition),
           intervalSec: Math.round(Number(params.interval_minutes) * 60),
+          ...(owner !== null ? { ownerPrincipalId: owner } : {}),
         });
         return {
           ok: true,
@@ -186,7 +200,7 @@ export function buildWatchTools(input: {
     execute: async (params) => {
       const ctx = requireContext();
       if (ctx === null) return noContext();
-      const outcome = watch.stopOwn(ctx.botId, ctx.conversationId, params.id);
+      const outcome = watch.stopOwn(ctx.botId, ctx.conversationId, params.id, owner);
       return outcome.ok
         ? { ok: true, content: outcome.message }
         : { ok: false, content: outcome.message, errorCode: 'NOT_FOUND' };

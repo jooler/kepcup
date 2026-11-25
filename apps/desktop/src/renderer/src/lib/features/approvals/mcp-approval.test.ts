@@ -114,6 +114,7 @@ describe('foldedApprovedKey', () => {
   it('maps the recorded duration to the folded record text', () => {
     expect(foldedApprovedKey('bot')).toBe('approvals.foldedApprovedBot');
     expect(foldedApprovedKey('conversation')).toBe('approvals.foldedApprovedConversation');
+    expect(foldedApprovedKey('task')).toBe('approvals.foldedApprovedTask');
     expect(foldedApprovedKey('command')).toBe('approvals.foldedApprovedCommand');
     expect(foldedApprovedKey(undefined)).toBe('approvals.foldedApprovedOnce');
   });

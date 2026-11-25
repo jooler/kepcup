@@ -25,6 +25,7 @@ interface TodoRow {
   updated_at: number;
   closed_at: number | null;
   position: number;
+  owner_principal_id: string | null;
 }
 
 interface TodoRunRow {
@@ -64,7 +65,16 @@ function assigneeToColumns(assignee: TodoAssignee | null): {
   return { botId: assignee.leadBotId, projectId: assignee.projectId };
 }
 
-export function rowToTodo(row: TodoRow): Todo {
+/**
+ * A todo row plus the ownership column that stays out of the shared RPC shape
+ * (62.11 C13): the owning human principal. Absent / null = the single-user
+ * status quo (ownerless rows carry no key, so the mapped shape is unchanged).
+ */
+export interface StoredTodo extends Todo {
+  ownerPrincipalId?: string | null;
+}
+
+export function rowToTodo(row: TodoRow): StoredTodo {
   return {
     id: row.id,
     title: row.title,
@@ -79,6 +89,7 @@ export function rowToTodo(row: TodoRow): Todo {
     updatedAt: row.updated_at,
     closedAt: row.closed_at,
     position: row.position,
+    ...(row.owner_principal_id !== null ? { ownerPrincipalId: row.owner_principal_id } : {}),
   };
 }
 
@@ -104,6 +115,10 @@ export interface InsertTodoInput {
   source: TodoSource;
   memoId?: string | null | undefined;
   blockedReason?: string | null | undefined;
+  /**
+   * 62.11 C13：归属主体（调用者）。缺省 / null = 单用户现状（NULL 行）。
+   */
+  ownerPrincipalId?: string | null | undefined;
 }
 
 export interface UpdateTodoPatch {
@@ -135,6 +150,11 @@ export interface ListTodosFilter {
    * workbench RPC and the butler never see cards. Reconcile does not.
    */
   excludeBoardCards?: boolean | undefined;
+  /**
+   * 62.11 C13：传入时只返回该主体拥有的行（owner_principal_id = ?）；
+   * 缺省 = 不过滤（单用户现状）。
+   */
+  ownerPrincipalId?: string | undefined;
 }
 
 export interface InsertTodoRunInput {
@@ -170,7 +190,7 @@ export class TodoStore {
     private readonly clock: Clock,
   ) {}
 
-  insert(input: InsertTodoInput): Todo {
+  insert(input: InsertTodoInput): StoredTodo {
     const id = newId('todo');
     const now = this.clock.now();
     const status = input.status ?? 'draft';
@@ -179,8 +199,9 @@ export class TodoStore {
       .prepare(
         `insert into todos
            (id, title, notes, assignee_bot_id, assignee_project_id, status, source,
-            memo_id, blocked_reason, pending_when, created_at, updated_at, closed_at, position)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            memo_id, blocked_reason, pending_when, created_at, updated_at, closed_at, position,
+            owner_principal_id)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -197,23 +218,24 @@ export class TodoStore {
         now,
         CLOSED_TODO_STATUSES.includes(status) ? now : null,
         this.#nextLanePosition(input.assignee ?? null),
+        input.ownerPrincipalId ?? null,
       );
     return this.#getOrThrow(id);
   }
 
-  get(id: string): Todo | null {
+  get(id: string): StoredTodo | null {
     const row = this.db.prepare('select * from todos where id = ?').get(id) as TodoRow | undefined;
     return row ? rowToTodo(row) : null;
   }
 
-  #getOrThrow(id: string): Todo {
+  #getOrThrow(id: string): StoredTodo {
     const todo = this.get(id);
     if (todo === null) throw new Error(`todo ${id} disappeared after insert`);
     return todo;
   }
 
   /** Partial update; bumps `updated_at`. Returns null when the todo does not exist. */
-  update(id: string, patch: UpdateTodoPatch): Todo | null {
+  update(id: string, patch: UpdateTodoPatch): StoredTodo | null {
     const current = this.get(id);
     if (current === null) return null;
     const assignee = patch.assignee !== undefined ? patch.assignee : current.assignee;
@@ -270,7 +292,7 @@ export class TodoStore {
   }
 
   /** Most recently updated first. */
-  list(filter: ListTodosFilter = {}): Todo[] {
+  list(filter: ListTodosFilter = {}): StoredTodo[] {
     const where: string[] = [];
     const params: Array<string | number> = [];
     if (filter.statuses !== undefined) {
@@ -289,6 +311,10 @@ export class TodoStore {
     }
     if (filter.excludeBoardCards === true) {
       where.push('id not in (select todo_id from board_cards)');
+    }
+    if (filter.ownerPrincipalId !== undefined) {
+      where.push('owner_principal_id = ?');
+      params.push(filter.ownerPrincipalId);
     }
     const clause = where.length > 0 ? `where ${where.join(' and ')}` : '';
     return (
@@ -315,7 +341,7 @@ export class TodoStore {
    * One lane's open todos as the workbench shows them (no board cards), ordered
    * by the manual drag key ascending (backfilled from the status order).
    */
-  listLaneOpen(assignee: TodoAssignee | null): Todo[] {
+  listLaneOpen(assignee: TodoAssignee | null): StoredTodo[] {
     const lane = this.#laneWhere(assignee);
     return (
       this.db
@@ -352,7 +378,7 @@ export class TodoStore {
   }
 
   /** Todos whose executor is this bot (bot assignee or project lead override). */
-  listByAssigneeBot(botId: string): Todo[] {
+  listByAssigneeBot(botId: string): StoredTodo[] {
     return (
       this.db
         .prepare('select * from todos where assignee_bot_id = ? order by updated_at desc, id desc')
@@ -361,7 +387,7 @@ export class TodoStore {
   }
 
   /** Todos assigned to this project conversation. */
-  listByAssigneeProject(projectId: string): Todo[] {
+  listByAssigneeProject(projectId: string): StoredTodo[] {
     return (
       this.db
         .prepare(

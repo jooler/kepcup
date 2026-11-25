@@ -21,7 +21,7 @@ function toolsFor(options: {
   violation: string;
   checkPath: (identity: RunIdentity, target: string, mode: 'read' | 'write') => unknown;
 }) {
-  const requested: Array<{ path: string; mode: string; preauthorize?: boolean }> = [];
+  const requested: Array<{ paths: string[]; preauthorize?: boolean }> = [];
   const identity: RunIdentity = {
     runId: 'run_task',
     botId: 'bot_x',
@@ -35,19 +35,21 @@ function toolsFor(options: {
       violations: [{ line: options.violation }],
     }),
     checkPath: options.checkPath,
-    ensurePathAccess: async (
+    ensurePathAccessBatch: async (
       _identity: RunIdentity,
-      target: string,
-      mode: 'read' | 'write',
-      _reason: string,
+      items: Array<{ path: string; mode: 'read' | 'write' }>,
       extra: { preauthorize?: boolean } = {},
     ) => {
       requested.push({
-        path: target,
-        mode,
+        paths: items.map((item) => item.path),
         ...(extra.preauthorize !== undefined ? { preauthorize: extra.preauthorize } : {}),
       });
-      return target;
+      return {
+        resolved: items.map((item) => item.path),
+        denied: [],
+        approvalId: 'apr_x',
+        duration: 'once',
+      };
     },
   } as unknown as ToolGateway;
   const tools = buildCodingTools(identity, {

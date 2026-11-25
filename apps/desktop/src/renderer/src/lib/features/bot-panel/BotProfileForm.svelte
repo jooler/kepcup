@@ -24,11 +24,12 @@
     DialogTitle,
   } from '$lib/components/ui/dialog';
   import type { MessageKey } from '$lib/i18n';
-  import { settingsStore } from '$lib/stores/settings.svelte';
+  import { settingsStore, type ModelOption } from '$lib/stores/settings.svelte';
   import { agentsStore } from '$lib/stores/agents.svelte';
   import { appsStore } from '$lib/stores/apps.svelte';
   import { appToolEstimate, shouldShowAcpAppsNotice } from './bot-apps';
   import BotPluginsSection from './BotPluginsSection.svelte';
+  import BotPluginsTeamView from './BotPluginsTeamView.svelte';
   import {
     capabilityRows,
     taskEngineValue,
@@ -56,6 +57,17 @@
      * （历史的新建表单）。字段区块与 data-settings-anchor 不变。
      */
     section,
+    /**
+     * 模型选项覆盖（右栏成员面编辑传 team.bots.modelOptions 的结果）：团队端点
+     * 上本机 providers 恒空（providers.list 是 admin plane）、桌面融合是本机
+     * 清单——都不代表服务器。缺省 undefined = 用本机 settings 推导（行为不变）。
+     */
+    modelOptions: modelOptionsOverride,
+    /**
+     * 团队端点（成员面）Bot：插件由管理员在管理台绑定，成员侧只读展示
+     * （渲染 BotPluginsTeamView，不调用被 deny 的 plugins.* 管理面）。
+     */
+    teamManaged = false,
   }: {
     profile: BotProfile;
     showIdentity?: boolean;
@@ -63,6 +75,9 @@
     /** 已有 Bot 时才能勾选邮箱绑定。新建对话框还没有 id。 */
     botId?: string;
     section?: BotConfigSection;
+    modelOptions?: ModelOption[];
+    /** 团队端点（成员面）：插件区块只读（BotPluginsTeamView）。 */
+    teamManaged?: boolean;
   } = $props();
 
   /** 整表渲染（section 缺省）时所有条目都出；下钻模式只出该条目。 */
@@ -74,7 +89,7 @@
    * so the current value still renders (and can be consciously cleared).
    */
   const modelOptions = $derived.by(() => {
-    const options = settingsStore.availableModelOptions;
+    const options = modelOptionsOverride ?? settingsStore.availableModelOptions;
     const stale = [
       profile.runtime.model,
       profile.runtime.light_model,
@@ -923,7 +938,11 @@
   <!-- 插件（P2 注入模型）：应用 / MCP / 邮箱三区块收编为一张插件列表 + 展开细选；
        深链锚点 bot-plugins（bot-apps / bot-mcp 别名见 BotPluginsSection）。 -->
   {#if show('plugins')}
-    <BotPluginsSection {profile} {botId} onConnectionSelected={maybeShowAcpAppsNotice} />
+    {#if teamManaged}
+      <BotPluginsTeamView {profile} />
+    {:else}
+      <BotPluginsSection {profile} {botId} onConnectionSelected={maybeShowAcpAppsNotice} />
+    {/if}
   {/if}
   {#if show('inkcop') && inkcopCollabOn}
     <div class="space-y-2" data-testid="bot-inkcop-agents" data-settings-anchor="bot-inkcop-agents">

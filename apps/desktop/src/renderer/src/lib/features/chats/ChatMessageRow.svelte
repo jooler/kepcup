@@ -20,8 +20,11 @@
   import { shell } from '$lib/stores/shell.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
+  import MemberAvatar from '$lib/features/team/MemberAvatar.svelte';
+  import { connections } from '$lib/rpc/connections.svelte';
+  import { teamContext } from '$lib/features/team/team-context.svelte';
   import MessageBody from './MessageBody.svelte';
-  import { exchangeMessageShape } from './exchange-message';
+  import { avatarOriginBotName, exchangeMessageShape, teamMessageSide } from './exchange-message';
   import MessageAttachments from './MessageAttachments.svelte';
   import QuotedMedia from './QuotedMedia.svelte';
   import FileArtifacts from '$lib/features/files/FileArtifacts.svelte';
@@ -103,8 +106,41 @@
    */
   const exchangeShape = $derived(exchangeMessageShape(session.view?.conversation, message));
   const exchangeChat = $derived(session.view?.conversation.type === 'bot_direct');
+  /**
+   * 团队上下文的用户消息分侧（T5）：按 senderPrincipalId 判左右（自己在右）。
+   * 非团队上下文恒 null——userSide 保持既有 senderType 判定，行为不变。
+   * T7 桌面融合视图：团队来源会话用该来源的活跃成员判自己。
+   */
+  const teamSelf = $derived.by(() => {
+    if (session.source !== 'local') return connections.get(session.source).memberId;
+    return teamContext.member?.id ?? null;
+  });
+  const teamActive = $derived(teamContext.active || session.source !== 'local');
+  const teamSide = $derived(teamMessageSide(teamActive, teamSelf, message));
+  /** T8 离线只读：团队来源断线时写操作（撤回等）置灰（缓存只读镜像）。 */
+  const teamOffline = $derived(
+    session.source !== 'local' && connections.get(session.source).status !== 'connected',
+  );
   /** 布局用的「用户侧」（行方向 / 对齐 / 操作钮位置）：交换会话的发起方也算。 */
-  const userSide = $derived(exchangeShape?.side === 'issuer' || isUser);
+  const userSide = $derived(
+    exchangeShape?.side === 'issuer' || (teamSide === null && isUser) || teamSide?.side === 'self',
+  );
+  /** 团队对端成员消息：左侧显示发送人名（快照优先，回落名册 / 主体 id）。 */
+  const teamPeer = $derived(teamSide?.side === 'peer' ? teamSide : null);
+  const teamPeerMember = $derived(
+    teamPeer === null || teamPeer.principalId === null
+      ? null
+      : session.source === 'local'
+        ? teamContext.memberById(teamPeer.principalId)
+        : contacts.teamMemberById(session.source, teamPeer.principalId),
+  );
+  const teamPeerName = $derived(
+    teamPeer === null
+      ? ''
+      : (teamPeer.senderName || teamPeerMember?.displayName || teamPeer.principalId || ''),
+  );
+  /** T10 预留：分身代回（origin='avatar'）的气泡徽标数据；非分身消息为 null。 */
+  const avatarBadgeName = $derived(avatarOriginBotName(message));
   /** Sender's stored avatar (preset / upload), falling back to initials. */
   const senderBot = $derived(
     message.senderBotId === null
@@ -126,15 +162,22 @@
       ? (session.view?.messages.find((m) => m.id === message.replyTo) ?? null)
       : null,
   );
-  const quotedName = $derived(
-    quoted === null
-      ? ''
-      : quoted.senderType === 'user'
-        ? settingsStore.userDisplayName
-        : quoted.senderBotId
-          ? chat.botName(quoted.senderBotId)
-          : '',
-  );
+  const quotedName = $derived.by(() => {
+    if (quoted === null) return '';
+    if (quoted.senderType === 'user') {
+      // 团队上下文（T5）：被引用的用户消息来自其他成员时显示成员名，否则保持「我」。
+      const side = teamMessageSide(teamContext.active, teamContext.member?.id ?? null, quoted);
+      if (side?.side === 'peer') {
+        return (
+          side.senderName ||
+          (side.principalId !== null ? (teamContext.memberById(side.principalId)?.displayName ?? side.principalId) : '') ||
+          settingsStore.userDisplayName
+        );
+      }
+      return settingsStore.userDisplayName;
+    }
+    return quoted.senderBotId !== null ? chat.botName(quoted.senderBotId) : '';
+  });
   /** 引用块里的被引用附件（图片缩略图 / 文件 chip）：映射成 QuotedMedia 的轻量形状。 */
   const quotedAttachments = $derived(
     quoted === null
@@ -163,9 +206,17 @@
   const canCopy = $derived(canAct && hasText);
   /** 整条钉为便签：便签是纯文本，只对有正文的消息提供（与复制同一门槛）。 */
   const canPin = $derived(canAct && hasText);
-  /** 撤回（design/02 §撤回与编辑）：只挂在本会话记录最后一条用户消息上（转交消息除外）。 */
+  /**
+   * 撤回（design/02 §撤回与编辑）：只挂在本会话记录最后一条用户消息上（转交消息
+   * 除外）。团队上下文（T5）只挂在自己的消息上——对端成员的消息不可撤回。
+   */
   const canRecall = $derived(
-    canAct && isLast && message.senderType === 'user' && delegatedBy === null,
+    canAct &&
+      isLast &&
+      message.senderType === 'user' &&
+      delegatedBy === null &&
+      !teamOffline &&
+      (teamSide === null || teamSide.side === 'self'),
   );
   /**
    * 语音消息的原始录音附件由语音气泡自己播放（53 号修订 v3）：附件行不再重复
@@ -238,7 +289,13 @@
     ? 'bg-accent/60 ring-1 ring-accent transition-colors'
     : ''}"
   role="group"
-  aria-label={exchangeShape !== null ? avatarName : isUser ? settingsStore.userDisplayName : name}
+  aria-label={exchangeShape !== null
+    ? avatarName
+    : teamPeer !== null
+      ? teamPeerName
+      : isUser
+        ? settingsStore.userDisplayName
+        : name}
   data-testid={`message-${message.id}`}
   data-message-status={message.status}
   data-highlighted={session.highlightMessageId === message.id ? 'true' : 'false'}
@@ -262,6 +319,19 @@
         testId="bot-avatar"
       />
     {/if}
+  {:else if teamPeer !== null}
+    <!-- 团队对端成员消息（T5）：左侧成员头像（连排只有第一条带，其余留占位对齐）。 -->
+    {#if merge.above}
+      <div class="mt-0.5 size-7 shrink-0" aria-hidden="true"></div>
+    {:else}
+      <MemberAvatar
+        name={teamPeerName}
+        avatar={teamPeerMember?.avatar ?? null}
+        state={teamPeerMember?.state ?? null}
+        class="mt-0.5 size-7"
+        testId="member-avatar"
+      />
+    {/if}
   {:else if !isUser && isProjectChat}
     <BotAvatar
       botId={message.senderBotId ?? ''}
@@ -282,6 +352,12 @@
       ? 'max-w-[calc(100%-32px)]'
       : 'max-w-[78%]'} {userSide ? 'items-end' : 'items-start'}"
   >
+    {#if teamPeer !== null}
+      <!-- 团队对端成员消息：发送人名（sender_name 快照，禁用 / 删除后仍可辨）。 -->
+      <span class="mb-0.5 text-[11px] text-muted-foreground" data-testid="member-sender-name">
+        {teamPeerName}
+      </span>
+    {/if}
     {#if delegatedBy !== null}
       <span class="mb-0.5 text-[11px] text-muted-foreground" data-testid="delegation-origin">
         {t('delegation.proxiedBy', { name: delegatedBy ? chat.botName(delegatedBy) : '' })}
@@ -313,6 +389,13 @@
     {/if}
 
     <MessageBody {message} {merge} userStyle={exchangeShape?.side === 'issuer'} />
+
+    {#if avatarBadgeName !== null}
+      <!-- 分身代回徽标（T10 预留，本阶段只渲染；62.06）。 -->
+      <span class="mt-0.5 text-[11px] text-muted-foreground" data-testid="avatar-origin-badge">
+        {t('chats.avatarOriginBadge', { name: avatarBadgeName })}
+      </span>
+    {/if}
 
     {#if clientSourceLabel !== null}
       <span class="mt-0.5 text-[11px] text-muted-foreground" data-testid="message-client-source"

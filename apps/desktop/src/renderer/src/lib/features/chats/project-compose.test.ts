@@ -30,6 +30,7 @@ function enter(
   query: string,
   state: { leadId: string | null; memberIds: string[] } = emptyState,
   highlight = -1,
+  allowQuickCreate = true,
 ): ReturnType<typeof composeEnterAction> {
   const excluded =
     phase === 'members' && state.leadId !== null
@@ -43,6 +44,7 @@ function enter(
     memberIds: state.memberIds,
     candidates: composeCandidates(bots, excluded, query),
     highlight,
+    allowQuickCreate,
   });
 }
 
@@ -127,6 +129,41 @@ describe('composeEnterAction · members round', () => {
       kind: 'needMembers',
     });
     expect(enter('members', '', { leadId: 'b1', memberIds: ['b2'] })).toEqual({ kind: 'commit' });
+  });
+});
+
+// 成员面收尾（member-bots B4）：web 团队端点（teamContext.active）上快速建 Bot
+// 对成员恒拒（core bots.create deny）——'create' 降级为 'createUnavailable'（提示，
+// 不发 RPC），其余判定（选中已有 Bot / alreadySelected / commit）不受影响。
+describe('composeEnterAction · allowQuickCreate: false（web 团队端点）', () => {
+  const state = { leadId: 'b1', memberIds: [] as string[] };
+
+  it('新名字回车：两轮都降级为 createUnavailable，不再走 create', () => {
+    expect(enter('lead', 'Carol', emptyState, -1, false)).toEqual({
+      kind: 'createUnavailable',
+      name: 'Carol',
+    });
+    expect(enter('members', 'Dave', state, -1, false)).toEqual({
+      kind: 'createUnavailable',
+      name: 'Dave',
+    });
+  });
+
+  it('选中已有 Bot 的路径不受影响（箭头 / 精确名 / alreadySelected / commit）', () => {
+    expect(enter('lead', 'bob', emptyState, -1, false)).toEqual({ kind: 'selectLead', botId: 'b4' });
+    expect(enter('members', '', state, 0, false)).toEqual({ kind: 'add', botId: 'b2' });
+    expect(enter('members', '  BOB ', { leadId: 'b4', memberIds: [] }, -1, false)).toEqual({
+      kind: 'alreadySelected',
+      botId: 'b4',
+    });
+    expect(enter('members', '', { leadId: 'b1', memberIds: ['b2'] }, -1, false)).toEqual({
+      kind: 'commit',
+    });
+  });
+
+  it('缺省 allowQuickCreate（本机）仍为 create——休眠铁律', () => {
+    expect(enter('lead', 'Carol')).toEqual({ kind: 'create', name: 'Carol' });
+    expect(enter('members', 'Carol', state)).toEqual({ kind: 'create', name: 'Carol' });
   });
 });
 

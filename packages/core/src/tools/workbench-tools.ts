@@ -41,6 +41,11 @@ export interface WorkbenchTodoInput {
   when?: string | null | undefined;
   /** 操作者：决定派发消息是否带「管家代你安排」。工具层一律显式传 'butler'。 */
   actor?: 'user' | 'butler' | undefined;
+  /**
+   * 62.11 C13：归属主体（当前运行主体，62.11 C7）。缺省 / null = 单用户现状
+   * （无归属，不校验）。写入 create / update；按 id 写操作做归属校验。
+   */
+  ownerPrincipalId?: string | null | undefined;
 }
 
 export interface WorkbenchToolFacade {
@@ -50,6 +55,8 @@ export interface WorkbenchToolFacade {
     statuses?: readonly TodoStatus[] | undefined;
     query?: string | undefined;
     includeClosed?: boolean | undefined;
+    /** 62.11 C13：传入时只列该主体的事项。 */
+    ownerPrincipalId?: string | undefined;
   }): TodoEntry[];
   getTodo(id: string): TodoEntry;
   createTodo(
@@ -60,13 +67,22 @@ export interface WorkbenchToolFacade {
     input: WorkbenchTodoInput,
   ): { todo: TodoEntry; warnings: string[]; notified?: boolean };
   /** 立即开始一条草案 / 已排期事项（周期事项保留周期，只是额外执行一次）。 */
-  startTodo(id: string, actor: 'user' | 'butler'): TodoEntry;
-  completeTodo(id: string): TodoEntry;
-  cancelTodo(id: string): TodoEntry;
-  listMemos(filter: { query?: string | undefined; trashed?: boolean | undefined }): Memo[];
-  createMemo(input: { body: string; source: 'butler' }): Memo;
-  updateMemo(id: string, patch: { body?: string | undefined; pinned?: boolean | undefined }): Memo;
-  deleteMemo(id: string): Memo;
+  startTodo(id: string, actor: 'user' | 'butler', ownerPrincipalId?: string | null): TodoEntry;
+  completeTodo(id: string, ownerPrincipalId?: string | null): TodoEntry;
+  cancelTodo(id: string, ownerPrincipalId?: string | null): TodoEntry;
+  listMemos(filter: {
+    query?: string | undefined;
+    trashed?: boolean | undefined;
+    /** 62.11 C13：传入时只列该主体的备忘。 */
+    ownerPrincipalId?: string | undefined;
+  }): Memo[];
+  createMemo(input: { body: string; source: 'butler'; ownerPrincipalId?: string | null }): Memo;
+  updateMemo(
+    id: string,
+    patch: { body?: string | undefined; pinned?: boolean | undefined },
+    ownerPrincipalId?: string | null,
+  ): Memo;
+  deleteMemo(id: string, ownerPrincipalId?: string | null): Memo;
   /** 排期的人话写法（「每个工作日 09:00」）。 */
   describeWhen(row: {
     kind: 'once' | 'cron';
@@ -311,6 +327,11 @@ function warningLines(warnings: readonly string[]): string[] {
 export function buildWorkbenchTools(input: {
   identity: RunIdentity;
   workbench: WorkbenchToolFacade;
+  /**
+   * 62.11 C13：当前运行主体（runs.principal_id，62.11 C7 经工具面传入）。
+   * 工具创建 / 读写的事项与备忘归属它；缺省 / null = 单用户现状（无归属）。
+   */
+  principalId?: string | null | undefined;
   /** 这一轮是不是用户本人触发（`triggerFromUser`，settings/context.ts；run 开始时由宿主算定）。 */
   triggerFromUser: boolean;
   /**
@@ -326,6 +347,8 @@ export function buildWorkbenchTools(input: {
 }): ToolDefinition[] {
   const { identity, workbench, triggerFromUser } = input;
   const touchedExternal = input.touchedExternal ?? (() => false);
+  // 62.11 C13：本 run 的主体；null = 单用户（不带归属字段 = 现状）。
+  const owner = input.principalId ?? null;
 
   /** 宿主二次校验：只有管家能用；返回 null = 通过。 */
   const butlerOnly = (): ToolResult | null => {
@@ -399,6 +422,7 @@ export function buildWorkbenchTools(input: {
           ...(status !== undefined ? { statuses: [status] } : {}),
           ...(params.query !== undefined ? { query: params.query } : {}),
           ...(status === 'done' || status === 'cancelled' ? { includeClosed: true } : {}),
+          ...(owner !== null ? { ownerPrincipalId: owner } : {}),
         });
         const needle = params.assignee?.trim().toLowerCase();
         if (needle !== undefined && needle !== '') {
@@ -480,7 +504,10 @@ export function buildWorkbenchTools(input: {
           const title = params.title.trim();
           const cutoff = workbench.now() - DUPLICATE_DISPATCH_WINDOW_MS;
           const duplicate = workbench
-            .listTodos({ statuses: ['in_progress', 'delivered'] })
+            .listTodos({
+              statuses: ['in_progress', 'delivered'],
+              ...(owner !== null ? { ownerPrincipalId: owner } : {}),
+            })
             .find(
               (item) =>
                 item.source === 'butler' &&
@@ -505,6 +532,7 @@ export function buildWorkbenchTools(input: {
             : {}),
           source: 'butler',
           actor: 'butler',
+          ...(owner !== null ? { ownerPrincipalId: owner } : {}),
         });
         return {
           ok: true,
@@ -630,11 +658,15 @@ export function buildWorkbenchTools(input: {
           let warnings: string[] = [];
           const edited = Object.keys(fields).length > 0;
           if (edited) {
-            warnings = workbench.updateTodo(params.id, { ...fields, actor: 'butler' }).warnings;
+            warnings = workbench.updateTodo(params.id, {
+              ...fields,
+              actor: 'butler',
+              ...(owner !== null ? { ownerPrincipalId: owner } : {}),
+            }).warnings;
           }
           let todo: TodoEntry;
           try {
-            todo = workbench.startTodo(params.id, 'butler');
+            todo = workbench.startTodo(params.id, 'butler', owner);
           } catch (error) {
             if (!edited) throw error;
             // 先改后开始：开始失败时别让模型以为什么都没改。
@@ -660,6 +692,7 @@ export function buildWorkbenchTools(input: {
           ...fields,
           ...(when !== undefined ? { when } : {}),
           actor: 'butler',
+          ...(owner !== null ? { ownerPrincipalId: owner } : {}),
         });
         return {
           ok: true,
@@ -704,8 +737,8 @@ export function buildWorkbenchTools(input: {
       try {
         const todo =
           params.outcome === 'done'
-            ? workbench.completeTodo(params.id)
-            : workbench.cancelTodo(params.id);
+            ? workbench.completeTodo(params.id, owner)
+            : workbench.cancelTodo(params.id, owner);
         const reason =
           params.reason !== undefined && params.reason.trim() !== ''
             ? `（${params.reason.trim()}）`
@@ -740,9 +773,12 @@ export function buildWorkbenchTools(input: {
       if (denied !== null) return denied;
       try {
         const query = params.query !== undefined ? { query: params.query } : {};
-        const live = workbench.listMemos({ ...query });
+        const scope = owner !== null ? { ownerPrincipalId: owner } : {};
+        const live = workbench.listMemos({ ...query, ...scope });
         const trashed =
-          params.include_trashed === true ? workbench.listMemos({ ...query, trashed: true }) : [];
+          params.include_trashed === true
+            ? workbench.listMemos({ ...query, trashed: true, ...scope })
+            : [];
         const all = [...live, ...trashed];
         if (all.length === 0) return { ok: true, content: '没有符合条件的备忘。' };
         const shown = all.slice(0, clampLimit(params.limit));
@@ -774,7 +810,11 @@ export function buildWorkbenchTools(input: {
       if (denied !== null) return denied;
       if (typeof params.body !== 'string') return invalid('body 不能为空');
       try {
-        const memo = workbench.createMemo({ body: params.body, source: 'butler' });
+        const memo = workbench.createMemo({
+          body: params.body,
+          source: 'butler',
+          ...(owner !== null ? { ownerPrincipalId: owner } : {}),
+        });
         return { ok: true, content: `已记下备忘（id：${memo.id}）。` };
       } catch (error) {
         return failure(error, '记备忘失败');
@@ -807,10 +847,14 @@ export function buildWorkbenchTools(input: {
         if (blocked !== null) return blocked;
       }
       try {
-        const memo = workbench.updateMemo(params.id, {
-          ...(params.body !== undefined ? { body: params.body } : {}),
-          ...(params.pinned !== undefined ? { pinned: params.pinned } : {}),
-        });
+        const memo = workbench.updateMemo(
+          params.id,
+          {
+            ...(params.body !== undefined ? { body: params.body } : {}),
+            ...(params.pinned !== undefined ? { pinned: params.pinned } : {}),
+          },
+          owner,
+        );
         return {
           ok: true,
           content: `已更新备忘（id：${memo.id}）${memo.pinned ? '，已置顶' : ''}。`,
@@ -835,7 +879,7 @@ export function buildWorkbenchTools(input: {
       const blocked = actionGate();
       if (blocked !== null) return blocked;
       try {
-        const memo = workbench.deleteMemo(params.id);
+        const memo = workbench.deleteMemo(params.id, owner);
         return {
           ok: true,
           content: `已把备忘（id：${memo.id}）移入最近删除，用户可在工作台恢复。`,

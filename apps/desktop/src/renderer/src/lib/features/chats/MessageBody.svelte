@@ -74,9 +74,10 @@
         : null,
   );
   /**
-   * 用户气泡的 @ 提及分词：注册表（全部活跃 Bot + 项目组）与输入框共用同一
-   * 套规则，手动输入的全名同样命中着色。本地文件/文件夹提及从消息的 mentions
-   * token 还原（正文里是 `@完整路径`，气泡里换成 icon + basename 展示）。
+   * 用户气泡的 @ 提及分词：注册表（全部活跃 Bot + 项目组 + 团队成员，T5）与
+   * 输入框共用同一套规则，手动输入的全名同样命中着色。本地文件/文件夹提及从
+   * 消息的 mentions token 还原（正文里是 `@完整路径`，气泡里换成 icon +
+   * basename 展示）。非团队上下文 members 为空数组——候选与现状一致。
    */
   const mentionTargets = $derived.by(() => [
     ...buildMentionTargets({
@@ -85,6 +86,7 @@
       projects: chat.conversations
         .filter((c) => c.type === 'project')
         .map((c) => ({ id: c.id, title: c.title })),
+      members: contacts.members,
     }),
     ...buildLocalPathMentionTargets(message.mentions),
   ]);
@@ -121,7 +123,7 @@
   {#if !('text' in message.content) || message.content.text.length > 0}
     <!-- 纯附件消息（docs/design/20-conversation-media.md）没有文本气泡，附件行即消息体。 -->
     <div
-      class="my-2 {userBubbleAccent ? '' : 'bg-primary text-primary-foreground'}"
+      class="{userBubbleAccent ? '' : 'bg-primary text-primary-foreground'}"
       style={messageBubbleStyle(uiConfig.messageBubble.user, merge, 'right')}
       style:background={userBubbleAccent?.hex}
       style:color={userBubbleAccent ? avatarOnFillForeground(userBubbleAccent) : undefined}

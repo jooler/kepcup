@@ -915,25 +915,29 @@ describe('runtime path claims (D123 §5)', () => {
     });
   });
 
-  it('a claim only applies to the claiming bot + conversation and its root', () => {
+  it('a claim reaches every task on an overlapping root — across bots and conversations (D140-1)', () => {
     const claims = new TaskClaimRegistry();
     claims.set({
       taskId: 'run_peer',
       botId: BOT,
       conversationId: 'conv_other',
       title: '别处',
-      root: path.join(outside, 'proj'),
-      paths: ['**'],
+      root: workspace(),
+      paths: ['docs/**'],
       reason: 'x',
       since: 1,
     });
     const gateway = makeGateway(undefined, claims);
-    // Different conversation: no effect.
+    // Different conversation, same root: still claimed.
     expect(gateway.checkPath(ids.scopedTask, 'docs/a.md', 'write')).toMatchObject({
-      kind: 'allowed',
+      kind: 'forbidden',
+      claimed: true,
     });
-    expect(claims.denial('run_b', BOT, CONV, path.join(workspace(), 'docs', 'a.md'))).toBeNull();
-    expect(claims.denial('run_b', BOT, 'conv_other', path.join(outside, 'proj', 'x'))).toContain(
+    // A different root never matches.
+    expect(
+      claims.denial('run_b', path.join(outside, 'proj', 'x'), path.join(outside, 'proj')),
+    ).toBeNull();
+    expect(claims.denial('run_b', path.join(workspace(), 'docs', 'a.md'), workspace())).toContain(
       'run_peer',
     );
   });
@@ -954,6 +958,53 @@ describe('runtime path claims (D123 §5)', () => {
     });
     expect(claims.release('run_peer')).toEqual(['docs/shared/**', 'notes/**']);
     expect(claims.get('run_peer')).toBeNull();
+  });
+
+  it('noteFileWritten auto-claims for the writing task and blocks peers across conversations (D140-1)', () => {
+    const claims = new TaskClaimRegistry();
+    const gateway = makeGateway(undefined, claims);
+    gateway.noteFileWritten(ids.scopedTask, path.join(workspace(), 'docs', 'a.md'));
+    expect(claims.entryOf('run_scoped_task')?.paths).toEqual(['docs/a.md']);
+    expect(claims.entryOf('run_scoped_task')?.reason).toContain('自动认领');
+
+    // A write task of a different bot + conversation on the same root: blocked
+    // on the claimed path, free on its own workspace.
+    runRows.set('run_peer_root', {
+      id: 'run_peer_root',
+      loopType: 'task',
+      taskWrites: true,
+      parentRunId: null,
+      status: 'running',
+      taskCwd: null,
+      botId: 'bot_other',
+      conversationId: 'conv_other',
+    });
+    const peer: RunIdentity = {
+      runId: 'run_peer_root',
+      botId: 'bot_other',
+      conversationId: 'conv_other',
+      loopType: 'task',
+    };
+    expect(gateway.checkPath(peer, path.join(workspace(), 'docs', 'a.md'), 'write')).toMatchObject(
+      { kind: 'forbidden', claimed: true },
+    );
+    const peerWorkspace = workspacePathFor(resolvePaths(home), 'bot_other', 'conv_other');
+    expect(gateway.checkPath(peer, path.join(peerWorkspace, 'free.md'), 'write')).toMatchObject({
+      kind: 'allowed',
+    });
+
+    // The claiming task's own subagent is never blocked by its own claim.
+    expect(gateway.checkPath(ids.subOfScopedTask, 'docs/a.md', 'write')).toMatchObject({
+      kind: 'allowed',
+    });
+
+    // Writes outside the task root, or by identities that are not write tasks,
+    // never register.
+    gateway.noteFileWritten(ids.scopedTask, path.join(outside, 'x.ts'));
+    expect(claims.entryOf('run_scoped_task')?.paths).toEqual(['docs/a.md']);
+    gateway.noteFileWritten(ids.turn, path.join(workspace(), 'docs', 'b.md'));
+    gateway.noteFileWritten(ids.readTask, path.join(workspace(), 'docs', 'c.md'));
+    expect(claims.entryOf('run_scoped_task')?.paths).toEqual(['docs/a.md']);
   });
 });
 

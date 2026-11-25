@@ -28,11 +28,28 @@ const h = vi.hoisted(() => {
       for (const handler of linkHandlers) handler(state);
     }
   }
+  /** team-context 桩：begin / reset 调用计数（bootGate 每次重导 gate.svelte）。 */
+  const teamState = {
+    began: 0,
+    resetCount: 0,
+    begin(): void {
+      this.began += 1;
+    },
+    reset(): void {
+      this.resetCount += 1;
+    },
+  };
   return {
     transport: new FakeAuthedTransport(),
     /** #boot 读到的探测结果；null = 服务器不可达（回退配对路径分支不进这些用例）。 */
-    probe: null as null | { mode: 'password' | 'pairing'; authenticated: boolean },
+    probe: null as null | {
+      mode: 'password' | 'pairing';
+      authenticated: boolean;
+      member?: { id: string; displayName: string };
+      mustChangePassword?: boolean;
+    },
     linkHandlers,
+    teamState,
   };
 });
 
@@ -52,10 +69,14 @@ vi.mock('./endpoint', () => ({
   ENDPOINT_KIND: 'remote' as const,
   defaultDeviceName: () => 'Test Browser',
 }));
+vi.mock('$lib/features/team/team-context.svelte', () => ({ teamContext: h.teamState }));
 
 beforeEach(() => {
   h.transport.calls.length = 0;
+  h.transport.linkState = 'connecting';
   h.linkHandlers.clear();
+  h.teamState.began = 0;
+  h.teamState.resetCount = 0;
 });
 
 afterEach(() => {
@@ -70,10 +91,11 @@ async function bootGate(): Promise<typeof gateModule> {
   return mod;
 }
 
-function stubFetch(status: number): void {
+/** 登录 / 改密的 fetch 桩；body 供响应 json() 读取（团队 member 标记）。 */
+function stubFetch(status: number, body: unknown = {}): void {
   vi.stubGlobal(
     'fetch',
-    vi.fn(() => Promise.resolve({ ok: status === 200, status })),
+    vi.fn(() => Promise.resolve({ ok: status === 200, status, json: async () => body })),
   );
 }
 
@@ -143,6 +165,113 @@ describe('WebGateState 密码模式', () => {
     const { webGate } = await bootGate();
     h.transport.emit('connected');
     h.transport.emit('reconnecting');
+    expect(webGate.view).toBe('booting');
+  });
+});
+
+describe('WebGateState 团队端点（T5）', () => {
+  const MEMBER = { id: 'mbr_1', displayName: '甲' } as const;
+
+  it('探测带 member 且已登录：团队上下文拉起；mustChangePassword 进改密视图', async () => {
+    h.probe = { mode: 'password', authenticated: true, member: MEMBER, mustChangePassword: true };
+    const { webGate } = await bootGate();
+    expect(h.teamState.began).toBe(1);
+    expect(webGate.mustChangePassword).toBe(true);
+    expect(webGate.view).toBe('change-password');
+    // 改密期间连接照常建立，但不得越过改密视图进 App。
+    h.transport.emit('connected');
+    expect(webGate.view).toBe('change-password');
+  });
+
+  it('探测带 member 且已登录、无需改密 → 正常 booting 拨号', async () => {
+    h.probe = { mode: 'password', authenticated: true, member: MEMBER };
+    const { webGate } = await bootGate();
+    expect(h.teamState.began).toBe(1);
+    expect(webGate.view).toBe('booting');
+    expect(h.transport.calls).toEqual(['connect']);
+    h.transport.emit('connected');
+    expect(webGate.view).toBe('connected');
+  });
+
+  it('登录响应带 member + mustChangePassword → 改密视图（不立即拨号）', async () => {
+    h.probe = { mode: 'password', authenticated: false };
+    const { webGate } = await bootGate();
+    stubFetch(200, { token: 't', member: MEMBER, mustChangePassword: true });
+    await webGate.login('admin', 'temporary password');
+    expect(h.teamState.began).toBe(1);
+    expect(webGate.view).toBe('change-password');
+    expect(h.transport.calls).toEqual([]);
+  });
+
+  it('登录响应带 member 且无需改密 → 立即拨号进正常路径', async () => {
+    h.probe = { mode: 'password', authenticated: false };
+    const { webGate } = await bootGate();
+    stubFetch(200, { token: 't', member: MEMBER, mustChangePassword: false });
+    await webGate.login('admin', 'correct horse battery');
+    expect(h.teamState.began).toBe(1);
+    expect(webGate.view).toBe('booting');
+    expect(h.transport.calls).toEqual(['connectNow']);
+  });
+
+  it('改密成功：mustChangePassword 清除、重新拨号（旧会话已按版本号失效）', async () => {
+    h.probe = { mode: 'password', authenticated: false };
+    const { webGate } = await bootGate();
+    stubFetch(200, { token: 't', member: MEMBER, mustChangePassword: true });
+    await webGate.login('admin', 'temporary password');
+    stubFetch(200, { ok: true });
+    const changed = await webGate.submitPasswordChange('temporary password', 'new password 9');
+    expect(changed).toBe(true);
+    expect(webGate.mustChangePassword).toBe(false);
+    expect(webGate.view).toBe('booting');
+    expect(h.transport.calls).toEqual(['connectNow']);
+    h.transport.emit('connected');
+    expect(webGate.view).toBe('connected');
+  });
+
+  it('改密：旧连接还在（connected）直接放行，不重复拨号', async () => {
+    h.probe = { mode: 'password', authenticated: true, member: MEMBER, mustChangePassword: true };
+    const { webGate } = await bootGate();
+    h.transport.emit('connected');
+    expect(webGate.view).toBe('change-password');
+    stubFetch(200, { ok: true });
+    await webGate.submitPasswordChange('old password 1', 'new password 9');
+    expect(webGate.view).toBe('connected');
+    expect(h.transport.calls).toEqual(['connect']);
+  });
+
+  it('改密失败分类：401=当前密码不对；400=强度不足；429=限流（留在改密视图）', async () => {
+    h.probe = { mode: 'password', authenticated: true, member: MEMBER, mustChangePassword: true };
+    const { webGate } = await bootGate();
+    expect(webGate.view).toBe('change-password');
+    stubFetch(401);
+    expect(await webGate.submitPasswordChange('wrong password', 'new password 9')).toBe(false);
+    expect(webGate.changePasswordError).toBe('invalid');
+    expect(webGate.view).toBe('change-password');
+    stubFetch(400);
+    expect(await webGate.submitPasswordChange('x', 'short')).toBe(false);
+    expect(webGate.changePasswordError).toBe('weak');
+    expect(webGate.view).toBe('change-password');
+    stubFetch(429);
+    expect(await webGate.submitPasswordChange('x', 'new password 9')).toBe(false);
+    expect(webGate.changePasswordError).toBe('ratelimited');
+    expect(webGate.view).toBe('change-password');
+  });
+
+  it('会话失效（unauthenticated）：团队上下文复位，回登录页', async () => {
+    h.probe = { mode: 'password', authenticated: true, member: MEMBER };
+    const { webGate } = await bootGate();
+    expect(h.teamState.began).toBe(1);
+    h.transport.emit('unauthenticated');
+    expect(webGate.view).toBe('login');
+    expect(h.teamState.resetCount).toBe(1);
+  });
+
+  it('个人版端点（探测/登录不带 member）：teamContext 不拉起', async () => {
+    h.probe = { mode: 'password', authenticated: false };
+    const { webGate } = await bootGate();
+    stubFetch(200, { mode: 'password', username: 'admin' });
+    await webGate.login('admin', 'correct horse battery');
+    expect(h.teamState.began).toBe(0);
     expect(webGate.view).toBe('booting');
   });
 });

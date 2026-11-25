@@ -86,6 +86,18 @@ export const ERROR_CODES = [
   'WORKDIR_MISSING',
   'WORKDIR_SWITCH_BLOCKED',
   'GIT_CLI_MISSING',
+  // worktree 隔离（D140，todo/agent-autonomy-and-parallel-tasks.md §3.6）
+  /** worktree 创建失败：git 不可用 / workdir 不是 git 仓库 / 目标路径冲突等原因在 message。 */
+  'WORKTREE_CREATE_FAILED',
+  /** worktree 改动以三方合并应用回工作目录时冲突：worktree 保留，冲突文件列表在 details。 */
+  'WORKTREE_APPLY_CONFLICT',
+  /** 任务没有 worktree（isolation 非 worktree）或 worktree 已被回收。 */
+  'WORKTREE_NOT_AVAILABLE',
+  /**
+   * 污点期外网被切断（D140-3）：工具结果用（对应 `request_network`），提示模型先申请
+   * 网络授权再重试。
+   */
+  'NETWORK_BLOCKED',
   // environment (P06)
   'ENV_ITEM_UNKNOWN',
   'ENV_ITEM_UNSUPPORTED_PLATFORM',
@@ -276,6 +288,56 @@ export const ERROR_CODES = [
   'MICRO_APP_BRIDGE_CLOSED',
   /** 微应用无响应（心跳超时，55 §9.1）；不自动重试，由用户重新打开。 */
   'MICRO_APP_UNRESPONSIVE',
+  // 主体缝（62.11 D138，docs/design/62-team-server/11-core-seams.md）
+  /**
+   * C14：设置的授权级别超过宿主上限（CoreServicesOptions.permissionCeiling，
+   * 如禁用会脱离沙箱的 bypass），设置被拒绝。
+   */
+  'PERMISSION_CEILING',
+  /**
+   * C14 / 方法策略：当前调用者无权执行——多主体下全局无人值守写入被 core
+   * 拒绝；宿主方法策略拒绝也复用此码。
+   */
+  'FORBIDDEN',
+  /** 请求频率超限（团队层硬限流，如 team.profile.push 每成员每分钟 1 次）；`details.retryAfterSec` 给出重试等待。 */
+  'RATE_LIMITED',
+  // 团队层（62-team-server，62.03 / 62.09）：团队服务器对成员连接的业务错误码。
+  /**
+   * Bot 对该成员不可见（62.03 §4 可见性撤销）：成员与它的 direct 转为只读，
+   * 历史可看、不能再发。
+   */
+  'BOT_NOT_VISIBLE',
+  /** 成员已被禁用（62.03 D127）：登录 / 握手 / 后续调用一律拒绝。 */
+  'MEMBER_DISABLED',
+  /** 仅项目负责人可执行（62.09 §1 双负责人制：真人负责人专属动作，如移出成员、转交）。 */
+  'NOT_PROJECT_LEAD',
+  /**
+   * 决议已过期 / 状态已变化（62.09 §2 签署绑定版本）：对旧版本的签署落到新
+   * 内容上，签署不生效，需刷新后重签。
+   */
+  'RESOLUTION_STALE',
+  /** 决议已锁定不可变更（62.09 §2）：通过后不可修改 / 作废 / 删除，修正只能起新决议。 */
+  'RESOLUTION_LOCKED',
+  // 好友层（62.04 D129v2）：dm 准入 = 仅好友；私有 Bot 配额码随 D128v2 下线。
+  /** 非好友之间不能互发 dm（62.04 D129v2：先加好友再聊）。 */
+  'NOT_FRIEND',
+  /** 对方已经是好友，无需重复申请（62.04 D129v2）。 */
+  'ALREADY_FRIENDS',
+  /** 对方拒绝了你的好友申请（2026-11：被拉黑时的对外话术，不暴露拉黑语义）。 */
+  'FRIEND_REQUEST_DECLINED',
+  /** 对方已被你拉黑，无需重复拉黑（2026-11）。 */
+  'ALREADY_BLOCKED',
+  /** 该成员未被拉黑，无从解除（2026-11）。 */
+  'NOT_BLOCKED',
+  // 成员侧 Bot 面（B 方案 member-bots，todo/member-bots）：成员自建 Bot 的
+  // 配额与工作路径边界；其余场景复用 FORBIDDEN / NOT_FOUND / BOT_NOT_VISIBLE。
+  /**
+   * 私有 Bot 数量已达上限（B-6，设置键 max-private-bots）：创建时本人配额满、
+   * 或转交时目标成员配额满，均返回此码。
+   */
+  'BOT_LIMIT_REACHED',
+  /** 工作路径不在允许集合（B-10：管理员启用根 ∪ 本人 workdirs 子树 ∪ 自动分配的 bots 目录）。 */
+  'WORKDIR_NOT_ALLOWED',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

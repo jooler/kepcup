@@ -3,6 +3,12 @@
   import { Toaster } from 'svelte-sonner';
   import { ModeWatcher, userPrefersMode } from 'mode-watcher';
   import { core } from '$lib/rpc/client.svelte';
+  import { connections } from '$lib/rpc/connections.svelte';
+  import { teamSettings } from '$lib/features/team/team-settings.svelte';
+  import { avatarRuntime } from '$lib/features/team/avatar-runtime.svelte';
+  import { profilePush } from '$lib/features/team/profile-push.svelte';
+  import { friends } from '$lib/features/team/friends.svelte';
+  import ProfilePushDialog from '$lib/features/team/ProfilePushDialog.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
@@ -13,6 +19,7 @@
   import { updateStore } from '$lib/stores/update.svelte';
   import { appNotices } from '$lib/stores/app-notices.svelte';
   import { onboarding } from '$lib/stores/onboarding.svelte';
+  import { teamContext } from '$lib/features/team/team-context.svelte';
   import { i18n, t } from '$lib/i18n';
   import { shell } from '$lib/stores/shell.svelte';
   import AppSidebar from '$lib/features/sidebar/AppSidebar.svelte';
@@ -71,6 +78,15 @@
     if (started) return;
     started = true;
     void core.start();
+    // T7 融合视图：多来源连接注册表（web 端点 / 未配置团队服务器时休眠）。
+    connections.start();
+    // T10 分身运行时（桌面端点才注册；web / 未连接休眠——零事件订阅）。
+    avatarRuntime.start();
+    teamSettings.start();
+    // 画像上行（T7）：真·上线边沿自动同步（首次弹确认清单、之后静默差额上行）。
+    profilePush.start();
+    // 好友层（62.04 D129v2）：通讯录好友栏的数据源（个人版 / 未连接休眠）。
+    friends.start();
     updateStore.start();
     appNotices.start();
     // 通知点击 → 打开对应对话（主进程经 ipc 转发）。
@@ -237,7 +253,17 @@
     if (!coreReady || settingsStore.settings === null) return;
     if (core.platform === null) return;
     onboardingChecked = true;
-    if (core.platform.onboardingVisible && settingsStore.settings.onboarding.completed === false) {
+    // 团队成员的完成标记落本地（settings.update 对成员是 admin plane，见
+    // OnboardingWizard.finish）；本地已跳过就不再弹。桌面 / 个人版的标记在
+    // settings 里，不走这条。
+    const localCompleted =
+      teamContext.endpointIsTeam &&
+      globalThis.localStorage?.getItem('kepcup.onboarding.completed') === '1';
+    if (
+      core.platform.onboardingVisible &&
+      settingsStore.settings.onboarding.completed === false &&
+      !localCompleted
+    ) {
       // 引导接管首启：不自动展开「+」面板（向导本身会创建第一个 Bot）。
       shell.autoOpenStartPanel = false;
       onboarding.show();
@@ -259,6 +285,14 @@
         <main class="flex min-h-0 min-w-0 flex-1 flex-col">
           {#if core.coreStatus?.status === 'locked'}
             <LockedPage reason={core.coreStatus.reason} />
+          {:else if core.coreStatus?.status === 'error'}
+            <!-- 启动失败（迁移拒绝、钥匙串错误等）：reason 是 core 已本地化的
+                 可读原因，必须展示——否则打包版只剩「启动中…」永远转圈。 -->
+            <CoreErrorPage
+              reason={core.coreStatus.reason}
+              hint={t('shell.coreErrorHint')}
+              testid="core-status-error"
+            />
           {:else if !coreReady}
             <PlaceholderPage title={t('shell.coreStarting')} message="" testid="core-starting" />
           {:else}
@@ -273,6 +307,12 @@
           <main class="flex min-h-0 min-w-0 flex-1 flex-col">
             {#if core.coreStatus?.status === 'locked'}
               <LockedPage reason={core.coreStatus.reason} />
+            {:else if core.coreStatus?.status === 'error'}
+              <CoreErrorPage
+                reason={core.coreStatus.reason}
+                hint={t('shell.coreErrorHint')}
+                testid="core-status-error"
+              />
             {:else if !coreReady}
               <PlaceholderPage title={t('shell.coreStarting')} message="" testid="core-starting" />
             {:else}
@@ -343,6 +383,8 @@
     <!-- 窄屏 toast 改顶部居中（33-narrow-layout）：sonner 单条 toast 默认 356px 宽，
        bottom-right 在手机宽度窗口里会横贯整个底部 tab 栏。 -->
     <Toaster position={narrowLayout.narrow ? 'top-center' : 'bottom-right'} />
+    <!-- T7 画像上行确认清单（仅桌面端点且团队连接建立后打开）。 -->
+    <ProfilePushDialog />
   </div>
 {/snippet}
 

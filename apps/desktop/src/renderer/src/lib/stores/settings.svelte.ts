@@ -15,6 +15,7 @@ import type {
 } from '@kepcup/shared';
 import { chatModelOptions } from '@kepcup/shared';
 import { core } from '$lib/rpc/client.svelte';
+import { teamContext } from '$lib/features/team/team-context.svelte';
 import { t } from '$lib/i18n';
 
 export interface ModelOption {
@@ -92,19 +93,35 @@ class SettingsState {
   /**
    * 用户显示名（个人资料里设置的名称；未设置时回退本地用户占位）。字段取值按
    * 缺失处理：core 侧尚未重启（旧快照没有这个键）时也不能抛错。
+   * 团队上下文（web 团队端点）优先服务端成员显示名——web 的个人资料称呼就是
+   * 服务端身份字段（team.member.updateSelf），本机 settings 快照来自服务器
+   * 投影、没有成员概念。桌面端点行为不变（本机设置为事实源）。
    */
   get userDisplayName(): string {
+    if (teamContext.active) {
+      const teamName = teamContext.member?.displayName;
+      if (typeof teamName === 'string' && teamName.trim().length > 0) return teamName.trim();
+    }
     const name = this.settings?.userProfileName;
     return typeof name === 'string' && name.trim().length > 0 ? name.trim() : t('sidebar.userName');
   }
 
   async refresh(): Promise<void> {
-    const [settings, providers] = await Promise.all([
-      core.call('settings.get') as Promise<Settings>,
-      core.call('providers.list') as Promise<{ providers: ProviderInfo[] }>,
-    ]);
+    const settingsPromise = core.call('settings.get') as Promise<Settings>;
+    // 团队端点（member 视图）：providers.list 是 admin plane——T4 方法策略拒绝，
+    // 不发起调用（旧实现无脑并发调用，boot 期 403 成 unhandled rejection）。
+    // 用 endpointIsTeam 而非 active：active 要等 team.bootstrap 成功才翻转，与
+    // 本方法在 App 首屏并行竞速，boot 期读到 false 会漏判。成员的 hasKey 无从
+    // 判断，按无 key 处理；settings.get 投影仍带 modelProviders 的名称与模型
+    // 清单（baseUrl 已剥离），模型选择器不受影响。
+    const providersPromise: Promise<ProviderInfo[]> = teamContext.endpointIsTeam
+      ? Promise.resolve([])
+      : (core.call('providers.list') as Promise<{ providers: ProviderInfo[] }>).then(
+          (result) => result.providers,
+        );
+    const [settings, providers] = await Promise.all([settingsPromise, providersPromise]);
     this.settings = settings;
-    this.providers = providers.providers;
+    this.providers = providers;
   }
 
   async refreshSandbox(probe = false): Promise<void> {

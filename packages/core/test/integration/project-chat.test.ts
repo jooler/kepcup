@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -39,6 +39,18 @@ function systemText(request: {
 }): string {
   const first = request.body.messages?.[0];
   return typeof first?.content === 'string' ? first.content : '';
+}
+
+/**
+ * D140 §3.5: an access card lists every requested path under `paths` (one
+ * card, one decision); `path` survives only on historical / single-path rows.
+ */
+function accessPayloadPaths(payload: unknown): string[] {
+  const p = (payload ?? {}) as { path?: string; paths?: Array<{ path?: string }> };
+  return [
+    ...(p.path !== undefined ? [p.path] : []),
+    ...(p.paths ?? []).flatMap((item) => (item.path !== undefined ? [item.path] : [])),
+  ];
 }
 
 /** Run of one bot in one conversation with response loopType and status. */
@@ -463,7 +475,7 @@ describe('project conversations', () => {
       'approval.created',
       (p) =>
         p.approval.botId === b.id &&
-        (p.approval.payload as { path?: string } | undefined)?.path === realpathSync(outsideFile2),
+        accessPayloadPaths(p.approval.payload).includes(realpathSync(outsideFile2)),
     );
     await sendDrafts(core, conv.id, [{ text: '再改一个文件', mentions: [b.id] }]);
     await secondApprovalEvent;
@@ -476,11 +488,17 @@ describe('project conversations', () => {
     };
     expect(grants.grants.some((g) => g.botId === b.id)).toBe(false);
     const after = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {
-      approvals: Array<{ botId: string | null; status: string; payload: { path?: string } }>;
+      approvals: Array<{
+        botId: string | null;
+        status: string;
+        payload: { path?: string; paths?: Array<{ path: string }> };
+      }>;
     };
     expect(
       after.approvals.some(
-        (x) => x.payload?.path === realpathSync(outsideFile2) && x.status === 'cancelled',
+        (x) =>
+          accessPayloadPaths(x.payload).includes(realpathSync(outsideFile2)) &&
+          x.status === 'cancelled',
       ),
     ).toBe(true);
 
@@ -513,7 +531,7 @@ describe('project conversations', () => {
     rmSync(outsideDir, { recursive: true, force: true });
   }, 60_000);
 
-  it('a group-bound workdir is shared by all members and still lease-protected', async () => {
+  it('a group-bound workdir is shared by all members: parallel write tasks with cross-conversation file claims', async () => {
     const { core, llm } = await start();
     const { a, b, conv } = await threeBots(core);
 
@@ -527,7 +545,10 @@ describe('project conversations', () => {
     // One script for the whole scenario: script() replaces the queue, so the
     // held step for A must live in the same queue as B's later steps.
     // D75 W2: writes happen in write tasks (a turn is read-only) — each bot's
-    // turn starts one; the tasks contend for the workdir lease.
+    // turn starts one. D140-1: the members' write tasks now run in PARALLEL on
+    // a shared workdir lease; mutual exclusion is the per-file auto-claim
+    // (first successful gateway write wins), and a claim is visible to every
+    // task on the overlapping root — another bot, another conversation.
     const isA = (r: Parameters<typeof systemText>[0]) => systemText(r).includes('名字：阿甲');
     const isB = (r: Parameters<typeof systemText>[0]) => systemText(r).includes('名字：阿乙');
     const [aStart, aAck, aWrite, aFinal, aRelay] = viaTask({
@@ -535,13 +556,21 @@ describe('project conversations', () => {
         step()
           .expect(isA)
           .replyToolCall('write', { path: 'from-group.txt', content: '群聊成员甲写入' }),
+        // Stays running (its auto-claim stays live) while B's task works.
         step().expect(isA).hold().replyText('甲完成'),
       ],
       relay: '甲：写好了',
     });
-    const [bStart, bAck, bWrite, bFinal, bRelay] = viaTask({
+    const [bStart, bAck, bClaimed, bOwn, bFinal, bRelay] = viaTask({
       taskSteps: [
-        step().expect(isB).replyToolCall('write', { path: 'from-direct.txt', content: '乙写入' }),
+        // Same path as A's live auto-claim → WRITE_CLAIMED, not a queue wait.
+        step()
+          .expect(isB)
+          .replyToolCall('write', { path: 'from-group.txt', content: '乙覆盖' }),
+        // Another path is free: the claim is per file, not the whole root.
+        step()
+          .expect(isB)
+          .replyToolCall('write', { path: 'from-direct.txt', content: '乙写入' }),
         step().expect(isB).replyText('乙完成'),
       ],
       relay: '乙：写好了',
@@ -554,7 +583,8 @@ describe('project conversations', () => {
       aRelay!.expect(isA),
       bStart!.expect(isB),
       bAck!.expect(isB),
-      bWrite!,
+      bClaimed!,
+      bOwn!,
       bFinal!,
       bRelay!.expect(isB),
     ]);
@@ -562,9 +592,11 @@ describe('project conversations', () => {
     await waitFor(() => (existsSync(path.join(workdirDir, 'from-group.txt')) ? true : null), {
       label: 'A group write',
     });
+    const aTask = (await listRuns(core, conv.id)).find((r) => r.loopType === 'task')!;
+    expect(aTask.botId).toBe(a.id);
 
-    // While A's write task still holds the lease, B's write task (direct
-    // conversation bound to the same workdir) waits for it, still submitted.
+    // B's write task (a direct conversation bound to the same workdir) does
+    // not queue behind A: it runs to completion while A is still running.
     const direct = await (async () => {
       const result = (await core.rpc.call('conversations.openDirect', { botId: b.id })) as {
         conversation: { id: string };
@@ -573,24 +605,32 @@ describe('project conversations', () => {
     })();
     await core.rpc.call('workdirs.select', { conversationId: direct.id, path: workdirDir });
     await sendDrafts(core, direct.id, [{ text: '你也写一个' }]);
-    // The task host keeps one write task per cwd (across conversations):
-    // B's task stays submitted, its queue reason names A's task (the old
-    // response run showed waiting_lease + lease.waiting instead).
     const bTask = await waitFor(
-      async () => (await listRuns(core, direct.id)).find((r) => r.loopType === 'task') ?? null,
-      { label: 'B task submitted' },
+      async () =>
+        (await listRuns(core, direct.id)).find(
+          (r) => r.loopType === 'task' && r.botId === b.id && r.status === 'completed',
+        ) ?? null,
+      { label: 'B task completes in parallel' },
     );
-    const aTask = (await listRuns(core, conv.id)).find((r) => r.loopType === 'task')!;
-    expect(aTask.botId).toBe(a.id);
-    expect(bTask.status).toBe('queued');
-    const queued = core.services.orchestrator!.tasks.list({
-      runId: bTask.originRunId!,
-      botId: b.id,
-      conversationId: direct.id,
-      loopType: 'turn',
-    });
-    expect(queued[0]?.queueReason).toContain(aTask.id);
-    expect(bWrite!.consumed).toBe(false);
+    // Proof of parallelism: B finished while A (held on its second model turn)
+    // is still running — the old semantics queued B until A released the lease.
+    expect((await listRuns(core, conv.id)).find((r) => r.id === aTask.id)!.status).toBe(
+      'running',
+    );
+
+    // The claim refused B's write of A's file and named the holder — a task of
+    // ANOTHER conversation: claims span conversations, not just group members.
+    // (Only tool results: the system prompt's tool docs mention WRITE_CLAIMED.)
+    const claimRefusal = (await stepsOf(core, bTask.id))
+      .filter((step_) => step_['type'] === 'tool_result')
+      .map((step_) => JSON.stringify(step_))
+      .find((text) => text.includes('WRITE_CLAIMED'));
+    expect(claimRefusal).toBeDefined();
+    expect(claimRefusal).toContain(aTask.id);
+    // Per-file, not a whole-root lock: B's own file went through, A's did not
+    // change.
+    expect(readFileSync(path.join(workdirDir, 'from-group.txt'), 'utf-8')).toBe('群聊成员甲写入');
+    expect(readFileSync(path.join(workdirDir, 'from-direct.txt'), 'utf-8')).toBe('乙写入');
 
     llm.releaseAll();
     await waitFor(
@@ -600,15 +640,6 @@ describe('project conversations', () => {
         ) ?? null,
       { label: 'A task completes' },
     );
-    const bRun = await waitFor(
-      async () =>
-        (await listRuns(core, direct.id)).find(
-          (r) => r.loopType === 'task' && r.botId === b.id && r.status === 'completed',
-        ) ?? null,
-      { label: 'B task completes after lease' },
-    );
-    expect(bRun).toBeTruthy();
-    expect(existsSync(path.join(workdirDir, 'from-direct.txt'))).toBe(true);
     rmSync(workdirDir, { recursive: true, force: true });
   }, 60_000);
 

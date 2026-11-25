@@ -23,6 +23,12 @@ import {
   rpcEventSchemas,
   rpcMethodSchemas,
 } from '../../src/index.js';
+import { conversationSchema, messageSchema, textContentSchema } from '../../src/domain/types.js';
+import {
+  messagesListInputSchema,
+  messagesListOutputSchema,
+  projectsCreateInputSchema,
+} from '../../src/rpc/methods.js';
 
 /** D96 远程遥控：帧协议、配对契约、方法 / 事件目录与端点能力集。 */
 
@@ -264,5 +270,182 @@ describe('endpoint capabilities', () => {
     expect(endpointHasCapability('remote', 'local-file-dialog')).toBe(false);
     expect(endpointHasCapability('remote', 'open-external')).toBe(false);
     expect(DESKTOP_ONLY_CAPABILITIES).toContain('sandbox-wizard');
+  });
+});
+
+// --- 62.11 principal seams (team-server T1): additive contract fields ---------
+
+describe('principal seams on shared contracts (62.11 T1)', () => {
+  const baseConversation = {
+    id: 'conv_1',
+    title: null,
+    directBotId: null,
+    workdirId: null,
+    readOnly: false,
+    summary: null,
+    summaryUptoSeq: 0,
+    lastSeq: 0,
+    lastReadSeq: 0,
+    lastMessageAt: null,
+    createdAt: 0,
+  };
+  const baseMessage = {
+    id: 'msg_1',
+    conversationId: 'conv_1',
+    seq: 1,
+    senderType: 'user',
+    senderBotId: null,
+    kind: 'text',
+    content: { text: 'hello' },
+    replyTo: null,
+    batchId: null,
+    runId: null,
+    status: 'normal',
+    editedAt: null,
+    createdAt: 0,
+  };
+
+  it('conversation type gains dm with owner / peer principal view fields', () => {
+    const dm = conversationSchema.parse({
+      ...baseConversation,
+      type: 'dm',
+      peerPrincipalIds: ['mbr_alice', 'mbr_bob'],
+    });
+    expect(dm.type).toBe('dm');
+    expect(dm.peerPrincipalIds).toEqual(['mbr_alice', 'mbr_bob']);
+    expect(dm.ownerPrincipalId).toBeUndefined();
+    const direct = conversationSchema.parse({
+      ...baseConversation,
+      type: 'direct',
+      directBotId: 'bot_a',
+      ownerPrincipalId: 'mbr_alice',
+    });
+    expect(direct.ownerPrincipalId).toBe('mbr_alice');
+    // Absent on legacy payloads (single-user installs keep their shape).
+    const legacy = conversationSchema.parse({ ...baseConversation, type: 'direct' });
+    expect(legacy.ownerPrincipalId).toBeUndefined();
+    expect(legacy.peerPrincipalIds).toBeUndefined();
+  });
+
+  it('messages gain optional sending-principal fields and updatedAt', () => {
+    const sent = messageSchema.parse({
+      ...baseMessage,
+      senderPrincipalId: 'mbr_alice',
+      senderName: 'Alice',
+      updatedAt: 1_700_000_000_000,
+    });
+    expect(sent.senderPrincipalId).toBe('mbr_alice');
+    expect(sent.senderName).toBe('Alice');
+    expect(sent.updatedAt).toBe(1_700_000_000_000);
+    // Nullable on rows never touched by the trigger / without a principal.
+    const legacy = messageSchema.parse(baseMessage);
+    expect(legacy.senderPrincipalId).toBeUndefined();
+    expect(legacy.senderName).toBeUndefined();
+    expect(legacy.updatedAt).toBeUndefined();
+    const nulled = messageSchema.parse({
+      ...baseMessage,
+      senderPrincipalId: null,
+      senderName: null,
+      updatedAt: null,
+    });
+    expect(nulled.senderPrincipalId).toBeNull();
+  });
+
+  it('textContent gains origin avatar with the avatar bot name', () => {
+    const avatar = textContentSchema.parse({
+      text: 'on my way',
+      origin: 'avatar',
+      avatar: { botName: 'Aster' },
+    });
+    expect(avatar.origin).toBe('avatar');
+    expect(avatar.avatar).toEqual({ botName: 'Aster' });
+    // Legacy origins keep parsing; the avatar field is absent by default.
+    const voice = textContentSchema.parse({ text: 'hi', origin: 'voice' });
+    expect(voice.avatar).toBeUndefined();
+    // `avatar` stays optional even for origin='avatar' — the schema is
+    // permissive; the team layer enforces the single-run-end rule (T10).
+    const bareAvatar = textContentSchema.parse({ text: 'hi', origin: 'avatar' });
+    expect(bareAvatar.avatar).toBeUndefined();
+    expect(
+      textContentSchema.safeParse({ text: 'hi', origin: 'nope', avatar: { botName: 'Aster' } })
+        .success,
+    ).toBe(false);
+  });
+
+  it('messages.list gains afterSeq / changedSince (mutually exclusive) and an optional cursor', () => {
+    expect(messagesListInputSchema.parse({ conversationId: 'conv_1' })).toEqual({
+      conversationId: 'conv_1',
+      limit: 60,
+    });
+    expect(messagesListInputSchema.parse({ conversationId: 'conv_1', afterSeq: 5 }).afterSeq).toBe(
+      5,
+    );
+    expect(
+      messagesListInputSchema.parse({ conversationId: 'conv_1', changedSince: 1_700_000_000_000 })
+        .changedSince,
+    ).toBe(1_700_000_000_000);
+    // beforeSeq alone keeps working (existing pagination).
+    expect(messagesListInputSchema.parse({ conversationId: 'conv_1', beforeSeq: 9 }).beforeSeq).toBe(
+      9,
+    );
+    // Any two (or three) of the cursors together are rejected.
+    expect(() =>
+      messagesListInputSchema.parse({ conversationId: 'conv_1', beforeSeq: 9, afterSeq: 5 }),
+    ).toThrow();
+    expect(() =>
+      messagesListInputSchema.parse({
+        conversationId: 'conv_1',
+        afterSeq: 5,
+        changedSince: 1_700_000_000_000,
+      }),
+    ).toThrow();
+    expect(() =>
+      messagesListInputSchema.parse({
+        conversationId: 'conv_1',
+        beforeSeq: 9,
+        afterSeq: 5,
+        changedSince: 1_700_000_000_000,
+      }),
+    ).toThrow();
+    // Output: cursor is optional and absent on legacy payloads.
+    expect(messagesListOutputSchema.parse({ messages: [] }).cursor).toBeUndefined();
+    expect(messagesListOutputSchema.parse({ messages: [], cursor: 1_700_000_000_001 }).cursor).toBe(
+      1_700_000_000_001,
+    );
+  });
+
+  it('projects.create accepts principalIds and relaxes the bot-member floor to 1', () => {
+    const withPrincipals = {
+      title: '项目组',
+      leadBotId: 'bot_a',
+      memberBotIds: ['bot_a'],
+      principalIds: ['mbr_alice'],
+    };
+    expect(projectsCreateInputSchema.parse(withPrincipals)).toEqual(withPrincipals);
+    // Without principals (or with an empty list) the floor stays 2 bots.
+    expect(() =>
+      projectsCreateInputSchema.parse({
+        title: '项目组',
+        leadBotId: 'bot_a',
+        memberBotIds: ['bot_a'],
+      }),
+    ).toThrow();
+    expect(() =>
+      projectsCreateInputSchema.parse({
+        title: '项目组',
+        leadBotId: 'bot_a',
+        memberBotIds: ['bot_a'],
+        principalIds: [],
+      }),
+    ).toThrow();
+    // The lead ∈ members check is unchanged.
+    expect(() =>
+      projectsCreateInputSchema.parse({
+        title: '项目组',
+        leadBotId: 'bot_a',
+        memberBotIds: ['bot_b'],
+        principalIds: ['mbr_alice'],
+      }),
+    ).toThrow(/负责人必须是项目成员/);
   });
 });

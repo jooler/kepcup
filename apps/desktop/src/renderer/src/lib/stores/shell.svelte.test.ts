@@ -1,6 +1,7 @@
 import { flushSync } from 'svelte';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
+import { setTeamHiddenSurfaces } from '$lib/features/team/surface-gate';
 import { shell } from './shell.svelte';
 
 /**
@@ -195,6 +196,36 @@ describe('对话内设置卡深链：Bot 详情 / 工作目录设置（todo/conv
     shell.openWorkdirSettings('workdir-ports');
     expect(shell.rightPanelTabRequest).toBe('profile');
     expect(shell.workdirSettingsRequest).toEqual({ anchor: 'workdir-ports' });
+  });
+
+  it("团队端点 'workdir-pick' 被拒 surfaces：深链回落为 no-op（T5）", () => {
+    setTeamHiddenSurfaces(['workdir-pick']);
+    try {
+      shell.openWorkdirSettings('workdir-ports');
+      expect(shell.workdirSettingsRequest).toBeNull();
+      expect(shell.rightPanelTabRequest).not.toBe('profile');
+    } finally {
+      setTeamHiddenSurfaces([]);
+    }
+    // 门控清空后行为与现状一致。
+    shell.openWorkdirSettings('workdir-ports');
+    expect(shell.workdirSettingsRequest).toEqual({ anchor: 'workdir-ports' });
+  });
+
+  it("团队端点被拒分区：openSettings 深链（宽屏）回落到可见分区（T5）", () => {
+    setTeamHiddenSurfaces(['remote']);
+    try {
+      shell.openSettings('remote');
+      expect(shell.settingsOpen).toBe(true);
+      expect(shell.settingsSection).not.toBe('remote');
+    } finally {
+      setTeamHiddenSurfaces([]);
+      shell.closeSettings();
+    }
+    // 门控清空后行为与现状一致。
+    shell.openSettings('remote');
+    expect(shell.settingsSection).toBe('remote');
+    shell.closeSettings();
   });
 });
 

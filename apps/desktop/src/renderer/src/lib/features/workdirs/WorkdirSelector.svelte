@@ -6,6 +6,7 @@
   import { shell } from '$lib/stores/shell.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Label } from '$lib/components/ui/label';
+  import { isTeamHidden } from '$lib/features/team/surface-gate';
   import WorkdirSettingsDialog from './WorkdirSettingsDialog.svelte';
 
   let {
@@ -71,8 +72,11 @@
   }
 </script>
 
-{#if showBlock}
-  <!-- 右栏表单区块（Bot「配置」tab / 群信息）：自带标签的通栏触发按钮 -->
+{#if showBlock && !isTeamHidden('workdir-pick')}
+  <!-- 右栏表单区块（Bot「配置」tab / 群信息）：自带标签的通栏触发按钮。
+       团队端点（T5）'workdir-pick' 被拒 surfaces 时整块隐藏——选择入口不存在
+       （工作目录由服务端 workdirRoots 供给，62.08 §2）；showBlock=false 的挂载
+       （右栏二级菜单行）由 BotMenu 自行门控。 -->
   <div class="grid gap-1.5" data-testid="workdir-selector">
     <Label>{t('workdirs.selector')}</Label>
     <Button

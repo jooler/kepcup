@@ -2401,3 +2401,199 @@
   `docs/design/20-conversation-media.md`（工具能力来源、SETUP_REQUIRED 分流、新增 4.1
   语音标准接口小节）；`plugins/dashscope` 与 `plugins/volcengine-ark` 的 plugin.json
   描述与 README 条目口径随数据更新。
+
+### DEV-134 消息变更时间 `messages.updated_at` 由 SQLite 触发器维护
+
+- 状态：已落实（迁移 `0078_principal_messages` 的触发器 `messages_touch_updated_at`,T1 落地）
+- 阶段：团队服务器 T1（分支 team-server，2026-11-20）
+- 是否阻塞：否
+- 问题：62.11 C6 的 `messages.changedSince` 增量补拉需要消息级「内容变更时间」。仓库约定时间由 infra/clock 注入维护（不依赖数据库时钟），但消息内容被原地改写的位置有十余处（`settings/host.ts`、`schedule/service.ts` ×4、`dispatch/tasks.ts` ×3、`updateStreamingText`、`edit` / `recall` 等），逐一在应用层维护 `updated_at` 既侵入面大也容易漏改。
+- 影响范围：`packages/core/migrations/main/`（触发器 DDL）、`domain/messages.ts`（映射与补拉比较）。
+- 可选方案：a) 逐改写点维护 `updated_at`；b) SQLite `AFTER UPDATE OF content_json, status, edited_at` 触发器写 `CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)`。
+- 推荐 / 决定：b。触发器只在内容 / 状态真正变更时触达，补拉比较用 `coalesce(updated_at, created_at)`；该列仅用于增量补拉排序，不参与业务语义，数据库时钟精度足够。
+- 已更新的文档：本条；PROGRESS.md T1 节。
+
+### DEV-135 62.11 C6「删除以墓碑体现」的 core 侧口径
+
+- 状态：已落实（`changedSince` 覆盖编辑 / 撤回 / 状态变化,T1;桌面缓存以 `team.bootstrap` 全量对账 + `changedSince` 两层同步,T8）
+- 阶段：团队服务器 T1（分支 team-server，2026-11-20）
+- 是否阻塞：否
+- 问题：62.11 C6 写「删除以墓碑体现」，但 core 的消息模型没有消息级软删除——物理删除只有会话删除级联与 `purgeTaskInterim`（用户不可见的中间气泡），没有可承载墓碑的消息行。
+- 影响范围：`messages.list` 的 `changedSince` 语义（T1）；客户端缓存同步策略（T8）。
+- 可选方案：a) core 新增消息级软删除列（扩大休眠面）；b) `changedSince` 覆盖编辑 / 撤回 / 状态变化（含 recalled），会话级删除 / 归档 / 移出（ Bot 视角）不在消息流里体现，由团队层 `team.bootstrap` 全量对比收敛。
+- 推荐 / 决定：b。单用户语义零新增；T8 桌面缓存以 `team.bootstrap` 会话全集对账 + `changedSince` 消息级补拉两层实现同步。
+- 已更新的文档：本条；PROGRESS.md T1 节。
+
+### DEV-136 C15 `provisionWorkdir` 入参改为 `(conversationId, name)`
+
+- 状态：已落实（`principal/ops.ts` 按此签名实现,T2）
+- 阶段：团队服务器 T2（分支 team-server，2026-11-20）
+- 是否阻塞：否
+- 问题：62.11 C15 设计签名为 `provisionWorkdir(root, name)`；core 缝 `workdirRoots` 已提供根列表，宿主侧再传根既冗余也扩大了 core 暴露面。同时按 README 固定契约把宿主写入口的成员查询命名为 `hasPrincipal`（core 不出现 member 语义）。
+- 决定：`provisionWorkdir(conversationId, name)`——在 `workdirRoots[0]` 下建目录并绑定到会话；根由 `CoreServicesOptions.workdirRoots` 提供。
+- 已更新的文档：本条；README 固定契约（已按此写）；PROGRESS.md T2 节。
+
+### DEV-137 C15 join/leave 系统消息措辞沿用缝文本
+
+- 状态：已落实（缝文本即交付文案,T6）
+- 阶段：团队服务器 T6（分支 team-server，2026-11-20）
+- 是否阻塞：否
+- 问题：T6 任务书要求加入 / 移出落「{name} 已加入项目组 / 已退出」，C15 缝 `principalOps.join/leave` 的既有通用文案为「{name} 已加入 / 已离开」；在 core 侧参数化文案会往通用缝里掺宿主语义。
+- 决定：接受缝文本（62.04 §4 的会话类型上下文在消息所在会话里已可辨）；「项目负责人已转交给 {name}」按任务书精确落地（`appendSystemMessage`）。
+- 已更新的文档：本条；PROGRESS.md T6 节。
+
+### DEV-138 C15 join/leave 不补发 conversation.updated
+
+- 状态：已落实（不补发;服务端由团队层 `onRosterChanged` 直清事件门缓存,T6）
+- 阶段：团队服务器 T6（分支 team-server，2026-11-20）
+- 是否阻塞：否
+- 问题：名册写不发布 `conversation.updated`，理论上依赖该事件刷新的消费者看不到名册变化；但 `conversationSchema` 载荷不含人类名册（项目组无 principals 字段），补发对客户端名册刷新零增益。
+- 决定：不补发。服务端事件门的成员资格缓存由团队层 `onRosterChanged` 直清（join/leave/transfer/删除全覆盖，isolation 断言移出即断流）；客户端名册刷新由可见系统消息（message.created）驱动（T7）。
+- 已更新的文档：本条；PROGRESS.md T6 节。
+
+### DEV-139 team.profile.push 证据标记落空数组
+
+- 状态：已落实（evidence 落 `[]`,T6;`profile_items` 未加 origin 列——按 `source:'explicit' + contributed_by NULL` 组合辨识,收编评估维持不做）
+- 阶段：团队服务器 T6（分支 team-server，2026-11-20）
+- 是否阻塞：否
+- 问题：T6 任务书要求上行条目 `evidence_json` 写 `[{"kind":"client-sync"}]` 作来源标记；evidence schema 是冻结的 shared 契约（`{messageId, conversationId}` 对），该形状不容许；任务书预案「给 `profile_items` 增可空 origin 列」属 core 迁移。
+- 决定：evidence 落 schema 最小形状 `[]` + `source:'explicit'` + `contributed_by NULL` 组合辨识上行条目；T9 前评估是否给 `profile_items` 加可空 `origin` 列收编。
+- 已更新的文档：本条；PROGRESS.md T6 节。
+
+### DEV-140 team.usage.mine 无 byBot 口径
+
+- 状态：已落实（byBot 随 T9 用量分摊全量分摊行兑现,byDay 桶边界仍按服务器本地日——62.07 §3「时区暂按服务器时区」立场,展示层标注）
+- 阶段：团队服务器 T6（分支 team-server，2026-11-20）
+- 是否阻塞：否
+- 问题：任务书把 byBot 列为可选字段；T6 钉定的 core 聚合缝 `UsageService.sumByPrincipal` 无 per-bot 分组口径。另 byDay 的 `dayStart` 标 UTC 午夜而 core 聚合按服务器本地日（62.07 §3「时区暂按服务器时区」立场，仅展示层桶边界标注差异）。
+- 决定：T6 只出 byDay；byBot 与时区口径在 T9 用量分摊（`ledgerSince` 全量分摊）时统一。
+- 已更新的文档：本条；PROGRESS.md T6 节。
+
+### DEV-141 私有 Bot 配额为运行配置，管理台可视化调节面后置
+
+- 状态：已落实（`--max-private-bots` / settings.json / env;管理台 T10 经「服务器设置」白名单键 `max-private-bots` 可视化调节,私有 Bot 页显示每成员计数与上限）
+- 阶段：团队服务器 T6（分支 team-server，2026-11-20）
+- 是否阻塞：否
+- 问题：每成员私有 Bot 上限（默认 5）任务书说「管理台可调」；管理台全量在 T10。
+- 决定：上限先经 `--max-private-bots` / settings.json / env 调节（并发安全经 per-member 互斥保证）；管理台可视化调节面随 T10 管理台补。
+- 已更新的文档：本条；PROGRESS.md T6 节。
+
+### DEV-142 P1 融合视图只覆盖会话级能力，重型面板跳独立团队窗口
+
+- 状态：已落实
+- 阶段：团队服务器 T7（分支 team-server，2026-11-20）
+- 是否阻塞：否
+- 问题：62.08 §3 的融合视图理想形态是全功能；但看板 / wiki / Bot 详情等重型面板约百个文件依赖单例 `core`，P1 全量来源化风险与工作量不成比例。
+- 决定：P1 融合范围收敛为会话级能力（通讯录 / dm / 直聊 / 项目组聊天、消息收发编辑撤回、附件、审批卡、草稿与 presence、@ 成员、项目成员面板）；团队条目上的看板 / wiki / Bot 详情等入口在融合视图中以「在团队窗口打开」跳转 T5 的远程进程窗口。长期以按面板逐步来源化推进。
+- 已更新的文档：本条；PROGRESS.md T7 节。
+
+### DEV-143 safeStorage 不可用时团队凭据不持久化
+
+- 状态：已落实
+- 阶段：团队服务器 T7（分支 team-server，2026-11-20）
+- 是否阻塞：否
+- 问题：桌面团队连接的成员 token 计划经 `safeStorage` 加密落 `<userData>/team-servers.json`；Linux 无钥匙串等场景 `safeStorage.isEncryptionAvailable()` 为 false，明文落盘不可接受。
+- 决定：`safeStorage` 不可用时拒绝保存 token（「记住我」强制 false），token 仅主进程内存持有（重启后需手动重新登录）；不写明文、不做自制加密兜底。
+- 已更新的文档：本条；PROGRESS.md T7 节。
+
+### DEV-144 手写最小 RFC 6455 客户端替代全局 WebSocket
+
+- 状态：已落实
+- 阶段：团队服务器 T7（分支 team-server，2026-11-20）
+- 是否阻塞：否
+- 问题：任务书指定主进程桥接用全局 `WebSocket` 连团队服务器 `/rpc`；实测 Node/Electron 的 `WebSocket`（undici）构造器不接受自定义头（第三参 options 被静默忽略、URL userinfo 不产生 `Authorization` 头），而 member-hub 鉴权只认 `Authorization: Bearer` 且拒绝 URL 查询串 token——Bearer 握手无法完成；任务书同时禁止新增 `ws` 依赖。
+- 影响范围：`apps/desktop/src/main/team-bridge.ts`（仅桌面主进程；core / apps/server 不受影响）。
+- 可选方案：a) 放宽 hub 接受查询串 token（扩大攻击面：token 进日志 / Referer，否决）；b) 新增 `ws` 依赖；c) 手写最小 RFC 6455 客户端。
+- 决定：c——约 250 行 http Upgrade + 帧编解码（只实现文本帧 + 控制帧）：客户端→服务端帧恒掩码、服务端帧带掩码或 RSV≠0 拒 1002、帧长与分片累积总量对齐 hub 侧 `RELAY_MAX_FRAME_BYTES`（超限 1009 不进缓冲）、close 握手回显 code（1 字节非法载荷回空）、错误路径全部收敛到重连；协议面测试覆盖（含 64 位超限 / 分片重组 / 分片中 ping 等 8 例）。与「不新增依赖」约束一致。
+- 已更新的文档：本条；PROGRESS.md T7 节。
+
+### DEV-145 团队来源系统级通知后置
+
+- 状态：已决定（后置，未排期——T11 最终报告列入未做项）
+- 阶段：团队服务器 T7（分支 team-server，2026-11-20）
+- 是否阻塞：否
+- 问题：桌面融合视图的团队消息提醒是渲染层被 @ toast（svelte-sonner），不走主进程系统通知链路（本机 core 的 onNotify 桥只接本机 core）；62.01 S12 的系统级通知（免打扰感知）口径未达成。
+- 影响范围：仅体验层；消息本体渲染与未读角标不受影响。
+- 决定：P1 交付渲染层被 @ toast（quietHours 在发送点抑制团队来源提及提醒）；系统级团队通知需主进程桥接的团队事件通知面扩展，作为遗留项另行安排（不承诺 T10——T10 任务书无此项；T11 收口时在未做项中如实列出）。
+- 已更新的文档：本条；PROGRESS.md T7 节。
+
+### DEV-146 多人类团队会话的未读静默口径两条渲染路径不一致
+
+- 状态：已落实（T11 收口窗口内执行——渲染层 `features/chats/unread.ts` 增共享判定 `teamMessageArrival`（仅自己回声静默 + `principal:<自己>` 计提及）,本机列表路径（`chat.svelte.ts`）的团队上下文（`teamContext.member` 为权威）与团队切片（`chat-team.svelte.ts`）接线同一判定,新增 `chat-team-arrival.svelte.test.ts` 用例;无主体上下文（单用户本机）保持「user 一律静默」现状不变。渲染层改动属 T11 收口代码批,提交由 orchestrator 收尾）
+- 阶段：团队服务器 T7（分支 team-server，2026-11-20）
+- 是否阻塞：否
+- 问题：本机列表路径（`chat.svelte.ts`，T5 web 团队上下文同样走它）沿用 `isSilentOnArrival` 的「senderType='user' 一律静默」单主体口径——多人类团队会话里其他成员的聊天消息不计未读；T7 团队切片（`chat-team.svelte.ts`）已收紧为「仅自己回声静默」（人类发送的消息计未读、人类 @ 计提及）。同一团队会话在两条路径下未读数可能不一致。
+- 影响范围：T5 web 同源路径的团队会话未读显示；单用户本机行为不变（本机所有 user 消息都是本人回执）。
+- 可选方案：a) T7 一并统一本机列表路径（审查期单方面改 T5 已验收行为，回归面不可控）；b) 维持两口径到 T11 统一。
+- 决定：b——T11 收口时把「仅自己回声静默 + 人类 @ 计提及」落到本机列表路径的团队会话（需区分来源与本人主体；单用户路径行为不变），统一后跑相关定向测试复核。
+- 已更新的文档：本条；PROGRESS.md T7 节。
+
+### DEV-147 缓存分区标识的路径注入双保险与加密驱动 types 映射
+
+- 状态：已落实
+- 阶段：团队服务器 T8（分支 team-server，2026-11-21）
+- 是否阻塞：否
+- 问题：① `platform.teamCache.*` 的分区标识（serverHash / memberId）来自渲染层 IPC 入参并拼进 `<userData>/team-cache/<serverHash>/<memberId>/` 文件系统路径，移交版 zod schema 仅 `min(1)`，路径安全完全押在 service 层 `sanitizePathSegment` 兜底上；② `better-sqlite3-multiple-ciphers` 的 exports map 无 types condition，`apps/desktop` 直接依赖后 tsc 需要类型映射。
+- 影响范围：`packages/shared/src/rpc/methods.ts`（platform.teamCache 入参 schema）、`apps/desktop/src/main/team-cache/service.ts`、`apps/desktop/tsconfig.node.json`。
+- 决定：① 双保险——shared zod 以 regex 钉死格式（serverHash 恰 16 位小写 hex，= `remoteProfileHash` 口径；memberId `mbr_` + 白名单字符 1–64，与 team-server 铸造的 `mbr_+ULID` 兼容）+ service 层 `assertPartitionSegments` 第二道（直连 in-process 调用不过 zod）+ `sanitizePathSegment` 降为第三道兜底；注入形状用例覆盖。**后续规范：凡「渲染层入参 → 文件系统路径」的平台方法沿用「schema regex 钉格式 + service 层同款校验」双保险，不得只靠 sanitize 兜底。** ② `tsconfig.node.json` 增 driver paths 映射（`packages/core` tsconfig 同款先例；最小构建配置改动，非依赖变更）。
+- 已更新的文档：本条；PROGRESS.md T8 节。
+
+### DEV-148 用量分摊 token 取整采用最大余数法
+
+- 状态：已落实
+- 阶段：团队服务器 T9（分支 team-server，2026-11-21）
+- 是否阻塞：否
+- 问题：任务书未定均摊取整口径；朴素 `round(t/n)` 在人数 ≥5 时合计与账行总额出现最多 ⌊n/2⌋ token 的差额（审查用例：7 token / 5 人 → Σ=5≠7），三口径合计与账表总额守恒断言会失败。
+- 影响：`apps/team-server/src/team/usage.ts` 的 `distributedShare`；`usage_allocations` 的 token 列语义。
+- 决定：**最大余数法**（base = floor(t/n)，余数按余数大小摊给前几名）——Σ tokens 恒等于账行总额；cost 为实数本就精确，双守恒；`mine` / 报表展示的「成员 token」语义为**分摊额**而非精确消耗（已在迁移注释与 PROGRESS 写明）。
+- 已更新的文档：本条；PROGRESS.md T9 节。
+
+### DEV-149 宿主工具 resolution_withdraw 的 reason 截断
+
+- 状态：已落实
+- 阶段：团队服务器 T9（分支 team-server，2026-11-21）
+- 是否阻塞：否
+- 问题：`team.resolutions.withdraw` RPC 入参有 zod `max(500)`，但宿主工具 `resolution_withdraw` 走引擎 JSON Schema 面，引擎不校验长度约束——Bot 可写超长留痕文案进系统消息。
+- 影响：`apps/team-server/src/team/resolutions.ts` 状态机 withdraw 入口。
+- 决定：状态机 `withdraw` 入口对 reason 统一 `trim().slice(0, 500)`（RPC 与工具双入口同保护，与 RPC zod 对齐，截断不报错），测试断言工具路径 600 字输入落 500 字留痕。
+- 已更新的文档：本条；PROGRESS.md T9 节。
+
+### DEV-150 分身契约的 additive 扩展（setAway client / avatarRevoked targetClientId）
+
+- 状态：已落实
+- 阶段：团队服务器 T10（分支 team-server，2026-11-21）
+- 是否阻塞：否
+- 问题：62.06 的分身运行端语义需要「哪条连接设置的离开」与「定向撤销哪条连接」，但 T6 冻结的 `team.presence.setAway` 契约没有连接身份字段（avatarSetBy 可能记为 null，运行端判定退化），`team.avatarRevoked` 也只能成员级广播（会误投同成员其它连接）。
+- 影响：shared `team/methods.ts`（setAway 增可选 `client`，D119/D121 同形）、shared `team/events.ts`（avatarRevoked 增可选 `targetClientId`）、`identity-binding.ts` CLIENT_BOUND_METHODS 增 setAway、member-hub 广播路径增连接级例外。
+- 决定：两处均为**可选字段 additive 扩展**——旧客户端零感知（不带 client = 旧行为；不带 targetClientId = 原成员级广播）；运行端判定对 deviceId null 一律 fail-closed（origin='avatar' 全拒）。按 D121 先例登记为契约注记。
+- 已更新的文档：本条；PROGRESS.md T10 节。
+
+### DEV-151 管理台新包依赖与产物裁决
+
+- 状态：已落实（依赖）/ 已决定（产物与 allowBuilds）
+- 阶段：团队服务器 T10（分支 team-server，2026-11-21）
+- 是否阻塞：否
+- 问题：① 01-conventions 要求大依赖登记——新包 `@kepcup/team-console` 引入 React 全家桶与 Astryx 设计系统；② `@astryxdesign/core` 带 postinstall（打印 astryx init 提示），pnpm v11 不批准会 ERR_PNPM_IGNORED_BUILDS 破坏 `pnpm -r build`——allowBuilds 登记超出任务书名义文件清单；③ 管理台构建产物（约 840KB）是否随分支提交。
+- 影响：`apps/team-console/package.json`、`pnpm-lock.yaml`、`pnpm-workspace.yaml`、`.gitignore`。
+- 决定：① 依赖**精确锁定**（react/react-dom 19.3.1、vite 7.3.6 与仓库一致、@vitejs/plugin-react **5.1.4**（vite 7 peer 匹配线，6.x 强制 vite 8；样式走 StyleX babel，仅用其 JSX 运行时与 fast refresh）、@astryxdesign/core / theme-neutral 0.7.16、@stylexjs/stylex 0.19.2；未装无作用域 `astryx`）；private / UNLICENSED / 仅存 team-server 分支不进 main。② allowBuilds 登记经实读核实（postinstall 一次性提示、`main().catch(()=>{})` 永不失败、dist 随包发布）——**维持**；升级该包时需复核 postinstall 仍满足承诺。③ **dist 不入库**（`.gitignore` 增 `apps/team-console/dist/`）：开发/验收现场 `pnpm --filter @kepcup/team-console build` 产出，Docker 镜像内构建，team-server `--console-dir` 缺省指向 `../team-console/dist`。另：`team.memory.share` 入参为 `memoryId`（T9 冻结契约）而任务书写作 `itemId`——命名口径差异非语义分歧，console revoke-share 兼容两种审计形状。
+- 已更新的文档：本条；PROGRESS.md T10 节。
+
+### DEV-152 worktree 沙箱需要放行共享对象库（`.git/objects`）
+
+- 状态：已落实
+- 阶段：D140 W5（分支 feat/d140-autonomy-parallel，2026-11-24）
+- 是否阻塞：否
+- 问题：D140-4 契约（`todo/agent-autonomy-and-parallel-tasks.md` §3.6）写「`readWrite` 增 `.git/worktrees/<name>` 精确子目录；**不**放行 `.git` 其余部分」，但 §6 W5 验收又要求「沙箱内 `git status` / `git diff` / `git commit` 成功」：linked worktree 的 index / HEAD / logs 在 `worktrees/<name>/`，而 `git add` / `commit` 新建的 blob / commit / tree 一律写进**共享对象库** `<git-common-dir>/objects/`（`.git/config`、`.git/hooks` 与其余部分不需要写）。只放行 `worktrees/<name>` 时 `commit` 必然失败（`unable to create ...: Permission denied`）。
+- 影响：`packages/core/src/sandbox/policy.ts`（`PolicyTaskWorktree.gitObjectsDir`）、`packages/core/src/workdir/service.ts`（`TaskWorktree.gitObjectsDir`，来自 `readWorktreeMeta` 的 `commondir`）、`packages/core/test/sandbox/worktree-sandbox.test.ts`。
+- 决定：在「只放行 worktree 自己的元数据子目录」之外**再放行 `<commondir>/objects`**（精确子目录，opens 的仍是沙箱外宿主执行的同一仓库对象库）。安全取舍：对象库按内容寻址，**常规 git 写入**只是新增（可能不可达的）对象，不能改配置 / hooks / refs（detached HEAD 的 commit 不写 refs），执行面不变；`.git/config`、`.git/hooks`、`.git/index` 仍然禁写（真沙箱用例钉住）。**残余风险（如实记录）**：放行的是整个 `<commondir>/objects` 子树，其中 `objects/info/alternates`（及 `http-alternates`）也落在可写范围内——沙箱内 shell 可直接写它（文件工具写这些路径会走 `#gitControlDecision` 的授权卡，shell 不会）。影响仅限「未来 git 读对象时的后备库」：无法通过它改 refs / config / hooks，也无法伪造与已有哈希冲突的对象；能让主仓在未来读到攻击者预置的、正常不可达的对象。若要彻底关闭，需要给 `SandboxPolicy` 增加 `denyWrite` 并透传到 srt（本期未做，属独立的策略面扩展）。`gitObjectsDir` 与 `gitWorktreeMeta` 一并作为 `buildSandboxPolicy` 的 `taskWorktree` 入参，后续若收紧需同时改契约与用例；两者都由 `readWorktreeMeta` 从 worktree 自己的 `.git` 指针**结构化校验**后给出（`<commondir>/worktrees/<name>` + `commondir`/`gitdir` 回指一致），指针被篡改时返回 null（任务失去写挂载，而不是获得别处的挂载）。
+- 已更新的文档：本条；`packages/core/src/workdir/worktree.ts` 模块注释。
+
+### DEV-153 worktree 任务的结算面事实（无 run_changes / 忽略文件不回流 / applyState 是进程内推导）
+
+- 状态：已落实（按实现事实记录，非契约变更）
+- 阶段：D140 W5（分支 feat/d140-autonomy-parallel，2026-11-24）
+- 是否阻塞：否
+- 问题：D140-4 的几个结算面行为在任务书里没有逐条写明，实施后必须以事实呈现：① 影子快照窗口（D140-1 的 `run_changes`）要求 `task_cwd` 在主 workdir 内，worktree 任务的 cwd 是**同级**目录 → `beginTaskWindow` 直接跳过，worktree 任务没有 `run_changes` 行；② 「应用」的补丁由 `git add -A -N` + `git diff <base>` 生成，`add -A` 尊重 `.gitignore` → 隔离目录里生成的**忽略文件**（构建产物、`node_modules` 等）不会回到工作目录；③ `applyState` 是 `WorktreeService` 的进程内 Map + 按「树是否存在」兜底推导；④ 结算卡的待决定项是进程内回调，重启时 `cancelAllPending` 会把它标为 cancelled；⑤ 任务失败自动重试（同一 run id 重新入队）复用原树，只有用户 `runs.retry`（新 run）才建新树；⑥ `git apply --3way` 隐含 `--index`，用户工作区只要有未暂存改动就会拒绝（「does not match index」），合同里的「三方合并」按字面实现会退化成假冲突。
+- 影响：`packages/core/src/workdir/worktree.ts`（apply / restore / 私有索引）、`packages/core/src/dispatch/orchestrator.ts`（结算与回调）、`packages/core/src/dispatch/tasks.ts`（retry）、`packages/core/test/unit/worktree-service.test.ts`、`packages/core/test/integration/tasks-worktree.test.ts`。
+- 决定：① **不补 run_changes**：worktree 任务的改动记录是「应用到工作目录」卡的 `files` / 增删行与 `task.applyState`；任务详情页的改动列表对它为空（代码注释与本节为证）。② 忽略文件**不回流**：只有 tracked 文件与未忽略的未跟踪文件进入补丁；树被删除 / 回收后这些产物一并丢弃（如需保留，让任务写到仓库内未忽略的路径，或用户在终端里自行处理）。③ applyState 兜底：重启后 surviving 树 = `kept`，缺失树 = `applied`（因此**冲突后重启会显示 kept**；被 reaper 回收的树会误显示 applied——唯一可见偏差，卡本身是事实来源）。④ 重启时未决定的卡变 cancelled、树保留（套用全局「待确认审批 → cancelled」），用户可在终端里手动合并；不做「重启后重新出卡」。⑤ 自动重试复用原树（同一任务的连续尝试，保留半成品；用户重试按契约建新树并把 `task_cwd` 重算为主 workdir）。⑥ 三方合并改为在**私有索引副本**上执行：把用户工作区当前 dirty / 未跟踪 / 已删除的被触路径物化进副本（`hash-object --no-filters` + `update-index --cacheinfo`），再 `GIT_INDEX_FILE=<副本> git apply --3way`——「ours」就是磁盘上的真实内容，用户真实索引从不被改写；补丁生成加 `--no-renames`，让 rename 退化为 delete+add（补丁路径集 = 还原点路径集 = 合并路径集；用户改过其中一侧时如实报冲突，绝不半写）。⑦ 「有改动」的判定用 `git diff <baseOid> --numstat` 而不是契约字面的 `git status --porcelain`：树的起点 `baseOid` 已含用户的未提交改动（`git stash create`），`status` 会把用户的既有改动算成任务的工作、无改动也出卡；`diff base` 才是任务自己的改动面，增删行与文件数也取自同一口径。另：建树（`stash create` + `worktree add`）不取主 workdir 的租约（共享租约不排除写任务，独占租约会违背「worktree 任务与主目录任务并行」的契约），因此同一时刻有主目录写任务时，起点快照可能含它写到一半的内容。
+- 已更新的文档：本条；`todo/agent-autonomy-and-parallel-tasks.md` §8 第 10–13 条；`packages/core/src/workdir/worktree.ts` 模块注释与 `apply()` 注释。

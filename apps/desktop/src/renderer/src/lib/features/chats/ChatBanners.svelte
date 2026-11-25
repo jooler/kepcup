@@ -6,10 +6,11 @@
   import { getChatSession } from './chat-session-context';
 
   /**
-   * Floating chat banners (read-only, confirm mode, failed run). Shared by the
-   * main chat and, later, a card dialog that provides its own session.
+   * Floating chat banners (read-only, team offline read-only, confirm mode,
+   * failed run). Shared by the main chat and, later, a card dialog that
+   * provides its own session.
    */
-  let { topClass }: { topClass: string } = $props();
+  let { topClass, teamOffline = false }: { topClass: string; teamOffline?: boolean } = $props();
 
   const session = getChatSession();
   const current = $derived(session.view);
@@ -18,7 +19,7 @@
   );
 </script>
 
-{#if current && (current.conversation.readOnly || confirmMode || current.failedRun)}
+{#if current && (current.conversation.readOnly || teamOffline || confirmMode || current.failedRun)}
   <div
     class="pointer-events-none absolute inset-x-0 {topClass} z-30 flex flex-col items-center gap-1.5 px-4"
   >
@@ -28,6 +29,15 @@
         data-testid="readonly-banner"
       >
         {t('composer.readOnly')}
+      </div>
+    {/if}
+    {#if teamOffline}
+      <!-- T8（62.10 §2）：团队来源断线 → 缓存只读镜像（无离线发送队列）。 -->
+      <div
+        class="pointer-events-auto rounded-full border border-amber-500/40 bg-background/95 px-3 py-1 text-xs text-amber-700 shadow-sm backdrop-blur dark:text-amber-400"
+        data-testid="team-offline-banner"
+      >
+        {t('team.offlineReadOnly')}
       </div>
     {/if}
     {#if confirmMode}

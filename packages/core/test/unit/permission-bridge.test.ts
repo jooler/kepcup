@@ -476,7 +476,10 @@ describe('AgentPermissionBridge decisions', () => {
     loopType: 'turn' as const,
   };
   const requested: Array<Record<string, unknown>> = [];
+  const grantCalls: Array<Record<string, unknown>> = [];
   let answer: 'approved' | 'denied' | 'cancelled' = 'denied';
+  /** Duration the (fake) user picked on the card; null = decision without one. */
+  let decidedDuration: 'task' | 'conversation' | null = null;
   let gatewayKind: 'needs_grant' | 'needs_lease' = 'needs_grant';
   const bridge = new AgentPermissionBridge({
     paths,
@@ -499,13 +502,20 @@ describe('AgentPermissionBridge decisions', () => {
         requested.push(payload);
         return {
           decision: answer,
-          approval: { id: 'apr_1', autoApproved: false, decision: null } as unknown as Approval,
+          approval: {
+            id: 'apr_1',
+            autoApproved: false,
+            decision: decidedDuration === null ? null : { duration: decidedDuration },
+          } as unknown as Approval,
         };
       },
       publishEvent: () => undefined,
     },
     grants: {
-      create: () => ({}) as never,
+      create: (input: Record<string, unknown>) => {
+        grantCalls.push(input);
+        return {} as never;
+      },
       listActive: () => [],
       hasEffectiveGrant: () => null,
     },
@@ -606,7 +616,7 @@ describe('AgentPermissionBridge decisions', () => {
         .decision,
     ).toBe('rejected');
     expect(requested).toHaveLength(1);
-    expect(requested[0]).toMatchObject({ kind: 'write', durations: ['once', 'conversation'] });
+    expect(requested[0]).toMatchObject({ kind: 'write', durations: ['once', 'task', 'conversation'] });
   });
 
   it('tiers inside the cwd: read_only refuses, ask confirms', async () => {
@@ -621,6 +631,40 @@ describe('AgentPermissionBridge decisions', () => {
       (await decide({ toolCallId: 'a', kind: 'edit', locations: [{ path: 'a' }] }, 'ask')).decision,
     ).toBe('allowed');
     expect(requested[0]).toMatchObject({ reason: expect.stringContaining('每次确认') });
+    answer = 'denied';
+  });
+
+  it('a task-duration approval records a task grant for this run (D140 §1.2); a once approval records none', async () => {
+    requested.length = 0;
+    grantCalls.length = 0;
+    answer = 'approved';
+    const outside = canonicalPath('/outside-task-dir/x.txt');
+    //「本任务内」: one grant per location, scoped to this run.
+    decidedDuration = 'task';
+    expect(
+      (await decide({ toolCallId: 't1', kind: 'edit', locations: [{ path: outside }] })).decision,
+    ).toBe('allowed');
+    expect(requested[0]).toMatchObject({
+      kind: 'write',
+      durations: ['once', 'task', 'conversation'],
+    });
+    expect(grantCalls).toEqual([
+      expect.objectContaining({
+        path: outside,
+        access: 'write',
+        duration: 'task',
+        runId: identity.runId,
+        approvalId: 'apr_1',
+      }),
+    ]);
+    //「仅这一次」answers this request only — no grant recorded (D75).
+    requested.length = 0;
+    grantCalls.length = 0;
+    decidedDuration = null;
+    expect(
+      (await decide({ toolCallId: 't2', kind: 'edit', locations: [{ path: outside }] })).decision,
+    ).toBe('allowed');
+    expect(grantCalls).toEqual([]);
     answer = 'denied';
   });
 

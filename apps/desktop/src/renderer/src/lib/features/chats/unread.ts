@@ -29,3 +29,51 @@ export function mergeUnreadCount(
   if (existing !== undefined) return { count: existing.unreadCount ?? 0, refetch: false };
   return { count: 0, refetch: true };
 }
+
+/** 消息到达判定（静默 / 提及）的共享结果形状（DEV-146 两条渲染路径统一）。 */
+export interface MessageArrivalVerdict {
+  /** 自己消息的回声（发送 principal = 自己的成员 id）：静默且不提醒。 */
+  isOwnEcho: boolean;
+  /** 到达时不计未读。 */
+  silent: boolean;
+  /** @ 我（`principal:<自己>`）：计提及角标并提醒。 */
+  mentioned: boolean;
+}
+
+/**
+ * 团队语境（多人类会话，知道「自己是谁」）的到达判定（DEV-146 两条渲染路径
+ * 统一口径，62.04 §4「人类 @ = 通知」）：
+ * - 静默：仅自己的消息回声（senderType 'user' 且 senderPrincipalId 等于自己的
+ *   成员 id）——其他成员的人类消息计未读；工作台回执卡规则照搬（system_event
+ *   + workbench origin，发送方必非 user）。
+ * - 提及：不看发送方是人还是 Bot，只排除自己的回声（自己 @ 自己的回声也不提醒）。
+ *
+ * `selfMemberId` 为 null（主体上下文缺失，回声无法认定）时保留团队切片的原
+ * 退化行为：人类消息计未读、不计提及。单用户本机路径（消息无主体字段）由调用
+ * 方先行回退 `isSilentOnArrival` 单主体口径——本机所有 user 消息都是本人回执，
+ * 静默不变（DEV-146 安全缺省）。
+ */
+export function teamMessageArrival(
+  message: {
+    senderType: string;
+    senderPrincipalId?: string | null;
+    mentions: readonly string[];
+    kind: string;
+    content: unknown;
+  },
+  selfMemberId: string | null,
+): MessageArrivalVerdict {
+  const isOwnEcho =
+    selfMemberId !== null &&
+    message.senderType === 'user' &&
+    message.senderPrincipalId != null &&
+    message.senderPrincipalId === selfMemberId;
+  return {
+    isOwnEcho,
+    silent: isOwnEcho || (message.senderType !== 'user' && isSilentOnArrival(message)),
+    mentioned:
+      !isOwnEcho &&
+      selfMemberId !== null &&
+      message.mentions.some((token) => token === `principal:${selfMemberId}`),
+  };
+}

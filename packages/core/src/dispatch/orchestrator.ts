@@ -41,6 +41,7 @@ import {
   type AgentToolApprovalPayload,
   type AgentPermissionTier,
   type AgentView,
+  type HostCapabilityId,
   type Attachment,
   type Bot,
   type CollabClientRef,
@@ -54,6 +55,7 @@ import {
   MAIL_ALERT_EVENT,
   IM_ALERT_EVENT,
   type Run,
+  type TaskApplyState,
   type ToolEffect,
   connectorMetaOf,
   type AppAuthReason,
@@ -103,6 +105,7 @@ import {
   buildAgentSessionPrompt,
   buildSystemPrompt,
   type CardPromptContext,
+  type HumanPrincipalLabel,
 } from '../agent/context/system-prompt.js';
 import {
   buildConversationContext,
@@ -120,6 +123,12 @@ import type {
   RunIdentity,
   ToolDefinition,
 } from '../agent/types.js';
+import type {
+  HostPromptSectionProvider,
+  HostToolsProvider,
+  PrincipalDirectory,
+  ToolPolicy,
+} from '../principal/types.js';
 import type { Scheduler } from '../scheduler/scheduler.js';
 import {
   isUserFacingReason,
@@ -154,8 +163,10 @@ import type { SettingsService } from '../domain/settings.js';
 import type { SecretsService } from '../domain/secrets.js';
 import type { ApprovalsService } from '../permissions/approvals.js';
 import type { GrantsService } from '../permissions/grants.js';
+import type { TaintService } from '../apps/taint.js';
 import type { WorkdirRuntime } from '../workdir/service.js';
 import type { TaskClaimRegistry } from '../workdir/claims.js';
+import { readWorktreeMeta, type WorktreeService } from '../workdir/worktree.js';
 import type { SandboxBackend } from '../sandbox/types.js';
 import type { CoreEventsMap } from '../start-types.js';
 import {
@@ -213,6 +224,7 @@ import type { ScheduleToolFacade } from '../tools/schedule-tools.js';
 import type { WatchToolFacade } from '../tools/watch-tools.js';
 import { WORKBENCH_OWN_READ_TOOLS, type WorkbenchToolFacade } from '../tools/workbench-tools.js';
 import { applyProfileChanges } from '../memory/service.js';
+import type { RetrievalAudience } from '../memory/retrieve.js';
 import {
   createSubagentFacade,
   buildSubagentSystemPrompt,
@@ -311,6 +323,9 @@ export interface OrchestratorWatchFacade extends WatchToolFacade {
  */
 export const SETUP_DISMISSED_EVENT = 'task_setup_dismissed';
 
+/** D140-1: per-file detail carried on a settled task's TaskChanges (capped). */
+const TASK_CHANGES_FILES_MAX = 50;
+
 /**
  * D90 workbench (lazy facade from start.ts): the todo a dispatched turn belongs to and the
  * delivery bookkeeping the orchestrator reports (docs/design/39-workbench.md §3.5).
@@ -407,9 +422,19 @@ export interface OrchestratorDeps {
   secrets: SecretsService;
   approvals: ApprovalsService;
   grants: GrantsService;
+  /**
+   * D140-3：污点网络放行的 run 终态清理（`task:` / `once:` 行随 run 结束失效）。
+   * 接在 `grants.expireForRun` 的同一位置调用；缺省 / null = 无网络放行可清理（部分单测）。
+   */
+  taint?: Pick<TaintService, 'expireNetworkForRun'> | null | undefined;
   workdirs: WorkdirRuntime;
   /** D123 §5: shared in-memory task claims (gateway + TaskHost). */
   claims?: TaskClaimRegistry | undefined;
+  /**
+   * D140-4: worktree isolation — the host creates / applies / reaps task
+   * trees. Absent = `isolation: 'worktree'` is refused (unit harnesses).
+   */
+  worktrees?: WorktreeService | undefined;
   sandbox: SandboxBackend;
   clock: Clock;
   logger: CoreLogger;
@@ -552,6 +577,30 @@ export interface OrchestratorDeps {
    * 经这里中止整次制作（草稿保留）。
    */
   widgetCraft?: { cancelStageRun(runId: string, reason?: string): boolean } | null;
+  /**
+   * 62.11 C2 主体目录（`CoreServicesOptions.principals`）：发言人标签、
+   * `<user_identity>` / `<conversation_info>` 的人类主体、记忆注入的主体键都经
+   * 它解析。缺省（单用户宿主）= 所有渲染与注入路径保持现状逐字节。
+   */
+  principals?: PrincipalDirectory;
+  /**
+   * 62.11 C8 宿主工具策略（`CoreServicesOptions.toolPolicy`）：deny 的工具从
+   * 最终工具面移除——内置引擎、外部智能体（ACP）、子代理研究工具、MCP / 能力
+   * 懒解析一律同一策略；提示词标志由最终工具名集合推导。缺省 = 不裁剪（现状）。
+   */
+  toolPolicy?: ToolPolicy;
+  /**
+   * 62.11 C10 宿主贡献工具（`CoreServicesOptions.hostTools`）：每次 run 追加到
+   * `buildResponseTools` 结果之后（再统一过策略）；名字登记进 shared 的 host
+   * 能力包，外部智能体路径据此保留。缺省 = 无追加（现状）。
+   */
+  hostTools?: HostToolsProvider;
+  /**
+   * T9（62.11 C10 提示词侧，`CoreServicesOptions.hostPromptSection`）：宿主按
+   * run 返回 `<host_rules>` 段正文；null / 缺省 = 段不出现（内置与 ACP 两条
+   * 提示词路径逐字节现状）。
+   */
+  hostPromptSection?: HostPromptSectionProvider;
 }
 
 /** The slice of the wiki domain the response loop consumes (owner-based since
@@ -616,6 +665,10 @@ export interface OrchestratorSkillsFacade {
  * The slice of the memory domain the orchestrator uses: the tool facade minus
  * `triggerMessages` (the orchestrator supplies the current batch to the tools
  * itself) plus the prompt-section builders and the reflection hook.
+ *
+ * C11 / C12 (62.05 §4) principal-keyed lookups: the section builders take the
+ * running principal (null = the single-user bucket, status quo); the retrieval
+ * audience is derived inside the memory service from it (owner fallback).
  */
 export type OrchestratorMemoryFacade = Omit<
   MemoryToolFacade,
@@ -628,13 +681,29 @@ export type OrchestratorMemoryFacade = Omit<
     reason: string,
     onDecided: (outcome: { approved: boolean; note: string }) => void,
   ): void;
-  profileCardSection(): string;
-  hardConstraintsSection(botId: string, conversationId: string): string;
-  myStateSection(botId: string, currentConversationId: string | null): string;
+  /** Compiled profile card of `principalKey` (C11; null = single-user bucket). */
+  profileCardSection(principalKey?: string | null): string;
+  /** C11 项目组发言人名片一行（~40 token，从编译卡截取）。 */
+  speakerProfileLine(principalKey: string, speakerName: string): string | null;
+  hardConstraintsSection(
+    botId: string,
+    conversationId: string,
+    principalKey?: string | null,
+    opts?: { speakerName?: string },
+  ): string;
+  myStateSection(
+    botId: string,
+    currentConversationId: string | null,
+    principalId?: string | null,
+  ): string;
   relevantMemoriesSection(input: {
     botId: string;
     conversationId: string;
     queryText: string;
+    /** C12: the speaking run's principal (audience derived, owner fallback). */
+    principalId?: string | null;
+    /** Optional precomputed audience override (host-provided). */
+    audience?: RetrievalAudience;
   }): Promise<string>;
   /** Registers the post-run reflection job (dedupe run:{runId}). */
   registerReflection(input: {
@@ -647,6 +716,12 @@ export type OrchestratorMemoryFacade = Omit<
     kind: 'turn' | 'task';
     /** Loop 续接 (D56): runs whose process records were replayed into this run. */
     continuedFromRunIds?: string[];
+    /**
+     * C7 / C11 (62.05 §2): the principal this run speaks for, carried per entry
+     * so a debounced merge attributes every extracted item to its own run even
+     * if the run row is gone by job time.
+     */
+    principalId?: string | null;
   }): void;
 };
 
@@ -723,6 +798,16 @@ type RunExecution =
     };
 
 /**
+ * Sending human principal of a user message (62.11 C4): the caller context's
+ * principal id plus its display-name snapshot. `name` may be null (no host
+ * directory yet); core snapshots whatever the host provides.
+ */
+export interface MessagePrincipal {
+  id: string;
+  name: string | null;
+}
+
+/**
  * Drives conversations end to end: sent messages -> message rows -> mailbox ->
  * supervisor turn (scheduler -> engine -> persisted steps, bot messages, usage
  * entries and events; docs/dev/02-architecture.md "一条消息的完整链路") and
@@ -755,6 +840,8 @@ export class Orchestrator {
   readonly #subagentFacades = new Map<string, SubagentToolFacade>();
   /** D75 任务层（dispatch/tasks.ts）：派出、注入、取消、结算、修复、对账、reaper。 */
   readonly #taskHost: TaskHost;
+  /** D140-4: worktree tasks that already got their apply card (per run id). */
+  readonly #worktreeApplySubmitted = new Set<string>();
   /** 管家提议的宿主侧（D70）：提议卡提交、确认后确定性创建 Bot / 项目组。 */
   readonly #butlerHost: ButlerHost;
   /** 跨 Bot 委派的宿主侧（D71）：投递闸门、结算、取消、恢复。 */
@@ -800,6 +887,7 @@ export class Orchestrator {
       // 任务失败自动重试：生产默认完整档位（测试装配可传 [] 关闭）。
       autoRetryDelaysMs: deps.taskAutoRetryDelaysMs ?? TASK_AUTO_RETRY_DELAYS_MS,
       ...(deps.claims !== undefined ? { claims: deps.claims } : {}),
+      ...(deps.worktrees !== undefined ? { worktrees: deps.worktrees } : {}),
       ...(deps.effects !== undefined ? { effects: deps.effects } : {}),
       messages: deps.messages,
       // D115 附件直注：注入坞直带附件的存取（归属校验 + claim + 字节）。
@@ -861,17 +949,29 @@ export class Orchestrator {
       userHomeOf: (identity) => executionUserHomeOf(identity),
       onSettled: (run, executorActive) => {
         deps.grants.expireForRun(run.id);
+        // D140-3：task / once 的网络放行随 run 结束失效（与 once 授权同位置）。
+        deps.taint?.expireNetworkForRun(run.id);
         deps.approvals.cancelPendingForRun(run.id);
         // D93 P3: spilled tool outputs live only as long as the run.
         this.#clearToolOutputSpill(run.id, run.botId, run.conversationId);
         // A still-unwinding execution keeps its write lease until it ends (an
         // aborted tool may still be writing); it releases the lease itself.
         if (!executorActive) {
+          void this.#releaseRunWindow(run.id).catch(() => {});
           this.#fsState.release(run.id);
-          void deps.workdirs.releaseRun(run.id).catch(() => {});
         }
         deps.publish('run.status', { run });
         if (run.conversationId !== null) this.#publishConversation(run.conversationId);
+        // D140-4: a settled worktree task with changes gets its「应用到工作
+        // 目录」card (non-blocking, outlives the run).
+        if (run.loopType === 'task' && run.isolation === 'worktree') {
+          void this.#settleWorktree(run).catch((error) => {
+            deps.logger.warn(
+              { runId: run.id, error: error instanceof Error ? error.message : String(error) },
+              'worktree settle card failed',
+            );
+          });
+        }
         // W6：委派跟随的任务到达终态 → 等它的委派重新检查是否可以结算。
         try {
           this.#delegationHost.onTaskSettled(run);
@@ -883,8 +983,8 @@ export class Orchestrator {
         }
       },
       releaseExecution: (runId) => {
+        void this.#releaseRunWindow(runId).catch(() => {});
         this.#fsState.release(runId);
-        void deps.workdirs.releaseRun(runId).catch(() => {});
       },
       // W3 interrupt (permission revoked): the task's and its sub runs' cards go.
       cancelPendingApprovals: (runIds) =>
@@ -1095,6 +1195,8 @@ export class Orchestrator {
           settings: deps.settings,
           bots: deps.bots,
           messages: deps.messages,
+          // 62.11 C2：续接判断的消息行把人类发送主体解析成显示名。
+          ...(deps.principals !== undefined ? { describePrincipal: deps.principals.describe } : {}),
           botId: input.botId,
           conversationId: input.conversationId,
           batchId: input.batchId,
@@ -1115,6 +1217,8 @@ export class Orchestrator {
           bots: deps.bots,
           messages: deps.messages,
           conversations: deps.conversations,
+          // 62.11 C2：负责人网关提示里的人类发言人经目录出名字（62.04 §4）。
+          ...(deps.principals !== undefined ? { describePrincipal: deps.principals.describe } : {}),
           leadBotId: input.leadBotId,
           conversationId: input.conversationId,
           batchId: input.batchId,
@@ -1179,6 +1283,11 @@ export class Orchestrator {
       voiceMode?: boolean;
       /** D121：发这条消息的客户端（设备），仅展示用。 */
       client?: CollabClientRef;
+      /** 62.11 C4：发送主体（调用者）；落库为 sender_principal_id / sender_name。 */
+      principal?: MessagePrincipal;
+      /** 62.06 / 62.04 §3：分身代回（content 记 origin:'avatar' + avatar.botName）。 */
+      origin?: 'avatar';
+      avatar?: { botName: string };
       /** 草稿发送：在消息落库事务内清理草稿（D120 原子性修复）。 */
       onPersisted?: () => void;
     },
@@ -1209,7 +1318,13 @@ export class Orchestrator {
    */
   sendShareMessage(
     conversationId: string,
-    input: { text: string; attachmentIds: string[]; shareIntakeId: string },
+    input: {
+      text: string;
+      attachmentIds: string[];
+      shareIntakeId: string;
+      /** 62.11 C4：发送主体（调用者）；落库为 sender_principal_id / sender_name。 */
+      principal?: MessagePrincipal;
+    },
   ): {
     message: Message;
     batchId: string;
@@ -1220,6 +1335,7 @@ export class Orchestrator {
       text: input.text,
       attachmentIds: input.attachmentIds,
       shareIntakeId: input.shareIntakeId,
+      ...(input.principal !== undefined ? { principal: input.principal } : {}),
     });
     return {
       message: prepared.message,
@@ -1233,6 +1349,26 @@ export class Orchestrator {
    * 消息落库（事务内）：写消息 + 认领附件 + 生成 batch id。返回值交给
    * {@link #publishAndRouteUserMessage} 在提交后发布事件与唤醒路由。
    */
+  /**
+   * 发送主体的清洗（62.11 C4）：对齐 {@link #prepareUserMessage} 对 client 字段
+   * 的处理——id 原样（不透明），name 过控制字符、trim、截断。调用方（绑定层 /
+   * 草稿发送 / 工作台派发）不给名时经主体目录（C2）取显示名快照落库——D18
+   * 「历史保留、名称可辨」：成员禁用 / 删除后消息仍显示发送时的名字。
+   * 无目录 / describe 不到 / 空名 = null = 单用户现状。
+   */
+  #cleanPrincipal(principal: MessagePrincipal | undefined): MessagePrincipal | undefined {
+    if (principal === undefined || principal.id.length === 0) return undefined;
+    let name: string | null =
+      principal.name === null || principal.name === undefined
+        ? null
+        : sanitizeClientName(principal.name);
+    if (name === null) {
+      const described = this.#deps.principals?.describe(principal.id);
+      if (described != null && described.name.length > 0) name = sanitizeClientName(described.name);
+    }
+    return { id: principal.id, name };
+  }
+
   #prepareUserMessage(
     conversationId: string,
     input: {
@@ -1245,6 +1381,11 @@ export class Orchestrator {
       voiceMode?: boolean;
       /** D121：发这条消息的客户端（设备），仅展示用。 */
       client?: CollabClientRef;
+      /** 62.11 C4：发送主体（调用者）。 */
+      principal?: MessagePrincipal;
+      /** 62.06 / 62.04 §3：分身代回标记（origin:'avatar'，avatar 对象可缺省）。 */
+      origin?: 'avatar';
+      avatar?: { botName: string };
       /** 草稿发送：在消息落库事务内清理草稿。 */
       onPersisted?: () => void;
     },
@@ -1265,6 +1406,7 @@ export class Orchestrator {
       input.client === undefined
         ? undefined
         : { ...input.client, name: sanitizeClientName(input.client.name) };
+    const attributedPrincipal = this.#cleanPrincipal(input.principal);
     let message: Message;
     const tx = this.#deps.db.transaction(() => {
       message = this.#deps.messages.append({
@@ -1278,7 +1420,12 @@ export class Orchestrator {
         ...(input.widgetOrigin !== undefined ? { widgetOrigin: input.widgetOrigin } : {}),
         ...(input.shareIntakeId !== undefined ? { shareIntakeId: input.shareIntakeId } : {}),
         ...(input.voiceMode === true ? { voiceMode: true } : {}),
+        ...(input.origin !== undefined ? { origin: input.origin } : {}),
+        ...(input.avatar !== undefined ? { avatar: input.avatar } : {}),
         ...(attributedClient !== undefined ? { client: attributedClient } : {}),
+        ...(attributedPrincipal !== undefined
+          ? { senderPrincipalId: attributedPrincipal.id, senderName: attributedPrincipal.name }
+          : {}),
       });
       if ((input.attachmentIds?.length ?? 0) > 0) {
         this.#deps.attachments.claimForMessage(input.attachmentIds!, conversationId, message.id);
@@ -1339,12 +1486,15 @@ export class Orchestrator {
     viaButler: boolean;
     butlerDrafted?: boolean | undefined;
     leadBotId: string | null;
+    /** 62.11 C4：派发所代表主体的归属（宿主从来源会话解析）。 */
+    principal?: MessagePrincipal;
     onAppended?: ((message: Message) => void) | undefined;
   }): { message: Message; runId: string | null; held: boolean } {
     const conv = this.#deps.conversations.getOrThrow(input.conversationId);
     if (conv.readOnly) {
       throw new AppError('CONVERSATION_READ_ONLY', '该对话为只读');
     }
+    const principal = this.#cleanPrincipal(input.principal);
     const batchId = `batch_${this.#deps.clock.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const message = this.#deps.messages.append({
       conversationId: input.conversationId,
@@ -1359,6 +1509,9 @@ export class Orchestrator {
         ...(input.viaButler ? { viaButler: true } : {}),
         ...(input.butlerDrafted === true ? { butlerDrafted: true } : {}),
       },
+      ...(principal !== undefined
+        ? { senderPrincipalId: principal.id, senderName: principal.name }
+        : {}),
     });
     this.#deps.publish('message.created', { conversationId: input.conversationId, message });
     this.#publishConversation(input.conversationId);
@@ -1395,11 +1548,14 @@ export class Orchestrator {
     viaButler: boolean;
     butlerDrafted?: boolean | undefined;
     dispatchMessageId: string | null;
+    /** 62.11 C4：派发所代表主体的归属（宿主从来源会话解析）。 */
+    principal?: MessagePrincipal;
   }): { message: Message } | null {
     const conv = this.#deps.conversations.getOrThrow(input.conversationId);
     if (conv.readOnly) {
       throw new AppError('CONVERSATION_READ_ONLY', '该对话为只读');
     }
+    const principal = this.#cleanPrincipal(input.principal);
     let targets: string[] = [];
     if (conv.type === 'project') {
       const members = new Set(this.#deps.conversations.memberBotIds(conv.id));
@@ -1433,6 +1589,9 @@ export class Orchestrator {
         ...(input.viaButler ? { viaButler: true } : {}),
         ...(input.butlerDrafted === true ? { butlerDrafted: true } : {}),
       },
+      ...(principal !== undefined
+        ? { senderPrincipalId: principal.id, senderName: principal.name }
+        : {}),
     });
     this.#deps.publish('message.created', { conversationId: conv.id, message });
     this.#publishConversation(conv.id);
@@ -1458,7 +1617,11 @@ export class Orchestrator {
    * 卡、扣下投递，目录卡作答（answerSetupPath）后才连同缓冲消息一起开始
    * 首个响应 run。
    */
-  answerSetupQuestion(conversationId: string, text: string): Message {
+  answerSetupQuestion(
+    conversationId: string,
+    text: string,
+    principal?: MessagePrincipal,
+  ): Message {
     const conv = this.#deps.conversations.getOrThrow(conversationId);
     if (conv.readOnly) {
       throw new AppError('CONVERSATION_READ_ONLY', '该对话为只读');
@@ -1475,6 +1638,7 @@ export class Orchestrator {
     if (trimmed.length === 0) {
       throw new AppError('INVALID_INPUT', '回答不能为空');
     }
+    const attributedPrincipal = this.#cleanPrincipal(principal);
     const message = this.#deps.messages.append({
       conversationId,
       senderType: 'user',
@@ -1482,6 +1646,9 @@ export class Orchestrator {
       text: trimmed,
       setupAnswer: true,
       batchId: `batch_${this.#deps.clock.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      ...(attributedPrincipal !== undefined
+        ? { senderPrincipalId: attributedPrincipal.id, senderName: attributedPrincipal.name }
+        : {}),
     });
     this.#deps.publish('message.created', { conversationId, message });
     this.#publishConversation(conversationId);
@@ -1554,8 +1721,21 @@ export class Orchestrator {
    * 访谈目录卡作答（docs/design/19 D59）：path 非空 → 绑定 workdir（复用手动
    * 绑定的系统消息通路）；随后落 setupAnswer 用户消息（选择或跳过），并把
    * 首问卡之后缓冲的全部用户消息一次性投递——首个响应 run 由此开始。
+   *
+   * `opts.display`（团队服务器成员面）：落库消息文本用展示名（目录名 / 预置根
+   * 名），绑定仍用真实 path——成员面不向普通成员暴露服务器绝对路径（B-10），
+   * 目录卡的已答行随消息文本渲染，因此文本与绑定值在此分离。缺省（本机 /
+   * console 访谈）= 现行为，消息文本即 path。
+   *
+   * `opts.displayPath`：绑定系统消息（workdirs.select 内部落的那条「工作目录
+   * 已绑定/切换为 …」）的路径展示值（相对成员本人子树的相对地址）——真实主机
+   * 路径不出服务端；缺省 = select 的现行为（name（真实 path））。
    */
-  answerSetupPath(conversationId: string, path: string | null): Message {
+  answerSetupPath(
+    conversationId: string,
+    path: string | null,
+    opts?: { display?: string | null; displayPath?: string | null } | undefined,
+  ): Message {
     const conv = this.#deps.conversations.getOrThrow(conversationId);
     if (conv.readOnly) {
       throw new AppError('CONVERSATION_READ_ONLY', '该对话为只读');
@@ -1583,13 +1763,24 @@ export class Orchestrator {
       throw new AppError('INVALID_INPUT', '目录问题已作答，不能重复提交');
     }
     if (path !== null) {
-      this.#deps.workdirs.select(conversationId, path);
+      this.#deps.workdirs.select(
+        conversationId,
+        path,
+        // 绑定系统消息同样不落服务器真实路径（成员面传相对展示地址；缺省不变）。
+        opts?.displayPath != null && opts.displayPath.length > 0
+          ? { displayPath: opts.displayPath }
+          : undefined,
+      );
     }
+    const display = opts?.display;
     const message = this.#deps.messages.append({
       conversationId,
       senderType: 'user',
       kind: 'text',
-      text: path ?? setupPathSkipText(this.#deps.settings.get().appLanguage),
+      text:
+        path === null
+          ? setupPathSkipText(this.#deps.settings.get().appLanguage)
+          : (typeof display === 'string' && display.length > 0 ? display : path),
       setupAnswer: true,
       batchId: `batch_${this.#deps.clock.now()}_${Math.random().toString(36).slice(2, 8)}`,
     });
@@ -1620,8 +1811,12 @@ export class Orchestrator {
   // --- message lifecycle ---------------------------------------------------
 
   /** Edit notification rules (docs/design/02-execution.md "编辑作为一次新触发"). */
-  editMessage(id: string, text: string): Message {
-    const message = this.#deps.messages.edit(id, text);
+  editMessage(id: string, text: string, principalId?: string | null): Message {
+    const message = this.#deps.messages.edit(
+      id,
+      text,
+      principalId != null ? { principalId } : undefined,
+    );
     this.#deps.publish('message.updated', { conversationId: message.conversationId, message });
     const notified = this.#notifyRunningLoops(message.conversationId, message);
     if (!notified) {
@@ -1650,8 +1845,11 @@ export class Orchestrator {
    * buffered when the recall lands re-reads the database at turn start and
    * drops the message (mailbox `refreshTriggerBatch`).
    */
-  recallMessage(id: string): Message {
-    const message = this.#deps.messages.recall(id);
+  recallMessage(id: string, principalId?: string | null): Message {
+    const message = this.#deps.messages.recall(
+      id,
+      principalId != null ? { principalId } : undefined,
+    );
     this.#deps.publish('message.updated', { conversationId: message.conversationId, message });
     return message;
   }
@@ -1972,7 +2170,12 @@ export class Orchestrator {
     conversationId: string,
     event: string,
     text: string,
-    options: { internal?: boolean; settingResolved?: SettingCardResolved } = {},
+    options: {
+      internal?: boolean;
+      settingResolved?: SettingCardResolved;
+      /** 62.11 C13：触发归属主体（监看提醒 = 监看归属）；缺省 = 现状（无显式归属）。 */
+      ownerPrincipalId?: string | null;
+    } = {},
   ): void {
     const conversation = this.#deps.conversations.get(conversationId);
     const bot = this.#deps.bots.get(botId);
@@ -2016,7 +2219,14 @@ export class Orchestrator {
         // jobs-table priority is only the claim order; the scheduler submit
         // below (via jobs-runner) uses response priority 1.
         priority: 2,
-        payload: { messageId: message.id, event },
+        payload: {
+          messageId: message.id,
+          event,
+          // 免打扰停放后重投时保留触发归属（62.11 C13）。
+          ...(options.ownerPrincipalId != null
+            ? { ownerPrincipalId: options.ownerPrincipalId }
+            : {}),
+        },
         runAfter: endAt,
       });
       this.#deps.logger.info(
@@ -2035,7 +2245,11 @@ export class Orchestrator {
    * delivery was parked, in which case it is parked again.
    */
   deliverParkedEvent(job: JobRow): void {
-    const payload = JSON.parse(job.payload_json) as { messageId?: unknown; event?: unknown };
+    const payload = JSON.parse(job.payload_json) as {
+      messageId?: unknown;
+      event?: unknown;
+      ownerPrincipalId?: unknown;
+    };
     if (typeof payload.messageId !== 'string' || typeof payload.event !== 'string') {
       this.#deps.logger.warn({ jobId: job.id }, 'event_delivery job with malformed payload');
       return;
@@ -2065,6 +2279,7 @@ export class Orchestrator {
     conversationId: string,
     event: string,
     message: Message,
+    attribution: { ownerPrincipalId?: string | null } = {},
   ): void {
     // W7: a watch alert is its own trigger reason (the bot created the watch).
     const isWatch = event === WATCH_ALERT_EVENT;
@@ -2077,6 +2292,10 @@ export class Orchestrator {
       messages: [message],
       reason: isWatch ? 'watch' : isMail ? 'mail' : isIm ? 'im' : 'event',
       ...(isWatch || isMail || isIm ? {} : { extraAttributes: { event } }),
+      // 62.11 C13：显式触发归属（监看提醒 = 监看归属）随批次走（进 run 主体）。
+      ...(attribution.ownerPrincipalId != null
+        ? { principalId: attribution.ownerPrincipalId }
+        : {}),
     });
   }
 
@@ -2087,9 +2306,16 @@ export class Orchestrator {
    * as a persistent `event_delivery` job. The user-visible alert card is
    * posted by the watch service before this.
    */
-  deliverWatchAlertToBot(input: { botId: string; conversationId: string; text: string }): void {
+  deliverWatchAlertToBot(input: {
+    botId: string;
+    conversationId: string;
+    text: string;
+    /** 62.11 C13：监看归属（提醒 run 的主体）。缺省 = 现状。 */
+    ownerPrincipalId?: string | null;
+  }): void {
     this.deliverEventToBot(input.botId, input.conversationId, WATCH_ALERT_EVENT, input.text, {
       internal: true,
+      ...(input.ownerPrincipalId != null ? { ownerPrincipalId: input.ownerPrincipalId } : {}),
     });
   }
 
@@ -2168,6 +2394,8 @@ export class Orchestrator {
     text: string;
     /** >1 minute lateness, already humanized by the caller when present. */
     lateByMs?: number | null;
+    /** 62.11 C13：排期归属（到期 run 的主体）。缺省 = 现状。 */
+    ownerPrincipalId?: string | null;
   }): void {
     const conversation = this.#deps.conversations.get(input.conversationId);
     const bot = this.#deps.bots.get(input.botId);
@@ -2187,6 +2415,10 @@ export class Orchestrator {
       messages: [message],
       reason: 'scheduled',
       extraAttributes,
+      // 62.11 C13：到期 run 的主体 = 排期归属（覆盖 T1 的「直聊 owner」临时规则）。
+      ...(input.ownerPrincipalId != null
+        ? { principalId: input.ownerPrincipalId }
+        : {}),
     });
   }
 
@@ -2477,6 +2709,7 @@ export class Orchestrator {
     this.#deps.approvals.cancelAllPending();
     for (const run of runs) {
       this.#deps.grants.expireForRun(run.id);
+      this.#deps.taint?.expireNetworkForRun(run.id);
       if (run.conversationId === null) continue;
       if (this.#deps.conversations.get(run.conversationId) === null) continue;
       const message = this.#deps.messages.append({
@@ -2598,6 +2831,67 @@ export class Orchestrator {
       });
     }
     return cards;
+  }
+
+  /**
+   * 62.11 C2：会话里的人类主体标签。项目组 = `conversation_principals` 在册主体
+   * 经目录映射；直聊 / 看板卡 = 会话 owner 一行（渲染层只在项目组出人类成员行，
+   * 直聊身份走 `<user_identity>`）。缺目录或解析不到的主体跳过（没有可显示的
+   * 名字就不造一个）。未提供目录 = 空数组（现状）。
+   */
+  #humanPrincipalsOf(conversationId: string): HumanPrincipalLabel[] {
+    const directory = this.#deps.principals;
+    if (directory === undefined) return [];
+    const labels: HumanPrincipalLabel[] = [];
+    const push = (
+      principalId: string | null | undefined,
+      role?: 'member' | 'lead',
+    ): void => {
+      if (principalId == null || principalId.length === 0) return;
+      const described = directory.describe(principalId);
+      if (described === null || described.name.length === 0) return;
+      labels.push({
+        name: described.name,
+        ...(described.note !== undefined ? { note: described.note } : {}),
+        ...(role !== undefined ? { role } : {}),
+      });
+    };
+    const conversation = this.#deps.conversations.get(conversationId);
+    if (conversation === null) return [];
+    if (conversation.type === 'project') {
+      // 62.09 §1：conversation_principals.role='lead' 的真人 = 项目负责人
+      // （<conversation_info> 的「项目负责人：{name}」行）。
+      for (const principal of this.#deps.conversations.principals(conversationId)) {
+        push(principal.principalId, principal.role);
+      }
+      return labels;
+    }
+    push(conversation.ownerPrincipalId);
+    return labels;
+  }
+
+  /**
+   * 62.11 C2 / 62.05 §4：本轮说话主体的标签（驱动恒小的 `<user_identity>` 段与
+   * 项目组的发言人名片行）。运行主体（runs.principal_id）经目录解析；没有目录、
+   * 没有运行主体或解析失败 = undefined（段不出现，现状）。
+   */
+  #speakerLabelOf(runId: string): HumanPrincipalLabel | undefined {
+    const directory = this.#deps.principals;
+    if (directory === undefined) return undefined;
+    const principalId = this.#deps.runs.principalOf(runId);
+    if (principalId === null) return undefined;
+    const described = directory.describe(principalId);
+    if (described === null || described.name.length === 0) return undefined;
+    return { name: described.name, ...(described.note !== undefined ? { note: described.note } : {}) };
+  }
+
+  /**
+   * 62.11 C15 宿主写入口（`principalOps.appendSystemMessage`）：进程内宿主直接
+   * 往对话里落一条系统消息（决议通知、加人 / 离开等）。事件名固定
+   * `host_notice`（不在 INTERNAL_SYSTEM_EVENTS 里 → 用户可见），文案由宿主给。
+   */
+  appendHostSystemMessage(conversationId: string, text: string): Message {
+    return this.#appendSystemMessage(conversationId, 'host_notice', text);
   }
 
   /**
@@ -2856,6 +3150,10 @@ export class Orchestrator {
       timeZone: this.#deps.timeZone,
       botNames: names,
       mentionLabels,
+      // 62.11 C2：人类发送主体经目录解析成显示名（未提供目录 = 「用户」字面量现状）。
+      ...(this.#deps.principals !== undefined
+        ? { describePrincipal: (id: string) => this.#deps.principals!.describe(id) }
+        : {}),
       shareAttachmentPath: (attachment, botId) => this.#shareAttachmentPath(attachment, botId),
       // 引用回复标注（conversation.ts renderReplySuffix）：解析被引用消息，让
       // 模型知道回复关系与被引用的附件 id（图片等非文本引用尤其依赖）。
@@ -2959,6 +3257,7 @@ export class Orchestrator {
       ...(batch.episode !== undefined
         ? { episodeId: batch.episode.id, episodeHop: batch.episode.hop }
         : {}),
+      principalId: this.#turnPrincipalOf(batch),
     });
     // A retried turn must not lose its episode: the rebuilt batch carries no
     // binding, so inherit the failed run's (D92 T1a — a retry re-runs the very
@@ -2980,6 +3279,44 @@ export class Orchestrator {
       throw error;
     }
     return run.id;
+  }
+
+  /**
+   * 62.11 C7: the human principal a supervisor turn is attributed to. A
+   * direct chat's turn belongs to the chat's owner (any trigger, including
+   * schedules living in that chat); a project turn belongs to the sender of
+   * the LAST user message in the trigger batch (a merged batch may mix
+   * principals — the last speaker wins; principal-less rows yield null).
+   * dm conversations never produce turns (no Bot member, no dispatch), and
+   * every other conversation type yields null.
+   *
+   * 62.11 C13（T6，覆盖 T1 临时规则）：排期到期 / 监看提醒的批次带显式归属
+   * （排期 / 监看行的 owner_principal_id）——它在直聊上通常与 owner 一致，在
+   * 项目组上让「成员建在项目组里的排期」的 run 归到该成员。合并进用户发言的
+   * 批次仍按发言人算（用户的话是用户说的）。无显式归属（单用户 / owner 为
+   * NULL）= T1 行为不变。
+   */
+  #turnPrincipalOf(batch: TriggerBatch): string | null {
+    const explicit = batch.principalId;
+    if (
+      explicit != null &&
+      explicit.length > 0 &&
+      !batch.messages.some((message) => message.senderType === 'user')
+    ) {
+      return explicit;
+    }
+    const conversation = this.#deps.conversations.get(batch.conversationId);
+    if (conversation === null) return null;
+    if (conversation.type === 'direct') return conversation.ownerPrincipalId ?? null;
+    if (conversation.type === 'project') {
+      for (let index = batch.messages.length - 1; index >= 0; index -= 1) {
+        const message = batch.messages[index];
+        if (message?.senderType !== 'user') continue;
+        const sender = message.senderPrincipalId;
+        return sender != null && sender.length > 0 ? sender : null;
+      }
+    }
+    return null;
   }
 
   #submitTurn(runId: string, batch: TriggerBatch): void {
@@ -3179,6 +3516,10 @@ export class Orchestrator {
     agentId: string;
     identity: RunIdentity;
     responseTools: ToolDefinition[];
+    /** 62.11 C2：项目组的人类主体（`<conversation_info>`），缺省不出现。 */
+    humanPrincipals?: HumanPrincipalLabel[];
+    /** 62.11 C2：本轮说话主体（`<user_identity>`），缺省段不出现。 */
+    speaker?: HumanPrincipalLabel;
     workspacePath: string;
     hasWorkdir: boolean;
     memorySections: {
@@ -3252,9 +3593,17 @@ export class Orchestrator {
             process.platform,
           );
     const taskId = input.task?.id ?? null;
-    const capabilities = resolveCapabilities(bot.profile.runtime.agent.capabilities, entry, {
-      isButler: bot.systemRole === 'butler',
-    });
+    const resolvedCapabilityPacks = resolveCapabilities(
+      bot.profile.runtime.agent.capabilities,
+      entry,
+      { isButler: bot.systemRole === 'butler' },
+    );
+    // 62.11 C10：宿主贡献工具挂 `host` 能力包——宿主在运行时给出的工具不被 Bot
+    // 的包勾选挡掉（宿主是工具面的权威；未提供宿主工具的安装上集合不变）。
+    const capabilities: HostCapabilityId[] =
+      this.#deps.hostTools !== undefined && !resolvedCapabilityPacks.includes('host')
+        ? [...resolvedCapabilityPacks, 'host']
+        : resolvedCapabilityPacks;
     const loadUserConfig = this.#deps.settings.get().agents[agentId]?.loadUserConfig === true;
     // D72 P5 会话复用（design 28 §7）：窗口内、指纹一致的会话只发增量。桥
     // server 名由会话行 id 派生（换会话 = 换名字），会话级提示词里的工具名
@@ -3300,11 +3649,23 @@ export class Orchestrator {
         maxNameLength: MAX_AGENT_TOOL_NAME - toolName('').length,
       });
       const cardPrompt = this.#cardPrompt(conversation, input.projectWikiTopics);
+      // T9（62.11 C10 提示词侧）：外部智能体只跑任务（D75 §8.1），loopType 恒
+      // 'task'；主体取本 run 的归属（C7）。缺省 / null / 空串 = 不传（现状）。
+      const hostRules =
+        this.#deps.hostPromptSection?.({
+          botId: bot.id,
+          conversationId: conversation.id,
+          principalId: this.#deps.runs.principalOf(input.identity.runId),
+          loopType: 'task',
+        }) ?? null;
       const sessionPrompt = buildAgentSessionPrompt({
         bot,
         conversation,
         ...(conversation.type === 'project' ? { members: this.#memberCards(conversation.id) } : {}),
+        ...(input.humanPrincipals !== undefined ? { humanPrincipals: input.humanPrincipals } : {}),
+        ...(input.speaker !== undefined ? { speaker: input.speaker } : {}),
         ...(cardPrompt !== undefined ? { card: cardPrompt } : {}),
+        ...(hostRules !== null && hostRules.trim().length > 0 ? { hostRules } : {}),
         tools: {
           toolNames: tools.map((tool) => tool.name),
           nativeCapabilities: entry.nativeCapabilities,
@@ -3574,6 +3935,10 @@ export class Orchestrator {
     configFiles: readonly string[];
     writable: boolean;
   }): Promise<'ok' | 'denied' | 'cancelled'> {
+    // 62.11 C9：start_task 的 cwd（绑定 workdir）同样受宿主 workdir 根约束——
+    // select 时已校验，这里对任务执行路径再断言一次（根配置变更 / 直接落库的
+    // 绑定也会被拦下）。未配置根 = no-op。
+    this.#deps.workdirs.assertInRoots(input.workdirPath);
     // Agents look for their config from the session directory up to the git
     // worktree root (OpenCode, Codex AGENTS.md …, P5 审查 H1): so does the gate.
     const searchRoot = gitRootAbove(input.workdirPath) ?? input.workdirPath;
@@ -3702,6 +4067,248 @@ export class Orchestrator {
   }
 
   /**
+   * D140-4: submits the「应用到工作目录」card for a settled worktree task with
+   * changes. No changes → the tree is kept silently (`kept`); a card is never
+   * re-submitted for the same run (a retried run has its own id).
+   */
+  async #settleWorktree(run: Run): Promise<void> {
+    const worktrees = this.#deps.worktrees;
+    if (worktrees === undefined) return;
+    if (run.worktreePath === null || run.conversationId === null) return;
+    if (this.#worktreeApplySubmitted.has(run.id)) return;
+    // Startup recovery / a host interruption: the tree is kept, never carded
+    // (the app may not even show the conversation's old approvals anymore).
+    if (run.status === 'interrupted') {
+      worktrees.setApplyState(run.id, existsSync(run.worktreePath) ? 'kept' : 'none');
+      this.#taskHost.publishUpdate(run.id);
+      return;
+    }
+    const workdir = this.#deps.workdirs.boundWorkdir(run.conversationId);
+    if (workdir === null || workdir.status !== 'available') {
+      worktrees.setApplyState(run.id, existsSync(run.worktreePath) ? 'kept' : 'none');
+      this.#taskHost.publishUpdate(run.id);
+      return;
+    }
+    const summary = await worktrees.summary(run.worktreePath, run.worktreeBase ?? '');
+    if (summary === null || summary.fileCount === 0) {
+      worktrees.setApplyState(run.id, 'kept');
+      this.#taskHost.publishUpdate(run.id);
+      return;
+    }
+    this.#worktreeApplySubmitted.add(run.id);
+    if (this.#worktreeApplySubmitted.size > 512) {
+      const oldest = this.#worktreeApplySubmitted.values().next().value;
+      if (oldest !== undefined) this.#worktreeApplySubmitted.delete(oldest);
+    }
+    worktrees.setApplyState(run.id, 'pending');
+    this.#taskHost.publishUpdate(run.id);
+    const input = {
+      workdirPath: workdir.path,
+      worktreePath: run.worktreePath,
+      baseOid: run.worktreeBase ?? '',
+    };
+    const treePath = run.worktreePath;
+    const identity: RunIdentity = {
+      runId: run.id,
+      botId: run.botId,
+      conversationId: run.conversationId,
+      loopType: 'task',
+    };
+    try {
+      this.#deps.approvals.submitNonBlocking(
+        identity,
+        'worktree_apply',
+        {
+          runId: run.id,
+          worktreePath: run.worktreePath,
+          workdirPath: workdir.path,
+          baseOid: run.worktreeBase ?? '',
+          files: summary.files,
+          fileCount: summary.fileCount,
+          insertions: summary.insertions,
+          deletions: summary.deletions,
+          taskTitle: run.taskTitle ?? '',
+        },
+        (outcome) => {
+          if (outcome.decision !== 'approved') {
+            worktrees.setApplyState(run.id, 'kept');
+            this.#taskHost.publishUpdate(run.id);
+            return;
+          }
+          // The merge runs after `decide` returned: an unexpected throw must
+          // not become an unhandled rejection (the card would stay "approved"
+          // with nothing recorded).
+          void this.#applyWorktree(run, input, outcome.approval.id).catch((error) => {
+            this.#deps.logger.warn(
+              { runId: run.id, error: error instanceof Error ? error.message : String(error) },
+              'worktree apply callback failed',
+            );
+            worktrees.setApplyState(run.id, existsSync(treePath) ? 'kept' : 'none');
+            this.#taskHost.publishUpdate(run.id);
+          });
+        },
+      );
+    } catch (error) {
+      // No card → no decide path: the tree stays, and no `pending` state is
+      // left behind without an affordance.
+      worktrees.setApplyState(run.id, existsSync(run.worktreePath) ? 'kept' : 'none');
+      this.#taskHost.publishUpdate(run.id);
+      throw error;
+    }
+  }
+
+  /**
+   * Applies a settled task's tree to the main workdir. A workdir that a task
+   * is writing right now is never touched: the decision is marked failed with
+   * the retry hint and the tree stays. A conflict restores the workdir (the
+   * worktree service backs the touched files up) and keeps the tree.
+   */
+  async #applyWorktree(
+    run: Run,
+    input: { workdirPath: string; worktreePath: string; baseOid: string },
+    approvalId: string,
+  ): Promise<void> {
+    const worktrees = this.#deps.worktrees;
+    if (worktrees === undefined) return;
+    const fail = (message: string, state: TaskApplyState): void => {
+      try {
+        this.#deps.approvals.fail(approvalId, message);
+      } catch (error) {
+        this.#deps.logger.warn(
+          { approvalId, error: error instanceof Error ? error.message : String(error) },
+          'worktree apply failure could not be recorded on the card',
+        );
+      }
+      worktrees.setApplyState(run.id, state);
+      this.#taskHost.publishUpdate(run.id);
+    };
+    const busyMessage = '工作目录正被任务写入，请稍后重试：隔离目录与改动已保留';
+    // The binding may have moved after the task settled (switching is only
+    // blocked while runs are active): the card's target no longer exists for
+    // this conversation, so the merge is refused with a readable reason
+    // instead of a lease error about an unrelated root.
+    const currentWorkdir =
+      run.conversationId !== null
+        ? this.#deps.workdirs.boundWorkdir(run.conversationId)
+        : null;
+    if (currentWorkdir?.path !== input.workdirPath) {
+      fail(
+        `工作目录已变更（当前：${currentWorkdir?.path ?? '未绑定'}），本次改动未应用：隔离目录与改动已保留`,
+        'kept',
+      );
+      return;
+    }
+    if (this.#deps.workdirs.workdirBusy(input.workdirPath)) {
+      fail(busyMessage, 'kept');
+      return;
+    }
+    // Host-held exclusive lease for the merge; a short abort keeps the
+    // callback from parking behind a task that grabbed the workdir meanwhile.
+    const hostIdentity: RunIdentity = {
+      runId: `worktree-apply:${run.id}`,
+      botId: run.botId,
+      conversationId: run.conversationId,
+      loopType: 'host',
+    };
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), 5_000);
+    timer.unref?.();
+    try {
+      await this.#deps.workdirs.ensureWriteLease(hostIdentity, input.workdirPath, {
+        pin: true,
+        signal: abort.signal,
+        reason: '应用隔离目录的改动',
+      });
+    } catch (error) {
+      clearTimeout(timer);
+      // A lost race for the workdir reads as the busy hint; anything else
+      // (the workdir went away, the conversation was deleted) is reported as
+      // itself.
+      fail(
+        abort.signal.aborted
+          ? busyMessage
+          : `应用隔离目录的改动失败：${error instanceof Error ? error.message : String(error)}`,
+        'kept',
+      );
+      return;
+    }
+    clearTimeout(timer);
+    try {
+      const outcome = await worktrees.apply(input);
+      if (!outcome.ok) {
+        if (outcome.conflicts.length > 0) {
+          fail(
+            `WORKTREE_APPLY_CONFLICT：三方合并冲突，改动保留在隔离目录（${outcome.conflicts
+              .slice(0, 20)
+              .join('、')}）`,
+            'conflict',
+          );
+          this.#appendWorktreeEvent(
+            run.conversationId,
+            'worktree_apply_conflict',
+            `隔离目录的改动未能自动合并（冲突文件：${outcome.conflicts.slice(0, 20).join('、')}${
+              outcome.conflicts.length > 20 ? ` 等 ${outcome.conflicts.length} 个` : ''
+            }）。改动保留在 ${input.worktreePath}，可在终端里手动合并。`,
+          );
+        } else {
+          // No conflict, an outright refusal (git's own reason): the workdir is
+          // untouched and the tree keeps every change.
+          fail(
+            `改动未写入工作目录，已保留在隔离目录（${outcome.reason.slice(0, 300)}）`,
+            'kept',
+          );
+        }
+        return;
+      }
+      // The merge landed: a failed tree cleanup must not report the apply as
+      // failed (the changes are already in the workdir) nor invite a second
+      // apply — keep the tree flag truthful and let the reaper collect it.
+      try {
+        await worktrees.remove(input.workdirPath, input.worktreePath);
+      } catch (error) {
+        this.#deps.logger.warn(
+          { runId: run.id, worktreePath: input.worktreePath, error: error instanceof Error ? error.message : String(error) },
+          'applied worktree could not be removed; the reaper will collect it',
+        );
+      }
+      worktrees.setApplyState(run.id, 'applied');
+      this.#taskHost.publishUpdate(run.id);
+    } catch (error) {
+      fail(
+        `应用隔离目录的改动失败：${error instanceof Error ? error.message : String(error)}`,
+        existsSync(input.worktreePath) ? 'kept' : 'none',
+      );
+    } finally {
+      await this.#deps.workdirs.releaseRun(hostIdentity.runId).catch(() => {});
+    }
+  }
+
+  /** User-visible system line for a worktree apply outcome (conversation exists). */
+  #appendWorktreeEvent(
+    conversationId: string | null,
+    event: string,
+    text: string,
+  ): void {
+    if (conversationId === null) return;
+    if (this.#deps.conversations.get(conversationId) === null) return;
+    try {
+      const message = this.#deps.messages.append({
+        conversationId,
+        senderType: 'system',
+        kind: 'system_event',
+        event,
+        text,
+      });
+      this.#deps.publish('message.created', { conversationId, message });
+    } catch (error) {
+      this.#deps.logger.warn(
+        { conversationId, event, error: error instanceof Error ? error.message : String(error) },
+        'worktree event message failed',
+      );
+    }
+  }
+
+  /**
    * D75 task launch (TaskHost `execute`): rebuilds the brief from the task's
    * private entries, takes the write lease for a write task (§5.1 — the whole
    * task holds it; the row stays `queued` = submitted while it waits, and no
@@ -3709,8 +4316,9 @@ export class Orchestrator {
    * (`kind: 'task'`) under scheduler key `task:{id}`. Every path ends in
    * `control.finish()`.
    */
-  async #startTask(task: Run, control: TaskRunControl): Promise<void> {
+  async #startTask(initial: Run, control: TaskRunControl): Promise<void> {
     let submitted = false;
+    let task = initial;
     try {
       // Stopped before it got here: the host already settled it.
       if (control.signal.aborted) return;
@@ -3728,9 +4336,99 @@ export class Orchestrator {
       }
       const botId = task.botId;
       const conversationId = task.conversationId;
+      // D140-4: the isolated tree is created before the task takes its lease
+      // (the tree root is the lease target) and before any scheduler slot.
+      // A failure settles the task with WORKTREE_CREATE_FAILED and leaves the
+      // workdir untouched.
+      if (task.isolation === 'worktree') {
+        // Mount-based backends (Windows WSL, the Linux container backend) are
+        // out of scope for the two-root rule set (see §8 limitation 6); only
+        // srt (or the confirm-mode fallback when srt is unavailable) runs a
+        // task in its tree. The enhanced routing is already bypassed in the
+        // gateway; this covers a mount backend configured as the DEFAULT.
+        const backendKind = this.#deps.sandbox.kind;
+        if (backendKind === 'wsl' || backendKind === 'podman' || backendKind === 'lima') {
+          this.#taskHost.settle(task.id, {
+            status: 'failed',
+            error: `WORKTREE_NOT_AVAILABLE：当前沙箱后端（${backendKind}）不支持 worktree 隔离，只有 srt 沙箱支持`,
+          });
+          return;
+        }
+        // A task can outlive the dispatch-time engine check: switching the Bot
+        // to an external agent while the task is queued would run ACP inside
+        // the tree, which §8 limitation 6 does not cover. The row's `engine`
+        // is not enough (the executor reads the Bot's current engine).
+        if (this.#taskAgentIdOf(this.#deps.bots.get(botId)).length > 0) {
+          this.#taskHost.settle(task.id, {
+            status: 'failed',
+            error:
+              'WORKTREE_NOT_AVAILABLE：该 Bot 已切换为外部智能体，worktree 隔离只支持内置引擎',
+          });
+          return;
+        }
+        // A tree is reused only while it is still a valid linked worktree of
+        // its repository: a deleted / rewritten `.git` pointer means the tree
+        // can never be written under the two-root policy — recreate instead.
+        const reused =
+          task.worktreePath !== null &&
+          task.taskCwd !== null &&
+          existsSync(task.worktreePath) &&
+          readWorktreeMeta(task.worktreePath) !== null;
+        if (!reused) {
+          const workdir = this.#deps.workdirs.boundWorkdir(conversationId);
+          const worktrees = this.#deps.worktrees;
+          if (
+            workdir === null ||
+            workdir.status !== 'available' ||
+            worktrees === undefined
+          ) {
+            this.#taskHost.settle(task.id, {
+              status: 'failed',
+              error: 'WORKTREE_CREATE_FAILED：对话没有可用的工作目录，无法创建隔离目录',
+            });
+            return;
+          }
+          control.waiting('创建隔离目录');
+          try {
+            const info = await worktrees.create({
+              workdirPath: workdir.path,
+              runId: task.id,
+            });
+            if (control.signal.aborted) {
+              // Cancelled mid-creation: the fresh tree is nobody's — collect it.
+              await worktrees.remove(workdir.path, info.path).catch(() => {});
+              return;
+            }
+            task = this.#deps.runs.setWorktree(task.id, {
+              worktreePath: info.path,
+              worktreeBase: info.baseOid,
+              taskCwd: info.path,
+            });
+            this.#deps.publish('run.status', { run: task });
+          } catch (error) {
+            if (control.signal.aborted) return;
+            this.#taskHost.settle(task.id, {
+              status: 'failed',
+              error: `WORKTREE_CREATE_FAILED：${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            });
+            return;
+          }
+        }
+      }
       if (task.taskWrites === true) {
         // Same fallback as the execution's cwd (#executeRun, 审查 L6).
         const root = task.taskCwd ?? workspacePathFor(this.#deps.paths, botId, conversationId);
+        // D140-1: built-in engine write tasks take a SHARED lease (several may
+        // hold one root; mutual exclusion moved to file-level auto-claims).
+        // External agent tasks keep the EXCLUSIVE whole-root lease — they
+        // serialize against everything on the root (unchanged). D140-4: a
+        // worktree task is EXCLUSIVE on its own tree root (one task per tree),
+        // which never conflicts with the workdir's shared leases.
+        const shared =
+          task.isolation !== 'worktree' &&
+          this.#taskAgentIdOf(this.#deps.bots.get(botId)).length === 0;
         control.waiting('等写入租约');
         try {
           await this.#deps.workdirs.ensureWriteLease(
@@ -3738,6 +4436,7 @@ export class Orchestrator {
             root,
             {
               pin: true,
+              shared,
               signal: control.signal,
               reason: `任务「${brief.title}」`,
               // D123: a declared domain makes this key structured; undeclared
@@ -3753,6 +4452,9 @@ export class Orchestrator {
           throw error;
         }
         if (control.signal.aborted) return;
+        // D140-1: open the per-run shadow window (before-snapshot while the
+        // lease is held; run_changes + interleaved marks at release).
+        await this.#deps.workdirs.beginTaskWindow(task).catch(() => {});
       }
       const key = `task:${task.id}`;
       let started = false;
@@ -3852,6 +4554,11 @@ export class Orchestrator {
   async #executeRun(runId: string, exec: RunExecution): Promise<void> {
     let { batch } = exec;
     const isTask = exec.kind === 'task';
+    // D140-4: the task's isolated tree (null for turns / plain tasks). It is
+    // the execution root: relative tool paths, command cwd and the context
+    // section all resolve against it instead of the workdir.
+    const taskWorktree =
+      exec.kind === 'task' ? this.#deps.workdirs.taskWorktreeOfTask(exec.task) : null;
     const loopType = isTask ? ('task' as const) : ('turn' as const);
     /**
      * 本 run 是语音对话模式下的对话轮（53 号修订 v3）：只影响对话轮的提示词
@@ -3928,6 +4635,22 @@ export class Orchestrator {
         settle('cancelled', null);
         return;
       }
+
+      // 62.11 C8 / C10 / C2 主缝（全部缺省 = 现状逐字节）：本次运行主体
+      // （runs.principal_id，C7）驱动宿主策略 ctx、工具策略过滤、`<user_identity>`
+      // 与按主体的画像 / 记忆注入。策略 deny 的工具从最终工具面移除——内置引擎、
+      // 外部智能体（ACP）、子代理研究工具与 MCP / 能力懒解析共用同一判定。
+      const runPrincipalId = runs.principalOf(runId);
+      const toolPolicyAllows = (toolName: string): boolean => {
+        const policy = this.#deps.toolPolicy;
+        if (policy === undefined) return true;
+        return (
+          policy(
+            { botId: batch.botId, conversationId: batch.conversationId, principalId: runPrincipalId },
+            toolName,
+          ) !== 'deny'
+        );
+      };
 
       // D75 §8.1: a turn always runs on the built-in engine with the bot's
       // built-in main model; a task runs on the bot's task engine (an external
@@ -4083,7 +4806,11 @@ export class Orchestrator {
             true,
           )
         : null;
-      const taskEntries = taskResolution?.entries ?? [];
+      // C8：被策略拒绝的外部工具在这里就不存在——任务面内联、两件套索引与子代理
+      // 共享同一次过滤（下面的 discovery resolve 回调再兜一层）。
+      const taskEntries = (taskResolution?.entries ?? []).filter((entry) =>
+        toolPolicyAllows(entry.name),
+      );
       // D91: more than EXTERNAL_TOOLS_INLINE_MAX enabled tools across the declared capabilities →
       // none of them is inlined; they are all reached through the capability pair (decided once
       // per run, so the tool list is fixed within it).
@@ -4177,6 +4904,8 @@ export class Orchestrator {
               },
               wrap: (entries) => wrapMcp(identity, entries),
               include: isTask ? () => true : (entry) => allowedOnReadOnlySurface(entry.decision),
+              // C8：被宿主策略拒绝的工具不进两件套索引——搜不到也调不到。
+              ...(this.#deps.toolPolicy !== undefined ? { allowedTool: toolPolicyAllows } : {}),
               onAuthRequired,
               now: () => this.#deps.clock.now(),
               logger: this.#deps.logger,
@@ -4211,12 +4940,17 @@ export class Orchestrator {
         ? {
             writeMemory: (botId, conversationId, input) =>
               memoryFacade.writeMemory(botId, conversationId, input),
-            recall: (botId, conversationId, query, kind) =>
-              memoryFacade.recall(botId, conversationId, query, kind),
-            getUserProfile: (category) => memoryFacade.getUserProfile(category),
+            // C11 / C12：工具链路把本次运行主体带下去（检索受众、写入归属、
+            // 画像桶）；单用户（无主体）= 旧行为。
+            recall: (botId, conversationId, query, kind, principalId) =>
+              memoryFacade.recall(botId, conversationId, query, kind, principalId),
+            getUserProfile: (opts) => memoryFacade.getUserProfile(opts),
+            profileCard: (principalKey) => memoryFacade.profileCard(principalKey),
             listCommitments: (botId) => memoryFacade.listCommitments(botId),
-            feedback: (botId, itemId, reason) => memoryFacade.feedback(botId, itemId, reason),
-            forget: (botId, itemIds) => memoryFacade.forget(botId, itemIds),
+            feedback: (botId, itemId, reason, principalKey) =>
+              memoryFacade.feedback(botId, itemId, reason, principalKey),
+            forget: (botId, itemIds, principalKey) =>
+              memoryFacade.forget(botId, itemIds, principalKey),
             requestProfileChange: (ident, changes, reason, signal) =>
               memoryFacade.requestProfileChange(ident, changes, reason, signal),
             // D75 审查 M4: a turn's proposal never waits — the user's decision
@@ -4323,7 +5057,12 @@ export class Orchestrator {
         renderOptions,
         gateway: this.#deps.gateway,
         workspacePath,
-        workdirPath: workdir !== null && workdir.status === 'available' ? workdir.path : null,
+        workdirPath:
+          taskWorktree !== null
+            ? taskWorktree.path
+            : workdir !== null && workdir.status === 'available'
+              ? workdir.path
+              : null,
         workdirs: this.#deps.workdirs,
         network,
         fsState: this.#fsState,
@@ -4464,14 +5203,27 @@ export class Orchestrator {
               currentModelRef: () => this.#conversationModelRef(isTask, batch.botId),
               ...this.#compactionRoute(batch.botId),
               buildTools: (subIdentity) =>
+                // C8 / C7: the sub run's research toolset is filtered by the
+                // same host policy (sub runs inherit the parent's principal,
+                // bot and conversation).
                 buildSubagentResearchTools({
                   identity: subIdentity,
+                  ...(runPrincipalId !== null ? { principalId: runPrincipalId } : {}),
+                  ...(this.#deps.toolPolicy !== undefined
+                    ? { toolPolicy: this.#deps.toolPolicy }
+                    : {}),
                   deps: {
                     runs,
                     gateway: this.#deps.gateway,
                     workspacePath,
+                    // D140-4: a worktree task's research sub run resolves its
+                    // relative paths in the same tree as the task.
                     workdirPath:
-                      workdir !== null && workdir.status === 'available' ? workdir.path : null,
+                      taskWorktree !== null
+                        ? taskWorktree.path
+                        : workdir !== null && workdir.status === 'available'
+                          ? workdir.path
+                          : null,
                     network,
                     secrets: this.#deps.secrets,
                     fsState: this.#fsState,
@@ -4493,6 +5245,10 @@ export class Orchestrator {
                               resolve: (servers) => this.#resolveCapabilityTools(servers, false),
                               wrap: (entries) => wrapMcp(subIdentity, entries),
                               include: (entry) => allowedOnReadOnlySurface(entry.decision),
+                              // C8：父 run 的宿主策略同样约束子 run 能搜 / 能调的范围。
+                              ...(this.#deps.toolPolicy !== undefined
+                                ? { allowedTool: toolPolicyAllows }
+                                : {}),
                               exclude: new Set(subInline.map((entry) => entry.name)),
                               now: () => this.#deps.clock.now(),
                               logger: this.#deps.logger,
@@ -4511,7 +5267,11 @@ export class Orchestrator {
                     botName: bot.profile.identity.name || bot.name,
                     workspacePath,
                     workdirPath:
-                      workdir !== null && workdir.status === 'available' ? workdir.path : null,
+                      taskWorktree !== null
+                        ? taskWorktree.path
+                        : workdir !== null && workdir.status === 'available'
+                          ? workdir.path
+                          : null,
                     timeZone: this.#deps.timeZone,
                     now: new Date(this.#deps.clock.now()),
                   }),
@@ -4536,11 +5296,28 @@ export class Orchestrator {
         !isTask && bot.systemRole === 'butler'
           ? (this.#deps.workbench?.contextSection() ?? '')
           : '';
+      // 62.05 §4 注入规则（62.11 C11 / C12，全部缺省 = 现状逐字节）：直聊 /
+      // 看板卡注入运行主体的整卡 + 该主体的硬性约束；项目组不注入整卡，改为
+      // 发言人名片一行（~40 token）+ 带行内归属（speakerName）的发言人约束。
+      // 检索 / my_state 的受众由 memory service 从运行主体推导（owner 兜底）。
+      const speakerLabel = this.#speakerLabelOf(runId);
+      const speakerName = speakerLabel?.name ?? null;
       const memorySections = memoryFacade
         ? {
-            userProfile: memoryFacade.profileCardSection(),
-            hardConstraints: memoryFacade.hardConstraintsSection(batch.botId, batch.conversationId),
-            myState: memoryFacade.myStateSection(batch.botId, batch.conversationId),
+            userProfile:
+              conv.type === 'project' && runPrincipalId !== null && speakerName !== null
+                ? // 项目组：发言人名片一行，不注入整卡（62.05 §4）。
+                  (memoryFacade.speakerProfileLine(runPrincipalId, speakerName) ?? '')
+                : // 直聊 / 看板卡：运行主体的编译卡（null = 单用户 '' 桶，现状）。
+                  memoryFacade.profileCardSection(runPrincipalId),
+            hardConstraints: memoryFacade.hardConstraintsSection(
+              batch.botId,
+              batch.conversationId,
+              runPrincipalId,
+              // C11 项目口径：约束行内标注发言人归属（单用户不带）。
+              runPrincipalId !== null && speakerName !== null ? { speakerName } : undefined,
+            ),
+            myState: memoryFacade.myStateSection(batch.botId, batch.conversationId, runPrincipalId),
             ...(schedulesSection.length > 0 ? { schedules: schedulesSection } : {}),
             ...(workbenchSection.length > 0 ? { workbench: workbenchSection } : {}),
             ...(watchesSection.length > 0 ? { watches: watchesSection } : {}),
@@ -4554,6 +5331,8 @@ export class Orchestrator {
               ]
                 .filter((text) => text.length > 0)
                 .join('\n'),
+              // C12：受众由 service 从运行主体推导（owner 兜底；null = 现状全量）。
+              principalId: runPrincipalId,
             }),
           }
         : {
@@ -4810,14 +5589,35 @@ export class Orchestrator {
                 },
               }
             : {}),
+          // 62.11 C8 / C10：宿主工具拼接与策略过滤在 tools/index.ts 的 finalize
+          // 段完成（同一策略覆盖内置 / ACP / 子代理）；principalId 供记忆工具
+          // 分桶。缺省（两个选项都不传）= 工具面与提示词逐字节现状。
+          ...(this.#deps.toolPolicy !== undefined ? { toolPolicy: this.#deps.toolPolicy } : {}),
+          ...(this.#deps.hostTools !== undefined ? { hostTools: this.#deps.hostTools } : {}),
+          ...(runPrincipalId !== null ? { principalId: runPrincipalId } : {}),
+          ...(this.#deps.principals !== undefined
+            ? {
+                hasConversationPrincipal: (conversationId: string, principalId: string) =>
+                  this.#deps.conversations.hasPrincipal(conversationId, principalId),
+              }
+            : {}),
         },
       });
+      // 62.11 C8 提示词同步：最终工具名集合（含宿主工具、已过策略）驱动
+      // buildSystemPrompt 的 has* 标志，被拒工具不再被静态规则点名。
+      const finalToolNames = new Set(responseTools.map((tool) => tool.name));
       // D72 外部 Agent Bot（design 28 §4–§5）：能力包决定注入哪些宿主工具（经
       // 宿主 MCP 桥）；提示词拆成会话级（ACP 版平台规则 + <tool_policy> + 身份 /
       // 人设 / 对话信息）、run 级动态段与对话段。内置引擎不受影响。
       // The agent's cwd: the bound workdir, else the workspace; a D75 task
-      // works in its resolved cwd (§3.4 task_cwd).
-      const workdirPath = workdir !== null && workdir.status === 'available' ? workdir.path : null;
+      // works in its resolved cwd (§3.4 task_cwd). D140-4: a task's isolated
+      // worktree IS its resolved cwd (same value as `taskWorktree` above).
+      const workdirPath =
+        taskWorktree !== null
+          ? taskWorktree.path
+          : workdir !== null && workdir.status === 'available'
+            ? workdir.path
+            : null;
       // A task without a recorded cwd works in the workspace — the root
       // #startTask leased — never in an unleased workdir (审查 L6).
       const agentCwd =
@@ -4831,7 +5631,20 @@ export class Orchestrator {
               conversation: conv,
               agentId,
               identity,
+              // C8 / C10: the ACP path starts from the final (host-appended,
+              // policy-filtered) toolset; denied tools are absent, so the ACP
+              // static rules keyed on tool names omit them too.
+              // C8 / C10：ACP 路径以 finalize 后的最终工具面为起点（已含宿主
+              // 工具、已过策略）——被拒工具不在列表里，ACP 的静态规则按工具名
+              // 门控也随之省略。
               responseTools,
+              ...(this.#deps.principals !== undefined
+                ? { humanPrincipals: this.#humanPrincipalsOf(conv.id) }
+                : {}),
+              ...(() => {
+                const speaker = this.#speakerLabelOf(runId);
+                return speaker !== undefined ? { speaker } : {};
+              })(),
               workspacePath,
               // The <workdir> section only when the agent works in it (a
               // workspace-cwd task does not, 审查 L10).
@@ -4982,13 +5795,40 @@ export class Orchestrator {
             timeZone: this.#deps.timeZone,
             now: new Date(this.#deps.clock.now()),
             ...(conv.type === 'project' ? { members: this.#memberCards(conv.id) } : {}),
+            // 62.11 C2：人类主体行（项目组渲染；直聊行渲染层不显示，身份走
+            // <user_identity>）与恒小的 <user_identity>（缺目录 = 输入缺省，
+            // 渲染逐字节现状）。
+            ...(this.#deps.principals !== undefined
+              ? { humanPrincipals: this.#humanPrincipalsOf(conv.id) }
+              : {}),
+            ...(() => {
+              const speaker = this.#speakerLabelOf(runId);
+              return speaker !== undefined ? { speaker } : {};
+            })(),
+            // T9（62.11 C10 提示词侧）：宿主 <host_rules> 段——ctx 与 C10 宿主
+            // 工具同一形状（conversationId 恒非空：run 必然绑定会话）。缺省 /
+            // null / 空串 = 不传（现状逐字节）。
+            ...(() => {
+              const section =
+                this.#deps.hostPromptSection?.({
+                  botId: bot.id,
+                  conversationId: conv.id,
+                  principalId: runPrincipalId,
+                  loopType: isTask ? 'task' : 'turn',
+                }) ?? null;
+              return section !== null && section.trim().length > 0 ? { hostRules: section } : {};
+            })(),
             // D92 T1a: the lead / member rules only in a project conversation's turn loop
             // (tasks never get them — a task cannot @ members).
             ...(conv.type === 'project' && !isTask
               ? { projectRole: bot.id === conv.leadBotId ? ('lead' as const) : ('member' as const) }
               : {}),
             ...(cardPrompt !== undefined ? { card: cardPrompt } : {}),
-            workdir: (await this.#deps.workdirs.promptSection(batch.conversationId)) ?? undefined,
+            workdir:
+              (await this.#deps.workdirs.promptSection(
+                batch.conversationId,
+                taskWorktree !== null ? { root: taskWorktree.path } : {},
+              )) ?? undefined,
             workspace: {
               path: workspacePath,
               entries: this.#deps.gateway.workspaceTopLevel(workspacePath),
@@ -5003,22 +5843,41 @@ export class Orchestrator {
             ...(skillsSection.length > 0 ? { skills: skillsSection } : {}),
             ...(capabilitiesSection.length > 0 ? { capabilities: capabilitiesSection } : {}),
             ...(availableAppsSection.length > 0 ? { availableApps: availableAppsSection } : {}),
+            // 62.11 C8 提示词同步：以下 has* 标志一律由「最终工具名集合」推导
+            // （拼接宿主工具 + 过滤策略之后的 finalToolNames），被策略拒绝的工具
+            // 不会再被任何静态规则点名。未提供策略 / 宿主工具时每个推导结果与
+            // 旧「按 facade 是否存在」的判定逐一等价（工具注册与 facade 同源）。
             // D91：mail_request_setup 有 mail 就注册（有无绑定都一样，与工具注册同源）；其余读写工具另按绑定门控（D144 起含邮箱内部写操作）。
-            ...(this.#deps.mail !== undefined ? { hasMailSetup: true } : {}),
+            ...(finalToolNames.has('mail_request_setup') ? { hasMailSetup: true } : {}),
             // D91: the app_request_connection rule only with the tool (appFacade is what registers it).
-            ...(appFacade !== undefined ? { hasAppRequestTool: true } : {}),
+            ...(finalToolNames.has('app_request_connection') ? { hasAppRequestTool: true } : {}),
             // D104 P1-3: the plugin-marketplace rule and the D63 ladder only with the tools.
-            ...(pluginFacade !== undefined ? { hasPluginTools: true } : {}),
-            ...(inkcopFacade !== undefined ? { hasInkcopAgentTool: true } : {}),
+            ...(finalToolNames.has('plugin_search') || finalToolNames.has('plugin_request_install')
+              ? { hasPluginTools: true }
+              : {}),
+            ...(finalToolNames.has('call_inkcop_agent') ? { hasInkcopAgentTool: true } : {}),
+            // C8：get_user_profile 被拒时静态规则不再点名它（system-prompt 侧
+            // 省略整句 + <user_profile> 引导退无工具名版本）；缺省 = 不传（现状）。
+            ...(finalToolNames.has('get_user_profile') ? {} : { hasProfileLookupTool: false }),
             // D90: only a turn that belongs to a dispatched workbench todo gets the delivery rule.
             // A pure update batch gets the update rule only: its todo is already being worked on, so
             // the 「新派发：做完给结论」 rule would read the notice as a new assignment.
             ...(todoSource !== null && !workbenchUpdate ? { workbenchDispatch: true } : {}),
             ...(workbenchUpdate ? { workbenchUpdate: true } : {}),
             // 与 settings_* 工具是否注册同源（toolDeps.settings）。
-            ...(settingsFacade !== undefined ? { hasSettingsTools: true } : {}),
+            ...(finalToolNames.has('settings_search') ||
+            finalToolNames.has('settings_read') ||
+            finalToolNames.has('settings_change')
+              ? {
+                  hasSettingsTools: true,
+                  // C8：settings_change 被拒时退到只读版设置规则。
+                  ...(finalToolNames.has('settings_change')
+                    ? {}
+                    : { hasSettingsChangeTool: false }),
+                }
+              : {}),
             // 管家的工作台规则只在确实注册了工作台工具时带（toolDeps.workbench）。
-            ...(this.#deps.workbench !== undefined ? { hasWorkbenchTools: true } : {}),
+            ...(finalToolNames.has('list_todos') ? { hasWorkbenchTools: true } : {}),
           });
         },
         messages: [
@@ -5226,7 +6085,7 @@ export class Orchestrator {
       // Close the lease window before settling: the after-snapshot writes the
       // changes summary card, which must land after the bot's final message.
       try {
-        await this.#deps.workdirs.releaseRun(runId);
+        await this.#releaseRunWindow(runId);
       } catch (error) {
         this.#deps.logger.warn(
           { runId, error: error instanceof Error ? error.message : String(error) },
@@ -5276,21 +6135,29 @@ export class Orchestrator {
         // settle() already wrote the terminal state, and runs.update has no
         // terminal-state guard — a throw here would let the outer catch flip
         // the completed run to failed. Log and move on.
-        try {
-          this.#deps.memory?.registerReflection({
-            runId,
-            botId: batch.botId,
-            conversationId: batch.conversationId,
-            triggerMessageIds: batch.messages.map((m) => m.id),
-            batchId: batch.messages[0]?.batchId ?? null,
-            kind: isTask ? 'task' : 'turn',
-            continuedFromRunIds: continuation?.continuedFromRunIds ?? [],
-          });
-        } catch (error) {
-          this.#deps.logger.warn(
-            { runId, err: error },
-            'reflection registration failed (run stays completed)',
-          );
+        // dm conversations never produce runs (no Bot member, no dispatch);
+        // the explicit skip keeps reflection off them even if that ever
+        // changes (dm 不进任何 Bot 域副作用).
+        if (conv.type !== 'dm') {
+          try {
+            this.#deps.memory?.registerReflection({
+              runId,
+              botId: batch.botId,
+              conversationId: batch.conversationId,
+              triggerMessageIds: batch.messages.map((m) => m.id),
+              batchId: batch.messages[0]?.batchId ?? null,
+              kind: isTask ? 'task' : 'turn',
+              continuedFromRunIds: continuation?.continuedFromRunIds ?? [],
+              // C7 / C11 (62.05 §2)：反思条目按所属运行带主体（job 侧仍保留
+              // runs.principalOf 兜底）；缺省（单用户）= 不带。
+              ...(runPrincipalId !== null ? { principalId: runPrincipalId } : {}),
+            });
+          } catch (error) {
+            this.#deps.logger.warn(
+              { runId, err: error },
+              'reflection registration failed (run stays completed)',
+            );
+          }
         }
       }
       this.#maybeEnqueueSummary(batch.conversationId);
@@ -6155,6 +7022,8 @@ export class Orchestrator {
       // Once-grants die with the run; pending approvals (if any survived)
       // must not dangle.
       this.#deps.grants.expireForRun(runId);
+      // D140-3：task / once 的网络放行随 run 结束失效（与 once 授权同位置）。
+      this.#deps.taint?.expireNetworkForRun(runId);
       this.#deps.approvals.cancelPendingForRun(runId);
       this.#clearToolOutputSpill(runId, run.botId, run.conversationId);
     }
@@ -6190,6 +7059,9 @@ export class Orchestrator {
   #maybeEnqueueSummary(conversationId: string): void {
     const conv = this.#deps.conversations.get(conversationId);
     if (!conv) return;
+    // dm 会话没有 Bot 参与回合（不 dispatch，本方法只被 run 收尾路径调用），
+    // 显式排除兜底：Bot 域的滚动摘要对 dm 无意义。
+    if (conv.type === 'dm') return;
     const unsummarized = conv.lastSeq - conv.summaryUptoSeq;
     if (unsummarized <= SUMMARY_TRIGGER_UNSUMMARIZED) return;
     this.#deps.jobs.enqueue({
@@ -6248,21 +7120,65 @@ export class Orchestrator {
   }
 
   /**
+   * D140-1: the run's write attribution for its shadow window — its own
+   * gateway-recorded files (exact per-run attribution) and those of every
+   * other task whose window is still open (files both wrote land
+   * `interleaved` in run_changes). Also wired into WorkdirRuntime for release
+   * paths outside the executor (the revoke RPC).
+   */
+  writeAttributionOf(runId: string): { own: Array<{ path: string; change: 'created' | 'modified' | 'deleted' }>; others: Set<string> } {
+    const own = this.#fsState
+      .changesOf(runId)
+      .map((change) => ({ path: change.path, change: change.change }));
+    const others = new Set<string>();
+    for (const window of this.#deps.workdirs.openTaskWindows()) {
+      if (window.runId === runId) continue;
+      for (const change of this.#fsState.changesOf(window.runId)) others.add(change.path);
+    }
+    return { own, others };
+  }
+
+  /** D140-1: closes a run's write lease with its write attribution. */
+  async #releaseRunWindow(runId: string): Promise<void> {
+    await this.#deps.workdirs.releaseRun(runId, this.writeAttributionOf(runId));
+  }
+
+  /**
    * Where a task works and what it left behind (TaskHost.describeCwd;
-   * `withChanges` false = the kind only, no lookup).
+   * `withChanges` false = the kind only, no lookup). D140-1: a settled write
+   * task's shadow window wrote its run_changes row — the file list (with
+   * `interleaved` marks for files a parallel task also changed) is back on
+   * the task detail page.
    */
   #describeTaskCwd(
     task: Run,
-    _withChanges: boolean,
+    withChanges: boolean,
   ): { kind: 'workdir' | 'workspace'; changes: TaskChanges | null } {
     const workspace =
       task.botId !== null && task.conversationId !== null
         ? workspacePathFor(this.#deps.paths, task.botId, task.conversationId)
         : null;
     const kind = task.taskCwd !== null && task.taskCwd !== workspace ? 'workdir' : 'workspace';
-    // Change summary / file list / revert on the task card was retired —
-    // never attach changes (disk writes still happen).
-    return { kind, changes: null };
+    if (!withChanges || kind !== 'workdir') return { kind, changes: null };
+    const change = this.#deps.workdirs.changesOf(task.id);
+    if (change === null) return { kind, changes: null };
+    const files = change.files.slice(0, TASK_CHANGES_FILES_MAX);
+    return {
+      kind,
+      changes: {
+        kind: 'workdir',
+        added: change.files.filter((file) => file.change === 'added').length,
+        modified: change.files.filter((file) => file.change === 'modified').length,
+        deleted: change.files.filter((file) => file.change === 'deleted').length,
+        reverted: change.revertedAt !== null,
+        files: files.map((file) => ({
+          path: file.path,
+          change: file.change,
+          ...(file.interleaved === true ? { interleaved: true } : {}),
+        })),
+        ...(change.files.length > files.length ? { more: change.files.length - files.length } : {}),
+      },
+    };
   }
 
   #publishConversation(conversationId: string): void {

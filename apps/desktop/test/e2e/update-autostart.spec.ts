@@ -113,6 +113,22 @@ test('update downloads silently; settings and sidebar expose progress and apply'
     await page.keyboard.press('Escape');
     await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
 
+    // 下载中即出现圆钮：外环显示进度（data-progress），点击开进度卡片（大
+    // 圆环 + 左下取消更新）。e2e 的 update:status 是 renderer 假状态注入，
+    // 主进程 gate 不在 downloading，真实取消链路（相位守卫 + 跳过版本持久
+    // 化）由主进程单测覆盖，真机验证路径见任务汇报清单。
+    const sidebarButton = page.locator('[data-testid="sidebar-update-button"]');
+    await expect(sidebarButton).toBeVisible({ timeout: 15_000 });
+    await expect(sidebarButton).toHaveAttribute('data-progress', '42');
+    await sidebarButton.click();
+    const progressCard = page.locator('[data-testid="update-progress-card"]');
+    await expect(progressCard).toBeVisible();
+    await expect(progressCard).toContainText('9.9.9');
+    await expect(progressCard).toContainText('42%');
+    await expect(page.locator('[data-testid="update-card-cancel"]')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(progressCard).toBeHidden();
+
     // 经 dev/e2e seam 驱动【真实门控】走 evaluate()（无在途执行 → ready），
     // 下载完成后不弹横幅，只在设置页出现绿色按钮、左栏底部出现圆形更新按钮。
     await page.evaluate(
@@ -131,21 +147,25 @@ test('update downloads silently; settings and sidebar expose progress and apply'
     await page.keyboard.press('Escape');
     await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
 
-    // 点击左栏圆形按钮 → 先弹确认浮层（提醒需要重启才能生效），确认后才走
+    // 点击左栏圆形按钮 → 弹进度卡片（下载完成态），右下「应用更新」再走
+    // 居中确认浮层（提醒需要重启才能生效——误点不直接重启），确认后才走
     // preload update:installNow → 主进程门控退出并安装；门控先广播
     // installing，按钮随之消失，证明确认后的点击确实走到了安装决策。
-    await page.locator('[data-testid="sidebar-update-button"]').click();
+    await sidebarButton.click();
+    await expect(progressCard).toBeVisible();
+    await page.locator('[data-testid="update-card-apply"]').click();
     const confirm = page.locator('[data-testid="sidebar-update-confirm"]');
     await expect(confirm).toBeVisible();
     await expect(confirm).toContainText('9.9.9');
     // 「稍后重启」只收起浮层，不触发安装。
     await page.locator('[data-testid="sidebar-update-restart-later"]').click();
     await expect(confirm).toBeHidden();
-    await expect(page.locator('[data-testid="sidebar-update-button"]')).toBeVisible();
-    await page.locator('[data-testid="sidebar-update-button"]').click();
+    await expect(sidebarButton).toBeVisible();
+    await sidebarButton.click();
+    await page.locator('[data-testid="update-card-apply"]').click();
     await expect(confirm).toBeVisible();
     await page.locator('[data-testid="sidebar-update-install-now"]').click();
-    await expect(page.locator('[data-testid="sidebar-update-button"]')).toHaveCount(0, {
+    await expect(sidebarButton).toHaveCount(0, {
       timeout: 15_000,
     });
   } finally {
@@ -199,7 +219,8 @@ test('waiting-runs shows drain copy; awaiting-user requires destructive confirma
   try {
     await waitReady(page);
 
-    // waiting-runs：设置行显示「已下载、等待执行结束」且带版本号；左栏不出圆钮。
+    // waiting-runs：设置行显示「已下载、等待执行结束」且带版本号；左栏圆钮
+    // 保持可见（完成态进度环收满，点击开卡片看等待详情）。
     await pushUpdate(app, { phase: 'waiting-runs', version: '9.9.9', activeRuns: 2 });
     await openGeneralSettings(page);
     await expect(page.locator('[data-testid="settings-update-waiting"]')).toContainText('9.9.9', {
@@ -209,22 +230,30 @@ test('waiting-runs shows drain copy; awaiting-user requires destructive confirma
       '等待执行结束',
     );
     await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="sidebar-update-button"]')).toHaveCount(0);
-
-    // awaiting-user：左栏圆钮转 destructive 警示态；点击先弹确认（含执行数），
-    // 「继续等待」收起确认且不安装（BR-P13-005：绝不静默中断在途执行）。
-    await pushUpdate(app, { phase: 'awaiting-user', version: '9.9.9', activeRuns: 2 });
     const sidebarButton = page.locator('[data-testid="sidebar-update-button"]');
     await expect(sidebarButton).toBeVisible({ timeout: 15_000 });
+
+    // awaiting-user：左栏圆钮转 destructive 警示态；点击先开进度卡片（含执行
+    // 数与等待文案），「中断执行并更新」仍要过破坏性确认浮层，「继续等待」
+    // 直接重臂排空轮询（BR-P13-005：绝不静默中断在途执行）。
+    await pushUpdate(app, { phase: 'awaiting-user', version: '9.9.9', activeRuns: 2 });
     await expect(sidebarButton).toHaveAttribute('data-awaiting', 'true');
     await sidebarButton.click();
+    const card = page.locator('[data-testid="update-progress-card"]');
+    await expect(card).toBeVisible();
+    await expect(card).toContainText('2');
+    await page.locator('[data-testid="update-card-interrupt"]').click();
     const confirm = page.locator('[data-testid="sidebar-update-confirm"]');
     await expect(confirm).toBeVisible();
     await expect(confirm).toContainText('2');
+    // 确认浮层里的「继续等待」：收起且不安装。
     await page.locator('[data-testid="sidebar-update-keep-waiting"]').click();
     await expect(confirm).toBeHidden();
-    // 门控重臂排空轮询（这里以 waiting-runs 推送模拟相位回流），圆钮收起。
+    // 门控重臂排空轮询（这里以 waiting-runs 推送模拟相位回流），圆钮保持
+    // 可见；installing 推送才把入口收走。
     await pushUpdate(app, { phase: 'waiting-runs', version: '9.9.9', activeRuns: 2 });
+    await expect(sidebarButton).toBeVisible();
+    await pushUpdate(app, { phase: 'installing', version: '9.9.9' });
     await expect(sidebarButton).toHaveCount(0, { timeout: 15_000 });
 
     // 设置页入口同样先确认：确认框出现（含执行数），点「中断执行并更新」

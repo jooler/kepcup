@@ -24,7 +24,7 @@ function turnIdentity(botId: string, conversationId: string): RunIdentity {
  * A TaskHost over the test core's real domain services whose executions are
  * driven by hand, on an injectable clock.
  */
-function handDrivenHost(stack: TestStack) {
+function handDrivenHost(stack: TestStack, limits?: { perConversation?: number }) {
   const d = domain(stack);
   const clock = { t: 1_000_000, now: () => clock.t };
   const controls = new Map<string, TaskRunControl>();
@@ -47,6 +47,7 @@ function handDrivenHost(stack: TestStack) {
     onSettled: () => {},
     releaseExecution: () => {},
     recordVisibleMessage: () => {},
+    ...(limits?.perConversation !== undefined ? { limits: { perConversation: limits.perConversation } } : {}),
   });
   return { host, controls, clock, d };
 }
@@ -96,22 +97,24 @@ describe('D123 ③: the startup queue a task reads about itself', () => {
     }
   });
 
-  it('keeps the submit-time reason (no publisher wired) and names the real holder', async () => {
+  it('keeps the submit-time reason (no publisher wired) and names the real limit', async () => {
     const stack = await createTestStack();
     try {
       const bot = await makeBot(stack.core, '小艾');
       const conv = await openDirect(stack.core, bot.id);
       const identity = turnIdentity(bot.id, conv.id);
-      const { host, controls, clock, d } = handDrivenHost(stack);
+      // D140-1: write domains no longer queue at the task layer — the
+      // per-conversation cap (1 here) is the submit-time blocker left.
+      const { host, controls, clock, d } = handDrivenHost(stack, { perConversation: 1 });
       const first = host.start(identity, input(['apps/**']));
       running(d, first.taskId);
       const firstControl = controls.get(first.taskId)!;
-      // The holder sits on its lease while the second write task queues...
+      // The first task holds the conversation slot while the second queues...
       const queued = host.start(identity, input(['apps/**']));
       expect(queued.state).toBe('submitted');
-      expect(queued.queueReason).toContain(first.taskId);
+      expect(queued.queueReason).toContain('本对话 1/1');
       expect(taskEvents(stack, queued.taskId).length).toBeGreaterThan(0);
-      // ...for a minute, then the lease hands over.
+      // ...for a minute, then the slot frees.
       clock.t += 60_000;
       firstControl.finish();
       const secondControl = controls.get(queued.taskId)!;
@@ -123,7 +126,7 @@ describe('D123 ③: the startup queue a task reads about itself', () => {
 
       const self = host.list(identity).find((task) => task.taskId === queued.taskId)!;
       expect(self.startupQueueMs).toBe(60_300);
-      expect(self.startupQueueReason).toBe(`等写域（任务 ${first.taskId} 持有 apps/**）`);
+      expect(self.startupQueueReason).toBe('等并发额度（本对话 1/1）');
     } finally {
       await stack.cleanup();
     }
@@ -157,7 +160,7 @@ describe('D123 ③: the startup queue a task reads about itself', () => {
       const bot = await makeBot(stack.core, '小艾');
       const conv = await openDirect(stack.core, bot.id);
       const identity = turnIdentity(bot.id, conv.id);
-      const { host, controls, clock, d } = handDrivenHost(stack);
+      const { host, controls, clock, d } = handDrivenHost(stack, { perConversation: 1 });
       const first = host.start(identity, input(['apps/**']));
       running(d, first.taskId);
       clock.t += 1_000;

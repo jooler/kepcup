@@ -62,6 +62,14 @@ class UpdateState {
   async keepWaiting(): Promise<void> {
     await window.kepcup.keepWaitingOnUpdate();
   }
+
+  /**
+   * 「取消更新」：停下本次下载并跳过该版本（相位守卫在主进程 gate——只有
+   * downloading 相位有效；取消后 gate 回 idle，按钮与卡片随之收起）。
+   */
+  async cancelDownload(): Promise<void> {
+    await window.kepcup.cancelUpdateDownload();
+  }
 }
 
 export const updateStore = new UpdateState();

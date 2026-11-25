@@ -82,6 +82,24 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
   },
   { kind: 'action', id: 'bots.delete', reason: '删除 Bot：破坏性动作，沿用原入口与二次确认' },
   {
+    kind: 'anchor',
+    id: 'team-server-connection',
+    reason:
+      'T5/T7「团队服务器」连接卡（62.08 §3 桌面融合视图）：桌面专属入口（platform.teamServers），服务器清单与凭据存主进程 team-servers.json（safeStorage），不入设置目录（62.03 §5——开源设置目录不扩展）',
+  },
+  {
+    kind: 'settings-section',
+    id: 'team-server',
+    reason:
+      '「团队服务器」独立分区（连接远程执行中心）：主体是桌面专属连接卡（platform.teamServers 多账号 / 健康检查 / 登录 / 融合开关），见 team-server-connection 锚点的排除口径（客户端本机状态 + platform 方法，62.03 §5 开源设置目录不扩展）',
+  },
+  {
+    kind: 'settings-section',
+    id: 'team',
+    reason:
+      'T7 成员域「团队」分区（62.03 §5）：离开态 / 免打扰 / 个人用量 / 画像上行是团队层成员域设置（team.presence.setAway / team.settings.* / team.usage.mine / team.profile.push，server 侧 member scope），开源设置目录不扩展成员 scope；服务器登记 / 登录 / 融合开关沿用 team-server-connection 的排除口径（客户端本机状态 + platform 方法）',
+  },
+  {
     kind: 'action',
     id: 'conversations.archive',
     reason: '从对话列表移除（归档）：可逆的对象管理动作，入口在侧栏右键与通讯录，不是设置',

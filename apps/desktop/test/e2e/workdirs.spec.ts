@@ -187,19 +187,18 @@ test('workdir selection, switching block while running; no changes card after wr
   }
 });
 
-// D75（DEV-015）/ D123：同一 workdir 的写任务在任务层排队（还没去申请写租约），
-// 状态行与任务卡显示「等写域（任务 … 持有 整目录）」；「强制收回」对这种排队
-// 不起作用——放行方式是取消（或等完）持有它的那条任务。
-test("a write task queued behind another conversation's write task shows the wait and runs once that task is cancelled", async () => {
+// D140-1：写任务默认并行——同一 workdir 的两个对话写任务共享租约、各写各的
+// 文件同时进行（不再有任务层的「等写域」排队）；独占只有外部智能体 / 宿主动作。
+test('two write tasks from different conversations write their own files in parallel on one workdir (D140-1)', async () => {
   test.setTimeout(300_000);
-  const session = await startSession('kepcup-e2e-lease-');
+  const session = await startSession('kepcup-e2e-parallel-');
   const { page, app, llm } = session;
-  const workdir = makeWorkdirDir('kepcup-e2e-lease-proj-');
+  const workdir = makeWorkdirDir('kepcup-e2e-parallel-proj-');
   try {
     await waitReady(page);
     await createBotAndOpenChat(page, '甲');
 
-    // 甲绑定工作目录并占住租约（挂在工具调用上，run 保持执行中）
+    // 甲绑定工作目录，写一个文件后挂在工具调用上（任务保持执行中）。
     await mockDirectoryPicker(app, workdir);
     await openWorkdirSelector(page);
     // 待确认的目录设置弹框 → 保存正式绑定。
@@ -212,21 +211,28 @@ test("a write task queued behind another conversation's write task shows the wai
     ).toHaveCount(1, { timeout: 15_000 });
     await expect(page.locator('[data-testid="workdir-settings-dialog"]')).not.toBeVisible();
 
-    // D75：甲的写任务启动前取得工作目录租约并整任务持有（挂在工具调用上保持执行中）。
-    const held = step().hold().replyToolCall('bash', { command: 'sleep 30' });
+    const aHeld = step().hold().replyText('甲完成');
     llm.script(
       'mock-main',
-      viaTask({ title: '占用工作目录', ack: '甲开始工作', taskSteps: [held] }),
+      viaTask({
+        title: '甲写一个',
+        ack: '甲开始工作',
+        taskSteps: [
+          step().replyToolCall('write', { path: '甲.txt', content: 'from-a' }),
+          aHeld,
+        ],
+      }),
     );
     await page.locator('[data-testid="composer-input"]').fill('开始工作');
     await page.locator('[data-testid="composer-input"]').press('ControlOrMeta+Enter');
     await expect(
-      page.locator('[data-testid="task-status"]').filter({ hasText: '占用工作目录' }),
+      page.locator('[data-testid="task-status"]').filter({ hasText: '甲写一个' }),
     ).toBeVisible({ timeout: 30_000 });
-    // The task's request is parked on the held step (the script is replaced next).
-    await expect.poll(() => held.consumed, { timeout: 30_000 }).toBe(true);
+    // 甲的任务写完后停在 hold 上（脚本随后替换为乙的）。
+    await expect.poll(() => aHeld.consumed, { timeout: 30_000 }).toBe(true);
 
-    // 乙：第二个对话绑定同一工作目录，触发写入 → 排队等待租约。
+    // 乙：另一个对话绑定同一工作目录，写自己的文件——共享租约让它立刻开始，
+    // 在甲还执行中时写完。
     // 系统对话框 mock 仍指向同一目录：重走单步绑定（同路径复用同一条 Workdir 记录）。
     await createBotAndOpenChat(page, '乙');
     await openWorkdirSelector(page);
@@ -239,11 +245,10 @@ test("a write task queued behind another conversation's write task shows the wai
     ).toHaveCount(1, { timeout: 15_000 });
     await expect(page.locator('[data-testid="workdir-settings-dialog"]')).not.toBeVisible();
 
-    // 乙的写任务排队等同一工作目录的租约（任务仍是 submitted，状态行显示等待）。
     llm.script(
       'mock-main',
       viaTask({
-        title: '也写一个',
+        title: '乙也写一个',
         ack: '乙去写',
         taskSteps: [
           step().replyToolCall('write', { path: '乙.txt', content: 'from-b' }),
@@ -255,48 +260,30 @@ test("a write task queued behind another conversation's write task shows the wai
     await page.locator('[data-testid="composer-input"]').fill('也写一个');
     await page.locator('[data-testid="composer-input"]').press('ControlOrMeta+Enter');
 
-    const status = page.locator('[data-testid="task-status-text"]').filter({ hasText: '也写一个' });
-    await expect(status).toContainText('等写域', { timeout: 60_000 });
-    const card = page.locator('[data-testid^="task-card-"]').filter({ hasText: '也写一个' });
-    await expect(card).toHaveAttribute('data-task-state', 'submitted');
-    await expect(card.locator('[data-testid="task-queue-reason"]')).toContainText('等写域');
+    const bCard = page.locator('[data-testid^="task-card-"]').filter({ hasText: '乙也写一个' });
+    await expect(bCard).toHaveAttribute('data-task-state', 'completed', { timeout: 60_000 });
+    // D140-1：乙的文件在甲仍执行时已经落盘——真并行，没有「等写域」。
+    expect(existsSync(path.join(workdir, '乙.txt'))).toBe(true);
+    expect(readFileSync(path.join(workdir, '乙.txt'), 'utf8')).toBe('from-b');
+    await expect(
+      page.locator('[data-testid="bot-bubble"]').filter({ hasText: '写完了' }),
+    ).toBeVisible({ timeout: 60_000 });
 
-    // 回到甲的对话，在甲的任务卡上取消 → 乙的任务取得租约并完成写入。
-    // D93：用户取消会唤醒甲；必须先备好取消 wake，否则会吃掉乙 viaTask 的 relay「写完了」。
+    // 回到甲的对话：任务仍在执行（没有被乙挡住），取消它 → 唤醒轮回复。
     await page.locator('[data-testid^="conversation-item-"]', { hasText: '甲' }).first().click();
-    const holder = page.locator('[data-testid^="task-card-"]').filter({ hasText: '占用工作目录' });
-    await expect(holder).toHaveAttribute('data-task-state', 'running', { timeout: 30_000 });
+    const aCard = page.locator('[data-testid^="task-card-"]').filter({ hasText: '甲写一个' });
+    await expect(aCard).toHaveAttribute('data-task-state', 'running', { timeout: 30_000 });
     llm.script('mock-main', [
       step()
         .inTurn()
         .expect((req) => !isTaskRequest(req) && req.lastUserText().includes('用户从任务卡主动取消'))
-        .replyText('好，占用已取消'),
-      step().inTask().replyToolCall('write', { path: '乙.txt', content: 'from-b' }),
-      step().inTask().replyText('乙.txt 已写入'),
-      step()
-        .inTurn()
-        .expect(
-          (req) =>
-            !isTaskRequest(req) &&
-            req.lastUserText().includes('<trigger reason="task"') &&
-            !req.lastUserText().includes('用户从任务卡主动取消'),
-        )
-        .replyText('写完了'),
+        .replyText('好，甲已停止'),
     ]);
-    await holder.locator('[data-testid="task-cancel"]').click();
-    await expect(holder).toHaveAttribute('data-task-state', 'cancelled', { timeout: 30_000 });
+    await aCard.locator('[data-testid="task-cancel"]').click();
+    await expect(aCard).toHaveAttribute('data-task-state', 'cancelled', { timeout: 30_000 });
     await expect(
-      page.locator('[data-testid="bot-bubble"]').filter({ hasText: '好，占用已取消' }),
+      page.locator('[data-testid="bot-bubble"]').filter({ hasText: '好，甲已停止' }),
     ).toBeVisible({ timeout: 30_000 });
-    await expect
-      .poll(() => existsSync(path.join(workdir, '乙.txt')), { timeout: 60_000 })
-      .toBe(true);
-    expect(readFileSync(path.join(workdir, '乙.txt'), 'utf8')).toBe('from-b');
-    await page.locator('[data-testid^="conversation-item-"]', { hasText: '乙' }).first().click();
-    await expect(card).toHaveAttribute('data-task-state', 'completed', { timeout: 60_000 });
-    await expect(
-      page.locator('[data-testid="bot-bubble"]').filter({ hasText: '写完了' }),
-    ).toBeVisible({ timeout: 60_000 });
   } finally {
     rmSync(workdir, { recursive: true, force: true });
     await closeSession(session);

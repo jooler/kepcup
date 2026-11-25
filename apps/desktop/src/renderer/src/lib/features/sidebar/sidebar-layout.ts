@@ -18,8 +18,28 @@ export const SIDEBAR_ICON_SNAP_WIDTH = 160;
  * 区间——侧栏按窗口宽度夹取、右栏放不下时让位，都以这条为底线。
  */
 export const WIDE_CHAT_MIN_WIDTH = 360;
-/** 宽屏右栏（Bot 详情）的最小可用宽度（px）。 */
+/** 宽屏右栏（Bot 详情）内容的最小可用宽度（px）；覆盖抽屉的固定宽按它加留白。 */
 export const WIDE_RIGHT_PANEL_MIN_WIDTH = 300;
+/**
+ * 并排形态下右栏的默认占比（0.41，与 ChatsArea 的 PANEL_DEFAULT_SIZE 一致，单一
+ * 事实来源：ChatsArea 从它派生百分比整数）。
+ */
+export const WIDE_RIGHT_PANEL_DEFAULT_SHARE = 0.41;
+/** 覆盖抽屉（中窄窗口的右栏形态）的固定宽（px）：内容 300 可用 + 留白。 */
+export const PANEL_DRAWER_WIDTH = 360;
+/**
+ * 并排形态下对话区的舒适宽线（px）：低于它右栏展开会把对话挤得不舒适，切覆盖抽屉。
+ * 推算：对话可用宽 =（窗口宽 − 有效侧栏宽）×（1 − 右栏默认占比）；默认侧栏 280 下
+ * 对应窗口 ~1178px（主 Bot 调研建议的 1150~1200 一档）——窗口 900~1100 的实测挤压
+ * 区间对应对话 ~370~480px，远低于此线。
+ */
+export const PANEL_DRAWER_CHAT_ENTER_WIDTH = 530;
+/**
+ * 退出抽屉回到并排的宽线（px，含）：与进入线构成 40px 滞回缓冲（对齐窄屏
+ * 640/680 的风格）——判定轴是对话可用宽，断点附近拖拽不抖动，且侧栏拖宽/收窄
+ * 同样受这条线保护（右栏宽度是按窗口比例切的，侧栏挤占同样伤对话区）。
+ */
+export const PANEL_DRAWER_CHAT_EXIT_WIDTH = 570;
 export const SIDEBAR_WIDTH_STORAGE_KEY = 'kepcup.sidebar.width';
 
 /** localStorage 的最小结构面（node 单测用替身注入）。 */
@@ -51,12 +71,31 @@ export function effectiveSidebarWidth(storedWidth: number, windowWidth: number):
 }
 
 /**
- * 常驻右栏是否放得下：聊天区 ≥ WIDE_CHAT_MIN_WIDTH 且右栏 ≥ WIDE_RIGHT_PANEL_MIN_WIDTH。
- * 放不下时宽屏不并排渲染右栏，Bot 药丸改开全屏 Bot 详情覆盖层（同窄屏）。
+ * 并排形态下对话区的默认可用宽（px）：pane group 宽（窗口 − 有效侧栏）中
+ * 扣除右栏默认占比后的份额。非法宽度回退 0（判定视为抽屉形态）。
  */
-export function rightPanelFits(windowWidth: number, sidebarWidth: number): boolean {
-  if (!Number.isFinite(windowWidth)) return true;
-  return windowWidth - sidebarWidth >= WIDE_CHAT_MIN_WIDTH + WIDE_RIGHT_PANEL_MIN_WIDTH;
+export function sideBySideChatWidth(windowWidth: number, sidebarWidth: number): number {
+  if (!Number.isFinite(windowWidth)) return 0;
+  const groupWidth = windowWidth - sidebarWidth;
+  if (!Number.isFinite(groupWidth) || groupWidth <= 0) return 0;
+  return Math.round(groupWidth * (1 - WIDE_RIGHT_PANEL_DEFAULT_SHARE));
+}
+
+/**
+ * 带滞回的「右栏覆盖抽屉」判定：已在抽屉则对话可用宽 ≥ 570 才回并排，未在抽屉则
+ * < 530 才进入（见 PANEL_DRAWER_CHAT_ENTER_WIDTH 的推算）。宽屏下窗口中窄时右栏
+ * 不再并排挤压对话区，改固定宽浮层抽屉；窗口 / 侧栏宽度任一变化都可能翻转。
+ * 非法窗口宽度一律按并排处理（与旧 rightPanelFits 一致）。
+ */
+export function nextPanelDrawer(
+  previouslyDrawer: boolean,
+  windowWidth: number,
+  sidebarWidth: number,
+): boolean {
+  if (!Number.isFinite(windowWidth)) return false;
+  const chatWidth = sideBySideChatWidth(windowWidth, sidebarWidth);
+  return chatWidth <
+    (previouslyDrawer ? PANEL_DRAWER_CHAT_EXIT_WIDTH : PANEL_DRAWER_CHAT_ENTER_WIDTH);
 }
 
 /** 拖拽释放时的落点：低于吸附阈值收成图标模式（最小宽），其余原样夹取。 */

@@ -11,6 +11,7 @@
   import { shell } from '$lib/stores/shell.svelte';
   import { plugins } from '$lib/features/plugins/plugins.svelte';
   import { ENDPOINT_KIND } from '$lib/features/web-shell/endpoint';
+  import { teamContext } from '$lib/features/team/team-context.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
@@ -213,6 +214,18 @@
       await core.call('butler.ensure', { interview: false });
     } catch {
       // 补建失败留给启动兜底；跳过流程本身不应被卡住。
+    }
+    if (teamContext.endpointIsTeam) {
+      // 团队成员：settings.update 是 admin plane（T4 策略拒绝），完成标记落
+      // 本地（每浏览器 / 每来源），不写全服务器共享的 onboarding 设置——不落
+      // 的话 persist 403 会让 close() 执行不到，向导每次登录都弹且跳不掉。
+      try {
+        globalThis.localStorage?.setItem('kepcup.onboarding.completed', '1');
+      } catch {
+        // 存不了（隐私模式等）只关闭：下次启动再弹一次，可再跳。
+      }
+      onboarding.close();
+      return;
     }
     await persist({ onboarding: { completed: true } });
     onboarding.close();

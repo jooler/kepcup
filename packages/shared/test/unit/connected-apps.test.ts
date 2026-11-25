@@ -188,9 +188,15 @@ describe('连接应用 schema', () => {
     ).not.toThrow();
   });
 
-  it('approvalDurationSchema 新增 bot 与 egress 的 command，grantDurationSchema 保持不变', () => {
-    expect(approvalDurationSchema.options).toEqual(['once', 'conversation', 'bot', 'command']);
-    expect(grantDurationSchema.options).toEqual(['once', 'conversation']);
+  it('approvalDurationSchema 新增 D140 的 task（once 之后），grantDurationSchema 同步增 task', () => {
+    expect(approvalDurationSchema.options).toEqual([
+      'once',
+      'task',
+      'conversation',
+      'bot',
+      'command',
+    ]);
+    expect(grantDurationSchema.options).toEqual(['once', 'task', 'conversation']);
   });
 
   it('setupRequirementSchema 的 connect-app 变体', () => {

@@ -13,6 +13,7 @@ function run(id: string, overrides: Partial<Run> = {}): Run {
     status: 'completed',
     setup: null,
     continuedFromRunIds: [],
+    createdAt: 1,
     ...overrides,
   } as Run;
 }
@@ -58,20 +59,47 @@ describe('restoredFailedRun', () => {
     ).toBe(failed);
   });
 
-  it('plain failures keep the previous behaviour; dismissed runs are skipped', () => {
+  it('restores a plain failure only while no newer turn of that bot took over', () => {
     const plain = run('p1', { status: 'failed' });
-    expect(restoredFailedRun([run('r2'), plain], new Set())).toBe(plain);
-    expect(restoredFailedRun([plain], new Set(['p1']))).toBeNull();
+    expect(restoredFailedRun([plain], new Set())).toBe(plain);
+    // A newer answered turn means the conversation moved past the failure; a
+    // turn of another Bot or a background run does not.
+    expect(restoredFailedRun([run('r2'), plain], new Set())).toBeNull();
+    expect(restoredFailedRun([run('r2', { botId: 'bot_b' }), plain], new Set())).toBe(plain);
+    expect(restoredFailedRun([run('bg', { loopType: 'reflection' }), plain], new Set())).toBe(
+      plain,
+    );
+    // A running / cancelled / interrupted follow-up has not answered the old
+    // message, so the retry entry stays available.
+    for (const status of ['running', 'cancelled', 'interrupted'] as const) {
+      expect(restoredFailedRun([run(`r-${status}`, { status }), plain], new Set())).toBe(plain);
+    }
+    // Older failures stay hidden after a newer failure was closed (no cascade
+    // of days-old banners on every open).
+    expect(
+      restoredFailedRun(
+        [run('newer', { status: 'failed', failureDismissed: true }), plain],
+        new Set(),
+      ),
+    ).toBeNull();
+  });
+
+  it('skips dismissed failures', () => {
+    expect(restoredFailedRun([run('p1', { status: 'failed' })], new Set(['p1']))).toBeNull();
     // 已落库的「已读」在空的会话内集合下也不再恢复（刷新后的路径）。
     expect(
       restoredFailedRun([run('p1', { status: 'failed', failureDismissed: true })], new Set()),
     ).toBeNull();
+    // A dismissed older failure does not hide the newer one.
     expect(
       restoredFailedRun(
-        [plain, run('older', { status: 'failed', failureDismissed: true })],
+        [
+          run('p2', { status: 'failed' }),
+          run('older', { status: 'failed', failureDismissed: true }),
+        ],
         new Set(),
-      ),
-    ).toBe(plain);
+      )?.id,
+    ).toBe('p2');
   });
 
   it('D75: failed tasks surface only with a setup, and only until a task retries them', () => {

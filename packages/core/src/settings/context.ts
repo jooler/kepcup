@@ -93,6 +93,8 @@ export const TRUSTED_TOOLS: ReadonlySet<string> = new Set([
   'edit',
   'delete',
   'request_access',
+  // D140-3：request_network 的结果只是授权回执，不带回外部内容。
+  'request_network',
   'acquire_workdir_write',
   'request_environment',
   'create_skill',

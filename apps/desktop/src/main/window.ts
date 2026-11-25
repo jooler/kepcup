@@ -79,9 +79,9 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
       ? { x: resolved.x, y: resolved.y }
       : {}),
     // 允许窄到手机宽度（375）：扩展中心等弹框在小窗口仍可用，不再按桌面布局设下限。
-    // 窄屏形态在 <640 进入（≥680 退出，滞回）；680~959 的宽屏三栏区间不再有 960 的下限兜底，
-    // 由渲染端保证聊天区可用宽度：侧栏宽度按窗口夹取、放不下并排右栏时 Bot 详情改走全屏覆盖层
-    //（renderer sidebar-layout.ts 的 WIDE_CHAT_MIN_WIDTH / rightPanelFits）。
+    // 窄屏形态在 <640 进入（≥680 退出，滞回）；680 以上的宽屏区间由渲染端保证对话可用宽度：
+    // 侧栏宽度按窗口夹取、右栏在窗口中窄时改固定宽覆盖抽屉（nextPanelDrawer），
+    // 并排只在窗口够宽时出现（renderer sidebar-layout.ts）。
     minWidth: MIN_WINDOW_WIDTH,
     minHeight: MIN_WINDOW_HEIGHT,
     show: false,
@@ -129,7 +129,7 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
       ? {
           titleBarStyle: 'hiddenInset' as const,
           // hiddenInset 默认红绿灯位置是 { x: 12, y: 12 }，整体右移、下移各 4px。
-          trafficLightPosition: { x: 16, y: 16 } as const,
+          trafficLightPosition: { x: 12, y: 12 } as const,
           vibrancy: 'sidebar' as const,
         }
       : {
@@ -185,7 +185,14 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
   win.on('maximize', persistSoon);
   win.on('unmaximize', persistSoon);
 
-  win.on('ready-to-show', () => win.show());
+  win.on('ready-to-show', () => {
+    // e2e：钉住内容区宽度。Windows CI / 小工作区可能把默认 1280 外框收进
+    // 覆盖抽屉区间（默认侧栏下对话可用宽 < 530，约 innerWidth < 1178），
+    // 抽屉遮罩会挡住 composer，打开右栏后再发消息的用例会超时。
+    if (__KEPCUP_TEST_HOOKS__) win.setContentSize(1600, 900);
+    win.show();
+    if (__KEPCUP_TEST_HOOKS__) win.setContentSize(1600, 900);
+  });
 
   // Tray-resident: closing the window only hides it (02-architecture.md).
   // Persist before hide/destroy so the next show/launch restores this frame.

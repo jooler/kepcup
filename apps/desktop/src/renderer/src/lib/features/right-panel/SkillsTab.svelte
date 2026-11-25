@@ -29,7 +29,16 @@
   } from '$lib/components/ui/dialog';
   import ImportSkillDialog from './ImportSkillDialog.svelte';
 
-  let { botId, active }: { botId: string; active: boolean } = $props();
+  /**
+   * 团队端点（成员面）：技能清单 / 正文仍可读，但安装 / 启停 / 卸载 / 回滚由服务端
+   * 管理员的扩展中心管理（method-policy 对这些方法一律 deny）。与 Bot 插件区块的
+   * `BotPluginsTeamView` 同口径——只读展示，不渲染会 403 的操作。
+   */
+  let {
+    botId,
+    active,
+    teamManaged = false,
+  }: { botId: string; active: boolean; teamManaged?: boolean } = $props();
 
   const KIND_KEYS: Record<SkillEntry['kind'], MessageKey> = {
     builtin: 'skills.kind.builtin',
@@ -348,7 +357,7 @@
         {/if}
       {/if}
       <div class="mt-3 flex flex-wrap items-center gap-1">
-        {#if skill.status === 'active'}
+        {#if !teamManaged && skill.status === 'active'}
           <Button
             size="sm"
             variant="ghost"
@@ -358,7 +367,7 @@
           >
             {t('skills.disable')}
           </Button>
-        {:else if skill.status === 'disabled'}
+        {:else if !teamManaged && skill.status === 'disabled'}
           <Button
             size="sm"
             variant="ghost"
@@ -378,7 +387,7 @@
         >
           {t('skills.view')}
         </Button>
-        {#if skill.kind === 'authored' && skill.status !== 'draft'}
+        {#if !teamManaged && skill.kind === 'authored' && skill.status !== 'draft'}
           <!-- 草稿没有版本历史：转正（git 首次提交）发生在校验通过之后。 -->
           <Button
             size="sm"
@@ -390,7 +399,14 @@
             {t('skills.history')}
           </Button>
         {/if}
-        {#if skill.status !== 'draft'}
+        {#if teamManaged}
+          <span
+            class="ml-auto max-w-[60%] min-w-0 text-right text-[10px] text-muted-foreground"
+            data-testid="skill-team-managed"
+          >
+            {t('skills.teamManagedHint')}
+          </span>
+        {:else if skill.status !== 'draft'}
           {@const managedBy = managingPluginOfSkill(skill.sourceUrl ?? '', plugins)}
           {#if managedBy === null}
             <!-- 普通公共 / 私有技能，以及来源指向已不存在插件的孤儿（插件系统上线前装的
@@ -423,25 +439,31 @@
     <div class="flex items-center justify-between gap-1">
       <p class="text-xs text-muted-foreground">{t('skills.tabHint')}</p>
     </div>
-    <div class="flex items-center gap-1.5">
-      <Button
-        size="sm"
-        variant="outline"
-        onclick={() => (importOpen = true)}
-        data-testid="skills-import"
-      >
-        {t('skills.import')}
-      </Button>
-      <Button
-        size="sm"
-        variant="ghost"
-        class="text-xs text-muted-foreground"
-        onclick={() => shell.openExtensionCenter('skills')}
-        data-testid="skills-open-market"
-      >
-        {t('skills.openMarket')}
-      </Button>
-    </div>
+    {#if teamManaged}
+      <p class="text-xs text-muted-foreground" data-testid="skills-team-managed-hint">
+        {t('skills.teamManagedHint')}
+      </p>
+    {:else}
+      <div class="flex items-center gap-1.5">
+        <Button
+          size="sm"
+          variant="outline"
+          onclick={() => (importOpen = true)}
+          data-testid="skills-import"
+        >
+          {t('skills.import')}
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          class="text-xs text-muted-foreground"
+          onclick={() => shell.openExtensionCenter('skills')}
+          data-testid="skills-open-market"
+        >
+          {t('skills.openMarket')}
+        </Button>
+      </div>
+    {/if}
 
     {#if skillsStore.loading && skills.length === 0}
       <p class="text-sm text-muted-foreground" data-testid="skills-loading">…</p>

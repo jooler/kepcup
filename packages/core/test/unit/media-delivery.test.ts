@@ -69,6 +69,12 @@ beforeEach(() => {
     key: deriveKey(Buffer.alloc(32, 5), KEY_INFO.mainDb),
   });
   runMigrations(db, migrationsUpTo(31));
+  // 0078 主体缝给 messages 加的三列（fixture 钉在 0031 旧表型上；append 的
+  // INSERT 现在带这三列，需补齐到 head 形状——本夹具不触发 updated_at 触发器，
+  // 无需重建触发器，列保持 NULL 即单用户休眠形状）。
+  db.exec('alter table messages add column sender_principal_id text;');
+  db.exec('alter table messages add column sender_name text;');
+  db.exec('alter table messages add column updated_at integer;');
   db.prepare(
     "insert into conversations (id, type, created_at) values ('conv_1', 'group', 1)",
   ).run();

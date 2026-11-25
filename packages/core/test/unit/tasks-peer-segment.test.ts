@@ -46,7 +46,8 @@ describe('buildPeerTasksSegment', () => {
           state: 'submitted',
           status: 'queued',
           writes: true,
-          queueReason: '等写域（任务 run_backend 持有 packages/core/**）',
+          // D140-1: 剩余的排队原因只有并发额度 / 等写入租约。
+          queueReason: '等并发额度（本对话 4/4）',
         }),
         summary({ taskId: 'run_read', title: '调研', writes: false }),
       ],
@@ -63,7 +64,7 @@ describe('buildPeerTasksSegment', () => {
       '[run_tests] <untrusted>补测试</untrusted>  running  写域 test/**, e2e/**',
     );
     expect(segment).toContain('等待用户输入');
-    expect(segment).toContain('排队中（等写域（任务 run_backend 持有 packages/core/**））');
+    expect(segment).toContain('排队中（等并发额度（本对话 4/4））');
     expect(segment).toContain('[run_read] <untrusted>调研</untrusted>  running  只读');
   });
 
@@ -87,12 +88,12 @@ describe('buildPeerTasksSegment', () => {
           writes: true,
           writeDomains: ['apps/**'],
           startupQueueMs: 247_000,
-          startupQueueReason: '等写域（任务 run_c2 持有 other3/**）',
+          startupQueueReason: '等写入租约',
         }),
       ],
       'run_self',
     );
-    expect(queued).toContain('启动前排队 247s（等写域（任务 run_c2 持有 other3/**））');
+    expect(queued).toContain('启动前排队 247s（等写入租约）');
     const short = buildPeerTasksSegment(
       [summary({ taskId: 'run_self', startupQueueMs: 2_400, startupQueueReason: null })],
       'run_self',
@@ -106,6 +107,40 @@ describe('buildPeerTasksSegment', () => {
     const segment = buildPeerTasksSegment([summary({ taskId: 'run_self' })], 'run_self');
     // The header mentions the field; the self row must not claim any duration.
     expect(segment).not.toMatch(/启动前排队 \d/);
+  });
+
+
+  it('shows claimed paths of peers (D140-1)', () => {
+    const segment = buildPeerTasksSegment(
+      [
+        summary({ taskId: 'run_self' }),
+        summary({
+          taskId: 'run_backend',
+          title: '后端改造',
+          writes: true,
+          claimedPaths: ['packages/shared/a.ts'],
+        }),
+        summary({
+          taskId: 'run_many',
+          title: '大量认领',
+          writes: true,
+          claimedPaths: ['x/1.ts', 'x/2.ts', 'x/3.ts', 'x/4.ts'],
+          claimedPathsMore: true,
+        }),
+        summary({
+          taskId: 'run_exact',
+          title: '正好四条',
+          writes: true,
+          claimedPaths: ['e/1.ts', 'e/2.ts', 'e/3.ts', 'e/4.ts'],
+        }),
+      ],
+      'run_self',
+    );
+    expect(segment).toContain('已认领 packages/shared/a.ts');
+    expect(segment).toContain('已认领 x/1.ts, x/2.ts, x/3.ts, x/4.ts 等');
+    // Exactly four paths is not truncated — no "等".
+    expect(segment).toContain('已认领 e/1.ts, e/2.ts, e/3.ts, e/4.ts');
+    expect(segment).not.toContain('已认领 e/1.ts, e/2.ts, e/3.ts, e/4.ts 等');
   });
 
   it('neutralizes a title trying to close <untrusted>', () => {

@@ -20,6 +20,8 @@ function untrusted(text: string): string {
 
 function taskLine(task: TaskSummary, now: number): string {
   const parts = [`[${task.taskId}] ${untrusted(task.title)}`, task.state, writeLabel(task)];
+  const claims = claimLabel(task);
+  if (claims !== null) parts.push(claims);
   parts.push(`派出 ${ago(now - task.createdAt)}`);
   if (task.state === 'submitted') parts.push(`排队中（${task.queueReason ?? '等待启动'}）`);
   if (task.awaitingInput) parts.push('等待用户输入（问题卡已发给用户）');
@@ -63,14 +65,27 @@ function writeLabel(task: TaskSummary): string {
   return `写域 ${segmentSafe(domains.join(', '))}`;
 }
 
+/**
+ * D140-1: the head of this task's claimed paths（自动认领 + 主动 claim 合并的
+ * 集合，截断展示——写它人已认领的路径会被拒）。
+ */
+function claimLabel(task: TaskSummary): string | null {
+  const paths = task.claimedPaths;
+  if (paths === undefined || paths.length === 0) return null;
+  const head = segmentSafe(paths.join(', '));
+  return task.claimedPathsMore === true ? `已认领 ${head} 等` : `已认领 ${head}`;
+}
+
 function peerLine(task: TaskSummary): string {
   const parts = [`[${task.taskId}] ${untrusted(task.title)}`, task.state, writeLabel(task)];
+  const claims = claimLabel(task);
+  if (claims !== null) parts.push(claims);
   if (task.state === 'submitted') parts.push(`排队中（${task.queueReason ?? '等待启动'}）`);
   if (task.awaitingInput) parts.push('等待用户输入');
   return parts.join('  ');
 }
 
-/** D123 ③: `启动前排队 247s（等写域（任务 run_x 持有 a/**））`; '' when unknown. */
+/** D123 ③: `启动前排队 247s（等写入租约）`; '' when unknown. */
 function startupQueueLabel(task: TaskSummary): string {
   const ms = task.startupQueueMs;
   if (ms === undefined) return '';
@@ -86,6 +101,8 @@ function startupQueueLabel(task: TaskSummary): string {
 /** D123 ③: the task's own row — same shape as a peer row, prefixed 本任务. */
 function selfLine(task: TaskSummary): string {
   const parts = [`本任务 [${task.taskId}] ${untrusted(task.title)}`, task.state, writeLabel(task)];
+  const claims = claimLabel(task);
+  if (claims !== null) parts.push(claims);
   const queue = startupQueueLabel(task);
   if (queue.length > 0) parts.push(queue);
   if (task.state === 'submitted') parts.push(`排队中（${task.queueReason ?? '等待启动'}）`);
@@ -94,12 +111,14 @@ function selfLine(task: TaskSummary): string {
 }
 
 /**
- * D123: the task loop's `<peer_tasks>` segment (design 59 §4.1) — sibling
- * tasks of the same (bot, conversation) plus one `本任务` row for itself: state,
- * write domain, and how long it queued before starting plus why (③ — the task
- * cannot call a model while queued, so this snapshot is its only trace).
- * No result or progress text; titles stay `<untrusted>`. Deterministic, no
- * model call under it.
+ * D123: the task loop's `<peer_tasks>` segment (design 59 §4.1; D140-1: write
+ * tasks of one directory run in parallel — the segment carries each task's
+ * claimed paths so writers stay out of each other's files) — sibling tasks of
+ * the same (bot, conversation) plus one `本任务` row for itself: state, write
+ * domain, claimed paths, and how long it queued before starting plus why (③ —
+ * the task cannot call a model while queued, so this snapshot is its only
+ * trace). No result or progress text; titles stay `<untrusted>`. Deterministic,
+ * no model call under it.
  */
 export function buildPeerTasksSegment(tasks: TaskSummary[], selfTaskId: string): string {
   const self = tasks.find((task) => task.taskId === selfTaskId) ?? null;
@@ -107,7 +126,7 @@ export function buildPeerTasksSegment(tasks: TaskSummary[], selfTaskId: string):
   if (self === null && peers.length === 0) return '';
   return [
     '<peer_tasks>',
-    '（同一对话中与你并行/相邻的任务；`本任务` 一行是你自己（含启动前排队时长与原因），其余是 peers。都是状态，不含结果与进度）',
+    '（同一对话中与你并行的任务；`本任务` 一行是你自己（含启动前排队时长与原因），其余是 peers；写任务默认并行——写「已认领」之外的路径前先协商，你自己首次写入的路径会被自动认领。都是状态，不含结果与进度）',
     ...(self !== null ? [selfLine(self)] : []),
     ...peers.map(peerLine),
     '</peer_tasks>',

@@ -47,6 +47,9 @@ interface MessageRow {
   created_at: number;
   owner_bot_id: string | null;
   task_id: string | null;
+  sender_principal_id: string | null;
+  sender_name: string | null;
+  updated_at: number | null;
 }
 
 export interface AppendMessageInput {
@@ -65,6 +68,16 @@ export interface AppendMessageInput {
   text?: string | undefined;
   /** text messages only: setup-interview answer (hidden bubble in the UI). */
   setupAnswer?: boolean | undefined;
+  /**
+   * text messages only (62.06 / 62.04 §3): sent on behalf of the principal by
+   * their local avatar bot over the principal's own connection — content
+   * records `origin: 'avatar'` + the avatar bot's display name. `origin`
+   * without an `avatar` object is valid (the bare badge-less marker); the
+   * schema and pass-through land with the messages.send seam and the write
+   * path is dormant until then.
+   */
+  origin?: 'avatar' | undefined;
+  avatar?: { botName: string } | undefined;
   /**
    * text messages only (53 号修订 v2 V2-1 / v3): produced in voice-conversation
    * mode — content records `origin: 'voice'`. 用户消息 = 正文即语音转写、音频附件
@@ -234,6 +247,19 @@ export interface AppendMessageInput {
    * reload; the bytes are read on demand through `files.preview`.
    */
   artifacts?: MessageArtifact[] | undefined;
+  /**
+   * 62.11 C4: the human principal sending this user message (from the caller
+   * context), snapshotted on the row. Null / omitted = single-user status quo
+   * (column stays NULL).
+   */
+  senderPrincipalId?: string | null | undefined;
+  /**
+   * 62.11 C4: display-name snapshot of the sending principal (D18 / D19 —
+   * names stay readable after the principal is disabled or removed).
+   * `senderPrincipalId` without a name is fine; a name without an id is not
+   * persisted (the column pairs with the principal).
+   */
+  senderName?: string | null | undefined;
   /** Overrides the creation time (defaults to the clock). */
   at?: number | undefined;
 }
@@ -288,6 +314,11 @@ export function messageRowToMessage(row: MessageRow): Message {
     attachments: [],
     ownerBotId: row.owner_bot_id,
     taskId: row.task_id,
+    // 62.11 C4 / C6: omitted when null so dormant message payloads stay
+    // byte-identical (schema fields are nullable-optional).
+    ...(row.sender_principal_id !== null ? { senderPrincipalId: row.sender_principal_id } : {}),
+    ...(row.sender_name !== null ? { senderName: row.sender_name } : {}),
+    ...(row.updated_at !== null ? { updatedAt: row.updated_at } : {}),
   };
 }
 
@@ -458,6 +489,9 @@ export class MessagesService {
               text: input.text ?? '',
               ...(input.setupAnswer ? { setupAnswer: true } : {}),
               ...(input.voiceMode === true ? { origin: 'voice' } : {}),
+              ...(input.origin === 'avatar' || input.avatar !== undefined
+                ? { origin: 'avatar', ...(input.avatar !== undefined ? { avatar: input.avatar } : {}) }
+                : {}),
               ...(input.delegation !== undefined
                 ? {
                     origin: 'delegation',
@@ -606,9 +640,15 @@ export class MessagesService {
       if (!row)
         throw new AppError('NOT_FOUND', `Conversation ${input.conversationId} does not exist`);
       const seq = row.last_seq + 1;
+      // 62.11 C4: the sender principal rides on user rows only; a name without
+      // an id is not persisted.
+      const senderPrincipalId =
+        input.senderType === 'user' ? (input.senderPrincipalId ?? null) : null;
+      const senderName =
+        senderPrincipalId !== null ? (input.senderName ?? null) : null;
       this.db
         .prepare(
-          'insert into messages (id, conversation_id, seq, sender_type, sender_bot_id, kind, content_json, reply_to, mentions_json, batch_id, run_id, status, created_at, owner_bot_id, task_id) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          'insert into messages (id, conversation_id, seq, sender_type, sender_bot_id, kind, content_json, reply_to, mentions_json, batch_id, run_id, status, created_at, owner_bot_id, task_id, sender_principal_id, sender_name) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         )
         .run(
           id,
@@ -626,6 +666,8 @@ export class MessagesService {
           now,
           ownerBotId,
           taskId,
+          senderPrincipalId,
+          senderName,
         );
       // Mid-turn permission cards are not conversation content: advance seq
       // (the row still feeds the bot) but do not move the user's preview time.
@@ -687,6 +729,8 @@ export class MessagesService {
         attachments: [],
         ownerBotId,
         taskId,
+        ...(senderPrincipalId !== null ? { senderPrincipalId } : {}),
+        ...(senderName !== null ? { senderName } : {}),
       };
     });
     run.immediate();
@@ -939,21 +983,42 @@ export class MessagesService {
   #listWhere(
     conversationId: string,
     filter: { sql: string; params: string[] },
-    options: { beforeSeq?: number; limit?: number },
+    options: { beforeSeq?: number; afterSeq?: number; changedSince?: number; limit?: number },
   ): Message[] {
     const limit = options.limit ?? 60;
     const params: Array<string | number> = [conversationId, ...filter.params];
     let where = `conversation_id = ? and ${filter.sql}`;
+    let ascending = false;
     if (options.beforeSeq !== undefined) {
       where += ' and seq < ?';
       params.push(options.beforeSeq);
     }
+    if (options.afterSeq !== undefined) {
+      // 62.11 C6 incremental pull: everything after the cursor, oldest first.
+      where += ' and seq > ?';
+      params.push(options.afterSeq);
+      ascending = true;
+    }
+    if (options.changedSince !== undefined) {
+      // 62.11 C6 change-feed pull: rows rewritten after `changedSince` (the
+      // messages_touch_updated_at trigger maintains updated_at; rows never
+      // rewritten fall back to created_at), capped at the conversation's
+      // current lastSeq so rows written after the query starts are left for
+      // the next pull. Recalled rows are included (the renderer shows the
+      // placeholder); visibility filtering is the caller's (userVisibleFilter).
+      where +=
+        ' and coalesce(updated_at, created_at) > ? and seq <= (select last_seq from conversations where id = messages.conversation_id)';
+      params.push(options.changedSince);
+      ascending = true;
+    }
     params.push(limit);
     const rows = this.db
-      .prepare(`select * from messages where ${where} order by seq desc limit ?`)
+      .prepare(`select * from messages where ${where} order by seq ${ascending ? 'asc' : 'desc'} limit ?`)
       .all(...params) as MessageRow[];
-    return rows
-      .reverse()
+    // The descending (beforeSeq) page reads oldest-last and is flipped to
+    // chronological order; ascending pulls come out in order already.
+    const chronological = ascending ? rows : [...rows].reverse();
+    return chronological
       .map(messageRowToMessage)
       .map((m) => ({ ...m, attachments: this.attachmentsFor(m.id) }));
   }
@@ -964,12 +1029,39 @@ export class MessagesService {
    * 若像旧实现那样先取原始行再在 RPC 层过滤，密集的内部事件会把页压缩成
    * 短页，桌面端「不足一页 = 没有更早消息」的判断会截断历史。Bot 侧读
    * 上下文仍走 list（含内部事件）。
+   *
+   * 62.11 C6: `afterSeq` / `changedSince` turn this into an incremental pull
+   * (ascending); the exclusive-cursor check lives in the binding layer's zod
+   * schema. The dedicated {@link listIncremental} adds the change-time cursor.
    */
   listVisible(
     conversationId: string,
-    options: { beforeSeq?: number; limit?: number } = {},
+    options: { beforeSeq?: number; afterSeq?: number; changedSince?: number; limit?: number } = {},
   ): Message[] {
     return this.#listWhere(conversationId, userVisibleFilter(), options);
+  }
+
+  /**
+   * Incremental catch-up (62.11 C6): `afterSeq` = visible messages with
+   * `seq > afterSeq` in ascending order; `changedSince` (UTC ms) = visible
+   * messages whose coalesce(updatedAt, createdAt) exceeds it, including
+   * edited / recalled rows (edits and recalls rewrite updated_at via the
+   * trigger). The `cursor` is the batch's max coalesce(updatedAt, createdAt) —
+   * feed it back as the next `changedSince`; absent on an empty batch.
+   */
+  async listIncremental(
+    conversationId: string,
+    query: { afterSeq?: number; changedSince?: number },
+    limit: number,
+  ): Promise<{ messages: Message[]; cursor?: number }> {
+    const options =
+      query.changedSince !== undefined
+        ? { changedSince: query.changedSince, limit }
+        : { afterSeq: query.afterSeq, limit };
+    const messages = this.listVisible(conversationId, options);
+    if (messages.length === 0) return { messages };
+    const cursor = Math.max(...messages.map((m) => m.updatedAt ?? m.createdAt));
+    return { messages, cursor };
   }
 
   /**
@@ -1036,14 +1128,23 @@ export class MessagesService {
     return this.getOrThrow(id);
   }
 
-  /** Edit a user message: content replaced, marked `edited`, FTS updated. */
-  edit(id: string, text: string): Message {
+  /**
+   * Edit a user message: content replaced, marked `edited`, FTS updated.
+   * `opts.principalId` (62.11 C4): when a caller principal is given, the row's
+   * `sender_principal_id` must match — anyone else (including the NULL rows of
+   * other senders) gets NOT_FOUND so existence is not leaked. Omitted = the
+   * single-user check exactly as before.
+   */
+  edit(id: string, text: string, opts?: { principalId?: string | null } | undefined): Message {
     const message = this.getOrThrow(id);
     if (message.senderType !== 'user') {
       throw new AppError('MESSAGE_NOT_RECALLABLE', 'Only user messages can be edited');
     }
     if (message.status === 'recalled') {
       throw new AppError('MESSAGE_NOT_RECALLABLE', 'A recalled message cannot be edited');
+    }
+    if (opts?.principalId != null && message.senderPrincipalId !== opts.principalId) {
+      throw new AppError('NOT_FOUND', `Message ${id} does not exist`);
     }
     const now = this.clock.now();
     // 保留 content 里的语义标记（origin:'voice' / delegation / widget / workbench /
@@ -1070,13 +1171,16 @@ export class MessagesService {
    * renderer shows a「已撤回」placeholder, and buffered trigger batches
    * re-read at turn start drop it.
    */
-  recall(id: string): Message {
+  recall(id: string, opts?: { principalId?: string | null } | undefined): Message {
     const message = this.getOrThrow(id);
     if (message.senderType !== 'user') {
       throw new AppError('MESSAGE_NOT_RECALLABLE', 'Only user messages can be recalled');
     }
     if (message.status === 'recalled') {
       throw new AppError('MESSAGE_NOT_RECALLABLE', 'The message was already recalled');
+    }
+    if (opts?.principalId != null && message.senderPrincipalId !== opts.principalId) {
+      throw new AppError('NOT_FOUND', `Message ${id} does not exist`);
     }
     this.db.prepare("update messages set status = 'recalled' where id = ?").run(id);
     this.db.prepare('delete from messages_fts where message_id = ?').run(id);

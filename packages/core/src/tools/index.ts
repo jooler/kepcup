@@ -4,8 +4,10 @@ import {
   GET_RUN_STEPS_DEFAULT_LIMIT,
   GET_RUN_STEPS_MAX_LIMIT,
   TOOL_OUTPUT_MAX_CHARS,
+  registerHostToolNames,
   type Message,
 } from '@kepcup/shared';
+import type { HostToolsProvider, ToolPolicy } from '../principal/types.js';
 import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { truncateToBudget } from '../agent/tokens.js';
@@ -315,6 +317,27 @@ export interface ResponseToolDeps {
    * 关联智能体以工具移交，不切换整轮 message_transport。
    */
   inkcop?: InkcopToolFacade | undefined;
+  /**
+   * 62.11 C7 / C11 / C12：当前运行主体（runs.principal_id）。缺省 / null =
+   * 单用户桶（记忆与画像工具按主体分桶时的现状）。
+   */
+  principalId?: string | null | undefined;
+  /**
+   * 62.11 C11：在册主体判定（conversation_principals）。提供时 get_user_profile
+   * 的 `member_id` 只能查当前会话在册主体（且只返回编译卡）；缺省 = 拒绝
+   * member_id 查询。
+   */
+  hasConversationPrincipal?: ((conversationId: string, principalId: string) => boolean) | undefined;
+  /**
+   * 62.11 C8 宿主工具策略：deny 的工具从 finalize 结果移除（含宿主贡献工具）。
+   * 缺省 = 不过滤（现状）。
+   */
+  toolPolicy?: ToolPolicy | undefined;
+  /**
+   * 62.11 C10 宿主贡献工具：每次 run 追加到内置工具面之后（再统一过策略）。
+   * 缺省 = 无追加（现状）。
+   */
+  hostTools?: HostToolsProvider | undefined;
 }
 
 /**
@@ -817,6 +840,71 @@ export function buildResponseTools(input: {
     },
   };
 
+  const requestNetwork: ToolDefinition<{ hosts?: string[]; reason: string }> = {
+    name: 'request_network',
+    description:
+      '当前对话处于污点保护期，沙箱命令的外部网络已被切断（本机端口不受影响）。需要联网时调用本工具申请：批准后按所选时长（仅这一次 / 本任务内 / 本对话内）放开外网；hosts 填要访问的主机（省略 = 任意主机）。任务里每张卡只弹一次；不要为绕过限制改用其他工具。',
+    parameters: Type.Object({
+      hosts: Type.Optional(
+        Type.Array(Type.String(), {
+          maxItems: 16,
+          description: '要访问的外部主机（域名，可含 *. 前缀；省略 = 任意主机）',
+        }),
+      ),
+      reason: Type.String({ description: '申请原因，会展示给用户' }),
+    }),
+    execute: async (params, ctx) => {
+      if (identity.conversationId === null || identity.botId === null) {
+        return {
+          ok: false,
+          content: '当前执行没有对话上下文，无法申请网络授权',
+          errorCode: 'INVALID_INPUT',
+        };
+      }
+      try {
+        const result = await gateway.requestNetworkAccess(
+          identity,
+          { hosts: params.hosts, reason: params.reason },
+          { signal: ctx.signal },
+        );
+        if (result.already) {
+          return {
+            ok: true,
+            content:
+              '本对话的外部网络已在此前批准的授权范围内，无需再次申请；直接重试需要联网的命令即可。',
+          };
+        }
+        const hold =
+          result.duration === 'task'
+            ? '本任务内有效'
+            : result.duration === 'conversation'
+              ? '本对话内有效（污点窗口内）'
+              : '仅对下一条命令有效';
+        const scope = result.hosts.length > 0 ? `（主机：${result.hosts.join('、')}）` : '';
+        return {
+          ok: true,
+          content: `用户已批准外部网络访问${scope}；${hold}。请重新执行需要联网的命令。`,
+        };
+      } catch (error) {
+        if (error instanceof AppError && error.code === 'APPROVAL_DENIED') {
+          return {
+            ok: false,
+            content:
+              '用户拒绝或取消了网络授权请求。不要反复重试；调整做法（离线完成，或询问用户）。',
+            errorCode: 'APPROVAL_DENIED',
+          };
+        }
+        if (error instanceof AppError && error.code === 'RUN_READ_ONLY') {
+          return { ok: false, content: error.message, errorCode: 'RUN_READ_ONLY' };
+        }
+        if (error instanceof AppError && error.code === 'INVALID_INPUT') {
+          return { ok: false, content: error.message, errorCode: 'INVALID_INPUT' };
+        }
+        throw error;
+      }
+    },
+  };
+
   const requestUnsandboxed: ToolDefinition<{
     command: string;
     cwd?: string;
@@ -1061,6 +1149,15 @@ export function buildResponseTools(input: {
             ...deps.memory,
             triggerMessages: () => deps.batchMessages ?? [],
           },
+          // 62.11 C11 / C12：当前运行主体（get_user_profile / recall / remember /
+          // feedback / forget 按主体分桶）与在册主体判定（member_id 查询门禁）。
+          // 缺省（单用户）= 旧行为。
+          ...(deps.principalId !== undefined && deps.principalId !== null
+            ? { principalId: deps.principalId }
+            : {}),
+          ...(deps.hasConversationPrincipal !== undefined
+            ? { hasConversationPrincipal: deps.hasConversationPrincipal }
+            : {}),
         })
       : [];
 
@@ -1107,8 +1204,16 @@ export function buildResponseTools(input: {
   const wikiTools = deps.wiki !== undefined ? buildWikiTools({ identity, wiki: deps.wiki }) : [];
 
   // P10 schedule tools (docs/dev/04-agent-runtime.md 工具目录, R 列).
+  // 62.11 C13：排期 / 监看工具的创建按当前运行主体归属（deps.principalId，
+  // 62.11 C7）；缺省（单用户）= 不带归属，行为不变。
   const scheduleTools =
-    deps.schedule !== undefined ? buildScheduleTools({ identity, schedule: deps.schedule }) : [];
+    deps.schedule !== undefined
+      ? buildScheduleTools({
+          identity,
+          schedule: deps.schedule,
+          ...(deps.principalId != null ? { principalId: deps.principalId } : {}),
+        })
+      : [];
 
   // W7 watch tools: an async hosted action like schedules (turn + task).
   const watchTools =
@@ -1118,6 +1223,7 @@ export function buildResponseTools(input: {
           watch: deps.watch,
           // D73 P2: a watch fetches its URL right away and on every interval — an egress channel.
           egress: (input, options) => gateway.egressCheck(identity, input, options),
+          ...(deps.principalId != null ? { principalId: deps.principalId } : {}),
         })
       : [];
 
@@ -1208,6 +1314,8 @@ export function buildResponseTools(input: {
     } catch {
       // Best effort: no card when the file vanished or stats failed.
     }
+    // D140-1: the generated artifact is a write — auto-claim its path.
+    gateway.noteFileWritten(identity, target);
   };
   const imageTools =
     deps.media !== undefined
@@ -1311,7 +1419,8 @@ export function buildResponseTools(input: {
         ]
       : [];
 
-  // 工作台工具（D90）：只给管家，只在对话轮工具面。
+  // 工作台工具（D90）：只给管家，只在对话轮工具面。62.11 C13：创建 / 读写
+  // 的事项与备忘按当前运行主体归属；缺省（单用户）= 不带归属，行为不变。
   const workbenchTools =
     deps.workbench !== undefined && deps.butler?.isButler === true
       ? buildWorkbenchTools({
@@ -1319,17 +1428,58 @@ export function buildResponseTools(input: {
           workbench: deps.workbench.host,
           triggerFromUser: deps.workbench.triggerFromUser,
           touchedExternal: deps.workbench.touchedExternal,
+          ...(deps.principalId != null ? { principalId: deps.principalId } : {}),
           ...(deps.updateNotice !== undefined
             ? { updateNoticeTodoIds: deps.updateNotice.todoIds }
             : {}),
         })
       : [];
 
+  // 62.11 C10 / C8（CoreServicesOptions.hostTools / toolPolicy）：宿主贡献工具先
+  // 拼到内置工具面之后，再对拼接结果统一过策略（先拼接再过滤——宿主工具同样受
+  // 策略约束）。最终名单同时是提示词 has* 标志的推导源（orchestrator），被拒
+  // 工具不会出现在提示词里。宿主工具名登记进 shared 的 `host` 能力包，外部
+  // 智能体（ACP）路径据此保留。两者都缺省 = 工具面与从前逐字节一致。
+  const hostToolsRaw =
+    deps.hostTools?.({
+      botId: identity.botId ?? '',
+      conversationId: identity.conversationId,
+      principalId: deps.principalId ?? null,
+      loopType: identity.loopType,
+    }) ?? [];
+  // Host tools keep their given order; a repeated name keeps its first entry
+  // (the engine would otherwise see two tools with one name).
+  const seenHostNames = new Set<string>();
+  const hostToolDefs = hostToolsRaw.filter((tool) => {
+    if (seenHostNames.has(tool.name)) return false;
+    seenHostNames.add(tool.name);
+    return true;
+  });
+  if (hostToolDefs.length > 0) registerHostToolNames(hostToolDefs.map((tool) => tool.name));
+  const policyAllows = (toolName: string): boolean => {
+    const policy = deps.toolPolicy;
+    if (policy === undefined) return true;
+    return (
+      policy(
+        {
+          botId: identity.botId ?? '',
+          conversationId: identity.conversationId,
+          principalId: deps.principalId ?? null,
+        },
+        toolName,
+      ) !== 'deny'
+    );
+  };
+  const applyToolPolicy = (tools: ToolDefinition[]): ToolDefinition[] =>
+    deps.toolPolicy === undefined ? tools : tools.filter((tool) => policyAllows(tool.name));
+
   // D73 §5.7 global dedupe: an MCP / app tool may never shadow a built-in one (a connector
   // slug `request` + tool `connection` would spell `app_request_connection`).
   const external = new Set<ToolDefinition>(mcpTools);
   const finalize = (list: ToolDefinition[]): ToolDefinition[] =>
-    dropBuiltinNameConflicts(list, external, deps.logger);
+    applyToolPolicy(
+      dropBuiltinNameConflicts([...list, ...hostToolDefs], external, deps.logger),
+    );
 
   if (identity.loopType === 'turn') {
     const taskTools =
@@ -1391,6 +1541,8 @@ export function buildResponseTools(input: {
     getRun,
     getRunSteps,
     requestAccess,
+    // D140-3：污点期断网后的网络授权申请（任务面；对话轮 / 只读 run 在网关直接拒绝）。
+    requestNetwork,
     requestUnsandboxed,
     acquireWorkdirWrite,
     gitRemote,
@@ -1608,6 +1760,12 @@ export function buildSubagentResearchTools(input: {
     | 'capabilities'
     | 'logger'
   >;
+  /**
+   * 62.11 C8 / C7：宿主工具策略与子 run 的运行主体（继承父 run）。提供策略时
+   * 最终名单过同一判定；缺省 = 不过滤（现状）。
+   */
+  principalId?: string | null;
+  toolPolicy?: ToolPolicy;
 }): ToolDefinition[] {
   const coding = buildCodingTools(
     input.identity,
@@ -1636,10 +1794,23 @@ export function buildSubagentResearchTools(input: {
     identity: input.identity,
     runs: input.deps.runs,
   });
-  return dropBuiltinNameConflicts(
+  const list = dropBuiltinNameConflicts(
     [...coding, runHistory, ...web, ...mcpTools, ...capabilityTools],
     new Set(mcpTools),
     input.deps.logger,
+  );
+  // C8：子 run 的研究工具面也受宿主策略约束（ctx 与父 run 一致）。
+  if (input.toolPolicy === undefined) return list;
+  return list.filter(
+    (tool) =>
+      input.toolPolicy!(
+        {
+          botId: input.identity.botId ?? '',
+          conversationId: input.identity.conversationId,
+          principalId: input.principalId ?? null,
+        },
+        tool.name,
+      ) !== 'deny',
   );
 }
 

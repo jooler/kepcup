@@ -46,6 +46,12 @@ export const collabPresenceEntrySchema = z.object({
   selection: collabSelectionSchema.nullable(),
   /** 服务端时钟。 */
   updatedAt: z.number(),
+  /**
+   * 团队宿主注入的权威主体身份（62.07 §1，README 固定契约「presence 条目增可选
+   * principalId」）：成员连接上由宿主逐连接绑定，自报 clientName 只作展示。
+   * 单用户宿主从不写该键——缺省休眠，条目形状与现状一致。
+   */
+  principalId: z.string().min(1).optional(),
 });
 export type CollabPresenceEntry = z.infer<typeof collabPresenceEntrySchema>;
 
@@ -178,6 +184,13 @@ export type CollabDraftSendInput = z.infer<typeof collabDraftSendInputSchema>;
 export const collabDraftChangedPayloadSchema = z.object({
   conversationId: z.string(),
   draft: collabDraftSchema,
+  /**
+   * Composer bucket of the draft (62.11 C5): the principal key the event
+   * belongs to. Present only for a non-empty bucket (a caller principal);
+   * single-user drafts (the `''` bucket) omit it, so dormant payloads stay
+   * byte-identical. The team layer filters draft events per member by it.
+   */
+  principalKey: z.string().optional(),
 });
 export type CollabDraftChangedPayload = z.infer<typeof collabDraftChangedPayloadSchema>;
 
@@ -187,12 +200,16 @@ export const collabDraftOwnerChangedPayloadSchema = z.object({
   /** owner 的连接 id（null = 无主或旧客户端未上报）。 */
   ownerConnectionId: collabConnectionIdSchema.nullable(),
   expiresAt: z.number().nullable(),
+  /** 62.11 C5：草稿桶（主体 key）；单用户桶（''）不带该字段。 */
+  principalKey: z.string().optional(),
 });
 export type CollabDraftOwnerChangedPayload = z.infer<typeof collabDraftOwnerChangedPayloadSchema>;
 
 export const collabDraftClearedPayloadSchema = z.object({
   conversationId: z.string(),
   byClientId: collabClientIdSchema,
+  /** 62.11 C5：被清空的草稿桶（主体 key）；单用户桶（''）不带该字段。 */
+  principalKey: z.string().optional(),
 });
 export type CollabDraftClearedPayload = z.infer<typeof collabDraftClearedPayloadSchema>;
 

@@ -3,7 +3,7 @@
   import { fade } from 'svelte/transition';
   import { X, Monitor, Pencil, Info, Blocks, ListTodo, StickyNote } from '@lucide/svelte';
   import type { BotProfile } from '@kepcup/shared';
-  import { t, type MessageKey } from '$lib/i18n';
+  import { t, errorText, type MessageKey } from '$lib/i18n';
   import { motionMs, MOTION } from '$lib/motion';
   import { toast } from 'svelte-sonner';
   import { shell } from '$lib/stores/shell.svelte';
@@ -52,6 +52,14 @@
   import AvatarPicker from './AvatarPicker.svelte';
   import EgressSummary from '$lib/features/bot-panel/EgressSummary.svelte';
   import ExportBotTemplateButton from '$lib/features/bot-template/ExportBotTemplateButton.svelte';
+  import { teamContext } from '$lib/features/team/team-context.svelte';
+  import { loadTeamBots, teamBots, teamBotsOf } from '$lib/features/team/team-bots.svelte';
+  import {
+    botPanelEditAction,
+    botPanelRemoveAction,
+    teamBotPatchOfProfile,
+  } from '$lib/features/team/team-bot-dialogs.svelte';
+  import TeamWorkdirPicker from '$lib/features/team/TeamWorkdirPicker.svelte';
   import { showBrowser, closeBrowser, BROWSER_SHOW_BTN_CLASS } from './show-browser';
   import { browserPages } from '$lib/stores/browser-pages.svelte';
   import { deepEqual, isEngineOnlyChange, reconcileBotDraft } from './bot-draft';
@@ -255,6 +263,116 @@
   let removing = $state(false);
 
   /**
+   * 「移除 Bot」行的成员面判定：团队服务器上 core `bots.delete` /
+   * `bots.deletionPreview` 对成员一律 deny（method-policy bot-edit 拒绝面）——
+   * 旧链路点击无反应的根因。所有者 Bot（canDelete）改走 `team.bots.delete`，
+   * 其余（butler / 管理员共享 / 非所有者 / 清单未解析）隐藏该行；非团队上下文
+   * 维持本地 core 链路。清单由下方 effect 自足加载，面板不依赖侧栏的加载时机。
+   */
+  const removeAction = $derived(
+    botPanelRemoveAction({
+      teamActive: teamContext.active,
+      conversationSource: chat.currentSource,
+      botId: bot?.id ?? null,
+      systemButler: bot?.systemRole === 'butler',
+      resolveSlice: teamBotsOf,
+    }),
+  );
+  /**
+   * 参数编辑 / 工作路径的成员面判定（botPanelRemoveAction 的姊妹函数）：所有者
+   * Bot（canEdit）→ Profile 保存与工作路径改绑改走 `team.bots.update`（core
+   * `bots.update` / `workdirs.*` 在服务器上是 bot-edit / workdir-pick 拒绝面，
+   * 旧链路「改参数静默 403」「工作路径行缺失 / 点击报错」即源于此）；其余回退
+   * 本地链路（行为不变）。与 removeAction 共用同一条自足加载 effect。
+   */
+  const editAction = $derived(
+    botPanelEditAction({
+      teamActive: teamContext.active,
+      conversationSource: chat.currentSource,
+      botId: bot?.id ?? null,
+      resolveSlice: teamBotsOf,
+    }),
+  );
+  /**
+   * 当前对话是否在团队来源上（web 团队端点 / 桌面融合团队来源）：本机会话工作
+   * 目录选择器（workdirs.* 全是本机 core 面）对团队对话不存在——服务端 deny
+   * 之外，客户端也按同一规则隐藏整行（B-3 惯例）。
+   */
+  const teamConversation = $derived(teamContext.active || chat.currentSource !== 'local');
+  // 成员面 Bot 清单自足加载：键只取对话身份与团队态（不依赖切片内容，避免
+  // 「加载 → 切片更新 → 重触发」回环）。
+  $effect(() => {
+    const teamSource = teamContext.active
+      ? 'local'
+      : (chat.currentSource !== 'local' ? chat.currentSource : null);
+    const botId = bot?.id ?? null;
+    if (teamSource !== null && botId !== null) void loadTeamBots(teamSource);
+  });
+
+  /**
+   * 成员面的模型选项（team.bots.modelOptions，B-2 服务器启用列表）：团队端点上
+   * settingsStore.providers 恒空（providers.list 是 admin plane）、桌面融合则
+   * 是本机清单——都不代表服务器。编辑成员面 Bot 时以下拉数据源注入表单
+   * （BotProfileForm 的 modelOptions 覆盖）；非成员面为 null（表单用本机推导）。
+   */
+  let teamModelOptions = $state<Array<{ ref: string; label: string }> | null>(null);
+  $effect(() => {
+    if (editAction.kind !== 'team') {
+      teamModelOptions = null;
+      return;
+    }
+    const source = editAction.source;
+    void teamBots
+      .modelOptions(source)
+      .then((options) => {
+        if (editAction.kind !== 'team' || editAction.source !== source) return;
+        teamModelOptions = options.map((option) => ({ ref: option.id, label: option.label }));
+      })
+      .catch(() => {
+        teamModelOptions = null;
+      });
+  });
+
+  // --- 成员面工作路径改绑（团队上下文所有者 Bot，B-10）---------------------------
+  let teamWorkdirOpen = $state(false);
+  /** 选中的 opaque 选项 key（服务端解析真实路径；成员端不见路径）。 */
+  let teamWorkdirSelected = $state<string | null>(null);
+  let teamWorkdirSaving = $state(false);
+  let teamWorkdirError = $state<string | null>(null);
+
+  /** 工作路径行的成员面变体（undefined = 团队行不渲染；摘要 = 展示名）。 */
+  const teamWorkdirRow = $derived(
+    editAction.kind === 'team'
+      ? {
+          summary: editAction.view.workdirName ?? t('teamBot.workdirUnbound'),
+        }
+      : undefined,
+  );
+
+  function openTeamWorkdir(): void {
+    if (editAction.kind !== 'team') return;
+    teamWorkdirSelected = editAction.view.workdirKey ?? null;
+    teamWorkdirError = null;
+    teamWorkdirOpen = true;
+  }
+
+  /** 改绑 Bot 工作路径（team.bots.update { workdirKey }）；服务端校验 B-10 边界。 */
+  async function confirmTeamWorkdir(): Promise<void> {
+    if (editAction.kind !== 'team' || teamWorkdirSelected === null) return;
+    const { source, view } = editAction;
+    teamWorkdirSaving = true;
+    teamWorkdirError = null;
+    try {
+      await teamBots.updateBot(source, view.id, { workdirKey: teamWorkdirSelected });
+      teamWorkdirOpen = false;
+    } catch (error) {
+      teamWorkdirError = (error as { code?: string } | undefined)?.code ?? 'INTERNAL';
+    } finally {
+      teamWorkdirSaving = false;
+    }
+  }
+
+  /**
    * The bot leads projects: deletion is blocked (the backend would reject with
    * PROJECT_LEAD_REQUIRED). Jump to that project's members section so the
    * user can hand the lead over first.
@@ -302,19 +420,54 @@
     }
   });
 
-  async function saveProfile(id: string, profile: BotProfile): Promise<void> {
-    // base = 草稿出发时的版本（最近一次保存 / 合并进来的服务端 profile）：core 据此三方合并，
-    // 草稿没碰的字段不会把 Bot 刚直改或设置卡刚写的值覆盖回去。换 Bot 的补救保存不带 base。
-    const base =
-      savedProfile !== null && draftBotId === id
-        ? ($state.snapshot(savedProfile) as BotProfile)
-        : null;
+  /**
+   * 一份完整 Profile 的持久化分派点（自动保存 / 直编 / 预置头像共用）：成员面
+   * Bot（canEdit）走 `team.bots.update`（子结构整体替换，服务端三方合并回当前
+   * Profile），本机 Bot 走 core `bots.update`（base 三方合并防过期覆盖）。
+   */
+  async function persistProfile(
+    id: string,
+    profile: BotProfile,
+    base: BotProfile | null,
+  ): Promise<void> {
+    if (editAction.kind === 'team') {
+      try {
+        await teamBots.updateBot(editAction.source, id, teamBotPatchOfProfile(profile));
+        // 成员面没有回传 Profile；以送出的草稿为基线做回声抑制，服务端收敛
+        //（如 MCP 清单过滤）经 bot.updated 到达后由 reconcile 三方合并进草稿。
+        savedProfile = $state.snapshot(profile) as BotProfile;
+      } catch (error) {
+        toast.error(
+          errorText(
+            (error as { code?: string } | undefined)?.code,
+            t('teamBot.editSaveFailed'),
+          ),
+        );
+      }
+      return;
+    }
     try {
-      const updated = await contacts.update(id, $state.snapshot(profile) as BotProfile, base);
+      const updated = await contacts.update(
+        id,
+        $state.snapshot(profile) as BotProfile,
+        // base = 草稿出发时的版本（最近一次保存 / 合并进来的服务端 profile）：core 据此三方合并，
+        // 草稿没碰的字段不会把 Bot 刚直改或设置卡刚写的值覆盖回去。换 Bot 的补救保存不带 base。
+        base,
+      );
       savedProfile = updated.profile;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
     }
+  }
+
+  async function saveProfile(id: string, profile: BotProfile): Promise<void> {
+    await persistProfile(
+      id,
+      profile,
+      savedProfile !== null && draftBotId === id
+        ? ($state.snapshot(savedProfile) as BotProfile)
+        : null,
+    );
   }
 
   /**
@@ -370,19 +523,14 @@
     // base = 写入前所基于的整份 profile（savedProfile ?? bot.profile）：core 三方合并，
     // 没改的字段（如 Bot 刚直改的模型）不会被这份改名 / 简介盖回去。
     const base = $state.snapshot(savedProfile ?? bot.profile) as BotProfile;
-    try {
-      const updated = await contacts.update(
-        bot.id,
-        {
-          ...base,
-          identity: { ...base.identity, ...patch },
-        } as BotProfile,
-        base,
-      );
-      savedProfile = updated.profile;
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error));
-    }
+    await persistProfile(
+      bot.id,
+      {
+        ...base,
+        identity: { ...base.identity, ...patch },
+      } as BotProfile,
+      base,
+    );
   }
 
   // --- 名称 / 简介点按直编 -------------------------------------------------
@@ -392,8 +540,8 @@
   let editingBio = $state(false);
   let bioDraft = $state('');
 
-  /** 编辑态输入框挂载即聚焦，点按后光标立即可见。 */
-  function focusOnMount(node: HTMLInputElement): void {
+  /** 编辑态输入控件挂载即聚焦，点按后光标立即可见（input / textarea 通用）。 */
+  function focusOnMount(node: HTMLElement): void {
     node.focus();
   }
 
@@ -426,20 +574,41 @@
 
   async function askRemove(): Promise<void> {
     if (!bot) return;
-    removePreview = await contacts.deletionPreview(bot.id);
+    // 成员面 Bot：core bots.deletionPreview 在服务器上对成员 deny，确认框直接
+    // 走成员面文案（公开 Bot 在框内追加「其他成员将无法访问」警示）。本地链路
+    // 照旧拉预览；预览失败显式 toast，不再静默无反应。
+    if (removeAction.kind === 'team') {
+      removePreview = { conversations: 0, messages: 0, ledProjects: [] };
+      removeOpen = true;
+      return;
+    }
+    try {
+      removePreview = await contacts.deletionPreview(bot.id);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+      return;
+    }
     removeOpen = true;
   }
 
   async function confirmRemove(): Promise<void> {
     if (!bot) return;
-    // remove 生效后派生值 bot 即为 null，名字要在 await 前捕获。
+    // remove 生效后派生值 bot / removeAction 即翻空，判定与名字要在 await 前捕获。
     const { id, name } = bot;
+    const teamSource = removeAction.kind === 'team' ? removeAction.source : null;
     removing = true;
     try {
-      await contacts.remove(id);
+      if (teamSource !== null) {
+        await teamBots.deleteBot(teamSource, id);
+      } else {
+        await contacts.remove(id);
+      }
       removeOpen = false;
       toast.success(t('contacts.deleteTitle', { name }));
       chat.close();
+    } catch (error) {
+      // 服务端拒绝（PROJECT_LEAD_REQUIRED / FORBIDDEN / 断线）显式呈现。
+      toast.error(errorText((error as { code?: string } | undefined)?.code, t('teamBot.deleteFailed')));
     } finally {
       removing = false;
     }
@@ -572,28 +741,33 @@
             </button>
           {/if}
           {#if editingBio}
-            <!-- 空简介时宽度由 placeholder 撑起（field-sizing:content 对空值取
-                 placeholder 尺寸），与展示态的占位文案宽度衔接。 -->
-            <input
-              class="field-sizing-content h-6 max-w-full min-w-12 rounded-md bg-accent px-2 text-center text-sm outline-none placeholder:text-muted-foreground"
+            <!-- 多行直编：Enter 换行、Cmd/Ctrl+Enter 提交、Esc 取消、blur 提交；
+                 宽度与展示态同约束（min(36ch,100%)），两态切换不跳动；空简介时宽度
+                 由 placeholder 撑起（field-sizing:content 对空值取 placeholder
+                 尺寸），与展示态的占位文案宽度衔接。 -->
+            <textarea
+              class="field-sizing-content max-w-[min(36ch,100%)] min-w-12 resize-none rounded-md bg-accent px-2 py-0.5 text-center text-sm outline-none placeholder:text-muted-foreground"
               bind:value={bioDraft}
               maxlength={500}
+              rows={1}
               placeholder={t('rightPanel.bioPlaceholder')}
               use:focusOnMount
               onkeydown={(e) => {
-                if (e.key === 'Enter') void commitBio();
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  void commitBio();
+                }
                 if (e.key === 'Escape') {
                   e.preventDefault();
                   editingBio = false;
                 }
               }}
               onblur={() => void commitBio()}
-              data-testid="bot-bio-inline-input"
-            />
+              data-testid="bot-bio-inline-input"></textarea>
           {:else}
             <button
               type="button"
-              class="h-6 max-w-full truncate rounded-md px-2 py-0.5 text-sm text-muted-foreground transition-colors hover:bg-accent {bot.bio
+              class="max-w-[min(36ch,100%)] rounded-md px-2 py-0.5 text-sm break-words whitespace-pre-wrap text-muted-foreground transition-colors hover:bg-accent {bot.bio
                 ? ''
                 : 'italic'}"
               onclick={startBioEdit}
@@ -608,7 +782,7 @@
             <AgentBadge agentId={bot.profile.runtime.agent.id} />
           {/if}
         </div>
-        <AvatarPicker bind:open={pickerOpen} {bot} />
+        <AvatarPicker bind:open={pickerOpen} {bot} updateProfile={persistProfile} />
       </div>
 
       <!-- 详情 / 组件 / 任务（D116）+ 便签（仅私聊）。横向居中 + 图标；手写 pill 条
@@ -698,7 +872,10 @@
                 conversationId={conversation?.id}
                 workdirId={conversation?.workdirId ?? null}
                 workdirDisabled={conversation?.readOnly}
-                deletable={bot.systemRole !== 'butler'}
+                teamConversation={teamConversation}
+                teamWorkdir={teamWorkdirRow}
+                onOpenTeamWorkdir={openTeamWorkdir}
+                deletable={removeAction.kind !== 'hidden'}
                 onOpenSection={(section) => (detail = { kind: 'profile', section })}
                 onOpenWorkdir={() => workdirSelector?.openWorkdir()}
                 onOpenMemory={() => (detail = { kind: 'memory' })}
@@ -726,6 +903,8 @@
                 bind:profile={draft}
                 showIdentity={false}
                 botId={bot?.id}
+                modelOptions={teamModelOptions ?? undefined}
+                teamManaged={teamConversation}
                 onBrowserProfileConfirm={confirmBrowserProfile}
                 section={detail.section}
               />
@@ -779,7 +958,9 @@
                             >{t(
                               grant.duration === 'once'
                                 ? 'rightPanel.grantOnce'
-                                : 'rightPanel.grantConversation',
+                                : grant.duration === 'task'
+                                  ? 'rightPanel.grantTask'
+                                  : 'rightPanel.grantConversation',
                             )}</span
                           >
                           <Button
@@ -800,7 +981,7 @@
               {:else if detail.kind === 'memory'}
                 <MemoryTab botId={bot.id} active={true} />
               {:else if detail.kind === 'skills'}
-                <SkillsTab botId={bot.id} active={true} />
+                <SkillsTab botId={bot.id} active={true} teamManaged={teamConversation} />
               {:else if detail.kind === 'wiki'}
                 <WikiBrowser
                   owner={{ kind: 'bot', id: bot.id }}
@@ -831,10 +1012,16 @@
       <DialogTitle>{t('contacts.deleteTitle', { name: bot?.name ?? '' })}</DialogTitle>
     </DialogHeader>
     <p class="text-sm text-muted-foreground" data-testid="bot-remove-body">
-      {t('contacts.deleteBody', {
-        conversations: removePreview.conversations,
-        messages: removePreview.messages,
-      })}
+      {#if removeAction.kind === 'team' && removeAction.view.mode === 'public'}
+        {t('contacts.deleteBodyTeamPublic')}
+      {:else if removeAction.kind === 'team'}
+        {t('contacts.deleteBodyTeam')}
+      {:else}
+        {t('contacts.deleteBody', {
+          conversations: removePreview.conversations,
+          messages: removePreview.messages,
+        })}
+      {/if}
     </p>
     {#if (bot?.profile.runtime.agent.id ?? '').length > 0}
       <p class="text-xs text-muted-foreground" data-testid="bot-remove-body-agent-note">
@@ -886,5 +1073,51 @@
         </Button>
       {/if}
     </DialogFooter>
+  </DialogContent>
+</Dialog>
+
+<!-- 成员面工作路径改绑（团队上下文所有者 Bot）：team.bots.workdirOptions 选项集
+     （预置根 / 我的目录子树，B-10 opaque key）内选择，team.bots.update
+     { workdirKey } 落绑；无自由路径输入——成员永不浏览任意 FS，服务器真实路径
+     不出服务端。 -->
+<Dialog bind:open={teamWorkdirOpen}>
+  <DialogContent class="max-w-lg" data-testid="bot-team-workdir-dialog">
+    <DialogHeader>
+      <DialogTitle>{t('teamBot.workdirLabel')}</DialogTitle>
+    </DialogHeader>
+    {#if editAction.kind === 'team'}
+      <p class="text-xs text-muted-foreground" data-testid="bot-team-workdir-current">
+        {t('teamBot.workdirCurrent', {
+          path: editAction.view.workdirName ?? t('teamBot.workdirUnbound'),
+        })}
+      </p>
+      <TeamWorkdirPicker
+        source={editAction.source}
+        selected={teamWorkdirSelected}
+        adminOnly={editAction.view.mode !== 'private'}
+        onSelect={(path) => (teamWorkdirSelected = path)}
+      />
+      {#if teamWorkdirError !== null}
+        <p class="text-xs text-destructive" data-testid="bot-team-workdir-error">
+          {errorText(teamWorkdirError, t('teamBot.editSaveFailed'))}
+        </p>
+      {/if}
+      <DialogFooter>
+        <Button
+          variant="outline"
+          onclick={() => (teamWorkdirOpen = false)}
+          data-testid="bot-team-workdir-cancel"
+        >
+          {t('contacts.cancel')}
+        </Button>
+        <Button
+          disabled={teamWorkdirSaving || teamWorkdirSelected === null}
+          onclick={() => void confirmTeamWorkdir()}
+          data-testid="bot-team-workdir-confirm"
+        >
+          {t('common.save')}
+        </Button>
+      </DialogFooter>
+    {/if}
   </DialogContent>
 </Dialog>

@@ -32,6 +32,7 @@
   import { enabledPluginCount } from '$lib/features/bot-panel/bot-plugins';
   import { plugins } from '$lib/features/plugins/plugins.svelte';
   import { inkcopCollabEnabled } from '$lib/features/inkcop-collab';
+  import { isTeamHidden } from '$lib/features/team/surface-gate';
   import type { BotConfigSection } from '$lib/features/bot-panel/bot-config-sections';
   import ConfigMenuGroup from './ConfigMenuGroup.svelte';
   import MenuRow from './MenuRow.svelte';
@@ -43,6 +44,18 @@
     conversationId,
     workdirId,
     workdirDisabled = false,
+    /**
+     * 当前对话在团队来源上（web 团队端点 / 桌面融合团队对话）：本机会话工作
+     * 目录行不渲染——WorkdirSelector 背后的 workdirs.* 全是本机 core 面，团队
+     * 服务器上是 workdir-pick 拒绝面（服务端 deny，前端按同一规则隐藏，B-3）。
+     */
+    teamConversation = false,
+    /**
+     * 成员面工作路径行（团队上下文所有者 Bot）：Bot 级绑定，选项集改绑入口；
+     * undefined = 不渲染。渲染时优先于本机会话工作目录行。
+     */
+    teamWorkdir,
+    onOpenTeamWorkdir,
     /** 管家（D70）不可删除：不渲染「移除 Bot」行。 */
     deletable = true,
     onOpenSection,
@@ -60,6 +73,9 @@
     conversationId: string | undefined;
     workdirId: string | null;
     workdirDisabled?: boolean;
+    teamConversation?: boolean;
+    teamWorkdir?: { summary: string };
+    onOpenTeamWorkdir?: () => void;
     deletable?: boolean;
     onOpenSection: (section: BotConfigSection) => void;
     onOpenWorkdir: () => void;
@@ -155,7 +171,22 @@
 </script>
 
 <div class="space-y-4" data-testid="bot-menu">
-  {#if conversationId !== undefined}
+  {#if conversationId !== undefined && teamWorkdir !== undefined}
+    <!-- 成员面工作路径行（团队上下文所有者 Bot，B-10）：Bot 级绑定（打开直聊时
+         服务端自动绑到会话），摘要 = 绑定目录名；点击进选项集改绑弹框。 -->
+    <ConfigMenuGroup>
+      <MenuRow
+        icon={FolderOpen}
+        title={t('teamBot.workdirLabel')}
+        summary={teamWorkdir.summary}
+        testid="bot-config-row-workdir-team"
+        onclick={() => onOpenTeamWorkdir?.()}
+      />
+    </ConfigMenuGroup>
+  {:else if conversationId !== undefined && !teamConversation && !isTeamHidden('workdir-pick')}
+    <!-- 本机会话工作目录行（P04）：团队对话不渲染（见 teamConversation 注释）；
+         'workdir-pick' 被拒 surfaces 时同样隐藏——选择入口不存在（工作目录由
+         服务端 workdirRoots 供给，62.08 §2）。 -->
     <ConfigMenuGroup>
       <MenuRow
         icon={FolderOpen}

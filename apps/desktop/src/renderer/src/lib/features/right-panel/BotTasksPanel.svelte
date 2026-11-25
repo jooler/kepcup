@@ -13,6 +13,7 @@
   import { tasks } from '$lib/stores/tasks.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
+  import { shell } from '$lib/stores/shell.svelte';
   import { Button } from '$lib/components/ui/button';
   import { botTasks } from './bot-tasks.svelte';
 
@@ -36,9 +37,11 @@
   const doneItems = $derived(items.filter((entry) => !isActiveTask(entry)));
 
   function open(task: TaskView, event: Event): void {
-    // 覆盖层形态（窄屏 / 宽屏放不下并排右栏）：右栏就是全屏覆盖层，任务详情页
-    // 在它背后——先收起覆盖层再打开，否则点击「没有任何可见反馈」。
+    // 覆盖层 / 抽屉形态下任务详情页都在右栏背后——先收层再打开，否则点击
+    //「没有任何可见反馈」：窄屏全屏覆盖层收 botDetailOpen，宽屏中窄的覆盖
+    // 抽屉收 rightPanelCollapsed（并排形态不需要，右栏与任务详情同屏）。
     if (sidebarLayout.panelAsOverlay) narrowLayout.closeBotDetail();
+    else if (sidebarLayout.panelAsDrawer) shell.rightPanelCollapsed = true;
     const trigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
     // 台账记任务自己的会话：切回该会话时任务页原位恢复（与任务卡打开同语义）。
     tasks.openDetail(task.taskId, trigger, task.conversationId);

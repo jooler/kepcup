@@ -23,6 +23,8 @@ KepCup 是一款 **OpenMind** 产品。
 
 OpenMind 指的是开放*思考*——产品意图、难题本身，以及模块如何咬合——而不只是开放源码树。在 AI 时代，这一点比「只开代码」走得更远：任何人都可以用编程模型与智能体重建这些想法，或把它们折叠进自己的产品。KepCup 可免费使用，设计本身也刻意做成可复用的。
 
+**一个刻意的例外**：团队服务器（`apps/team-server`——成员账号、团队协作、管理台）是**闭源的商业组件**。本仓在该路径只保留一个说明文档；真实代码在开发期以嵌套私有仓的形式挂载在那里，客户端（desktop）与共享契约保持开源。见 [docs/design/63-closed-source-team-server.md](docs/design/63-closed-source-team-server.md) 与 [apps/team-server/README.md](apps/team-server/README.md)。
+
 ## 什么是 KepCup
 
 KepCup 是开源的 **Personal Agent**（多 Bot 团队形态）。你创建 Bot，赋予权限与工作目录，它们与你协作、彼此协作——**而无需把数据交给你无法掌控的主机**。作为由你端到端掌控的多 Bot 助手，它可以替代托管式队友产品（如 Grok Bot、Muse、Dot）。

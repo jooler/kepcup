@@ -11,7 +11,13 @@
   let {
     tools,
     active,
-  }: { tools: Array<Extract<TaskRunEntry, { kind: 'tool' }>>; active: boolean } = $props();
+    taskId,
+  }: {
+    tools: Array<Extract<TaskRunEntry, { kind: 'tool' }>>;
+    active: boolean;
+    /** 透传给展开卡：运行中的 shell 命令在右上角提供「停止」。 */
+    taskId?: string;
+  } = $props();
 
   let open = $state(true);
   /** Manual per-row overrides; unset rows follow the failed-auto-expand default. */
@@ -99,7 +105,7 @@
           </button>
           {#if isOpen(tool)}
             <div class="px-2 pb-2">
-              <TaskRunToolCard entry={tool} {active} />
+              <TaskRunToolCard entry={tool} {active} {taskId} />
             </div>
           {/if}
         </div>

@@ -1,4 +1,5 @@
 import { MY_STATE_COMMITMENT_HORIZON_MS, type Conversation, type Run } from '@kepcup/shared';
+import { passesAudience, type RetrievalAudience } from './retrieve.js';
 import type { MemoryStore } from './store.js';
 
 export interface MyStateInput {
@@ -13,6 +14,16 @@ export interface MyStateInput {
   getConversation(id: string): Conversation | null;
   /** Loads a trigger message of a run (for the 30-char preview). */
   getMessage(id: string): { content: unknown } | null;
+  /**
+   * C12 audience (62.05 §3): commitments are filtered by the same audience
+   * rule as retrieval, and in-flight runs are narrowed to conversations inside
+   * the current audience — a direct chat lists only this conversation's runs,
+   * a project lists the project and its card / task conversations. Absent =
+   * single-user status quo (no narrowing).
+   */
+  audience?: RetrievalAudience;
+  /** Maps a conversation id to its project (card → parent); used for run narrowing. */
+  resolveProjectScope?: (conversationId: string) => string | null;
 }
 
 /**
@@ -27,6 +38,11 @@ export function buildMyState(input: MyStateInput): string[] {
   const commitments = input.store
     .commitments()
     .filter((item) => item.dueAt !== null && item.dueAt > input.now && item.dueAt <= horizon)
+    .filter((item) =>
+      input.audience === undefined
+        ? true
+        : passesAudience(item, input.audience, input.resolveProjectScope),
+    )
     .sort((a, b) => (a.dueAt ?? 0) - (b.dueAt ?? 0));
   for (const item of commitments) {
     const due = new Date(item.dueAt!).toISOString().slice(0, 10);
@@ -42,7 +58,24 @@ export function buildMyState(input: MyStateInput): string[] {
         run.status === 'waiting_approval' ||
         run.status === 'waiting_lease'),
   );
+  // C12 run narrowing: only when a principal is actually in play (the audience
+  // carries a principal id) — otherwise the cross-conversation listing stays
+  // exactly as before (dormancy).
+  const audience = input.audience;
+  const inAudience = (conversationId: string): boolean => {
+    if (audience === undefined || audience.principalId === null || audience.principalId === '') {
+      return true;
+    }
+    if (audience.projectConversationId !== null) {
+      const scope =
+        input.resolveProjectScope?.(conversationId) ?? conversationId;
+      return scope === audience.projectConversationId;
+    }
+    // Direct chat: the audience conversation itself.
+    return conversationId === audience.conversationId;
+  };
   for (const run of elsewhere) {
+    if (!inAudience(run.conversationId!)) continue;
     const conversation = input.getConversation(run.conversationId!);
     if (conversation === null) continue;
     const name =

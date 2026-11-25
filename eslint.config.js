@@ -18,10 +18,18 @@ export default tseslint.config(
       // D102 headless 服务端：web 构建产物（pack-server.mjs 生成）与打包暂存目录。
       'apps/server/web/**',
       'release-server/**',
+      // D126 team server: web build artifact served from the package dir
+      // (desktop render layer build). console 的源码在私有仓子目录里正常参与
+      // lint；其构建产物 console/dist 由全局 **/dist/** 覆盖。
+      'apps/team-server/web/**',
       // D122 手机原生壳:cap add 生成的原生工程(Java/Swift/ObjC,由 Xcode /
       // Android Studio 维护),web 构建产物与同步资产已被各自 .gitignore 覆盖。
       'apps/mobile/android/**',
       'apps/mobile/ios/**',
+      // T11 收口：本机 web 构建产物（relay 托管的压缩 bundle）与 iOS archive
+      // 里的资产副本——git 已忽略的生成物，与 apps/server/web 同类，不进 lint。
+      'infra/cloudflare/relay/public/assets/**',
+      'apps/mobile/release/**',
       'packages/core/src/**/migrations/**',
       // P12 rootfs build scripts: distro-side CI artifacts (CommonJS/bash by
       // contract, executed inside the image build — not app source).
@@ -106,6 +114,22 @@ export default tseslint.config(
     // D102 headless 服务端：CLI / 服务端控制台输出就是产品面（二维码、配对链接、
     // 设备列表），与桌面「renderer 不许 console」的约束不同域。
     files: ['apps/server/src/**', 'apps/server/test/**'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
+  {
+    // D126 team server：同 server——CLI 输出与服务端日志是产品面，不适用
+    // 「renderer 不许 console」的约束。
+    files: ['apps/team-server/server/src/**', 'apps/team-server/server/test/**'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
+  {
+    // T10-B 管理台（D133）：对齐 apps/server 先例放开 no-console（新应用；
+    // 服务端日志与运维排查输出不属于桌面 renderer 的约束域）。
+    files: ['apps/team-server/console/src/**', 'apps/team-server/console/test/**'],
     rules: {
       'no-console': 'off',
     },

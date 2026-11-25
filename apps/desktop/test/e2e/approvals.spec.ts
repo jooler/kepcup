@@ -124,8 +124,9 @@ test('access approval card appears above the composer and leaves the transcript'
     await expect(card).toBeVisible({ timeout: 60_000 });
     await expect(card).toBeFocused();
 
-    // 键盘操作：按 2 选择「本对话内一直允许」，Enter 批准。
-    await card.press('2');
+    // 键盘操作：三档时长（1 仅这一次 / 2 本任务内 / 3 本对话内），按 3 选择
+    // 「本对话内一直允许」，Enter 批准。
+    await card.press('3');
     await card.press('Enter');
 
     // The popup goes away. The transcript does not keep a folded record.

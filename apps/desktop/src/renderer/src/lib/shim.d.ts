@@ -43,6 +43,108 @@ declare global {
         }): Promise<string | null>;
         /** 对话里 @ 本地文件/文件夹：只返回路径与类型，不上传文件字节。 */
         selectLocalPath(): Promise<{ path: string; kind: 'file' | 'folder' } | null>;
+        /**
+         * T7 融合视图：团队服务器凭据 / 多账号 / 桥接启停（钉死契约——A2 按此消费；
+         * 实现见 apps/desktop/src/main/team-servers.ts）。token / 密码永不出主进程：
+         * 任何返回值都不含凭据字段。错误约定：reject 的 Error.message 为
+         * `JSON.stringify({code, message, details?})`（code 取 shared ERROR_CODES；
+         * JSON.parse 失败按通用错误处理）。可选字段——web 垫片不提供（判空兜底）。
+         */
+        teamServers?: {
+          list(): Promise<
+            Array<{
+              serverHash: string;
+              url: string;
+              /** 用户在本机起的显示名（'' = 未设，UI 回退显示 url）。 */
+              name: string;
+              accounts: Array<{
+                memberId: string;
+                username: string;
+                displayName: string;
+                remembered: boolean;
+              }>;
+              activeMemberId: string | null;
+              status: 'idle' | 'connecting' | 'connected' | 'unauthenticated' | 'error';
+            }>
+          >;
+          add(input: { url: string }): Promise<{ serverHash: string }>;
+          remove(input: { serverHash: string }): Promise<{ ok: true }>;
+          /** 本机重命名（name trim 落盘，空 = 清除回退显示 url）；只存本机。 */
+          rename(input: { serverHash: string; name: string }): Promise<{ ok: true }>;
+          login(input: {
+            serverHash: string;
+            username: string;
+            password: string;
+            remember: boolean;
+          }): Promise<{ member: { id: string; displayName: string } }>;
+          logout(input: { serverHash: string }): Promise<{ ok: true }>;
+          switchAccount(input: { serverHash: string; memberId: string }): Promise<{ ok: true }>;
+          connect(input: { serverHash: string }): Promise<{ ok: true }>;
+          disconnect(input: { serverHash: string }): Promise<{ ok: true }>;
+          probe(input: {
+            url: string;
+          }): Promise<{
+            reachable: boolean;
+            kind: 'team' | 'personal' | 'unknown';
+            authenticated?: boolean;
+            member?: { id: string; displayName: string };
+            detail?: string;
+          }>;
+          onChanged(cb: () => void): () => void;
+        };
+        /**
+         * T8 客户端本地缓存（platform.teamCache.*，README 固定契约）：分区整库加密的
+         * 只读镜像（主进程 team-cache/ 实现）。会话 / 消息视图字段与
+         * team.bootstrap / messages.list 完全一致（shared conversationCacheSchema /
+         * messageCacheSchema）。错误约定同 teamServers。可选字段——web 垫片不提供
+         * （web 缓存走渲染层 IndexedDB 适配器，同名 TeamCacheStore 接口）。
+         */
+        teamCache?: {
+          open(input: { serverHash: string; memberId: string }): Promise<{ ok: true }>;
+          close(input: { serverHash: string; memberId: string }): Promise<{ ok: true }>;
+          putConversations(input: {
+            serverHash: string;
+            memberId: string;
+            conversations: unknown[];
+            replace?: boolean;
+          }): Promise<{ ok: true }>;
+          putMessages(input: {
+            serverHash: string;
+            memberId: string;
+            conversationId: string;
+            messages: unknown[];
+            replace?: boolean;
+          }): Promise<{ ok: true }>;
+          getConversations(input: {
+            serverHash: string;
+            memberId: string;
+          }): Promise<{ conversations: unknown[] }>;
+          getMessages(input: {
+            serverHash: string;
+            memberId: string;
+            conversationId: string;
+            limit?: number;
+            beforeSeq?: number;
+          }): Promise<{ messages: unknown[] }>;
+          putAttachment(input: {
+            serverHash: string;
+            memberId: string;
+            key: string;
+            bytes: string;
+          }): Promise<{ ok: true }>;
+          getAttachment(input: {
+            serverHash: string;
+            memberId: string;
+            key: string;
+          }): Promise<{ bytes: string } | { missing: true }>;
+          clearPartition(input: { serverHash: string; memberId: string }): Promise<{ ok: true }>;
+          clearServer(input: { serverHash: string }): Promise<{ ok: true }>;
+          usage(input: {
+            serverHash: string;
+            memberId: string;
+          }): Promise<{ cacheBytes: number | null; attachmentLimitBytes: number }>;
+          setAttachmentLimit(input: { limitBytes: number }): Promise<{ ok: true }>;
+        };
       };
       /** Syncs nativeTheme.themeSource (macOS vibrancy material follows the app theme). */
       setNativeThemeSource(mode: 'light' | 'dark' | 'system'): Promise<void>;
@@ -116,6 +218,8 @@ declare global {
       checkForUpdate(): Promise<{ ok: boolean; message?: string }>;
       /** BR-P13-002: re-arms the gate's drain poll (「继续等待」). */
       keepWaitingOnUpdate(): Promise<void>;
+      /** 「取消更新」：停下本次下载并跳过该版本（gate 相位守卫：仅 downloading 有效）。 */
+      cancelUpdateDownload(): Promise<void>;
       /** dev/e2e-only (DCE'd in packaged builds): drives the real gate's evaluate(). */
       testGateEvaluate?(version: string): Promise<void>;
       onUpdateStatus(callback: (status: unknown) => void): () => void;

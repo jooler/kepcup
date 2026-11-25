@@ -2,6 +2,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
+import { canonicalPath } from '../../src/infra/paths.js';
 import {
   LimaSandboxBackend,
   PodmanSandboxBackend,
@@ -258,6 +259,24 @@ describe('PodmanSandboxBackend exec 请求构造', () => {
     expect(request.env.LANG).toBe('C.UTF-8');
     // PATH：host 工具链前缀保留（1:1 绑定同径），宿主 PATH 尾部被镜像 PATH 替换。
     expect(request.env.PATH).toBe('/opt/kepcup/toolchains/node/bin:/opt/kepcup/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin');
+  });
+
+  it('exec 请求携带 D140-2 的固定 denyWrite（共享 srtFilesystemFor 规则层）', async () => {
+    const capture: Captured = { argv: [], inputs: [] };
+    const backend = podmanBackend(capture);
+    await backend.exec(execRequest());
+    const request = JSON.parse(capture.inputs[0]!) as {
+      filesystem?: { denyWrite?: string[]; allowWrite?: string[] };
+    };
+    // 读宽（D140-2）后 srt 会自动放开 ~/.npm/_logs 与 ~/.claude/debug 的
+    // 写入；srtFilesystemFor 显式 denyWrite 保持写范围不变。挂载式后端
+    // （Podman/WSL）本就看不到宿主 home，这些条目在 guest 内为不存在路径、
+    // 由 srt 跳过；Lima 同径挂载 home，与默认级完全一致。
+    expect(request.filesystem?.denyWrite).toEqual([
+      path.join(canonicalPath(homedir()), '.npm', '_logs'),
+      path.join(canonicalPath(homedir()), '.claude', 'debug'),
+    ]);
+    expect(request.filesystem?.allowWrite).toEqual([WORKDIR]);
   });
 
   it('结果记录回带请求 nonce；不匹配的记录拒绝执行（BR-P12-005）', async () => {

@@ -26,21 +26,41 @@
     PinOff,
     Smartphone,
     MonitorSmartphone,
+    Server,
+    Globe,
     FileUp,
+    Moon,
+    UserPlus,
     type LucideIcon,
   } from '@lucide/svelte';
-  import { t } from '$lib/i18n';
+  import { t, errorText } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { stripMarkdown } from '$lib/strip-markdown';
   import { logoDarkUrl, logoLightUrl } from './sidebar-icons';
   import { ENDPOINT_KIND } from '$lib/features/web-shell/endpoint';
+  import { teamContext } from '$lib/features/team/team-context.svelte';
+  import TeamConversationsGroup from '$lib/features/team/TeamConversationsGroup.svelte';
+  import { awayState } from '$lib/features/team/away-state.svelte';
+  import MemberAvatar from '$lib/features/team/MemberAvatar.svelte';
+  import AddFriendDialog from '$lib/features/team/AddFriendDialog.svelte';
+  // 团队 Bot 面（B4 子域 B）：store 与对话框组件是子域 A 的契约交付物——
+  // loadTeamBots / teamBotsOf / botCapabilitiesOf 见 team-bots.svelte.ts；
+  // 对话框 props 契约 { source, onClose }（Edit 另带 botId）；项目组流
+  // openTeamProjectCreate + 挂 TeamProjectCreateDialog（宿主状态在
+  // team-project-create.svelte）。
+  import { loadTeamBots, teamBotsOf, botCapabilitiesOf } from '$lib/features/team/team-bots.svelte';
+  import TeamBotTemplateImportDialog from '$lib/features/team/TeamBotTemplateImportDialog.svelte';
+  import TeamBotEditDialog from '$lib/features/team/TeamBotEditDialog.svelte';
+  import TeamProjectCreateDialog from '$lib/features/team/TeamProjectCreateDialog.svelte';
+  import { openTeamProjectCreate } from '$lib/features/team/team-project-create.svelte';
+  import type { SourceId } from '$lib/rpc/connections.svelte';
   import { shell } from '$lib/stores/shell.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { chat, type ConversationView } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
   import { onboarding } from '$lib/stores/onboarding.svelte';
-  import { createBotConversational } from '$lib/features/bot-setup';
+  import { createBotConversational, createTeamBotConversational } from '$lib/features/bot-setup';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import ProjectAvatarStack from '$lib/avatars/ProjectAvatarStack.svelte';
   import UserAvatar from '$lib/avatars/UserAvatar.svelte';
@@ -90,6 +110,7 @@
   } from './sidebar-activity';
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
   import { sidebarLayout } from './sidebar-layout.svelte';
+  import { botRowMenuAction, teamPlusSource } from './sidebar-team-group.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import * as Tooltip from '$lib/components/ui/tooltip';
 
@@ -152,6 +173,8 @@
   /**
    * 设置分类条目：分区清单的事实源在 settings-section-labels（可见分区，宽屏全集），
    * 这里在「个人资料」之后插入「扩展中心」。主体内容渲染在 SettingsSectionView。
+   * 团队端点（T5）把扩展中心入口列为被拒 surfaces（'extension-center'）时不再插入
+   * ——被隐藏入口从导航消失，深链按 resolveSettingsSection 回落。
    */
   const settingsNavEntries = $derived.by(() => {
     const entries: SettingsNavEntry[] = visibleSettingsSections(false).map((section) => ({
@@ -159,12 +182,14 @@
       label: section.label,
       icon: section.icon,
     }));
-    const profileIndex = entries.findIndex((entry) => entry.id === 'profile');
-    entries.splice(profileIndex + 1, 0, {
-      id: 'extension-center',
-      label: t('sidebar.extensionCenter'),
-      icon: Blocks,
-    });
+    if (!teamContext.isTeamHidden('extension-center')) {
+      const profileIndex = entries.findIndex((entry) => entry.id === 'profile');
+      entries.splice(profileIndex + 1, 0, {
+        id: 'extension-center',
+        label: t('sidebar.extensionCenter'),
+        icon: Blocks,
+      });
+    }
     return entries;
   });
 
@@ -203,6 +228,8 @@
 
   let plusOpen = $state(false);
   let plusQuery = $state('');
+  /** 「添加好友」弹框（+ 面板入口 → AddFriendDialog，2026-11）。 */
+  let addFriendOpen = $state(false);
   /** D48：从模板导入 Bot（.kepcup-bot.json → 新建 Bot）。 */
   let templateImportOpen = $state(false);
 
@@ -363,8 +390,9 @@
     return stripMarkdown(raw);
   }
 
-  /** 条目标题（图标模式的 hover 提示同源）：项目组用标题，私聊用 Bot 名。 */
+  /** 条目标题（图标模式的 hover 提示同源）：项目组用标题，私聊用 Bot 名，dm 用对端成员名。 */
   function nameOf(conversation: ConversationView): string {
+    if (conversation.type === 'dm') return teamContext.dmPeerView(conversation.peerPrincipalIds).title;
     return conversation.type === 'project'
       ? (conversation.title ?? conversation.id)
       : (conversation.bot?.name ?? conversation.directBotId ?? conversation.id);
@@ -388,6 +416,89 @@
   async function openCreateProject(): Promise<void> {
     plusOpen = false;
     chat.beginProjectCompose();
+  }
+
+  // --- 团队分组（B4 子域 B，方案决策 B-4） -------------------------------------
+  // 「+」面板团队分组 / Bot 行 per-bot 菜单：判定逻辑在 sidebar-team-group，
+  // 这里只做 store 接线（团队 Bot 清单与对话框来自子域 A 的契约交付物）。
+
+  /**
+   * 团队分组的目标来源：web 团队端点 = 'local'（同源 core 即团队服务器）；
+   * 桌面融合 = 当前选中会话的团队来源（未连接则隐藏），否则首个已连接团队
+   * 来源；非团队上下文 null——分组整体不渲染，本地条目与顺序零变化。
+   */
+  const teamPlus = $derived(teamPlusSource());
+
+  /** 团队来源的成员面能力（2026-11「+」菜单重构）：公开建 Bot 条目的显隐依据。 */
+  const teamPlusCaps = $derived(teamPlus === null ? null : botCapabilitiesOf(teamPlus));
+
+  /**
+   * 团队模板导入弹框（2026-11「+」菜单重构）：打开时定格来源，选中态变化不
+   * 影响已开的框；null = 关闭。
+   */
+  let teamTemplateImportSource = $state<SourceId | null>(null);
+  /** 团队 Bot 编辑框（右键 per-bot 入口 / 通讯录行入口）。 */
+  let teamBotEditTarget = $state<{ source: SourceId; botId: string } | null>(null);
+
+  // 目标来源出现 / 重连时拉成员面 Bot 清单（右键 per-bot 判定与 A 的对话框
+  // 共用同一份切片；非团队上下文不发起——本机 core 没有 team.bots.* 方法）。
+  // bootstrap 的 botCapabilities / 成员 id 由 team-context 写入 store（B4 B3）。
+  $effect(() => {
+    const source = teamPlus;
+    if (source === null) return;
+    void loadTeamBots(source);
+  });
+
+  /** 右键菜单所在 Bot 行的成员面判定（B-12 per-bot）：本地行零变化。 */
+  const contextBotAction = $derived.by(() => {
+    // 右键行来自 chat.conversations（本机列表）：web 团队端点下同源 core 即
+    // 团队服务器，成员面切片就是 'local'；桌面本机名册从不在成员面里。
+    const slice = teamBotsOf('local');
+    return botRowMenuAction({
+      teamActive: teamContext.active,
+      memberBots: slice.bots,
+      memberBotsResolved: slice.loaded || slice.error !== undefined,
+      botId: contextConversation?.bot?.id ?? null,
+      botActive: contextConversation?.bot?.status === 'active',
+      editSurfaceHidden: teamContext.isTeamHidden('bot-edit'),
+    });
+  });
+
+  /**
+   * 团队分组直建入口（2026-11「+」菜单重构）：无对话框，菜单项即定私有 /
+   * 公开档——服务端 `team.bots.create { interview: true }` 建 Bot、开本人直聊
+   * 会话并启动访谈（B-11），跳转后参数在访谈对话里逐步完善（名称 / 工作目录
+   * 由访谈与目录卡确定，SetupPathCard 团队分支提供选项集 + 新建文件夹）。
+   * 失败 toast（BOT_LIMIT_REACHED / FORBIDDEN 等错误码 → errorText）。
+   */
+  async function createTeamBotFromMenu(source: SourceId, mode: 'private' | 'public'): Promise<void> {
+    plusOpen = false;
+    plusQuery = '';
+    const result = await createTeamBotConversational(source, { mode });
+    if (!result.ok) {
+      toast.error(errorText(result.code, t('teamBot.createFailed')));
+    }
+  }
+
+  /** 团队模板导入（2026-11「+」菜单重构）：类型 → 文件两步弹框，见新组件。 */
+  function openTeamTemplateImport(source: SourceId): void {
+    plusOpen = false;
+    plusQuery = '';
+    teamTemplateImportSource = source;
+  }
+
+  /** 新建团队项目组（B4 子域 B）：A 的项目流宿主（对话框挂在本组件尾部）。 */
+  function openTeamProject(source: SourceId): void {
+    plusOpen = false;
+    plusQuery = '';
+    openTeamProjectCreate(source);
+  }
+
+  function openTeamBotEditFromContext(): void {
+    const action = contextBotAction;
+    closeContextMenu();
+    if (action.kind !== 'teamEdit') return;
+    teamBotEditTarget = { source: 'local', botId: action.bot.id };
   }
 
   /**
@@ -849,9 +960,21 @@
   />
 {/snippet}
 
-<!-- 会话头像（展开/图标两模式共用）：项目组用成员头像堆叠，私聊用 Bot 头像。 -->
+<!-- 会话头像（展开/图标两模式共用）：项目组用成员头像堆叠，私聊用 Bot 头像，
+     dm 用对端成员头像（T5；自我会话显示自己的显示名 / 头像，2026-11）。dm 与
+     Bot 条目同规格：size-12 + text-base 首字母（MemberAvatar 首字母字号由继承
+     传入——尺寸 class 在外层，text-* 会级联到内层字面）。 -->
 {#snippet conversationAvatar(conversation: ConversationView)}
-  {#if conversation.type === 'project'}
+  {#if conversation.type === 'dm'}
+    {@const peer = teamContext.dmPeerView(conversation.peerPrincipalIds)}
+    <MemberAvatar
+      name={peer.title}
+      avatar={peer.avatar}
+      state={peer.state}
+      class="size-12 text-base"
+      testId="conversation-avatar"
+    />
+  {:else if conversation.type === 'project'}
     <ProjectAvatarStack members={conversation.memberPreviews ?? []} class="size-11" />
   {:else}
     <BotAvatar
@@ -958,6 +1081,7 @@
   {@const showMetaRow =
     preview.length > 0 ||
     ((conversation.unreadCount ?? 0) > 0 && !chat.isViewing(conversation.id)) ||
+    ((chat.mentionCounts[conversation.id] ?? 0) > 0 && !chat.isViewing(conversation.id)) ||
     (conversation.runningBotIds?.length ?? 0) > 0 ||
     (permissions.pendingByConversation[conversation.id] ?? 0) > 0}
   <Sidebar.MenuItem>
@@ -1002,6 +1126,17 @@
                   data-testid="unread-badge"
                 >
                   {conversation.unreadCount}
+                </span>
+              {/if}
+              <!-- @ 提及角标（DEV-146：web 团队上下文经本机列表渲染的团队会话与
+               团队切片同口径）；单用户本机无提及计数，恒不渲染。 -->
+              {#if (chat.mentionCounts[conversation.id] ?? 0) > 0 && !chat.isViewing(conversation.id)}
+                <span
+                  class="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium text-primary-foreground"
+                  title={t('team.mentionBadge')}
+                  data-testid="mention-badge"
+                >
+                  @{chat.mentionCounts[conversation.id]}
                 </span>
               {/if}
               {#if (conversation.runningBotIds?.length ?? 0) > 0}
@@ -1086,6 +1221,9 @@
         >
           <Search class="size-5" />
         </Button>
+        <!-- 「+」新增面板（D128 曾对 web 团队直连端点整体移除——服务端 Bot /
+             项目组由管理员在 console 创建；2026-11 加好友入口回归，按钮恢复，
+             面板内 bot-create 条目仍按 surfaces 门控隐藏）。 -->
         <Button
           variant="ghost"
           size="icon"
@@ -1201,6 +1339,15 @@
                             data-testid="pending-badge"
                           >
                             {permissions.pendingByConversation[conversation.id]}
+                          </span>
+                        <!-- @ 提及角标（DEV-146）：优先于未读数，与团队切片窄行同款。 -->
+                        {:else if (chat.mentionCounts[conversation.id] ?? 0) > 0 && !chat.isViewing(conversation.id)}
+                          <span
+                            class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium text-primary-foreground"
+                            title={t('team.mentionBadge')}
+                            data-testid="mention-badge"
+                          >
+                            @{chat.mentionCounts[conversation.id]}
                           </span>
                         {:else if (conversation.unreadCount ?? 0) > 0 && !chat.isViewing(conversation.id)}
                           <span
@@ -1321,6 +1468,8 @@
               {/each}
             </div>
           {/if}
+          <!-- T7 融合视图：团队会话分组（本机分组之下；未融合时不渲染）。 -->
+          <TeamConversationsGroup {collapsed} />
         {/if}
       </Sidebar.GroupContent>
     </Sidebar.Group>
@@ -1332,7 +1481,8 @@
   {#if !narrow && !settingsPage}
     <Sidebar.Footer>
       {#if collapsed}
-        <!-- 图标模式（参考图）：「+」从顶部移到底部，与技能市场、头像竖排。 -->
+        <!-- 图标模式（参考图）：「+」从顶部移到底部，与技能市场、头像竖排。
+             2026-11 与顶部「+」同口径恢复（加好友入口回归，见上）。 -->
         <div class="flex flex-col items-center gap-1 p-1">
           <button
             type="button"
@@ -1345,17 +1495,20 @@
           >
             <Plus class="size-5" />
           </button>
-          <button
-            type="button"
-            class="app-no-drag z-10 flex size-10 shrink-0 cursor-pointer items-center justify-center
-              rounded-full text-muted-foreground transition-colors hover:bg-accent/80 hover:text-foreground"
-            onclick={() => shell.openExtensionCenter()}
-            aria-label={t('sidebar.extensionCenter')}
-            title={t('sidebar.extensionCenter')}
-            data-testid="extension-center-button"
-          >
-            <Blocks class="size-5" aria-hidden="true" />
-          </button>
+          <!-- 扩展中心入口（团队端点被拒 surfaces 时隐藏，T5）。 -->
+          {#if !teamContext.isTeamHidden('extension-center')}
+            <button
+              type="button"
+              class="app-no-drag z-10 flex size-10 shrink-0 cursor-pointer items-center justify-center
+                rounded-full text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+              onclick={() => shell.openExtensionCenter()}
+              aria-label={t('sidebar.extensionCenter')}
+              title={t('sidebar.extensionCenter')}
+              data-testid="extension-center-button"
+            >
+              <Blocks class="size-5" aria-hidden="true" />
+            </button>
+          {/if}
           <!-- 更新圆钮（ready 普通态 / awaiting-user destructive 确认态，组件内自管）。 -->
           <SidebarUpdateButton />
           <DropdownMenu.Root>
@@ -1372,14 +1525,17 @@
             </DropdownMenu.Trigger>
             <DropdownMenu.Content side="top" align="center" class="min-w-40">
               <!-- 连接手机（D96）：拉起配对二维码小窗；未开启远程遥控时小窗
-                   先出「勾选即开启」门槛（见 RemotePairDialog）。 -->
-              <DropdownMenu.Item
-                onclick={() => remotePairing.request()}
-                data-testid="menu-connect-phone"
-              >
-                <Smartphone aria-hidden="true" />
-                {t('menu.connectPhone')}
-              </DropdownMenu.Item>
+                   先出「勾选即开启」门槛（见 RemotePairDialog）。桌面端点专属
+                   ——web 端点本来就在浏览器里，手机访问同一网址即可。 -->
+              {#if ENDPOINT_KIND === 'desktop'}
+                <DropdownMenu.Item
+                  onclick={() => remotePairing.request()}
+                  data-testid="menu-connect-phone"
+                >
+                  <Smartphone aria-hidden="true" />
+                  {t('menu.connectPhone')}
+                </DropdownMenu.Item>
+              {/if}
               <DropdownMenu.Item
                 onclick={() => clientNameDialog.openDialog()}
                 data-testid="menu-device-name"
@@ -1387,6 +1543,31 @@
                 <MonitorSmartphone aria-hidden="true" />
                 {t('menu.deviceName')}
               </DropdownMenu.Item>
+              <!-- 团队服务器（62.08）：设置页 → 「团队服务器」独立分区的连接卡。
+                   与连接卡同口径：web 端点无 platform.teamServers，不渲染入口。 -->
+              {#if ENDPOINT_KIND === 'desktop'}
+                <DropdownMenu.Item
+                  onclick={() => shell.openSettings('team-server', 'team-server-connection')}
+                  data-testid="menu-team-server"
+                >
+                  <Server aria-hidden="true" />
+                  {t('menu.teamServer')}
+                </DropdownMenu.Item>
+              {/if}
+              <!-- 设置离开（62.01 S12）独立成组：上方分割线把它与设备操作隔开
+                   （下方既有分割线隔开导航区；分割线随条目一起条件渲染）。 -->
+              {#if awayState.activeSource() !== null}
+                <DropdownMenu.Separator />
+                <DropdownMenu.Item
+                  onclick={() => shell.openSettings('team')}
+                  data-testid="menu-away"
+                >
+                  <Moon aria-hidden="true" />
+                  {awayState.isAway(awayState.activeSource()!)
+                    ? t('team.awayClear')
+                    : t('team.awaySet')}
+                </DropdownMenu.Item>
+              {/if}
               <DropdownMenu.Separator />
               <DropdownMenu.Item
                 onclick={() => shell.openSettings('general')}
@@ -1421,14 +1602,17 @@
               </button>
             </DropdownMenu.Trigger>
             <DropdownMenu.Content side="top" align="start" class="min-w-40">
-              <!-- 同图标模式的「连接手机」入口。 -->
-              <DropdownMenu.Item
-                onclick={() => remotePairing.request()}
-                data-testid="menu-connect-phone"
-              >
-                <Smartphone aria-hidden="true" />
-                {t('menu.connectPhone')}
-              </DropdownMenu.Item>
+              <!-- 同图标模式的「连接手机」入口：桌面端点专属（web 在浏览器里，
+                   手机访问同一网址即可）。 -->
+              {#if ENDPOINT_KIND === 'desktop'}
+                <DropdownMenu.Item
+                  onclick={() => remotePairing.request()}
+                  data-testid="menu-connect-phone"
+                >
+                  <Smartphone aria-hidden="true" />
+                  {t('menu.connectPhone')}
+                </DropdownMenu.Item>
+              {/if}
               <DropdownMenu.Item
                 onclick={() => clientNameDialog.openDialog()}
                 data-testid="menu-device-name"
@@ -1436,6 +1620,30 @@
                 <MonitorSmartphone aria-hidden="true" />
                 {t('menu.deviceName')}
               </DropdownMenu.Item>
+              <!-- 团队服务器（62.08）：设置页 → 「团队服务器」独立分区的连接卡。
+                   与连接卡同口径：web 端点无 platform.teamServers，不渲染入口。 -->
+              {#if ENDPOINT_KIND === 'desktop'}
+                <DropdownMenu.Item
+                  onclick={() => shell.openSettings('team-server', 'team-server-connection')}
+                  data-testid="menu-team-server"
+                >
+                  <Server aria-hidden="true" />
+                  {t('menu.teamServer')}
+                </DropdownMenu.Item>
+              {/if}
+              <!-- 同图标模式：设置离开独立成组（上方分割线，见 collapsed 分支）。 -->
+              {#if awayState.activeSource() !== null}
+                <DropdownMenu.Separator />
+                <DropdownMenu.Item
+                  onclick={() => shell.openSettings('team')}
+                  data-testid="menu-away"
+                >
+                  <Moon aria-hidden="true" />
+                  {awayState.isAway(awayState.activeSource()!)
+                    ? t('team.awayClear')
+                    : t('team.awaySet')}
+                </DropdownMenu.Item>
+              {/if}
               <DropdownMenu.Separator />
               <DropdownMenu.Item
                 onclick={() => shell.openSettings('general')}
@@ -1453,20 +1661,23 @@
               </DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Root>
-          <!-- 技能市场入口（参考 Connect apps 的胶囊形态）：预置技能的浏览/添加 -->
-          <button
-            type="button"
-            class="app-no-drag z-10 flex h-10 min-w-0 flex-1 cursor-pointer items-center gap-2
-              rounded-full border border-border bg-white px-3 text-sm text-muted-foreground
-              shadow-none transition-colors hover:text-foreground dark:bg-accent"
-            onclick={() => shell.openExtensionCenter()}
-            aria-label={t('sidebar.extensionCenter')}
-            title={t('sidebar.extensionCenter')}
-            data-testid="extension-center-button"
-          >
-            <Blocks class="size-4 shrink-0" aria-hidden="true" />
-            <span class="truncate">{t('sidebar.extensionCenter')}</span>
-          </button>
+          <!-- 技能市场入口（参考 Connect apps 的胶囊形态）：预置技能的浏览/添加。
+               团队端点被拒 surfaces 时隐藏（同图标模式口径）。 -->
+          {#if !teamContext.isTeamHidden('extension-center')}
+            <button
+              type="button"
+              class="app-no-drag z-10 flex h-10 min-w-0 flex-1 cursor-pointer items-center gap-2
+                rounded-full border border-border bg-white px-3 text-sm text-muted-foreground
+                shadow-none transition-colors hover:text-foreground dark:bg-accent"
+              onclick={() => shell.openExtensionCenter()}
+              aria-label={t('sidebar.extensionCenter')}
+              title={t('sidebar.extensionCenter')}
+              data-testid="extension-center-button"
+            >
+              <Blocks class="size-4 shrink-0" aria-hidden="true" />
+              <span class="truncate">{t('sidebar.extensionCenter')}</span>
+            </button>
+          {/if}
           <!-- 更新圆钮（同图标模式的复用组件，语义见组件头注释）。 -->
           <SidebarUpdateButton />
         </div>
@@ -1534,44 +1745,134 @@
     data-testid="start-chat-search"
   />
   <div class="mt-2 space-y-0.5">
-    <button
-      type="button"
-      class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
-      onclick={() => void startConversationalCreate()}
-      data-testid="start-chat-create-bot"
-    >
-      <span class="flex size-7 items-center justify-center rounded-full bg-muted">
-        <Plus class="size-4" />
-      </span>
-      {t('sidebar.createBot')}
-    </button>
-    <button
-      type="button"
-      class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
-      onclick={openCreateProject}
-      data-testid="start-chat-create-project"
-    >
-      <span class="flex size-7 items-center justify-center rounded-full bg-muted">
-        <Users class="size-4" />
-      </span>
-      {t('sidebar.createProject')}
-    </button>
-    <!-- D48：从模板导入（web 端点无本地文件对话框，置灰不隐藏）。 -->
-    <button
-      type="button"
-      class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent
-        {endpointSupports('local-file-dialog') ? '' : 'cursor-not-allowed opacity-50'}"
-      disabled={!endpointSupports('local-file-dialog')}
-      title={endpointSupports('local-file-dialog') ? '' : t('botTemplate.desktopOnly')}
-      onclick={() => (templateImportOpen = true)}
-      data-testid="start-chat-import-template"
-    >
-      <span class="flex size-7 items-center justify-center rounded-full bg-muted">
-        <FileUp class="size-4" />
-      </span>
-      {t('botTemplate.importEntry')}
-    </button>
+    <!-- 添加好友（2026-11 web 团队端点回归的 + 面板入口）：搜索成员 → 发申请；
+         非团队上下文不出现（好友层只存在于团队服务器）。 -->
+    {#if teamContext.active}
+      <button
+        type="button"
+        class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
+        onclick={() => {
+          plusOpen = false;
+          plusQuery = '';
+          addFriendOpen = true;
+        }}
+        data-testid="start-chat-add-friend"
+      >
+        <span class="flex size-7 items-center justify-center rounded-full bg-muted">
+          <UserPlus class="size-4" />
+        </span>
+        {t('friends.addFriend')}
+      </button>
+    {/if}
+    <!-- 团队端点 surfaces 门控（T5）+ 成员面让位（member-bots B4 审查修正）：
+         web 团队端点上 core `bots.create` 对成员恒拒（B2 只放开 team.bots.create，
+         bot-create surface 按 B-12 对成员不再隐藏）——本机入口会让位给下方团队
+         分组的「在服务端创建 Bot」，避免出现必拒的重复入口；本机 / 非团队端点
+         行为零变化。 -->
+    {#if !teamContext.active && !teamContext.isTeamHidden('bot-create')}
+      <button
+        type="button"
+        class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
+        onclick={() => void startConversationalCreate()}
+        data-testid="start-chat-create-bot"
+      >
+        <span class="flex size-7 items-center justify-center rounded-full bg-muted">
+          <Plus class="size-4" />
+        </span>
+        {t('sidebar.createBot')}
+      </button>
+    {/if}
+    <!-- 2026-11「+」菜单重构：web 团队端点第一组只留「添加好友」——本地新建
+         项目组 / 本机模板导入仅桌面本机上下文出现（团队侧入口见下方团队分组）；
+         桌面本机 / 非团队端点行为零变化。 -->
+    {#if !teamContext.active}
+      <button
+        type="button"
+        class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
+        onclick={openCreateProject}
+        data-testid="start-chat-create-project"
+      >
+        <span class="flex size-7 items-center justify-center rounded-full bg-muted">
+          <Users class="size-4" />
+        </span>
+        {t('sidebar.createProject')}
+      </button>
+      <!-- D48：从模板导入本机 Bot（web 端点无本地文件对话框，置灰不隐藏；
+           团队端点的成员面模板导入走下方团队分组入口）。 -->
+      <button
+        type="button"
+        class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent
+          {endpointSupports('local-file-dialog') ? '' : 'cursor-not-allowed opacity-50'}"
+        disabled={!endpointSupports('local-file-dialog')}
+        title={endpointSupports('local-file-dialog') ? '' : t('botTemplate.desktopOnly')}
+        onclick={() => (templateImportOpen = true)}
+        data-testid="start-chat-import-template"
+      >
+        <span class="flex size-7 items-center justify-center rounded-full bg-muted">
+          <FileUp class="size-4" />
+        </span>
+        {t('botTemplate.importEntry')}
+      </button>
+    {/if}
   </div>
+  <!-- 团队分组（2026-11「+」菜单重构）：连接团队服务器时出现四个条目——新建
+       服务端 Bot（私有 / 公开两档直建，无对话框，参数在访谈里完善）、新建服务端
+       项目组、从模板导入；非团队上下文（teamPlus 为 null）整体不渲染，上方本地
+       条目与顺序零变化。公开档按成员面 botCapabilities.canCreatePublicBot 显隐
+       （B-1 分组权限）；「我的私有 Bot」条目移除——通讯录列出全部可见 Bot。 -->
+  {#if teamPlus !== null}
+    <p class="px-2 pt-2 pb-1 text-[11px] text-muted-foreground" data-testid="start-chat-team-group-title">
+      {t('teamBot.groupSection')}
+    </p>
+    <div class="space-y-0.5" data-testid="start-chat-team-group">
+      <button
+        type="button"
+        class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
+        onclick={() => void createTeamBotFromMenu(teamPlus, 'private')}
+        data-testid="start-chat-team-create-bot-private"
+      >
+        <span class="flex size-7 items-center justify-center rounded-full bg-muted">
+          <Server class="size-4" />
+        </span>
+        {t('teamBot.createPrivateAction')}
+      </button>
+      {#if teamPlusCaps?.canCreatePublicBot === true}
+        <button
+          type="button"
+          class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
+          onclick={() => void createTeamBotFromMenu(teamPlus, 'public')}
+          data-testid="start-chat-team-create-bot-public"
+        >
+          <span class="flex size-7 items-center justify-center rounded-full bg-muted">
+            <Globe class="size-4" />
+          </span>
+          {t('teamBot.createPublicAction')}
+        </button>
+      {/if}
+      <button
+        type="button"
+        class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
+        onclick={() => openTeamProject(teamPlus)}
+        data-testid="start-chat-team-create-project"
+      >
+        <span class="flex size-7 items-center justify-center rounded-full bg-muted">
+          <Users class="size-4" />
+        </span>
+        {t('teamBot.createProjectAction')}
+      </button>
+      <button
+        type="button"
+        class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
+        onclick={() => openTeamTemplateImport(teamPlus)}
+        data-testid="start-chat-team-import-template"
+      >
+        <span class="flex size-7 items-center justify-center rounded-full bg-muted">
+          <FileUp class="size-4" />
+        </span>
+        {t('botTemplate.importEntry')}
+      </button>
+    </div>
+  {/if}
   {#if plusBots.length > 0}
     <p class="px-2 pt-2 pb-1 text-[11px] text-muted-foreground">{t('contacts.title')}</p>
     <div class="space-y-0.5 pb-1 {narrow ? '' : 'max-h-[300px] overflow-y-auto'}">
@@ -1655,6 +1956,28 @@
   </div>
 {/if}
 
+<!-- 添加好友弹框（+ 面板「添加好友」入口；团队上下文才挂载）。 -->
+<AddFriendDialog bind:open={addFriendOpen} />
+
+<!-- 团队模板导入弹框（2026-11「+」菜单重构：类型 → 文件两步；上传后服务端
+     直接建 Bot，无访谈）。仅团队上下文入口可达，非团队上下文永不挂载。 -->
+{#if teamTemplateImportSource !== null}
+  <TeamBotTemplateImportDialog
+    source={teamTemplateImportSource}
+    onClose={() => (teamTemplateImportSource = null)}
+  />
+{/if}
+{#if teamBotEditTarget !== null}
+  <TeamBotEditDialog
+    source={teamBotEditTarget.source}
+    botId={teamBotEditTarget.botId}
+    onClose={() => (teamBotEditTarget = null)}
+  />
+{/if}
+<!-- 团队项目组创建对话框（B4 子域 B 入口 + 子域 A 本体）：宿主状态在
+     team-project-create.svelte，未打开时 Dialog 关闭、零渲染面。 -->
+<TeamProjectCreateDialog />
+
 {#if contextMenu}
   <!-- 条目右键菜单（参考 Grok Bot）：管理操作收在这里 -->
   <button
@@ -1714,7 +2037,16 @@
         openProjectDetail,
         'context-project-settings',
       )}
-    {:else if contextConversation?.bot?.status === 'active'}
+    {:else if contextBotAction.kind === 'teamEdit'}
+      <!-- 成员面 Bot（B4 子域 B，B-12 per-bot 判定）：canEdit 才出编辑入口，
+           转交 / 删除在 TeamBotEditDialog 内；bot-edit surface 不再整体屏蔽。 -->
+      {@render contextItem(
+        Pencil,
+        t('teamBot.editAction'),
+        openTeamBotEditFromContext,
+        'context-edit-team-bot',
+      )}
+    {:else if contextBotAction.kind === 'localRename'}
       {@render contextItem(Pencil, t('sidebar.renameBot'), openRename, 'context-rename-bot')}
     {/if}
     {@render contextItem(

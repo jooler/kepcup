@@ -11,7 +11,7 @@ interface GrantRow {
   conversation_id: string;
   path: string;
   access: 'read' | 'write';
-  duration: 'once' | 'conversation';
+  duration: 'once' | 'task' | 'conversation';
   run_id: string | null;
   approval_id: string | null;
   created_at: number;
@@ -49,6 +49,11 @@ function rowToGrant(row: GrantRow): Grant {
  * - an unused one (request_access pre-authorization) and every other `once`
  *   grant also dies after GRANT_ABSOLUTE_TTL_MS, and with its run
  *   (expireForRun) — whichever comes first.
+ *
+ * `task`（D140 §1.2「本任务内允许」）= 到该 run 结束: effective for every tool
+ * call of its own run (no tool-call scope — unlike `once`), never for another
+ * run (a sub run is a new run that needs its own grant), and revoked with the
+ * run (`expireForRun`). No TTL timer: the run's lifetime bounds it.
  *
  * Revocations the service makes on its own (consumed, TTL, run end) are
  * reported through `onAutoRevoke` (coalesced per conversation) so the right
@@ -173,11 +178,13 @@ export class GrantsService {
   }
 
   /**
-   * Active grants that apply to this identity: same bot + conversation, and
-   * `once` grants only while their own run is executing — and, within the
-   * run, only in the tool call that owns them (or any call while unclaimed:
-   * the first one to use it claims it via noteOnceUse). The single predicate
-   * for both the file-path check and the sandbox policy (BR-P03-003).
+   * Active grants that apply to this identity: same bot + conversation;
+   * `conversation` grants everywhere; `task` grants in their own run (every
+   * tool call of it — no tool-call scope, D140 §1.2); `once` grants only
+   * while their own run is executing — and, within the run, only in the tool
+   * call that owns them (or any call while unclaimed: the first one to use it
+   * claims it via noteOnceUse). The single predicate for both the file-path
+   * check and the sandbox policy (BR-P03-003).
    */
   listEffective(identity: RunIdentity): Grant[] {
     if (identity.botId === null || identity.conversationId === null) return [];
@@ -186,7 +193,8 @@ export class GrantsService {
       (g) =>
         g.botId === identity.botId &&
         (g.duration === 'conversation' ||
-          (g.runId === identity.runId && this.#onceUsableIn(g.id, scope))),
+          (g.duration === 'task' && g.runId === identity.runId) ||
+          (g.duration === 'once' && g.runId === identity.runId && this.#onceUsableIn(g.id, scope))),
     );
   }
 
@@ -222,8 +230,9 @@ export class GrantsService {
    * request_access pre-authorization). It stays usable for the rest of that
    * call — and only there — and is revoked when the call returns; outside any
    * tool call (or after the call already returned) it is revoked immediately.
-   * No-op for conversation grants, already revoked ones and once grants owned
-   * by another call (listEffective never hands those out).
+   * No-op for `task` / conversation grants (D140 §1.2: a task grant lasts the
+   * whole run), already revoked ones and once grants owned by another call
+   * (listEffective never hands those out).
    */
   noteOnceUse(grant: Grant): void {
     if (grant.duration !== 'once' || grant.revokedAt !== null) return;
@@ -269,8 +278,12 @@ export class GrantsService {
         scope: 'path',
         conversationId: grant.conversationId,
         botIds: [grant.botId],
-        // A once grant belongs to one run: only that run's task is affected.
-        ...(grant.duration === 'once' && grant.runId !== null ? { runId: grant.runId } : {}),
+        // A once / task grant belongs to one run: only that run's task is
+        // affected (D140 §1.2 — revoking a task grant interrupts just that
+        // task, never the whole conversation).
+        ...(grant.duration !== 'conversation' && grant.runId !== null
+          ? { runId: grant.runId }
+          : {}),
       }) ?? 0;
     return { grant, interruptedTasks };
   }
@@ -328,14 +341,21 @@ export class GrantsService {
     }
   }
 
-  /** `once` grants (still unused ones included) expire when their run ends. */
+  /**
+   * `once` and `task` grants (still unused once grants included) expire when
+   * their run ends (D140 §1.2: a task grant lives exactly as long as its run).
+   */
   expireForRun(runId: string): number {
     const live = this.#db
-      .prepare("select id, conversation_id from grants where run_id = ? and revoked_at is null and duration = 'once'")
+      .prepare(
+        "select id, conversation_id from grants where run_id = ? and revoked_at is null and duration in ('once','task')",
+      )
       .all(runId) as Array<{ id: string; conversation_id: string }>;
     if (live.length === 0) return 0;
     const result = this.#db
-      .prepare("update grants set revoked_at = ? where run_id = ? and revoked_at is null and duration = 'once'")
+      .prepare(
+        "update grants set revoked_at = ? where run_id = ? and revoked_at is null and duration in ('once','task')",
+      )
       .run(this.#clock.now(), runId);
     for (const row of live) {
       this.#onceOwners.delete(row.id);
