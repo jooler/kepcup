@@ -116,7 +116,6 @@ const mainExecutableRel = isDarwin
 const cacheDir = join(cacheRoot, lock.version);
 const cacheArchive = join(cacheDir, asset.asset);
 const outputDir = join(outputRoot, assetKey);
-const outputExecutable = join(outputDir, ...mainExecutableRel.split('/'));
 const pinnedFiles = asset.files ?? {};
 const pinnedExecutableSha = pinnedFiles[mainExecutableRel];
 
