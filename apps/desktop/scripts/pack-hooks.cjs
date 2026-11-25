@@ -562,37 +562,42 @@ function ensureWslRootfsSource(wslDir, targetArch, projectDir) {
 }
 
 /**
- * P-B2：cua-driver provider 产物校验（唯一 provider，必须随包）。校验：
- * CuaDriver.app 完整（Contents/MacOS/cua-driver + Info.plist——AMFI 要求 bundle
- * 形态，裸二进制会被 SIGKILL）、可执行文件 sha256 与 resources/cua-driver.lock.json
- * 的 pin 一致、上游签名可验、lock 文件随包。返回摘要（导出供单测）。
+ * P-B2 + 2026-11 三端启用修订：cua-driver provider 产物校验（唯一 provider，必须随包）。
+ * 按平台校验 `<resources>/cua-driver/` 下的产物：
+ * - darwin：完整 CuaDriver.app（Contents/MacOS/cua-driver + Info.plist——AMFI 要求
+ *   bundle 形态，裸二进制会被 SIGKILL）+ 上游签名可验（禁止重签）。
+ * - win：cua-driver.exe 与同级 cua-driver-uia.exe / cua_driver_sdk.dll。
+ * - linux：cua-driver 与同级 cua-cursor-theme，外加 wayland-helper/ 目录（Wayland
+ *   窗口矩形定位的 GNOME 扩展，缺目录会在 Wayland 会话降级）。
+ * 三平台都校验：lock 文件随包、随包版本与仓内一致、lock.assets["<platform>-<arch>"].files
+ * 的每个 pin 与产物实际 sha256 一致。返回摘要（导出供单测）。
  */
-function assertCuaDriverBundle(appBundlePath, targetArch, options = {}) {
+function assertCuaDriverBundle(resourcesPath, targetPlatform, targetArch, options = {}) {
   const verifySignature = options.verifySignature !== false;
-  const driverPath = path.join(
-    appBundlePath,
-    'Contents',
-    'Resources',
-    'cua-driver',
-    'CuaDriver.app',
-  );
-  if (!existsSync(driverPath)) {
+  const driverDir = path.join(resourcesPath, 'cua-driver');
+  if (!existsSync(driverDir)) {
     throw new Error(
-      `[pack] 缺少 cua-driver 产物：${driverPath}（唯一 provider，必须随包；先跑 scripts/fetch-cua-driver.mjs --arch ${targetArch}）`,
+      `[pack] 缺少 cua-driver 产物：${driverDir}（唯一 provider，必须随包；先跑 scripts/fetch-cua-driver.mjs --os ${targetPlatform} --arch ${targetArch}）`,
     );
   }
-  const executable = path.join(driverPath, 'Contents', 'MacOS', 'cua-driver');
-  if (!existsSync(executable) || !existsSync(path.join(driverPath, 'Contents', 'Info.plist'))) {
+  const executableRelPath =
+    targetPlatform === 'darwin'
+      ? path.join('CuaDriver.app', 'Contents', 'MacOS', 'cua-driver')
+      : targetPlatform === 'win'
+        ? 'cua-driver.exe'
+        : 'cua-driver';
+  const executable = path.join(driverDir, executableRelPath);
+  if (
+    !existsSync(executable) ||
+    (targetPlatform === 'darwin' && !existsSync(path.join(driverDir, 'CuaDriver.app', 'Contents', 'Info.plist')))
+  ) {
     throw new Error(
-      `[pack] cua-driver 产物不完整：${driverPath}（必须是完整 CuaDriver.app bundle；裸二进制会被 AMFI 拒绝执行，重跑 scripts/fetch-cua-driver.mjs）`,
+      targetPlatform === 'darwin'
+        ? `[pack] cua-driver 产物不完整：${driverDir}（必须是完整 CuaDriver.app bundle；裸二进制会被 AMFI 拒绝执行，重跑 scripts/fetch-cua-driver.mjs）`
+        : `[pack] cua-driver 产物不完整：缺 ${executableRelPath}（win/linux 运行时主二进制必须与 helper/SDK 同目录，重跑 scripts/fetch-cua-driver.mjs）`,
     );
   }
-  const packagedLockPath = path.join(
-    appBundlePath,
-    'Contents',
-    'Resources',
-    'cua-driver.lock.json',
-  );
+  const packagedLockPath = path.join(resourcesPath, 'cua-driver.lock.json');
   if (!existsSync(packagedLockPath)) {
     throw new Error(
       `[pack] 缺少 cua-driver.lock.json：${packagedLockPath}（打包版 readCuaDriverLock 需要它）`,
@@ -612,26 +617,49 @@ function assertCuaDriverBundle(appBundlePath, targetArch, options = {}) {
       `[pack] 随包 cua-driver.lock.json 版本不一致：${packagedLock.version || '（缺失）'} ≠ ${lock.version || '（缺失）'}`,
     );
   }
-  const archKey = `darwin-${targetArch}`;
-  const pinnedExecutable = lock?.assets?.[archKey]?.files?.['CuaDriver.app/Contents/MacOS/cua-driver'];
+  const archKey = `${targetPlatform}-${targetArch}`;
+  const pinnedFiles = lock?.assets?.[archKey]?.files ?? {};
+  const pinnedExecutable = pinnedFiles[executableRelPath.split(path.sep).join('/')];
   if (typeof pinnedExecutable !== 'string' || !/^[0-9a-f]{64}$/i.test(pinnedExecutable)) {
     throw new Error(
       `[pack] cua-driver lock 缺少可执行文件 sha256 pin（${archKey}）——发版必须 pin 住上游产物，不允许 PENDING/缺失`,
     );
   }
-  const actual = require('node:crypto').createHash('sha256').update(readFileSync(executable)).digest('hex');
-  if (actual !== pinnedExecutable) {
+  if (targetPlatform === 'linux' && !existsSync(path.join(driverDir, 'wayland-helper'))) {
     throw new Error(
-      `[pack] cua-driver 可执行文件 sha256 与 lock 不一致（${archKey}）：产物 ${actual} ≠ pin ${pinnedExecutable}（重跑 scripts/fetch-cua-driver.mjs 或同步 lock）`,
+      `[pack] cua-driver 产物缺少 wayland-helper/：${driverDir}（Wayland 会话的窗口定位依赖它，重跑 scripts/fetch-cua-driver.mjs）`,
     );
   }
-  if (verifySignature) {
-    const verify = spawnSync('/usr/bin/codesign', ['--verify', '--strict', driverPath], {
-      encoding: 'utf8',
-    });
+  for (const [rel, pinned] of Object.entries(pinnedFiles)) {
+    const filePath = path.join(driverDir, ...rel.split('/'));
+    if (typeof pinned !== 'string' || !/^[0-9a-f]{64}$/i.test(pinned)) {
+      throw new Error(
+        `[pack] cua-driver lock 的 ${rel} sha256 pin 无效（${archKey}）——发版必须 pin 住上游产物，不允许 PENDING/缺失`,
+      );
+    }
+    if (!existsSync(filePath)) {
+      throw new Error(
+        `[pack] cua-driver 产物缺少 lock pin 的文件 ${rel}：${filePath}（重跑 scripts/fetch-cua-driver.mjs）`,
+      );
+    }
+    const actual = require('node:crypto').createHash('sha256').update(readFileSync(filePath)).digest('hex');
+    if (actual !== pinned) {
+      throw new Error(
+        `[pack] cua-driver 文件 sha256 与 lock 不一致（${archKey}）：${rel} 产物 ${actual} ≠ pin ${pinned}（重跑 scripts/fetch-cua-driver.mjs 或同步 lock）`,
+      );
+    }
+  }
+  if (verifySignature && targetPlatform === 'darwin') {
+    const verify = spawnSync(
+      '/usr/bin/codesign',
+      ['--verify', '--strict', path.join(driverDir, 'CuaDriver.app')],
+      {
+        encoding: 'utf8',
+      },
+    );
     if (verify.status !== 0) {
       throw new Error(
-        `[pack] cua-driver bundle 签名校验失败：${driverPath}（${verify.stderr?.trim() || `退出码 ${verify.status}`}）——不许重签上游产物`,
+        `[pack] cua-driver bundle 签名校验失败：${driverDir}（${verify.stderr?.trim() || `退出码 ${verify.status}`}）——不许重签上游产物`,
       );
     }
   }
@@ -732,10 +760,18 @@ function afterPack(context) {
         '[pack] CuaDriver 未随包（KEPCUP_SKIP_COMPUTER_USE=1）——产物没有计算机操控能力。',
       );
     } else {
-      assertCuaDriverBundle(appBundlePath, archName(context));
+      assertCuaDriverBundle(resourcesPath, 'darwin', archName(context));
     }
   } else {
     assertNoShareExtension(context.appOutDir);
+    // 三端启用修订：win/linux 同样必须随包（运行时目录形态，无 codesign 校验）。
+    if (process.env.KEPCUP_SKIP_COMPUTER_USE === '1') {
+      console.warn(
+        '[pack] CuaDriver 未随包（KEPCUP_SKIP_COMPUTER_USE=1）——产物没有计算机操控能力。',
+      );
+    } else {
+      assertCuaDriverBundle(resourcesPath, dirName, archName(context));
+    }
   }
 
   console.log(
@@ -754,7 +790,11 @@ function afterSign(context) {
     context.appOutDir,
     `${context.packager.appInfo.productFilename}.app`,
   );
-  assertCuaDriverBundle(appBundlePath, archName(context));
+  assertCuaDriverBundle(
+    path.join(appBundlePath, 'Contents', 'Resources'),
+    'darwin',
+    archName(context),
+  );
 }
 
 module.exports = {

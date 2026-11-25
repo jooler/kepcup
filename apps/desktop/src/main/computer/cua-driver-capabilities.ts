@@ -10,12 +10,17 @@ import type { ComputerProviderCapabilities } from '@kepcup/shared'
 
 export const CUA_DRIVER_PROTOCOL_VERSION = 1
 
+/**
+ * 按「平台 + 版本」静态合成能力。provider 只在 darwin/win32/linux 上创建
+ * （lifecycle 门控），因此平台收窄失败（其它系统）实际不可达，兜底映射为
+ * darwin 仅为满足共享契约的 platform 枚举。
+ */
 export function synthesizeCuaDriverCapabilities(
   providerVersion: string,
-  platform: 'darwin' | 'win32' | 'linux' = 'darwin'
+  platform: NodeJS.Platform = process.platform
 ): ComputerProviderCapabilities {
   return {
-    platform,
+    platform: platform === 'win32' || platform === 'linux' ? platform : 'darwin',
     provider: 'cua-driver',
     providerVersion,
     protocolVersion: CUA_DRIVER_PROTOCOL_VERSION,

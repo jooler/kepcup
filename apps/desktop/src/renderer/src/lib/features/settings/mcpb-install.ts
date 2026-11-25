@@ -92,6 +92,15 @@ export function runtimeLabel(kind: 'node' | 'python' | 'uv'): string {
   return kind === 'node' ? 'Node.js' : kind === 'python' ? 'Python' : 'uv';
 }
 
+/** 运行时官网下载页（安装卡「下载」按钮的跳转目标，经系统浏览器打开）。 */
+export function runtimeDownloadUrl(kind: 'node' | 'python' | 'uv'): string {
+  return kind === 'node'
+    ? 'https://nodejs.org/'
+    : kind === 'python'
+      ? 'https://www.python.org/downloads/'
+      : 'https://docs.astral.sh/uv/';
+}
+
 /** 确认按钮能否点：已检查、兼容、运行时就绪、必填项齐全。 */
 export function canInstall(input: {
   compatible: boolean;

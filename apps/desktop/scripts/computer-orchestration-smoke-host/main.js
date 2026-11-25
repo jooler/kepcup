@@ -1,10 +1,10 @@
-// computer-use 编排层冒烟宿主（D105 WP2 / P-B2 验收）。
+// computer-use 编排层冒烟宿主（D105 WP2 / P-B2 验收；2026-11 三端启用修订）。
 //
 // 由 computer-orchestration-smoke.mjs 以 `Electron <本目录> <appQuery>` 启动。
 // 验证「main 编排层」全链路（不经 core）：
 //   sidecar 产物（out/main/computer-sidecar.js，ELECTRON_RUN_AS_NODE fork）
-//   → provider lifecycle（darwin → CuaDriverProviderClient）
-//   → CuaDriver daemon spawn + unix socket（embedded；TCC 归宿主）
+//   → provider lifecycle（darwin / win32 / linux → CuaDriverProviderClient）
+//   → CuaDriver daemon spawn + unix socket / win32 named pipe（embedded；TCC 归宿主）
 //   → dispatch 方法面（capabilities / listApps / getAppState + tree diff）
 //   → 并发第二实例（进程隔离）
 //   → disconnect → shutdownComputerProviders → CuaDriver daemon terminate（kill switch 同路径）
@@ -30,16 +30,31 @@ const positional = argv.filter((arg) => !arg.startsWith('--provider='))
 const appQuery = positional[0] ?? 'Notes'
 const userDataDir = path.join(require('node:os').tmpdir(), `kepcup-orchestration-smoke-${process.pid}`)
 
-const DRIVER_PROCESS_PATTERN = 'CuaDriver.app/Contents/MacOS/cua-driver'
-
 function fail(message) {
   console.error(`[smoke2] ${message}`)
   app.exit(1)
 }
 
+/** daemon 进程计数：darwin/linux 用 pgrep 按路径匹配；win32 按映像名 cua-driver.exe。 */
 function driverProcessCount() {
   try {
-    const out = execFileSync('/usr/bin/pgrep', ['-f', DRIVER_PROCESS_PATTERN], { encoding: 'utf8' })
+    if (process.platform === 'win32') {
+      const out = execFileSync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          '(Get-Process -Name "cua-driver" -ErrorAction SilentlyContinue | Measure-Object).Count',
+        ],
+        { encoding: 'utf8' },
+      )
+      const count = Number.parseInt(out.trim(), 10)
+      return Number.isNaN(count) ? 0 : count
+    }
+    const pattern =
+      process.platform === 'darwin' ? 'CuaDriver.app/Contents/MacOS/cua-driver' : 'cua-driver'
+    const out = execFileSync('/usr/bin/pgrep', ['-f', pattern], { encoding: 'utf8' })
     return out.split('\n').filter((line) => line.trim().length > 0).length
   } catch {
     return 0 // pgrep 无匹配退出非 0

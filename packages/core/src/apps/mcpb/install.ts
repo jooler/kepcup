@@ -426,7 +426,7 @@ export class McpbInstaller {
     if (runtimeKind !== null && resolution === null) {
       throw new AppError(
         'MCPB_RUNTIME_MISSING',
-        `此包需要 ${runtimeLabel(runtimeKind)} 运行时，环境管理器里尚未安装。请先在「设置 → 环境」安装后重试。`,
+        `此包需要 ${runtimeLabel(runtimeKind)} 运行时，本机未检测到。请先在「设置 → 环境」安装，或从官网下载安装后重试。`,
       );
     }
     const dir = inspection.installDir;

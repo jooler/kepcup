@@ -61,7 +61,8 @@ async function setup(
 ): Promise<TestStack> {
   const stack = await createTestStack({
     ...(options.runtimes === false
-      ? {}
+      ? // 强制运行时缺失（含系统 PATH 回退）：否则真机上有自装 Node 时用例前提不成立
+        { mcpbRuntimes: { node: null } }
       : { mcpbRuntimes: { node: { command: process.execPath, version: '24.21.0' } } }),
     ...(options.home !== undefined ? { home: options.home } : {}),
     ...(options.keystore !== undefined ? { keystore: options.keystore } : {}),

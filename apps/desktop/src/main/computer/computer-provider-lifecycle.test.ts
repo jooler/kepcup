@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { ComputerProviderLifecycle } from './computer-provider-lifecycle'
 import { CuaDriverProviderClient } from './cua-driver-provider-client'
 
-// P-B2：计算机操控只使用 CuaDriver（macOS）。其它平台返回 null，由 sidecar
-// 给出「尚未启用」的可行动原因；不再有 KEPCUP_COMPUTER_PROVIDER 开关。
+// P-B2 + 2026-11 三端启用修订：计算机操控只使用 CuaDriver，darwin / win32 /
+// linux 都创建 provider；其它平台（headless / 未知系统）返回 null，由 sidecar
+// 给出可行动原因。不再有 KEPCUP_COMPUTER_PROVIDER 开关。
 
 class FakeCuaDriverProviderClient extends CuaDriverProviderClient {
   shutdownCalled = false
@@ -29,17 +30,17 @@ describe('ComputerProviderLifecycle（CuaDriver-only）', () => {
     return { lifecycle, counts: () => ({ created }) }
   }
 
-  it('darwin → cua provider，并复用同一实例', () => {
+  it.each(['darwin', 'win32', 'linux'] as const)('%s → cua provider，并复用同一实例', (platform) => {
     const { lifecycle, counts } = makeLifecycle()
-    const provider = lifecycle.current('darwin')
+    const provider = lifecycle.current(platform)
     expect(provider).toBeInstanceOf(CuaDriverProviderClient)
-    expect(lifecycle.current('darwin')).toBe(provider)
+    expect(lifecycle.current(platform)).toBe(provider)
     expect(counts().created).toBe(1)
   })
 
-  it.each(['win32', 'linux'] as const)('%s → null（本期只接 macOS）', (platform) => {
+  it('unsupported 平台 → null（headless / 未知系统不创建 provider）', () => {
     const { lifecycle, counts } = makeLifecycle()
-    expect(lifecycle.current(platform)).toBeNull()
+    expect(lifecycle.current('freebsd')).toBeNull()
     expect(counts().created).toBe(0)
   })
 

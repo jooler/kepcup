@@ -99,8 +99,13 @@ export interface CreateTestCoreOptions {
    * `source` / `approvedGates`). Test-hook builds default to an EMPTY catalog.
    */
   connectorCatalog?: unknown;
-  /** D73 P2 test hook: managed runtimes for MCPB bundles (e.g. `{ node: { command: process.execPath } }`). */
-  mcpbRuntimes?: Partial<Record<'node' | 'python' | 'uv', { command: string; version?: string }>>;
+  /**
+   * D73 P2 test hook: managed runtimes for MCPB bundles (e.g. `{ node: { command: process.execPath } }`).
+   * `null` forces the runtime missing (skips the system PATH fallback).
+   */
+  mcpbRuntimes?: Partial<
+    Record<'node' | 'python' | 'uv', { command: string; version?: string } | null>
+  >;
   /**
    * D73 P3 §7.1 test hook (see CoreServicesOptions.directorySync): signed-directory public keys,
    * the loopback base URL of a fake directory, and the timer cadence.

@@ -1,8 +1,8 @@
 # 52 计算机操控（Computer Use）
 
-Bot 通过**无障碍树优先、截屏与键鼠兜底**读取并操作本机原生桌面应用的 UI：语义寻址（元素索引）、精确、可作用于后台应用、不抢焦点；树读不到的（canvas / 游戏 / Electron 内容区）退到截屏坐标与键盘。能力最初拆自 [stablyai/orca](https://github.com/stablyai/orca)（MIT，快照 commit `55507b87` / v1.4.214），**2026-11-10 起 provider 改为 CuaDriver（trycua/cua），原 vendored 原生层已删除**；TS 编排层与集成层（工具 / 审批 / 设置 / RPC）保留在 KepCup。P0 仅 macOS；Windows / Linux 后续按上游启用。
+Bot 通过**无障碍树优先、截屏与键鼠兜底**读取并操作本机原生桌面应用的 UI：语义寻址（元素索引）、精确、可作用于后台应用、不抢焦点；树读不到的（canvas / 游戏 / Electron 内容区）退到截屏坐标与键盘。能力最初拆自 [stablyai/orca](https://github.com/stablyai/orca)（MIT，快照 commit `55507b87` / v1.4.214），**2026-11-10 起 provider 改为 CuaDriver（trycua/cua），原 vendored 原生层已删除**；TS 编排层与集成层（工具 / 审批 / 设置 / RPC）保留在 KepCup。**2026-11 三端启用修订：darwin / win32 / linux 全部启用，驱动产物随发行版安装包分发**（Linux 部分桌面受限——上游声明 Wayland / 非 GNOME 桌面可能只在前台可用）。
 
-**状态：已实施（2026-10-31 P0 原生 helper；2026-11-10 P-B2 全面切换为 CuaDriver）**；执行方案与工作包见 [todo/computer-use.md](../../todo/computer-use.md) 与 [todo/computer-use-cua-adapter.md](../../todo/computer-use-cua-adapter.md)。无 DB 迁移。
+**状态：已实施（2026-10-31 P0 原生 helper；2026-11-10 P-B2 全面切换为 CuaDriver；2026-11-26 三端启用）**；执行方案与工作包见 [todo/computer-use.md](../../todo/computer-use.md) 与 [todo/computer-use-cua-adapter.md](../../todo/computer-use-cua-adapter.md)。无 DB 迁移。
 
 > ## 实现修订（2026-11-10）：只保留 CuaDriver
 >
@@ -25,7 +25,7 @@ Bot 通过**无障碍树优先、截屏与键鼠兜底**读取并操作本机原
 > | 9 | 截图稳定可用 | driver 默认不尝试采集（避免弹框抢焦点），embedded 下 `check_permissions` 的 prompt 也被忽略 | daemon 带 `CUA_DRIVER_ALLOW_CAPTURE_CONSENT_ALERT=1` 真去采集（宿主已有屏幕录制时通常直接成功；macOS 要求时由系统弹一次同意框）；设置页「检测截屏」做真实抓帧自检；失败时如实报 `screenshot_failed` + 指引 |
 > | 10 | 权限引导自动弹窗 | embedded daemon 默认不弹窗；TCC 按进程缓存 | 主进程用 `systemPreferences` 读状态/触发 AX 提示；屏幕录制只开面板；直采同意只能由真实采集触发（设置页「检测截屏」或首次截图时由系统弹）；下一次动作前重启 daemon |
 > | 11 | 安装包体积 | CuaDriver.app 每架构约 +60MB | release note 写明；禁止重签上游产物 |
-> | 12 | Windows/Linux 自研 runtime | 上游支持三端 | 本期只接 macOS；后续按上游启用 |
+> | 12 | Windows/Linux 自研 runtime | 上游支持三端 | ~~本期只接 macOS~~ **2026-11-26 三端已启用**（同版本 pin；win/linux 是运行时目录形态，随发行版安装包分发） |
 >
 > 未受影响的硬约束：审批、敏感参数掩码、`outcome: 'uncertain'` 语义与工具面
 > 全部留在 core（`packages/core/src/tools/computer-tools.ts`），provider 替换不触碰。
@@ -70,7 +70,7 @@ Bot 通过**无障碍树优先、截屏与键鼠兜底**读取并操作本机原
   5. **审批与安全第一版做全**：新增 `ApprovalKind` `computer_control`，审批时长复用 once / conversation / bot 分档，**不设「永不问」档**；动作防重放对齐 orca / ZCode 验证过的语义——`ComputerActionVerification`（可能已下发）映射到 `ToolResult.outcome: 'uncertain'`，重试前必须先观察；`type` / `paste` / `set_value` 的文本参数标 `sensitiveParams`，不进审批卡明文与日志；粘贴走 orca 的剪贴板校验（防提示注入）；stop 三通道：模型 `computer_stop`、用户 renderer 常驻「停止操控」（main `ipcMain.handle` 直达 sidecar，不经 core）、sidecar 单会话互斥。**已知限制明示**：桌面级「用户正在手动操作」检测 v1 不做（技术上不可靠），靠审批档位与显式 stop 兜底；**权限被拒后绝不切换到 osascript / AppleScript / 系统事件等其他 UI 自动化技术**（写入工具描述与错误文案）。
   6. **设置目录一处开关 + 权限引导走设置页**：条目 `browser.computer-use`（group `browser`，anchor `computer-use`；条目增多再迁独立组），字段 toggle `enabled`，`store: { kind: 'settings', generic: true }`（顶层键 `computerUse.enabled`，默认关）+ `card: 'field-editor'`，`maxMode: 'user-only'`（安全开关，Bot 可出卡但宿主不采用 values，符合 D89 惯例），不进 `DIRECT_ITEM_IDS`。macOS 权限引导不做卡片：设置页 anchor 区块显示 helper 的 AX / 屏幕录制权限状态，一键打开对应系统设置 pane 并首次拉起 helper 注册 TCC（main 新增 `computer:permissions-status` / `computer:permissions-open` IPC，仿 sensor-permission）。
   7. **构建与分发跟随 KepCup mac 现有策略**：SwiftPM 按 arm64 / x64 分架构出包（不做 universal lipo，同 rg「平台私有二进制只打本机架构一份」）；`apps/desktop/scripts/build-computer-use-macos.mjs` 改造自 orca 构建脚本（重命名 / bundle id / icon / 签名）；release 用 Developer ID + runtime + timestamp + **helper 独立公证**（嵌入主包前单独 notarize，验收项），dev 用 Apple Development 身份；无有效签名身份时构建跳过 helper、能力整体不可用并明确报错（不静默降级）。electron-builder：helper 走 `extraResources`，sidecar 入口走 `asarUnpack`（`ELECTRON_RUN_AS_NODE` fork，对齐 stdio-proxy 先例）；pack-hooks 加「mac 包必须含 helper」校验。**（2026-11-10 修订：不再构建 Swift helper；改为 `fetch-cua-driver.mjs` 获取 pinned `CuaDriver.app`，上游签名禁止重签，pack-hooks 改为强制校验 CuaDriver + lock 文件。）**
-  8. **平台分期**：P0 macOS（helper 需 macOS 14+，沿 orca 门控）；P1 Windows（`runtime.ps1` 零第三方依赖，验证 PowerShell 执行策略与 serve 通道）；P2 Linux（依赖 GNOME AT-SPI，KDE / 其他桌面明确报能力不可用）。能力集按平台经 `capabilities` 裁剪，工具描述不承诺跨平台一致。
+  8. **平台分期**：P0 macOS（helper 需 macOS 14+，沿 orca 门控）；P1 Windows；P2 Linux（依赖 GNOME AT-SPI，KDE / 其他桌面明确报能力不可用）。能力集按平台经 `capabilities` 裁剪，工具描述不承诺跨平台一致。**（2026-11-26 三端启用修订：P1/P2 随 CuaDriver 上游三端运行时一并启用——原「Windows runtime.ps1 / Linux runtime.py 自研」路线已随 vendored 原生层删除；Windows 无系统授权概念，Linux 依赖桌面环境辅助功能（GNOME AT-SPI；Wayland 会话需要随包的 wayland-helper），真机冒烟状态见文末「三端启用」节。）**
 
 ## 1 调研结论摘要
 
@@ -84,7 +84,7 @@ Bot 通过**无障碍树优先、截屏与键鼠兜底**读取并操作本机原
 | TS 编排层 | `src/main/computer/`（生产 ~5-6k 行，含测试 ~12k） | 全平台 | 出口仅 `@orca/process-host` 等 spawn 工具函数；`sidecar-client.ts` fork `computer-sidecar.js`（`COMPUTER_SIDECAR_ENTRY_FILENAME`，构建独立入口、asar.unpacked 解出） |
 | 集成层 | `src/main/runtime/rpc/methods/computer.ts`（runtime RPC）+ `src/cli/specs/computer.ts` + `src/cli/handlers/computer.ts`（CLI）+ `skills/computer-use`（agent 技能文档）+ `src/shared/computer-use-runtime-types.ts`（206 行类型契约） | 薄 | 与 orca 自有 RPC / CLI 深绑，**不搬** |
 
-sidecar 方法面（`computer-sidecar.ts` dispatch，树 diff 基线在 sidecar 进程内持有）：`capabilities` / `listApps` / `listWindows` / `getAppState` / `click` / `performSecondaryAction` / `scroll` / `drag` / `typeText` / `pressKey` / `hotkey` / `pasteText` / `setValue`。provider 选择在 `computer-provider-lifecycle.ts`：darwin → `CuaDriverProviderClient`；其它平台暂不启用（返回 null）。
+sidecar 方法面（`computer-sidecar.ts` dispatch，树 diff 基线在 sidecar 进程内持有）：`capabilities` / `permissionsStatus` / `listApps` / `listWindows` / `getAppState` / `click` / `performSecondaryAction` / `scroll` / `drag` / `typeText` / `pressKey` / `hotkey` / `pasteText` / `setValue`。provider 选择在 `computer-provider-lifecycle.ts`：darwin / win32 / linux → `CuaDriverProviderClient`（2026-11-26 三端启用；其它平台返回 null）。
 
 原 macOS 原生层的关键机制（稳定元素索引、后台输入注入、键盘安全、权限信任静置、会话所有权与连接鉴权、Unix socket 路径安全）随 P-B2 删除；CuaDriver 对应能力由上游实现，KepCup 只保留树 diff 与大树裁剪（祖先保留）。
 
@@ -189,3 +189,80 @@ sidecar 方法面（`computer-sidecar.ts` dispatch，树 diff 基线在 sidecar 
 > **2026-11-10 修订**：风险①（独立 helper 签名 / 公证）随 helper 删除而消失；
 > 新增风险为 CuaDriver 上游签名 / AMFI、安装包体积（每架构约 +60MB）、TCC 归属变化
 > （老用户需重新授权）与上游契约漂移（版本 pin + 季度吸收）。
+
+## 9 三端启用（2026-11-26 修订）
+
+用户确认启用 CuaDriver 的全平台能力，驱动产物随发行版安装包分发。上游同一 tag
+（`cua-driver-rs-v0.46.1`）分发三端资产；KepCup 侧改动集中在 provider 门控、分发
+链路与权限面板状态源，core / preload / host-capabilities 本就平台盲，零改动。
+
+### 9.1 平台事实与形态差异
+
+| | darwin | win32 | linux |
+|---|---|---|---|
+| 上游资产 | `*.tar.gz`（CuaDriver.app bundle，AMFI 要求） | `*.zip`（运行时目录：`cua-driver.exe` + `cua-driver-uia.exe` + `cua_driver_sdk.dll` 等） | `*.tar.gz`（运行时目录：`cua-driver` + `cua-cursor-theme` + `libcua_driver_sdk.so` + `wayland-helper/`） |
+| daemon 端点 | Unix socket（104 字节路径上限） | named pipe `\\.\pipe\kepcup-cua-<sha256(socket目录)前12位>`（Node `net` 与 unix socket 同 API；名字跨重启稳定供孤儿清理） | Unix socket |
+| 系统授权 | TCC（AX / 屏幕录制 / 26+ 直采同意） | 无 OS 授权概念（UIA 开箱可用） | 依赖桌面环境：GNOME AT-SPI；Wayland 会话需随包 wayland-helper；部分桌面只在前台可用 |
+| lock pin | 主二进制（bundle 内） | 主二进制 + uia helper + sdk dll | 主二进制 + cursor-theme |
+
+### 9.2 改动面
+
+- **门控**：`computer-provider-lifecycle.ts` 三端创建 provider；`cua-driver-paths.ts`
+  按 OS 解析运行时（打包 `<resources>/cua-driver/<exe>`，dev
+  `resources/cua-driver/<os>-<arch>/`）与 socket 端点（win32 走 pipe，跳过 0700/104
+  字节语义）；能力合成传真实 `process.platform`；`pasteText` 弦按平台（darwin
+  `cmd+v`，其余 `ctrl+v`）。
+- **分发**：lock 新增 `win-x64|arm64` / `linux-x64|arm64` 四条目（同版本 0.46.1）；
+  `fetch-cua-driver.mjs` 支持 `--os` + zip 解包（win 用 PowerShell
+  Expand-Archive；MSYS tar 需 `--force-local`、用 cwd 替代 `-C`）；`dist.mjs` 按
+  `--win/--linux` 目标 fetch；`electron-builder.yml` win/linux 平台块加
+  `extraResources`（`to: cua-driver`，每包只含本 arch 一份）+ lock 随包；
+  `pack-hooks.cjs` 三平台校验（win/linux 校验全部 pin 文件哈希 + linux 的
+  wayland-helper 目录随包；codesign 仅 darwin）。
+- **CI**：release.yml 的成品守卫步骤扩为三平台（win/linux 用
+  `scripts/release/verify-cua-driver-package.mjs` 校验最终解包目录的 lock pin；
+  codesign / TeamIdentifier 检查仍仅 mac）。
+- **权限面板状态源**：win/linux 无 TCC——`computer-host.permissionsStatus` 改走
+  sidecar 新方法 `permissionsStatus`（daemon `check_permissions`，embedded 只读），
+  读不到如实报 unknown；「打开系统设置」按钮仅 darwin 渲染；「检测截屏」探针
+  全平台保留（机制本就跨平台）。
+- **文案**：catalog summary、设置页 hint、core `PERMISSION_DENIED` 引导均改为按
+  平台表述（i18n 新增 `computerUseCapture` / `computerUsePermissionHintOther`）。
+
+### 9.3 验证状态与遗留
+
+- **Windows 真机（开发机，win-x64）已验证**：fetch/`--record` 全链路 + lock 全绿；
+  编排冒烟 3/3（capabilities 握手 `platform: 'win32'`、listApps、stop 清理 daemon）；
+  侧车探针确认 getAppState 真实 UIA 树（Notepad 36 元素）+ 真帧截图（~430KB PNG）、
+  daemon `check_permissions` 经 sidecar `permissionsStatus` 方法可读。冒烟暴露并修掉
+  四个 Windows 特有问题：
+  1. 运行时目录候选扫描把「目录存在」当命中——`apps/`、仓库根必然存在，win/linux
+     候选必须验证目录里**装有主二进制**（darwin 候选带 `.app` 后缀无此问题）；
+  2. win32 目录前缀是 `win-<arch>`（lock / fetch / extraResources 键），不是平台
+     枚举的 `win32-<arch>`；
+  3. named pipe 的 `fs.existsSync` 恒 false（stat 抛错）——启动等待与孤儿清理改用
+     真连一次的探针（带 500ms 超时防挂死），启动失败时回收 daemon 子进程避免
+     「already running」卡死；
+  4. 「检测截屏」探针结果被状态源覆盖——非 darwin 的 permissionsStatus 直接读
+     daemon verdict，而 `screen_recording_capturable` 在 Windows 上不可靠（报
+     unknown 的同时真帧采集成功），导致探针后状态行停在「未知」。修法：真帧自检
+     的结论（granted / not-granted）缓存进 `#directCapture` 并优先于 daemon
+     verdict（与 darwin 的缓存合并语义对齐）。
+- Windows 平台差异备忘：driver 上报的应用名带 `.exe` 后缀（`Notepad.exe`）；
+  `check_permissions` 在 Windows 上报 `accessibility/screen_recording: false`——
+  Windows 没有 OS 授权概念、上游平台 crate 也没有对应检测物（实测报 false 的同时
+  UIA 与真帧截屏都可用），**设置页据此在 win 上整行隐藏「辅助功能 / 屏幕录制」**
+  （保留可用性 + 检测截屏的真实自检，提示文案按平台改写；darwin 是 TCC 真状态、
+  linux 保留——GNOME AT-SPI 是真实依赖）；同一用户下并发第二个 daemon 会启动失败
+  （exit 1，疑似上游单实例锁）——KepCup 单实例拓扑下不出现。
+- win-arm64 / linux 仅代码 + CI 打包链路就位，**真机冒烟待后续**（风险④顺延）；
+  冒烟清单需含：`normalizeCuaClickAction` 的动作词表核对——现有映射是 macOS AX
+  风格（press/show_menu/pick/confirm/cancel/open），若 win（UIA）/ linux 树的
+  actions 词表不同，`computer_perform_action` 会以可行动的 `action_not_supported`
+  拒绝（不静默），届时按 driver 实际词表扩充映射：
+  Linux 需 GNOME / X11 桌面实测（AT-SPI 可用性、wayland-helper 安装脚本、部分
+  桌面只前台可用）。
+- snap/flatpak 沙箱对 daemon spawn 的限制未验证（AppImage/deb/rpm 为主要目标）；
+  sandboxed 场景若 spawn 失败按「provider 不可用」如实报错，无静默降级。
+- 安装包体积：win/linux 各架构运行时目录约 +40–60MB（含 sdk dll / node runtime），
+  release note 写明。

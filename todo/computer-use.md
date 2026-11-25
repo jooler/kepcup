@@ -22,8 +22,10 @@ CI 的 macOS runner 无 GUI 会话与 TCC 授权，`cua-driver-provider.live.tes
    0.40.1 新增发现 2）——验证错误文案可行动（2026-11-07 复检补：截屏失败与被挡的
    scroll/drag 报错现在都带「系统设置 › 屏幕录制给 KepCup 授权 + 重启」指引）、
    授权后截图恢复、设置页权限状态正确。
-3. **唯一 provider**：darwin 上只有 CuaDriver（不再有 native / script 分支）；非 darwin
-   报「尚未启用」。`KEPCUP_COMPUTER_PROVIDER` 开关已删除，不要再按旧文档设置。
+3. **唯一 provider**：darwin / win32 / linux 上只有 CuaDriver（不再有 native / script
+   分支；2026-11-26 三端启用修订，见 [52-computer-use.md](docs/design/52-computer-use.md)
+   「三端启用」节）。其它平台报「尚未启用」。`KEPCUP_COMPUTER_PROVIDER` 开关已删除，
+   不要再按旧文档设置。
 4. **安装包**：含 CuaDriver.app 的包（+约 60MB/架构）在 release note 写明体积变化；
    pack-hooks 对 cua 产物做「存在才校验」的签名 + lock 哈希检查。
 5. **升级重授权**：cua 期的 TCC 记在 KepCup 主应用名下——原生 helper 时代（独立

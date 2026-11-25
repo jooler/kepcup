@@ -8,11 +8,11 @@ packages:
   - apps/team-server/console
   - '!apps/team-server'
 
-# pi-ai@1.0.2 的传递 peer + pi-coding-agent 精确依赖 8.10.2 与 core 的 ^8.11.2
-# 会把 pi 包分裂成两个实例（双模型目录/双 Agent 类）。统一到 8.11.2 收敛为单实例
-# （Phase A 审查 P1-1，todo/pi-1x-upgrade-mcp-subagent.md）。
+# pi-coding-agent 精确依赖 undici（1.6.1 起 8.12.4，含安全修复）与 core 的 ^8.11.2
+# 会把 pi 包分裂成两个实例（双模型目录/双 Agent 类）。统一到 8.12.4 收敛为单实例
+# （Phase A 审查 P1-1，todo/pi-1x-upgrade-mcp-subagent.md；版本随 pi 升级同步）。
 overrides:
-  undici: 8.11.2
+  undici: 8.12.4
 
 allowBuilds:
   electron: true
@@ -44,10 +44,12 @@ minimumReleaseAgeExclude:
   - '@typescript-eslint/visitor-keys@8.71.0'
   - typescript-eslint@8.71.0
   - '@anthropic-ai/sandbox-runtime@0.0.78'
-  - '@earendil-works/pi-agent-core@1.5.2'
-  - '@earendil-works/pi-ai@1.5.2'
-  - '@earendil-works/pi-codemode@1.5.2'
-  - '@earendil-works/pi-coding-agent@1.5.2'
-  - '@earendil-works/pi-mcp@1.5.2'
-  - '@earendil-works/pi-telemetry@1.5.2'
-  - '@earendil-works/pi-tui@1.5.2'
+  - '@earendil-works/pi-agent-core@1.6.1'
+  - '@earendil-works/pi-ai@1.6.1'
+  - '@earendil-works/pi-codemode@1.6.1'
+  - '@earendil-works/pi-coding-agent@1.6.1'
+  - '@earendil-works/pi-mcp@1.6.1'
+  - '@earendil-works/pi-telemetry@1.6.1'
+  - '@earendil-works/pi-tui@1.6.1'
+  - '@earendil-works/pi-schema@1.6.1'
+  - electron@45.5.0

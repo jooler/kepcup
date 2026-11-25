@@ -59,7 +59,7 @@ export class CuaDriverProviderClient {
     await this.ensureStarted()
     if (!this.capabilitiesCache) {
       const version = readCuaDriverLock()?.version ?? 'unknown'
-      this.capabilitiesCache = synthesizeCuaDriverCapabilities(version)
+      this.capabilitiesCache = synthesizeCuaDriverCapabilities(version, process.platform)
     }
     return this.capabilitiesCache
   }
@@ -142,7 +142,7 @@ export class CuaDriverProviderClient {
     }
     const bundle = resolveCuaDriverBundlePath()
     if (!bundle) {
-      throw cuaDriverTransportError('CuaDriver.app was not found')
+      throw cuaDriverTransportError('cua-driver runtime was not found')
     }
     const socketDirectory = prepareCuaDriverSocketDirectory(this.options.userDataDirectory)
     if (this.options.skipOrphanCleanup !== true) {

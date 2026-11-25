@@ -11,7 +11,7 @@ import {
   normalizeComputerActionResult,
   rejectContradictedComputerAction
 } from './computer-action-verification-normalization'
-import type { CuaDriverCaptureProbe } from './cua-driver-permissions'
+import type { CuaDriverCaptureProbe, CuaDriverPermissionStatus } from './cua-driver-permissions'
 import { isComputerSidecarDiagnostic, logComputerDiagnostic } from './computer-sidecar-diagnostics'
 import { validateComputerSidecarPasteText } from './computer-sidecar-paste-validation'
 import { RuntimeClientError } from './runtime-client-error'
@@ -22,6 +22,7 @@ export const COMPUTER_SIDECAR_ENTRY_FILENAME = 'computer-sidecar.js'
 
 type ComputerSidecarMethod =
   | 'capabilities'
+  | 'permissionsStatus'
   | 'probeDirectCapture'
   | 'listApps'
   | 'listWindows'
@@ -76,6 +77,15 @@ export async function callComputerSidecarCapabilities(): Promise<ComputerProvide
 }
 
 /**
+ * daemon 侧权限状态（check_permissions，embedded 只读）。三端启用修订后是
+ * win/linux 权限面板的状态源（无 TCC 可读）；darwin 保持 Electron 快路径。
+ * 会启动 sidecar/daemon——设置页刷新本来就是握手级开销，可接受。
+ */
+export async function callComputerSidecarPermissionsStatus(): Promise<CuaDriverPermissionStatus> {
+  return (await getComputerSidecar().call('permissionsStatus', {})) as CuaDriverPermissionStatus
+}
+
+/**
  * 截屏自检：经 sidecar 让 CuaDriver 真抓一帧（首次可能触发系统直采同意框）。
  * 只允许用户在设置页主动触发——会短暂抢焦点，不挂在状态轮询里。
  */
@@ -101,7 +111,12 @@ export async function callComputerSidecarSnapshot(
 export async function callComputerSidecarAction(
   method: Exclude<
     ComputerSidecarMethod,
-    'capabilities' | 'probeDirectCapture' | 'listApps' | 'listWindows' | 'getAppState'
+    | 'capabilities'
+    | 'permissionsStatus'
+    | 'probeDirectCapture'
+    | 'listApps'
+    | 'listWindows'
+    | 'getAppState'
   >,
   params: unknown
 ): Promise<ComputerActionResult> {

@@ -541,7 +541,8 @@ export const enUS = {
     'Parts containing ${user_config.…} are replaced after you fill them in below; sensitive values are stored only in the keychain, not in settings.',
   'settings.mcpbIncompatible': 'Incompatible with the current environment: {reason}',
   'settings.mcpbRuntimeMissing':
-    "Requires the {runtime} runtime, which isn't installed. Install it in Settings > Environment first.",
+    'No {runtime} runtime detected. Install it in Settings > Environment, or download it from the official site.',
+  'settings.mcpbRuntimeDownload': 'Download {runtime}',
   'settings.mcpbUntrusted':
     'Source not reviewed: after installation, all tools from this server will ask for your approval each time.',
   'settings.mcpbConfigTitle': 'Configuration',
@@ -2143,7 +2144,8 @@ export const enUS = {
   'plugins.consent.mcp': 'MCP servers',
   'plugins.consent.mcpb': 'Embedded local package · launch command',
   'plugins.consent.mcpHttp': 'Remote service · {host}',
-  'plugins.consent.runtimeMissing': 'Needs the {runtime} runtime, which is not installed',
+  'plugins.consent.runtimeMissing': 'No {runtime} runtime detected — install it to continue',
+  'plugins.consent.runtimeDownload': 'Download {runtime}',
   'plugins.consent.configTitle': 'Configuration',
   'plugins.consent.required': 'Required',
   'plugins.consent.sensitive': 'Sensitive',
@@ -2711,7 +2713,7 @@ export const enUS = {
   // --- D105 computer use ------------------------------------------------------
   'settings.computerUseSectionTitle': 'Computer use',
   'settings.computerUseSectionHint':
-    'Let bots read and drive native desktop apps in tasks: accessibility-tree first, screenshots and synthetic input as fallback, without stealing focus. First use needs Accessibility & Screen Recording granted to KepCup (macOS only, off by default).',
+    'Let bots read and drive native desktop apps in tasks: accessibility-tree first, screenshots and synthetic input as fallback, without stealing focus. Off by default; on macOS, first use needs Accessibility & Screen Recording granted to KepCup.',
   // Web endpoint (remote): CuaDriver and the driven desktop both live on the local machine.
   'settings.computerUseWebOnlyHint': 'This feature requires the KepCup desktop client',
   'settings.computerUseGranted': 'Granted',
@@ -2724,6 +2726,8 @@ export const enUS = {
   'settings.computerUseAccessibility': 'Accessibility (read & drive app UIs)',
   'settings.computerUseScreenRecording': 'Screen Recording (capture app windows)',
   'settings.computerUseDirectCapture': 'Direct capture (macOS 26+ screenshot availability)',
+  // Non-macOS (three-platform enablement): Windows needs no OS grants; Linux depends on the desktop environment.
+  'settings.computerUseCapture': 'Screen capture (window capture availability)',
   'settings.computerUseProbeCapture': 'Test capture',
   'settings.computerUseProbingCapture': 'Capturing…',
   'settings.computerUseOpenSettings': 'Open System Settings',
@@ -2731,6 +2735,10 @@ export const enUS = {
   'settings.computerUseRefresh': 'Refresh',
   'settings.computerUsePermissionHint':
     'Permissions go to the KepCup main app (CuaDriver runs embedded; there is no standalone helper). Test capture grabs one real frame to confirm screenshots work; macOS 26+ may show a consent dialog the first time — choose Allow. If a grant does not take effect, restart KepCup.',
+  'settings.computerUsePermissionHintOther':
+    'Status is reported live by the CuaDriver daemon (embedded): Windows needs no OS grants; on Linux, desktop-environment accessibility support is required (GNOME AT-SPI; Wayland sessions need the wayland-helper), and some desktops only work in the foreground. Test capture grabs one real frame to confirm screenshots work.',
+  'settings.computerUsePermissionHintWindows':
+    'Windows needs no OS grants — once availability is ready, control just works (apps running as administrator may be out of reach). Test capture grabs one real frame to confirm screenshots work.',
   // --- D96 remote control -----------------------------------------------------
   'settings.navRemote': 'Remote',
   'settings.remoteSectionTitle': 'Remote control',

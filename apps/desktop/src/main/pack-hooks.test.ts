@@ -33,7 +33,8 @@ const hooks = require('../../scripts/pack-hooks.cjs') as {
     appGroup: string | null;
   };
   assertCuaDriverBundle(
-    appBundlePath: string,
+    resourcesPath: string,
+    targetPlatform: 'darwin' | 'win' | 'linux',
     targetArch: string,
     options?: { lockPath?: string; verifySignature?: boolean },
   ): { version: string; executable: string };
@@ -422,23 +423,50 @@ describe('share extension packaging checks', () => {
   });
 });
 
-// P-B2：CuaDriver 是唯一 provider，必须随 mac 包分发；bundle / lock / 版本都要校验。
+// P-B2 + 三端启用修订：CuaDriver 是唯一 provider，必须随包分发（三平台）；
+// bundle / lock / 版本 / 全部 pin 文件都要校验。
 describe('afterPack CuaDriver checks', () => {
   const FAKE_EXECUTABLE = '#!/bin/sh\n';
   const FAKE_EXECUTABLE_SHA256 = createHash('sha256').update(FAKE_EXECUTABLE).digest('hex');
+  const FAKE_HELPER = 'helper-bytes\n';
+  const FAKE_HELPER_SHA256 = createHash('sha256').update(FAKE_HELPER).digest('hex');
 
-  function fakeApp(
-    overrides: { withBundle?: boolean; withLock?: boolean; packagedVersion?: string } = {},
+  type FakeRuntimeOverrides = {
+    withRuntime?: boolean;
+    withLock?: boolean;
+    packagedVersion?: string;
+    withWaylandHelper?: boolean;
+  };
+
+  /** 造 `<resources>/cua-driver/` 产物：darwin 是 .app bundle，win/linux 是运行时目录。 */
+  function fakeResources(
+    platform: 'darwin' | 'win' | 'linux',
+    overrides: FakeRuntimeOverrides = {},
   ): string {
     const bundle = mkdtempSync(path.join(tmpdir(), 'kepcup-pack-cua-'));
-    const app = path.join(bundle, 'KepCup.app');
-    const resources = path.join(app, 'Contents', 'Resources');
+    const resources = path.join(bundle, 'resources');
     mkdirSync(resources, { recursive: true });
-    if (overrides.withBundle !== false) {
-      const driver = path.join(resources, 'cua-driver', 'CuaDriver.app');
-      mkdirSync(path.join(driver, 'Contents', 'MacOS'), { recursive: true });
-      writeFileSync(path.join(driver, 'Contents', 'Info.plist'), '<plist/>');
-      writeFileSync(path.join(driver, 'Contents', 'MacOS', 'cua-driver'), FAKE_EXECUTABLE);
+    if (overrides.withRuntime !== false) {
+      const driverDir = path.join(resources, 'cua-driver');
+      if (platform === 'darwin') {
+        const driver = path.join(driverDir, 'CuaDriver.app');
+        mkdirSync(path.join(driver, 'Contents', 'MacOS'), { recursive: true });
+        writeFileSync(path.join(driver, 'Contents', 'Info.plist'), '<plist/>');
+        writeFileSync(path.join(driver, 'Contents', 'MacOS', 'cua-driver'), FAKE_EXECUTABLE);
+      } else {
+        mkdirSync(driverDir, { recursive: true });
+        writeFileSync(
+          path.join(driverDir, platform === 'win' ? 'cua-driver.exe' : 'cua-driver'),
+          FAKE_EXECUTABLE,
+        );
+        writeFileSync(
+          path.join(driverDir, platform === 'win' ? 'cua_driver_sdk.dll' : 'libcua_driver_sdk.so'),
+          FAKE_HELPER,
+        );
+        if (platform === 'linux' && overrides.withWaylandHelper !== false) {
+          mkdirSync(path.join(driverDir, 'wayland-helper'), { recursive: true });
+        }
+      }
     }
     if (overrides.withLock !== false) {
       writeFileSync(
@@ -446,10 +474,102 @@ describe('afterPack CuaDriver checks', () => {
         JSON.stringify({ version: overrides.packagedVersion ?? '0.40.1' }),
       );
     }
-    return app;
+    return resources;
   }
 
-  function fakeLock(executableSha256 = FAKE_EXECUTABLE_SHA256): { dir: string; lockPath: string } {
+  function fakeLock(platform: 'darwin' | 'win' | 'linux'): { dir: string; lockPath: string } {
+    const dir = mkdtempSync(path.join(tmpdir(), 'kepcup-pack-lock-'));
+    const lockPath = path.join(dir, 'cua-driver.lock.json');
+    const files =
+      platform === 'darwin'
+        ? { 'CuaDriver.app/Contents/MacOS/cua-driver': FAKE_EXECUTABLE_SHA256 }
+        : platform === 'win'
+          ? { 'cua-driver.exe': FAKE_EXECUTABLE_SHA256, 'cua_driver_sdk.dll': FAKE_HELPER_SHA256 }
+          : { 'cua-driver': FAKE_EXECUTABLE_SHA256, 'libcua_driver_sdk.so': FAKE_HELPER_SHA256 };
+    writeFileSync(
+      lockPath,
+      JSON.stringify({ version: '0.40.1', assets: { [`${platform}-arm64`]: { files } } }),
+    );
+    return { dir, lockPath };
+  }
+
+  function assertPass(
+    platform: 'darwin' | 'win' | 'linux',
+    resources: string,
+    lockPath: string,
+  ): { version: string; executable: string } {
+    return hooks.assertCuaDriverBundle(resources, platform, 'arm64', {
+      lockPath,
+      verifySignature: false,
+    });
+  }
+
+  function cleanupAll(paths: string[]): void {
+    for (const p of paths) rmSync(p, { recursive: true, force: true });
+  }
+
+  test.each(['darwin', 'win', 'linux'] as const)(
+    '%s: a well-formed runtime passes and reports its version',
+    (platform) => {
+      const resources = fakeResources(platform);
+      const { dir, lockPath } = fakeLock(platform);
+      try {
+        const summary = assertPass(platform, resources, lockPath);
+        expect(summary.version).toBe('0.40.1');
+        expect(summary.executable).toContain('cua-driver');
+      } finally {
+        cleanupAll([path.dirname(resources), dir]);
+      }
+    },
+  );
+
+  test.each(['darwin', 'win', 'linux'] as const)('%s: a missing runtime fails the build', (platform) => {
+    const resources = fakeResources(platform, { withRuntime: false });
+    const { dir, lockPath } = fakeLock(platform);
+    try {
+      expect(() =>
+        hooks.assertCuaDriverBundle(resources, platform, 'arm64', {
+          lockPath,
+          verifySignature: false,
+        }),
+      ).toThrow(/缺少 cua-driver 产物/);
+    } finally {
+      cleanupAll([path.dirname(resources), dir]);
+    }
+  });
+
+  test.each(['darwin', 'win', 'linux'] as const)('%s: a missing packaged lock fails the build', (platform) => {
+    const resources = fakeResources(platform, { withLock: false });
+    const { dir, lockPath } = fakeLock(platform);
+    try {
+      expect(() =>
+        hooks.assertCuaDriverBundle(resources, platform, 'arm64', {
+          lockPath,
+          verifySignature: false,
+        }),
+      ).toThrow(/缺少 cua-driver\.lock\.json/);
+    } finally {
+      cleanupAll([path.dirname(resources), dir]);
+    }
+  });
+
+  test.each(['darwin', 'win', 'linux'] as const)('%s: a version mismatch fails the build', (platform) => {
+    const resources = fakeResources(platform, { packagedVersion: '0.39.0' });
+    const { dir, lockPath } = fakeLock(platform);
+    try {
+      expect(() =>
+        hooks.assertCuaDriverBundle(resources, platform, 'arm64', {
+          lockPath,
+          verifySignature: false,
+        }),
+      ).toThrow(/版本不一致/);
+    } finally {
+      cleanupAll([path.dirname(resources), dir]);
+    }
+  });
+
+  test.each(['darwin', 'win', 'linux'] as const)('%s: a lock without a pinned sha256 fails closed', (platform) => {
+    const resources = fakeResources(platform);
     const dir = mkdtempSync(path.join(tmpdir(), 'kepcup-pack-lock-'));
     const lockPath = path.join(dir, 'cua-driver.lock.json');
     writeFileSync(
@@ -457,106 +577,110 @@ describe('afterPack CuaDriver checks', () => {
       JSON.stringify({
         version: '0.40.1',
         assets: {
-          'darwin-arm64': {
-            files: { 'CuaDriver.app/Contents/MacOS/cua-driver': executableSha256 },
+          [`${platform}-arm64`]: {
+            files:
+              platform === 'darwin'
+                ? { 'CuaDriver.app/Contents/MacOS/cua-driver': 'PENDING' }
+                : platform === 'win'
+                  ? { 'cua-driver.exe': 'PENDING' }
+                  : { 'cua-driver': 'PENDING' },
           },
         },
       }),
     );
-    return { dir, lockPath };
-  }
-
-  test('a well-formed bundle passes and reports its version', () => {
-    const appBundle = fakeApp();
-    const { dir, lockPath } = fakeLock();
     try {
-      const summary = hooks.assertCuaDriverBundle(appBundle, 'arm64', {
-        lockPath,
-        verifySignature: false,
-      });
-      expect(summary.version).toBe('0.40.1');
-      expect(summary.executable).toContain('cua-driver');
+      expect(() =>
+        hooks.assertCuaDriverBundle(resources, platform, 'arm64', {
+          lockPath,
+          verifySignature: false,
+        }),
+      ).toThrow(/pin 无效|缺少可执行文件 sha256 pin/);
     } finally {
-      rmSync(path.dirname(appBundle), { recursive: true, force: true });
-      rmSync(dir, { recursive: true, force: true });
+      cleanupAll([path.dirname(resources), dir]);
     }
   });
 
-  test('a missing bundle fails the build', () => {
-    const appBundle = fakeApp({ withBundle: false });
-    const { dir, lockPath } = fakeLock();
+  test.each(['darwin', 'win', 'linux'] as const)('%s: a hash mismatch fails the build', (platform) => {
+    const resources = fakeResources(platform);
+    const dir = mkdtempSync(path.join(tmpdir(), 'kepcup-pack-lock-'));
+    const lockPath = path.join(dir, 'cua-driver.lock.json');
+    const wrongSha = '0'.repeat(64);
+    writeFileSync(
+      lockPath,
+      JSON.stringify({
+        version: '0.40.1',
+        assets: {
+          [`${platform}-arm64`]: {
+            files:
+              platform === 'darwin'
+                ? { 'CuaDriver.app/Contents/MacOS/cua-driver': wrongSha }
+                : platform === 'win'
+                  ? { 'cua-driver.exe': wrongSha }
+                  : { 'cua-driver': wrongSha },
+          },
+        },
+      }),
+    );
     try {
       expect(() =>
-        hooks.assertCuaDriverBundle(appBundle, 'arm64', { lockPath, verifySignature: false }),
-      ).toThrow(/缺少 cua-driver 产物/);
-    } finally {
-      rmSync(path.dirname(appBundle), { recursive: true, force: true });
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test('a missing packaged lock fails the build', () => {
-    const appBundle = fakeApp({ withLock: false });
-    const { dir, lockPath } = fakeLock();
-    try {
-      expect(() =>
-        hooks.assertCuaDriverBundle(appBundle, 'arm64', { lockPath, verifySignature: false }),
-      ).toThrow(/缺少 cua-driver\.lock\.json/);
-    } finally {
-      rmSync(path.dirname(appBundle), { recursive: true, force: true });
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test('a version mismatch fails the build', () => {
-    const appBundle = fakeApp({ packagedVersion: '0.39.0' });
-    const { dir, lockPath } = fakeLock();
-    try {
-      expect(() =>
-        hooks.assertCuaDriverBundle(appBundle, 'arm64', { lockPath, verifySignature: false }),
-      ).toThrow(/版本不一致/);
-    } finally {
-      rmSync(path.dirname(appBundle), { recursive: true, force: true });
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test('a lock without a pinned sha256 fails closed', () => {
-    const appBundle = fakeApp();
-    const { dir, lockPath } = fakeLock('PENDING');
-    try {
-      expect(() =>
-        hooks.assertCuaDriverBundle(appBundle, 'arm64', { lockPath, verifySignature: false }),
-      ).toThrow(/缺少可执行文件 sha256 pin/);
-    } finally {
-      rmSync(path.dirname(appBundle), { recursive: true, force: true });
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test('a hash mismatch fails the build', () => {
-    const appBundle = fakeApp();
-    const { dir, lockPath } = fakeLock('0'.repeat(64));
-    try {
-      expect(() =>
-        hooks.assertCuaDriverBundle(appBundle, 'arm64', { lockPath, verifySignature: false }),
+        hooks.assertCuaDriverBundle(resources, platform, 'arm64', {
+          lockPath,
+          verifySignature: false,
+        }),
       ).toThrow(/sha256 与 lock 不一致/);
     } finally {
-      rmSync(path.dirname(appBundle), { recursive: true, force: true });
-      rmSync(dir, { recursive: true, force: true });
+      cleanupAll([path.dirname(resources), dir]);
+    }
+  });
+
+  test('win/linux pin 哈希但产物缺 helper 文件 → 构建失败', () => {
+    const resources = fakeResources('win');
+    rmSync(path.join(resources, 'cua-driver', 'cua_driver_sdk.dll'));
+    const { dir, lockPath } = fakeLock('win');
+    try {
+      expect(() =>
+        hooks.assertCuaDriverBundle(resources, 'win', 'arm64', {
+          lockPath,
+          verifySignature: false,
+        }),
+      ).toThrow(/缺少 lock pin 的文件/);
+    } finally {
+      cleanupAll([path.dirname(resources), dir]);
+    }
+  });
+
+  test('linux 缺 wayland-helper 目录 → 构建失败', () => {
+    const resources = fakeResources('linux', { withWaylandHelper: false });
+    const dir = mkdtempSync(path.join(tmpdir(), 'kepcup-pack-lock-'));
+    const lockPath = path.join(dir, 'cua-driver.lock.json');
+    writeFileSync(
+      lockPath,
+      JSON.stringify({
+        version: '0.40.1',
+        assets: { 'linux-arm64': { files: { 'cua-driver': FAKE_EXECUTABLE_SHA256 } } },
+      }),
+    );
+    try {
+      expect(() =>
+        hooks.assertCuaDriverBundle(resources, 'linux', 'arm64', {
+          lockPath,
+          verifySignature: false,
+        }),
+      ).toThrow(/wayland-helper/);
+    } finally {
+      cleanupAll([path.dirname(resources), dir]);
     }
   });
 
   test('an unsigned bundle fails the signature check', () => {
-    const appBundle = fakeApp();
-    const { dir, lockPath } = fakeLock();
+    const resources = fakeResources('darwin');
+    const { dir, lockPath } = fakeLock('darwin');
     try {
-      expect(() => hooks.assertCuaDriverBundle(appBundle, 'arm64', { lockPath })).toThrow(
-        /签名校验失败/,
-      );
+      expect(() =>
+        hooks.assertCuaDriverBundle(resources, 'darwin', 'arm64', { lockPath }),
+      ).toThrow(/签名校验失败/);
     } finally {
-      rmSync(path.dirname(appBundle), { recursive: true, force: true });
-      rmSync(dir, { recursive: true, force: true });
+      cleanupAll([path.dirname(resources), dir]);
     }
   });
 });

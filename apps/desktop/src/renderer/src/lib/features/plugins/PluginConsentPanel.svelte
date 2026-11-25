@@ -2,9 +2,11 @@
   import type { PluginInspectOutput } from '@kepcup/shared';
   import { t, listSeparator } from '$lib/i18n';
   import { Badge } from '$lib/components/ui/badge';
+  import { Button } from '$lib/components/ui/button';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { Label } from '$lib/components/ui/label';
-  import { formatBytes, runtimeLabel } from '../settings/mcpb-install';
+  import { formatBytes, runtimeDownloadUrl, runtimeLabel } from '../settings/mcpb-install';
+  import { endpointSupports } from '$lib/features/web-shell/endpoint';
   import type { PluginForm } from './plugin-install';
   import { runtimeDisclosureView } from './plugin-runtime-disclosure';
   import PluginFieldForm from './PluginFieldForm.svelte';
@@ -39,6 +41,13 @@
   const mcpbItems = $derived(info.mcp.filter((item) => item.kind === 'mcpb'));
   /** D125 P4：执行型插件的能力披露（null = 数据型，整块不渲染）。 */
   const runtimeView = $derived(runtimeDisclosureView(info.runtime));
+  /** web-shell（remote 端点）没有系统浏览器通路：按约定置灰为「仅桌面」而非可点无效。 */
+  const canOpenExternal = $derived(endpointSupports('open-external'));
+
+  /** 运行时缺失：跳官网下载页（仅桌面端点可用，web 下按钮已置灰）。 */
+  function openRuntimeDownload(kind: 'node' | 'python' | 'uv'): void {
+    window.kepcup.openExternal(runtimeDownloadUrl(kind)).catch(() => undefined);
+  }
 </script>
 
 <div class="space-y-3" data-testid={testid}>
@@ -232,9 +241,28 @@
               >{item.launchCommand}</code
             >
             {#if item.runtime !== null && !item.runtime.available}
-              <span class="text-xs text-destructive">
-                {t('plugins.consent.runtimeMissing', { runtime: runtimeLabel(item.runtime.kind) })}
-              </span>
+              <div
+                class="flex flex-wrap items-center gap-2"
+                data-testid={`${testid}-runtime-missing-${item.id}`}
+              >
+                <span class="text-xs text-destructive">
+                  {t('plugins.consent.runtimeMissing', {
+                    runtime: runtimeLabel(item.runtime.kind),
+                  })}
+                </span>
+                <Button
+                  variant="outline"
+                  size="xs"
+                  disabled={!canOpenExternal}
+                  title={canOpenExternal ? undefined : t('settings.desktopOnly')}
+                  onclick={() => openRuntimeDownload(item.runtime!.kind)}
+                  data-testid={`${testid}-runtime-download-${item.id}`}
+                >
+                  {t('plugins.consent.runtimeDownload', {
+                    runtime: runtimeLabel(item.runtime.kind),
+                  })}
+                </Button>
+              </div>
             {/if}
             <code class="text-xs break-all text-muted-foreground">{item.mcpbSha256}</code>
           {:else}
