@@ -5,6 +5,7 @@
   import { core } from '$lib/rpc/client.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { appsStore } from '$lib/stores/apps.svelte';
+  import { endpointSupports } from '$lib/features/web-shell/endpoint';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
@@ -24,6 +25,7 @@
     formatBytes,
     initialForm,
     missingRequired,
+    runtimeDownloadUrl,
     runtimeLabel,
     type McpbForm,
   } from './mcpb-install';
@@ -49,6 +51,13 @@
   const installable = $derived(
     info !== null && canInstall({ compatible: info.compatible, runtime: info.runtime, missing }),
   );
+  /** web-shell（remote 端点）没有系统浏览器通路：按约定置灰为「仅桌面」而非可点无效。 */
+  const canOpenExternal = $derived(endpointSupports('open-external'));
+
+  /** 运行时缺失：跳官网下载页（仅桌面端点可用，web 下按钮已置灰）。 */
+  function openRuntimeDownload(kind: 'node' | 'python' | 'uv'): void {
+    window.kepcup.openExternal(runtimeDownloadUrl(kind)).catch(() => undefined);
+  }
 
   function reset(): void {
     info = null;
@@ -205,9 +214,21 @@
           </p>
         {/if}
         {#if info.runtime !== null && !info.runtime.available}
-          <p class="text-xs text-amber-600 dark:text-amber-400" data-testid="mcpb-runtime-missing">
-            {t('settings.mcpbRuntimeMissing', { runtime: runtimeLabel(info.runtime.kind) })}
-          </p>
+          <div class="flex flex-wrap items-center gap-2" data-testid="mcpb-runtime-missing">
+            <p class="text-xs text-amber-600 dark:text-amber-400">
+              {t('settings.mcpbRuntimeMissing', { runtime: runtimeLabel(info.runtime.kind) })}
+            </p>
+            <Button
+              variant="outline"
+              size="xs"
+              disabled={!canOpenExternal}
+              title={canOpenExternal ? undefined : t('settings.desktopOnly')}
+              onclick={() => openRuntimeDownload(info!.runtime!.kind)}
+              data-testid="mcpb-runtime-download"
+            >
+              {t('settings.mcpbRuntimeDownload', { runtime: runtimeLabel(info.runtime.kind) })}
+            </Button>
+          </div>
         {/if}
         <p class="text-xs text-amber-600 dark:text-amber-400">{t('settings.mcpbUntrusted')}</p>
 

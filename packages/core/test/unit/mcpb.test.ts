@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -7,12 +7,14 @@ import { AppError, type McpServer, type Settings } from '@kepcup/shared';
 import { buildMcpbFixture, buildZip, defaultMcpbManifest } from '@kepcup/testkit';
 import {
   checkCompatibility,
+  envManagerRuntimeResolver,
   formatLaunch,
   manifestFields,
   McpbInstaller,
   parseMcpbManifest,
   renderLaunch,
   satisfiesRange,
+  systemRuntimeResolution,
   validateUserConfig,
   type McpbInstallerDeps,
 } from '../../src/apps/mcpb/index.js';
@@ -843,5 +845,130 @@ describe('mcpb hardening (review fixes)', () => {
     );
     await h.installer.afterServerRemoved([server], 'mcpb_x'); // marker for another sha
     expect(existsSync(path.join(dir, 'precious.txt'))).toBe(true);
+  });
+});
+
+describe('runtime resolver: system PATH fallback', () => {
+  /**
+   * 无冒号的临时目录（相对 cwd）。模拟 POSIX 平台时 PATH 按 `:` 切分，而 Windows
+   * 绝对路径里的盘符冒号会被误切——用相对路径让同一份用例在三种宿主上都成立。
+   */
+  async function flatTmp(): Promise<string> {
+    const dir = await mkdtemp('mcpb-unit-');
+    dirs.push(dir);
+    return dir;
+  }
+
+  /** 环境管理器替身：managed 里放什么由参数决定，只认 node。 */
+  function envStub(over: { installed?: { dir: string; version: string } | null; binDir?: string } = {}) {
+    const installed = over.installed ?? null;
+    return {
+      installedFor: (item: string) => (item === 'node' ? installed : null),
+      activeRowFor: (item: string) =>
+        item === 'node' && installed !== null
+          ? ({
+              id: 'env_1',
+              item: 'node',
+              version: installed.version,
+              rel_path: '',
+              size_bytes: null,
+              status: 'installed',
+              requested_by: null,
+              approval_id: null,
+              installed_at: 1,
+              last_used_at: 1,
+            } as never)
+          : null,
+      binDirsForRow: () => (over.binDir !== undefined ? [over.binDir] : []),
+    };
+  }
+
+  /** 替换进程 PATH。只放单目录：`;` 在 POSIX 宿主上不是分隔符，多目录请按宿主平台拼。 */
+  function withPath(dirs: string[], fn: () => void): void {
+    const old = process.env.PATH;
+    process.env.PATH = dirs.join(';');
+    try {
+      fn();
+    } finally {
+      if (old === undefined) delete process.env.PATH;
+      else process.env.PATH = old;
+    }
+  }
+
+  it('finds a system runtime on PATH when the environment manager has none', async () => {
+    const dir = await flatTmp();
+    const exe = process.platform === 'win32' ? 'node.exe' : 'node';
+    await writeFile(path.join(dir, exe), '');
+    withPath([dir], () => {
+      const found = systemRuntimeResolution('node', {
+        platform: process.platform === 'win32' ? 'win32' : 'linux',
+      });
+      expect(found).not.toBeNull();
+      // 相对 PATH 条目解析出的命令会被固化为绝对路径（spawn 时不随 cwd 漂移）
+      expect(found!.command).toBe(path.resolve(path.join(dir, exe)));
+      expect(found!.version).toBeNull(); // 系统运行时不带版本：兼容检查视为「不阻断」
+    });
+  });
+
+  it('prefers the managed install (with version) over a PATH hit', async () => {
+    const managed = await flatTmp();
+    const system = await flatTmp();
+    await writeFile(path.join(managed, 'node'), '');
+    await writeFile(path.join(system, 'node'), '');
+    withPath([system], () => {
+      const resolve = envManagerRuntimeResolver(
+        envStub({ installed: { dir: managed, version: '24.21.0' }, binDir: managed }),
+        'linux',
+      );
+      expect(resolve('node')).toEqual({ command: path.join(managed, 'node'), version: '24.21.0' });
+    });
+  });
+
+  it('falls back to the system runtime when the managed row exists but its exe is gone', async () => {
+    const system = await flatTmp();
+    const staleManaged = await flatTmp(); // 目录空：受管行在、可执行文件被清掉
+    await writeFile(path.join(system, 'node'), '');
+    withPath([system], () => {
+      const resolve = envManagerRuntimeResolver(
+        envStub({ installed: { dir: staleManaged, version: '24.21.0' }, binDir: staleManaged }),
+        'linux',
+      );
+      expect(resolve('node')!.command).toBe(path.resolve(path.join(system, 'node')));
+    });
+  });
+
+  it('skips WindowsApps app-execution-alias stubs on win32', async () => {
+    const alias = path.join(await flatTmp(), 'WindowsApps');
+    await mkdir(alias, { recursive: true });
+    await writeFile(path.join(alias, 'node.exe'), '');
+    const real = await flatTmp();
+    await writeFile(path.join(real, 'node.exe'), '');
+    const found = systemRuntimeResolution('node', { platform: 'win32', path: `${alias};${real}` });
+    expect(found).not.toBeNull();
+    expect(found!.command).toBe(path.resolve(path.join(real, 'node.exe')));
+  });
+
+  it('python prefers python3 over python', async () => {
+    const dir = await flatTmp();
+    await writeFile(path.join(dir, 'python3'), '');
+    await writeFile(path.join(dir, 'python'), '');
+    expect(
+      systemRuntimeResolution('python', { platform: 'linux', path: dir })!.command,
+    ).toBe(path.resolve(path.join(dir, 'python3')));
+  });
+
+  it('parses POSIX colon-delimited PATH on darwin (no .exe suffix)', async () => {
+    const dir = await flatTmp();
+    await writeFile(path.join(dir, 'node'), '');
+    const found = systemRuntimeResolution('node', { platform: 'darwin', path: `${dir}:/usr/bin` });
+    expect(found).not.toBeNull();
+    expect(found!.command).toBe(path.resolve(path.join(dir, 'node')));
+  });
+
+  it('returns null when nothing is on PATH', () => {
+    expect(systemRuntimeResolution('node', { platform: 'linux', path: '' })).toBeNull();
+    expect(
+      systemRuntimeResolution('uv', { platform: 'linux', path: '/nonexistent-dir-only' }),
+    ).toBeNull();
   });
 });

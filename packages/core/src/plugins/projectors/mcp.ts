@@ -153,7 +153,7 @@ export class McpProjector implements PluginProjector<PluginConsentMcp> {
         } else if (r.runtime?.available === false) {
           // P0 has no inline install: point at Settings → Environment like the installer does.
           blockers.push(
-            `「${displayName}」需要 ${runtimeLabel(r.runtime.kind)} 运行时，请先在「设置 → 环境」安装后重试`,
+            `「${displayName}」需要 ${runtimeLabel(r.runtime.kind)} 运行时，本机未检测到。请先安装后重试（设置 → 环境，或官网下载）`,
           );
         }
         const slot = this.#deps.mcpb.slotConflict(r.name, r.version, r.sha256);

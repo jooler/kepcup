@@ -518,8 +518,12 @@ export interface CoreServicesOptions {
   /**
    * D73 P2 test hook (test-hooks builds only): managed runtimes the MCPB installer resolves
    * without the environment manager (e.g. `{ node: { command: process.execPath } }`).
+   * `null` forces the runtime MISSING (skips the system PATH fallback too) so runtime-absent
+   * suites stay hermetic on machines that have a system-installed runtime.
    */
-  mcpbRuntimes?: Partial<Record<'node' | 'python' | 'uv', { command: string; version?: string }>>;
+  mcpbRuntimes?: Partial<
+    Record<'node' | 'python' | 'uv', { command: string; version?: string } | null>
+  >;
   /**
    * D73 P1 test hook (NODE_ENV=test in a test-hooks build only): the connector catalog the
    * Bots' `<available_apps>` / app tools are built from. Test-hook builds default to an
@@ -1746,9 +1750,12 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       ...(options.platform !== undefined ? { platform: options.platform } : {}),
       resolveRuntime: (kind) => {
         const forced = __KEPCUP_TEST_HOOKS__ === true ? options.mcpbRuntimes?.[kind] : undefined;
-        return forced !== undefined
-          ? { command: forced.command, version: forced.version ?? null }
-          : envRuntimeResolver(kind);
+        if (forced !== undefined) {
+          return forced === null
+            ? null
+            : { command: forced.command, version: forced.version ?? null };
+        }
+        return envRuntimeResolver(kind);
       },
       requestApproval: (context, payload) =>
         new Promise<boolean>((resolve) => {

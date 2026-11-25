@@ -541,7 +541,8 @@ export const enUS = {
     'Parts containing ${user_config.…} are replaced after you fill them in below; sensitive values are stored only in the keychain, not in settings.',
   'settings.mcpbIncompatible': 'Incompatible with the current environment: {reason}',
   'settings.mcpbRuntimeMissing':
-    "Requires the {runtime} runtime, which isn't installed. Install it in Settings > Environment first.",
+    'No {runtime} runtime detected. Install it in Settings > Environment, or download it from the official site.',
+  'settings.mcpbRuntimeDownload': 'Download {runtime}',
   'settings.mcpbUntrusted':
     'Source not reviewed: after installation, all tools from this server will ask for your approval each time.',
   'settings.mcpbConfigTitle': 'Configuration',
@@ -2143,7 +2144,8 @@ export const enUS = {
   'plugins.consent.mcp': 'MCP servers',
   'plugins.consent.mcpb': 'Embedded local package · launch command',
   'plugins.consent.mcpHttp': 'Remote service · {host}',
-  'plugins.consent.runtimeMissing': 'Needs the {runtime} runtime, which is not installed',
+  'plugins.consent.runtimeMissing': 'No {runtime} runtime detected — install it to continue',
+  'plugins.consent.runtimeDownload': 'Download {runtime}',
   'plugins.consent.configTitle': 'Configuration',
   'plugins.consent.required': 'Required',
   'plugins.consent.sensitive': 'Sensitive',
