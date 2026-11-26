@@ -3605,6 +3605,7 @@ export class Orchestrator {
         ? [...resolvedCapabilityPacks, 'host']
         : resolvedCapabilityPacks;
     const loadUserConfig = this.#deps.settings.get().agents[agentId]?.loadUserConfig === true;
+    const reuseLocalAuth = this.#deps.settings.get().agents[agentId]?.reuseLocalAuth === true;
     // D72 P5 会话复用（design 28 §7）：窗口内、指纹一致的会话只发增量。桥
     // server 名由会话行 id 派生（换会话 = 换名字），会话级提示词里的工具名
     // 随之变化，所以按候选行先算一遍、指纹不符再按新行重算。
@@ -3685,6 +3686,7 @@ export class Orchestrator {
             tools: tools.map((tool) => tool.name).sort(),
             server: hostServerName,
             loadUserConfig,
+            reuseLocalAuth,
           }),
         )
         .digest('hex');

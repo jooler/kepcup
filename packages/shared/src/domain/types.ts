@@ -1048,12 +1048,20 @@ export const agentSettingSchema = z
     /** 「加载我的个人配置」（默认关，§5）。 */
     loadUserConfig: z.boolean().default(false).catch(false),
     /**
+     * 「复用本机登录」（默认关，2026-11-26 凭据策略修订）：开启后 Provider
+     * 不再把该 Agent 的全局配置 / 登录根改到 KepCup 私有目录（如 Antigravity
+     * 的 `GEMINI_HOME`），Agent 直接沿用本机官方登录与个人配置——凭据解析
+     * 优先级「本地直读 → OAuth → API key」的第一级。多数 Agent 的凭据本就
+     * 不隔离，此开关只对做了整目录隔离的 Provider 生效。
+     */
+    reuseLocalAuth: z.boolean().default(false).catch(false),
+    /**
      * 该智能体的默认模型（设置页「智能体」）。Bot 选择它时自动带上；Bot 自己的
      * `runtime.agent.model` 为空时也回退到这里。'' = 用智能体自己的默认。
      */
     model: z.string().default('').catch(''),
   })
-  .catch({ enabled: false, source: 'managed', loadUserConfig: false, model: '' });
+  .catch({ enabled: false, source: 'managed', loadUserConfig: false, reuseLocalAuth: false, model: '' });
 export type AgentSetting = z.infer<typeof agentSettingSchema>;
 
 /**
@@ -1065,6 +1073,7 @@ export const agentSettingInputSchema = z
   .object({
     enabled: z.boolean().optional(),
     loadUserConfig: z.boolean().optional(),
+    reuseLocalAuth: z.boolean().optional(),
     /** 默认模型（'' = 智能体自己的默认）。 */
     model: z.string().max(500).optional(),
   })

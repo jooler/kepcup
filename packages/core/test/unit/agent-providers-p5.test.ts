@@ -1,4 +1,12 @@
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -945,13 +953,49 @@ describe('Google Antigravity', () => {
     { id: 'gateway', name: 'AI Gateway' },
   ];
 
-  it('keeps only gemini-api-key (agent-platform hidden until its config entry exists, M3)', () => {
+  it('keeps gemini-api-key + oauth (2026-11 capability policy); gateway / agent-platform stay filtered', () => {
+    // 2026-11-26 凭据策略：能力开放 + 风险提示（UI 对 oauth-personal 二次确认），
+    // gateway（rollout）与未知方式仍过滤，agent-platform 等配置入口就绪再放开。
+    // 过滤保持广告序。
     expect(filterAntigravityAuthMethods(advertised).map((method) => method.id)).toEqual([
+      'oauth-personal',
+      'oauth-business',
       'gemini-api-key',
     ]);
     expect(antigravityProvider.authMethods!(advertised).map((method) => method.id)).not.toContain(
-      'oauth-personal',
+      'gateway',
     );
+    expect(antigravityProvider.authMethods!(advertised).map((method) => method.id)).not.toContain(
+      'agent-platform',
+    );
+  });
+
+  it('launch isolates GEMINI_HOME by default; reuseLocalAuth falls back to the default home', () => {
+    const entry = fakeAgentEntry('fake-agy', { provider: 'antigravity' });
+    const stateRoot = mkdtempSync(path.join(tmpdir(), 'kepcup-agy-launch-'));
+    const target = { command: 'agy', args: [], env: {} };
+    // 默认：私有 GEMINI_HOME（fail closed——stateDir 缺失抛错）。
+    const isolated = antigravityProvider.launch({
+      entry,
+      target,
+      platform: process.platform,
+      stateDir: stateRoot,
+    });
+    expect(isolated.env.GEMINI_HOME).toBe(path.join(stateRoot, 'gemini-home'));
+    expect(existsSync(path.join(stateRoot, 'gemini-home'))).toBe(true);
+    expect(() =>
+      antigravityProvider.launch({ entry, target, platform: process.platform }),
+    ).toThrow(/私有状态目录/);
+    // 复用本机登录：不设 GEMINI_HOME（Agent 回落默认 ~/.gemini），不建私有目录。
+    const reused = antigravityProvider.launch({
+      entry,
+      target,
+      platform: process.platform,
+      stateDir: stateRoot,
+      reuseLocalAuth: true,
+    });
+    expect(reused.env.GEMINI_HOME).toBeUndefined();
+    expect(reused.command).toBe('agy');
   });
 
   it('every tier maps to `default`; auto_edit / yolo are never entered', async () => {

@@ -125,6 +125,14 @@ export const agentViewSchema = z.object({
   installedVersion: z.string().nullable(),
   source: z.enum(['managed', 'system']),
   loadUserConfig: z.boolean(),
+  /**
+   * 该 Provider 默认隔离本机登录 / 配置根（如 Antigravity 的 `GEMINI_HOME`）：
+   * UI 据此在登录面板显示「复用本机登录」开关（settings.agents[id].
+   * `reuseLocalAuth`）。false = 凭据本就直读，无需开关。
+   */
+  isolatesLocalAuth: z.boolean().default(false),
+  /** 本机设置「复用本机登录」当前值（默认关；`isolatesLocalAuth` 为 true 时有意义）。 */
+  reuseLocalAuth: z.boolean().default(false),
   /** 设置页里给该智能体配置的默认模型（'' = 智能体自己的默认）。 */
   defaultModel: z.string().default(''),
   /**
@@ -294,6 +302,8 @@ export const agentsLogoutInputSchema = z.object({ id: agentIdSchema });
 export const agentsConfigureInputSchema = z.object({
   id: agentIdSchema,
   loadUserConfig: z.boolean().optional(),
+  /** 「复用本机登录」（默认关；凭据策略第一级：本地直读 → OAuth → API key）。 */
+  reuseLocalAuth: z.boolean().optional(),
   /** 并发上限（`settings.providerConcurrency['agent:{id}']`）。 */
   concurrency: z.number().int().min(1).max(16).optional(),
   /** 默认模型（'' = 智能体自己的默认）。 */

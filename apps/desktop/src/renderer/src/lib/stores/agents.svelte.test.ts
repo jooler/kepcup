@@ -51,6 +51,7 @@ function agentPayload(extra: Record<string, unknown> = {}): Record<string, unkno
     installedVersion: null,
     source: 'managed',
     loadUserConfig: false,
+    isolatesLocalAuth: false,
     concurrency: 1,
     hasApiKey: false,
     install: {
@@ -78,22 +79,26 @@ describe('agentsStore 的载荷归一化', () => {
     agentsStore.agents = [];
   });
 
-  it('core 载荷缺 defaultModel → 补成空串（不崩 UI）', async () => {
+  it('core 载荷缺 defaultModel / reuseLocalAuth → 补成默认值（不崩 UI）', async () => {
     listPayload.agents = [agentPayload()];
     await agentsStore.refresh();
     expect(agentsStore.agents[0]?.defaultModel).toBe('');
+    expect(agentsStore.agents[0]?.reuseLocalAuth).toBe(false);
     expect(agentsStore.agents[0]?.name).toBe('Fake Agent');
   });
 
-  it('core 载荷带 defaultModel → 原样保留', async () => {
-    listPayload.agents = [agentPayload({ defaultModel: 'smart' })];
+  it('core 载荷带 defaultModel / reuseLocalAuth → 原样保留', async () => {
+    listPayload.agents = [agentPayload({ defaultModel: 'smart', reuseLocalAuth: true })];
     await agentsStore.refresh();
     expect(agentsStore.agents[0]?.defaultModel).toBe('smart');
+    expect(agentsStore.agents[0]?.reuseLocalAuth).toBe(true);
   });
 
-  it('agent.status 事件缺 defaultModel → 补成空串', () => {
+  it('agent.status 事件含未知状态字段 fallback → 仍补齐可选字段', () => {
     agentsStore.start();
-    handlers.get('agent.status')?.({ agent: agentPayload() });
+    handlers.get('agent.status')?.({ agent: agentPayload({ status: 'future_status' }) });
     expect(agentsStore.get('fake')?.defaultModel).toBe('');
+    expect(agentsStore.get('fake')?.reuseLocalAuth).toBe(false);
+    expect(agentsStore.get('fake')?.isolatesLocalAuth).toBe(false);
   });
 });

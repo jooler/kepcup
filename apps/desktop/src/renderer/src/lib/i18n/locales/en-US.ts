@@ -3237,7 +3237,7 @@ export const enUS = {
   'agents.terms.cursor':
     'Cursor usage counts against your Cursor plan quota. When "Load my personal config" is off, KepCup doesn\'t use your personal Cursor CLI config (its command allowlist would bypass per-command confirmation).',
   'agents.terms.antigravity':
-    "Don't sign in with a personal Google account: Google's terms prohibit third-party software from accessing Antigravity through personal accounts, and violations may result in account suspension (including Gemini CLI). KepCup currently only offers Gemini API key sign-in (the project configuration needed for Vertex AI isn't available yet).",
+    "Note: Google's terms prohibit third-party software from accessing Antigravity through personal accounts — signing in via OAuth with a personal account breaches the terms and may result in account suspension (including Gemini CLI); whether to use it is your call. Gemini API keys and Gemini Enterprise (oauth-business) are not affected; the project configuration needed for Vertex AI isn't available yet.",
   'agents.terms.inkcop':
     "InkCop must be running and signed in, with the bridge enabled in InkCop under Settings → Services → ACP Agents; tasks attach to its main conversation through the local inkcop-acp. LLM keys stay inside the InkCop app; KepCup doesn't inject or store them. Writing tasks go through ACP; for standalone knowledge base management, connect directly to LoomVec instead of going through this agent.",
   'agents.terms.cline':
@@ -3300,7 +3300,20 @@ export const enUS = {
   'agents.installConfirm': 'Install and enable',
   'agents.cancel': 'Cancel',
   'agents.loginHint':
-    "Sign-in happens through the vendor's official flow (usually opening a browser for authorization). KepCup only runs the official sign-in command and shows its output; it never reads or stores any credentials.",
+    "Credential priority: ① reuse your machine's existing official sign-in (detected automatically) → ② official OAuth / sign-in command (KepCup only runs the official command and shows its output) → ③ API key. KepCup never reads or stores any credentials.",
+  'agents.loginHintApiKey':
+    'This agent signs in with an API key: paste a key issued by the vendor console (e.g. Google AI Studio) and save it. KepCup passes it to the agent as an environment variable and completes the official registration automatically; it never reads or stores other credentials.',
+  'agents.localAuthPreferred':
+    "If this agent is already signed in on this machine, that sign-in is used automatically — no need to sign in again inside KepCup.",
+  'agents.reuseLocalAuth': 'Reuse local sign-in',
+  'agents.reuseLocalAuthHint':
+    "When enabled, KepCup no longer uses its private isolated directory: the agent directly reuses this machine's official sign-in and personal config (e.g. ~/.gemini), with no need to sign in again.",
+  'agents.reuseLocalAuthWarning':
+    "Risk: the machine's sign-in method and personal config take effect wholesale — KepCup sessions may run under an account you picked in another client (including a personal account, a Google-terms breach that can lead to suspension), and global MCP merging, allow rules and hooks are no longer isolated.",
+  'agents.oauthPersonalTitle': 'Sign in to {name} with a personal Google account?',
+  'agents.oauthPersonalBody':
+    "Google's Antigravity terms prohibit third-party software from accessing the service through personal Google accounts; violations can lead to the suspension of both Antigravity and Gemini CLI accounts. KepCup only provides the capability with this honest warning — whether to continue is your decision.",
+  'agents.oauthPersonalProceed': 'Sign in anyway',
   'agents.loginLoading': 'Loading sign-in methods…',
   'agents.loginNoMethods': 'This agent has no sign-in method that KepCup can start.',
   'agents.loginRunning': 'Signing in…',

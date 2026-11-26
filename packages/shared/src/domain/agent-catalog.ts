@@ -470,9 +470,11 @@ const CURSOR_AGENT_ENTRY: AgentCatalogEntry = {
  * Google Antigravity（design 28 §9.2 / §9.3）：原生 `agy_acp_server`，binary
  * 分发（dl.google.com）。Registry 未给 sha256：6 个平台归档均已下载计算锁定。
  * 条款第 6 条禁止第三方软件经个人 Google 账号（Antigravity OAuth）访问——
- * Provider 只放行 `gemini-api-key` 与 `agent-platform`（Vertex），过滤
- * `oauth-personal` / `oauth-business`，并以私有 `GEMINI_HOME` 隔离用户在其它
- * 客户端里选过的登录方式。`preview` 档。
+ * 2026-11-26 凭据策略修订：应用只提供能力 + 风险提示，由用户自行权衡
+ * （`oauth-personal` 经 UI 二次确认后可触发；`oauth-business` 为 Google 建议
+ * 的合规通道；`gemini-api-key` 不受限）。默认仍以私有 `GEMINI_HOME` 隔离用户
+ * 在其它客户端里选过的登录方式，「复用本机登录」开启后共享本机 `~/.gemini`。
+ * `preview` 档。
  */
 const ANTIGRAVITY_AGENT_ENTRY: AgentCatalogEntry = {
   id: 'antigravity-acp',
@@ -531,8 +533,8 @@ const ANTIGRAVITY_AGENT_ENTRY: AgentCatalogEntry = {
   // 待登录（配 key）后实测原生工具名（web 检索 / 读图）。
   nativeCapabilities: {},
   auth: {
-    kinds: ['api-key'],
-    note: 'Gemini API key（AI Studio）或 Vertex AI（agent-platform）；不支持 Google 个人账号登录',
+    kinds: ['subscription', 'api-key'],
+    note: 'Gemini API key（AI Studio）、Google 账号 OAuth（浏览器授权，条款风险自负）或 Vertex AI',
     apiKeyEnv: 'GEMINI_API_KEY',
   },
   // 解压后：linux ≈ 1.06 GB、macOS ≈ 407 MB、Windows ≈ 227 MB（取最大）。

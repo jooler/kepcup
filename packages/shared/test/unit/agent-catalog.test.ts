@@ -224,7 +224,7 @@ describe('agent catalog', () => {
     expect(byId('opencode').auth.kinds).toContain('anonymous');
     expect(byId('cursor').auth).toMatchObject({ apiKeyEnv: 'CURSOR_API_KEY' });
     expect(byId('antigravity-acp').auth).toMatchObject({
-      kinds: ['api-key'],
+      kinds: ['subscription', 'api-key'],
       apiKeyEnv: 'GEMINI_API_KEY',
     });
   });
@@ -310,6 +310,7 @@ describe('profile and settings defaults', () => {
       enabled: true,
       source: 'managed',
       loadUserConfig: false,
+      reuseLocalAuth: false,
       model: '',
     });
   });
@@ -325,12 +326,14 @@ describe('profile and settings defaults', () => {
       enabled: true,
       source: 'managed',
       loadUserConfig: false,
+      reuseLocalAuth: false,
       model: '',
     });
     expect(settings.agents.b).toEqual({
       enabled: false,
       source: 'managed',
       loadUserConfig: false,
+      reuseLocalAuth: false,
       model: '',
     });
     expect(settings.customAgents).toEqual([{ id: 42 }]);

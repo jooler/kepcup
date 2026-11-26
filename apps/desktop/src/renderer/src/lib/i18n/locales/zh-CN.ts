@@ -3100,7 +3100,7 @@ export const zhCN = {
   'agents.terms.cursor':
     'Cursor 的用量计入你的 Cursor 套餐额度。未开启「加载我的个人配置」时，KepCup 不使用你的 Cursor 个人 CLI 配置（其中的命令白名单会绕过逐条确认）。',
   'agents.terms.antigravity':
-    '不要使用 Google 个人账号登录：Google 条款禁止第三方软件经个人账号访问 Antigravity，违者可能被封号（含 Gemini CLI）。KepCup 目前只提供 Gemini API key 登录（Vertex AI 需要的项目配置入口尚未提供）。',
+    '注意：Google 条款禁止第三方软件经个人账号访问 Antigravity——经 OAuth 用个人账号登录违反条款，可能被封号（含 Gemini CLI 账号），是否使用由你决定。Gemini API key 与 Gemini Enterprise（oauth-business）不受此限；Vertex AI 的项目配置入口尚未提供。',
   'agents.terms.inkcop':
     'InkCop 须先启动并登录，并在 InkCop「设置 → 服务 → ACP 智能体」开启桥；任务经本机 inkcop-acp 附着其主对话。LLM 密钥只在 InkCop 应用内，KepCup 不注入、不保存。写作任务走 ACP；独立知识库管理请直连 LoomVec，不要经本智能体代管。',
   'agents.terms.cline':
@@ -3160,7 +3160,19 @@ export const zhCN = {
   'agents.installConfirm': '安装并启用',
   'agents.cancel': '取消',
   'agents.loginHint':
-    '登录在厂商官方流程中完成（通常会打开浏览器授权）。KepCup 只运行官方登录命令并显示其输出，不读取、不保存任何凭据。',
+    '凭据优先级：①复用你本机的官方登录（自动检测）→ ②官方 OAuth / 登录命令（KepCup 只运行官方登录命令并显示其输出）→ ③API key。KepCup 不读取、不保存任何凭据。',
+  'agents.loginHintApiKey':
+    '该智能体以 API key 登录：粘贴厂商控制台（如 Google AI Studio）签发的 key 并保存，KepCup 以环境变量提供给智能体，并自动完成官方登录登记；不读取、不保存其他凭据。',
+  'agents.localAuthPreferred': '本机已有该智能体的官方登录时自动优先使用，无需在 KepCup 重新登录。',
+  'agents.reuseLocalAuth': '复用本机登录',
+  'agents.reuseLocalAuthHint':
+    '开启后不再使用 KepCup 的私有隔离目录：智能体直接沿用你本机的官方登录与个人配置（如 ~/.gemini），无需重新登录。',
+  'agents.reuseLocalAuthWarning':
+    '风险：本机的登录方式与个人配置会全部生效——KepCup 会话可能以你在其它客户端选过的账号（含个人账号，违反 Google 条款可致封号）运行，全局 MCP 合并、放行规则与钩子也不再被隔离。',
+  'agents.oauthPersonalTitle': '使用 Google 个人账号登录 {name}？',
+  'agents.oauthPersonalBody':
+    'Google Antigravity 条款禁止第三方软件经个人 Google 账号访问服务，违反可致 Antigravity 与 Gemini CLI 账号被封。KepCup 仅提供能力并如实提示，是否继续由你决定。',
+  'agents.oauthPersonalProceed': '仍要登录',
   'agents.loginLoading': '正在读取登录方式…',
   'agents.loginNoMethods': '该智能体没有可由 KepCup 发起的登录方式。',
   'agents.loginRunning': '登录进行中…',

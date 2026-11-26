@@ -352,6 +352,10 @@ export class AgentsService {
     );
   }
 
+  #clearAuthStatus(agentId: string): void {
+    (this.#deps.host as { clearAuthStatus?(id: string): void }).clearAuthStatus?.(agentId);
+  }
+
   #authState(entry: AgentCatalogEntry): AuthState {
     if (entry.auth.kinds.length === 0) return 'ok';
     const apiKeyOnly = entry.auth.kinds.every((kind) => kind === 'api-key');
@@ -454,6 +458,9 @@ export class AgentsService {
       installedVersion: setting?.installedVersion ?? installedVersion,
       source,
       loadUserConfig: setting?.loadUserConfig === true,
+      isolatesLocalAuth:
+        providerFor(entry, this.#providers).features.isolatesLocalAuth === true,
+      reuseLocalAuth: setting?.reuseLocalAuth === true,
       defaultModel: setting?.model ?? '',
       // Effective limit (the scheduler's): 1 for agents without parallel sessions.
       concurrency: agentConcurrency(
@@ -630,6 +637,7 @@ export class AgentsService {
         ? { stateDir: this.#deps.stateDirFor(entry.id) }
         : {}),
       loadUserConfig: this.#deps.settings.get().agents[entry.id]?.loadUserConfig === true,
+      reuseLocalAuth: this.#deps.settings.get().agents[entry.id]?.reuseLocalAuth === true,
     });
     const spawn = this.#deps.spawn ?? spawnAgentProcess;
     // Same private cwd as the run processes (审查 M1).
@@ -950,9 +958,17 @@ export class AgentsService {
         this.#deps.secrets.removeValue(agentApiKeySecretName(agentId));
       }
       this.#saveSetting(agentId, null);
-      for (const cache of [this.#errors, this.#auth, this.#methods, this.#logins, this.#options]) {
+      for (const cache of [
+        this.#errors,
+        this.#auth,
+        this.#authNotedAt,
+        this.#methods,
+        this.#logins,
+        this.#options,
+      ]) {
         cache.delete(agentId);
       }
+      this.#clearAuthStatus(agentId);
       this.#clearEfforts(agentId);
       this.#deps.logger.info({ agentId, name: entry.name }, 'agent uninstalled');
     });
@@ -962,6 +978,7 @@ export class AgentsService {
   configure(input: {
     id: string;
     loadUserConfig?: boolean | undefined;
+    reuseLocalAuth?: boolean | undefined;
     concurrency?: number | undefined;
     model?: string | undefined;
   }): AgentView {
@@ -970,6 +987,21 @@ export class AgentsService {
       this.#saveSetting(entry.id, { loadUserConfig: input.loadUserConfig });
       // The process-level config of a running agent depends on it.
       this.#deps.host.stop(entry.id);
+    }
+    if (input.reuseLocalAuth !== undefined) {
+      const previous = this.#setting(entry.id)?.reuseLocalAuth === true;
+      this.#saveSetting(entry.id, { reuseLocalAuth: input.reuseLocalAuth });
+      if (input.reuseLocalAuth !== previous) {
+        this.#cancelLogin(entry.id);
+        this.#logins.delete(entry.id);
+        this.#auth.delete(entry.id);
+        this.#authNotedAt.delete(entry.id);
+        this.#methods.delete(entry.id);
+        this.#clearAuthStatus(entry.id);
+        // The login root (e.g. GEMINI_HOME) of every process depends on it:
+        // restart idle processes and re-probe to reflect local auth state immediately.
+        this.#afterChange(entry);
+      }
     }
     if (input.model !== undefined) {
       this.#saveSetting(entry.id, { model: input.model.trim() });
@@ -1015,6 +1047,17 @@ export class AgentsService {
       // their state until the next probe / run tells. The old process (old
       // key in its environment) retires after its current runs.
       this.#auth.delete(entry.id);
+      this.#authNotedAt.delete(entry.id);
+      this.#clearAuthStatus(entry.id);
+      // Antigravity 的流程还差一步官方登记（todo §8.1：存 key → 选方式
+      // authenticate → 私有 settings.json 记住 auth.type，后续会话进程据此
+      // 推断登录方式）：单一 agent 类登录方式时自动补上，保存即完整登录。
+      await this.#authenticateAfterKeySave(entry);
+      // Clear any auth state set during `#authenticateAfterKeySave`'s discovery probe
+      // or earlier pushes before `#afterChange` re-probes with the saved API key.
+      this.#auth.delete(entry.id);
+      this.#authNotedAt.delete(entry.id);
+      this.#clearAuthStatus(entry.id);
       this.#afterChange(entry);
       return this.view(entry.id);
     }
@@ -1032,6 +1075,14 @@ export class AgentsService {
         'INVALID_INPUT',
         `智能体「${entry.name}」没有登录方式「${input.methodId}」`,
       );
+    }
+    if (
+      method.type === 'agent' &&
+      /api[-_]key/i.test(method.id) &&
+      entry.auth.apiKeyEnv !== undefined &&
+      !this.#hasApiKey(entry)
+    ) {
+      throw new AppError('INVALID_INPUT', `请先配置并保存 ${entry.auth.apiKeyEnv} API key`);
     }
     const session: LoginSession = {
       methodId: method.id,
@@ -1171,10 +1222,22 @@ export class AgentsService {
         },
       );
       if (session.error === null) {
-        session.exitCode = 0;
-        this.#auth.set(entry.id, 'ok');
-        this.#authNotedAt.delete(entry.id);
-        this.#deps.logger.info({ agentId: entry.id, methodId: method.id }, 'agent authenticated');
+        // authenticate 成功 ≠ 真有凭据：key 型方式（如 Antigravity 的
+        // gemini-api-key）只登记选型、不校验 key，key 缺位时 session/new 仍报
+        // 未登录——若执行期间已无已存 key（例如并发 logout），必须报错而不是
+        // 返回 exitCode = 0 误导 UI 显示「登录成功」。
+        const keyMethodWithoutCredential =
+          /api[-_]key/i.test(method.id) &&
+          entry.auth.apiKeyEnv !== undefined &&
+          !this.#hasApiKey(entry);
+        if (keyMethodWithoutCredential) {
+          session.error = `请先配置并保存 ${entry.auth.apiKeyEnv} API key`;
+        } else {
+          session.exitCode = 0;
+          this.#auth.set(entry.id, 'ok');
+          this.#authNotedAt.delete(entry.id);
+          this.#deps.logger.info({ agentId: entry.id, methodId: method.id }, 'agent authenticated');
+        }
       }
     } catch (error) {
       session.error ??= errorMessage(error);
@@ -1196,6 +1259,48 @@ export class AgentsService {
     if (session?.running === true) {
       session.error = '已取消';
       session.kill?.();
+    }
+  }
+
+  /**
+   * 保存 API key 后的一次性官方登记（todo §8.1 的 Antigravity 流程后半步）：
+   * 广告出的 agent 类登录方式中恰有一种 key 型方式（id 含 api-key，如
+   * Antigravity 的 `gemini-api-key`）时，自动对该方式 `authenticate`——它不
+   * 校验 key（key 已在注入的环境里），只把登录选型写进 Agent 私有设置，后续
+   * 会话进程据此推断。命中多种或没有时不猜（留给 UI 选择）；失败不阻塞保存，
+   * 真实登录态由 `#afterChange` 的下一次探测 / 测试给出。
+   */
+  async #authenticateAfterKeySave(entry: AgentCatalogEntry): Promise<void> {
+    if (entry.auth.apiKeyEnv === undefined) return;
+    try {
+      // 已在途的探测先等它结束（`#probe` 在 initialize 后即登记方式列表），
+      // 再看缓存，避免与后台探测赛跑。
+      const probing = this.#probes.get(entry.id);
+      if (probing !== undefined) await probing;
+      if (!this.#methods.has(entry.id)) await this.#probeQuietly(entry);
+      const methods = (this.#methods.get(entry.id) ?? []).filter(
+        (method) => method.type === 'agent' && /api[-_]key/i.test(method.id),
+      );
+      const method = methods.length === 1 ? methods[0] : undefined;
+      if (method === undefined) return;
+      await this.#withControl(
+        entry,
+        this.#deps.timeouts?.probeMs ?? PROBE_TIMEOUT_MS,
+        async (control) => {
+          await control.initialize();
+          await control.authenticate(method.id);
+        },
+      );
+      this.#deps.logger.info(
+        { agentId: entry.id, methodId: method.id },
+        'agent authenticated after saving the API key',
+      );
+    } catch (error) {
+      if (this.#disposed) return;
+      this.#deps.logger.info(
+        { agentId: entry.id, error: errorMessage(error) },
+        'agent authenticate after key save failed',
+      );
     }
   }
 
@@ -1229,6 +1334,8 @@ export class AgentsService {
     }
     this.#logins.delete(agentId);
     this.#auth.set(agentId, entry.auth.kinds.length === 0 ? 'ok' : 'required');
+    this.#authNotedAt.delete(agentId);
+    this.#clearAuthStatus(agentId);
     this.#deps.host.stop(agentId);
     this.#publish(agentId);
     return this.view(agentId);

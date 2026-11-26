@@ -146,7 +146,11 @@
       bind:this={detailEl}
     >
       {#if selectedAgent !== null}
-        <AgentCard agent={selectedAgent} />
+        <!-- 按智能体 id 重建卡片：组件实例被复用时面板本地状态（测试结果、
+             登录面板草稿）会窜到别的智能体头上，谁的报错留在谁的界面。 -->
+        {#key selectedAgent.id}
+          <AgentCard agent={selectedAgent} />
+        {/key}
       {/if}
     </div>
   </div>

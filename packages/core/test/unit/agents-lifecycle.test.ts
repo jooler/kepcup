@@ -140,6 +140,9 @@ function harness(
     },
     inUse: () => hostState.inUse,
     authStatus: () => hostState.authStatus,
+    clearAuthStatus: () => {
+      hostState.authStatus = null;
+    },
   };
   const service = new AgentsService({
     settings: {
@@ -442,6 +445,23 @@ describe('P4-B review: run-noted logout and post-change probing', () => {
     // Other failure codes never mark a logout.
     h.service.noteRunError('slow', 'AGENT_FAILED');
     expect(h.service.view('slow').status).toBe('ready');
+  });
+
+  it('toggling reuseLocalAuth clears cached host authStatus and reflects the flag in view', async () => {
+    const h = harness(subscription(), { script: { turns: [] } });
+    h.installedVersion.value = '1.0.0';
+    h.settings.current = settingsSchema.parse({
+      ...h.settings.current,
+      agents: { slow: { enabled: true } },
+    });
+    h.host.authStatus = { kind: 'authenticated', at: Date.now() };
+    expect(h.service.view('slow').reuseLocalAuth).toBe(false);
+    expect(h.service.view('slow').status).toBe('ready');
+
+    const configured = h.service.configure({ id: 'slow', reuseLocalAuth: true });
+    expect(configured.reuseLocalAuth).toBe(true);
+    expect(h.host.authStatus).toBeNull();
+    await until(() => !h.service.view('slow').probing, 're-probe after toggling reuseLocalAuth');
   });
 
   it('after an install the first published view is still probing (#2)', async () => {

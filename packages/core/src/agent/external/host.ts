@@ -132,6 +132,8 @@ export interface AgentHostDeps {
   processCwdFor?(agentId: string): string;
   /** 「加载我的个人配置」（进程级，`LaunchContext.loadUserConfig`）。 */
   loadUserConfigFor?(agentId: string): boolean;
+  /** 「复用本机登录」（进程级，`LaunchContext.reuseLocalAuth`）。 */
+  reuseLocalAuthFor?(agentId: string): boolean;
   /** 应用数据目录（Provider 的进程级隔离配置用，`LaunchContext.dataHome`）。 */
   dataHome?: string;
   /** 每个 Agent 的私有状态目录（`LaunchContext.stateDir`）。 */
@@ -727,6 +729,11 @@ export class AgentHost {
     return this.#authStatus.get(agentId) ?? null;
   }
 
+  /** Clears cached `_auth/status_update` after credential/home-root switches (e.g. reuseLocalAuth / apiKey). */
+  clearAuthStatus(agentId: string): void {
+    this.#authStatus.delete(agentId);
+  }
+
   /**
    * Called once on `dispose()` (审查 C10): background sessions — `complete()`
    * and background runs, which write nothing on their own — settle (failed)
@@ -776,6 +783,7 @@ export class AgentHost {
         ? { stateDir: this.#deps.stateDirFor(entry.id) }
         : {}),
       loadUserConfig: this.#deps.loadUserConfigFor?.(entry.id) === true,
+      reuseLocalAuth: this.#deps.reuseLocalAuthFor?.(entry.id) === true,
     };
     // User config that would bypass the host's decisions: never start (第三轮 #4).
     provider.checkConfig?.(configContext);
