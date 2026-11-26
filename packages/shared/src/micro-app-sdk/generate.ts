@@ -557,7 +557,7 @@ export function microAppPreviewMockSpec(): readonly MicroAppPreviewMockSpec[] {
 }
 
 /** spec 便捷引用（守卫测试用）。 */
-export const MICRO_APP_SDK_SPEC_METHOD_COUNT = /* @__PURE__ */ MICRO_APP_API_METHODS.length;
+export const MICRO_APP_SDK_SPEC_METHOD_COUNT = MICRO_APP_API_METHODS.length;
 export const MICRO_APP_SDK_METHOD_OF = microAppApiMethodOf;
 
 // --- S2 预览 mock（55 §11：宿主能力 mock——ai 脚本 / listen 转写 / speak 记录）---------

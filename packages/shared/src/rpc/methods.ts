@@ -679,7 +679,8 @@ export const updateCancelActiveOutputSchema = z.object({
 });
 export type UpdateCancelActiveOutput = z.infer<typeof updateCancelActiveOutputSchema>;
 
-const voidInput = z.void();
+export const voidInputSchema = z.void();
+const voidInput = voidInputSchema;
 export const okOutputSchema = z.object({ ok: z.literal(true) });
 const okOutput = okOutputSchema;
 export const conversationsMarkReadOutputSchema = okOutputSchema;
