@@ -76,7 +76,7 @@ describe('Kimi Code provider (2.8.1)', () => {
     });
     expect(isolated.env).toMatchObject({
       KEEP: '1',
-      KIMI_CODE_HOME: stateDir,
+      KIMI_CODE_HOME: path.resolve(stateDir),
       KIMI_CODE_NO_AUTO_UPDATE: '1',
       KIMI_CLI_NO_AUTO_UPDATE: '1',
     });
@@ -159,7 +159,10 @@ describe('goose provider (1.61.1)', () => {
       platform: 'linux',
       stateDir,
     });
-    expect(isolated.env).toMatchObject({ GOOSE_MODE: 'approve', GOOSE_PATH_ROOT: stateDir });
+    expect(isolated.env).toMatchObject({
+      GOOSE_MODE: 'approve',
+      GOOSE_PATH_ROOT: path.resolve(stateDir),
+    });
     const user = gooseProvider.launch({
       entry,
       target: {
