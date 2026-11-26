@@ -80,13 +80,15 @@ node adherence.mjs --agents fake --runs 2          # 自测（假 Agent，无需
 
 | Agent | 登录（`--steps auth --auth-method <id>`） | 离线现象（2026-10-07） |
 |---|---|---|
-| claude | `claude-ai-login`（订阅）或 `console-login`（Console）。等价命令：`npx -y @agentclientprotocol/claude-agent-acp@0.86.0 --cli auth login --claudeai`（`--console`）；两者均 `type:'terminal'`，`args` 追加在 agent 调用后；另带 `_meta['terminal-auth']`（绝对路径形式）。条款门禁见设计 §9.3：只走官方登录、不碰凭据 | `session/new` 成功；`session/prompt` 才报 `-32000 Authentication required` |
+| claude | `claude-ai-login`（订阅）、`console-login`（Console）或远程环境的 `claude-login`。等价命令：`npx -y @agentclientprotocol/claude-agent-acp@0.113.0 --cli auth login --claudeai`（`--console`）；两者均 `type:'terminal'`，`args` 追加在 agent 调用后；另带 `_meta['terminal-auth']`（绝对路径形式）。条款门禁见设计 §9.3：只走官方登录、不碰凭据 | `session/new` 成功；`session/prompt` 才报 `-32000 Authentication required` |
 | codex | `chat-gpt`（`authenticate`，由 Agent 自行拉起浏览器）或 `api-key`（`--pass-env OPENAI_API_KEY --auth-method api-key`）。两者都不是 terminal 类 | `session/new` 即 `-32000 Authentication required` |
 | opencode | `opencode-login` → `<binary> auth login`（authMethod 没有 `type`，只有 `_meta['terminal-auth']`，且 command 是裸名 `opencode`）。**不要在其中登录 Claude 订阅** | `session/new` 成功；自带 `opencode/*-free` 匿名模型，未登录也能 prompt——脚本离线不发 prompt |
 | dsh | 无登录流程：`--pass-env DEEPSEEK_API_KEY` | `session/new` 成功；`prompt` 报 `-32603`，message 含 `no API key for provider route "deepseek-official"`（不是 -32000） |
 | cursor | 需 `--allow-large` 下载。`cursor_login`（`cursor-agent login`）或 `--pass-env CURSOR_API_KEY` | 见 todo 附录 A.2：`-32000 Authentication required` |
-| antigravity | 需 `--allow-large`。**只用** `gemini-api-key` / `agent-platform`；脚本拒绝执行 `oauth-personal`。注意工作区信任 `AGY_ACP_DISABLE_WORKSPACE_TRUST`、全局 `~/.gemini/config/mcp_config.json` 合并（独立 HOME 下为空，真实场景需另验） | 见 todo 附录 A.2 |
+| antigravity | 需 `--allow-large`。可用 `gemini-api-key` / `oauth-personal`（条款风险自负）/ `oauth-business`；脚本拒绝 `gateway` / `agent-platform`。注意工作区信任 `AGY_ACP_DISABLE_WORKSPACE_TRUST`、全局 `~/.gemini/config/mcp_config.json` 合并（独立 HOME 下为空，真实场景需另验） | 见 todo 附录 A.2 |
 | zcode | 无 ACP，脚本只检测桌面应用是否安装（`steps.detect`）。登录用其内置 CLI `zcode login`；垫片联调另议 | — |
+
+D118 新增目标（Cline / Copilot / goose / Qwen / Kimi Code / Grok / Devin）的启动方式与登录提示见 `agents.mjs` 的 `AGENTS` 表；其中 goose 的 spike 使用 Registry 完整 CLI，产品实际分发的是 lean `goose-acp`，两者需分别记录。
 
 登录后要补测的 todo §3.1 / §3.2 项（脚本已覆盖的步骤名）：认证（`auth`，含无 TTY）、`session/new` + http MCP（`mcp`）、`prompt` 完整序列、`steer`、`cancel`、`resume`、`permission`（optionId 白名单）、`modes`、`complete`、`native`。**脚本未覆盖、需手工验证**：Electron `ELECTRON_RUN_AS_NODE=1` 能否跑 JS 入口（用 `--command <electron> --env ELECTRON_RUN_AS_NODE=1 -- <npm pack 解出的入口.js>`）、沙箱可读范围 / 拒读 `~/.kepcup`、Agent 自动加载的配置 / 指令文件及关闭方式、三平台各跑一次、各 Agent 专项（§3.2：`_meta.systemPrompt`、`CODEX_CONFIG`、`OPENCODE_CONFIG_CONTENT` 等，用 `--session-meta` / `--env` 配合）。
 

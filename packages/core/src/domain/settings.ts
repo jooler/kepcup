@@ -141,9 +141,29 @@ export class SettingsService {
         issues: parsed.error.issues,
       });
     }
-    // 存量迁移（legacy 字段 → modelProviders）产生变化时写回一次，让存储
-    // 尽快收敛到新形状；迁移是纯函数，写回失败也只是下次再迁一遍。
-    if (pre.changed) this.#write(parsed.data);
+    // InkCop ACP was removed: drop its stale per-agent settings and reset the
+    // app default so existing installations fall back to the built-in engine.
+    const retiredInkcop =
+      parsed.data.agents.inkcop !== undefined || parsed.data.defaultTaskAgentId === 'inkcop';
+    if (retiredInkcop) {
+      const agents = { ...parsed.data.agents };
+      delete agents.inkcop;
+      parsed.data.agents = agents;
+      if (parsed.data.defaultTaskAgentId === 'inkcop') parsed.data.defaultTaskAgentId = '';
+    }
+    // 存量迁移（legacy 字段 → modelProviders / 已移除 Agent）产生变化时写回
+    // 一次，让存储尽快收敛到新形状；写回失败也只是下次再迁一遍（读路径不因
+    // 只读 / 满盘而启动失败）。
+    if (pre.changed || retiredInkcop) {
+      try {
+        this.#write(parsed.data);
+      } catch (error) {
+        this.logger?.warn(
+          { error: error instanceof Error ? error.message : String(error) },
+          'settings migration write-back failed',
+        );
+      }
+    }
     return parsed.data;
   }
 

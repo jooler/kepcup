@@ -54,7 +54,7 @@ Bot 的行为逻辑参考真人——想象一下你与真人是如何协作的�
 2. 与你完成第一轮沟通之后，再开始干活，我在团队中，能调用无尽的资源，我只需要给出正确的规划和标准，然后任务由执行者真正执行。
 3. 之后我会继续等待你的新指令，可以继续接受其它任务，而外发出去的任务，执行完毕后我会收到结果，此时我会再想你汇报任务执行结果。
 
-整个流程中，我的职责有两个：1. 与你沟通；2. 出规划、驱动任务执行。在 KepCup 的设计中，这两个职责，设计成两个 Loop 调用 LLM 来执行，每收到一条消息，就启动回复 loop，按需启动任务 loop，并且，所有 loop 都是独立运行，底层有内置智能体（当前是 Pi Agent）或第三方智能体（由ACP协议驱动 Claude Code、Codex、OpenCode、Cursor 等）执行，上下文绝对聚焦且设计上就很难碰到主流大模型的上下文窗口。
+整个流程中，我的职责有两个：1. 与你沟通；2. 出规划、驱动任务执行。在 KepCup 的设计中，这两个职责，设计成两个 Loop 调用 LLM 来执行，每收到一条消息，就启动回复 loop，按需启动任务 loop，并且，所有 loop 都是独立运行，底层有内置智能体（当前是 Pi Agent）或第三方智能体（由 ACP 协议驱动 Claude Agent、Codex、OpenCode、Cursor 等）执行，上下文绝对聚焦且设计上就很难碰到主流大模型的上下文窗口。
 
 ```mermaid
 sequenceDiagram
@@ -143,7 +143,7 @@ flowchart TB
 - [x] 浏览器使用
 - [x] 硬件传感器架构 + 麦克风 / 摄像头
 - [x] 用户画像
-- [x] 经 ACP 接入第三方智能体（Claude Code / Codex / Cursor / OpenCode）
+- [x] 经 ACP 接入第三方智能体（Claude Agent / Codex / Cursor / OpenCode）
 - [x] 扩展中心 — 技能
 - [x] 扩展中心 — 连接（Notion、Linear、Cloudflare 等）
 - [x] 扩展中心 — MCP
@@ -269,11 +269,19 @@ KepCup 站在许多开源项目与产品灵感之上。以下致谢**不暗示**
 
 下列产品**不是** npm 依赖，用户可在本机安装后，经 ACP 作为可选 peer CLI 接入 KepCup（见 [docs/design/28-external-agents-acp.md](docs/design/28-external-agents-acp.md)）：
 
-- Claude Code  
-- Codex  
-- Cursor  
-- OpenCode  
+- Claude Agent
+- Codex
+- Cursor
+- OpenCode
 - DeepSeek Harness
+- Google Antigravity
+- Cline
+- GitHub Copilot
+- goose
+- Qwen Code
+- Kimi Code
+- Grok Build
+- Devin
 
 ### 可选沙箱增强（非 npm）
 

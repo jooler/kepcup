@@ -7,7 +7,7 @@ import { genericAcpProvider } from './generic-acp.js';
 import { switchToMode } from './mode-tier.js';
 
 /**
- * Google Antigravity（原生 `agy_acp_server` 1.3.0，design 28 §9.2 / §9.3）：只
+ * Google Antigravity（原生 `agy_acp_server` 1.5.2，design 28 §9.2 / §9.3）：只
  * 覆盖与通用实现的差异。依据：离线探测（todo 附录 A.2）+ 二进制内嵌的 Python
  * 源码（离线 `strings` 阅读，未运行）。
  *
@@ -142,7 +142,7 @@ export const antigravityProvider: AgentProvider = {
       genericAcpProvider.toolName(server, tool),
     );
   },
-  // parallelSessions：agy-acp-server 1.3.0 是原生二进制，无可读源码证实
+  // parallelSessions：agy-acp-server 1.5.2 是原生二进制，无可读源码证实
   // 多会话并发 → false（fail-safe：并发恒为 1，不跑后台任务）。
   features: {
     steering: false,

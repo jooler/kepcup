@@ -72,13 +72,14 @@ export interface ContractTarget {
     reject: string;
   };
   /**
-   * Where the agent's mirror updates carry the MCP tool name; `opaque` = the
-   * agent has no structured name at all (OpenCode): the host cannot hide its
-   * mirrors, so the bridge cases run without them (the provider's own tests
-   * cover the unrecognized mirror).
+   * Where the agent's mirror updates carry the MCP tool name; `opaque` = run
+   * without mirrors when this shared fake cannot reproduce the provider's
+   * structured spelling (the provider's own tests cover that mapping).
    */
   mirrorNameIn?:
     'name' | 'claude_meta' | 'codex_raw_input' | 'antigravity_meta' | 'cursor_raw_input' | 'opaque';
+  /** Use the user's config root in the harness (providers with global scans). */
+  loadUserConfig?: boolean;
 }
 
 const logger = {
@@ -113,6 +114,7 @@ async function createHarness(target: ContractTarget, rawScript: FakeAgentScript)
     // Providers that relocate the agent's global config (OpenCode, Cursor,
     // Antigravity) refuse to start without a private state directory.
     stateDirFor: (id) => path.join(dir, 'state', id),
+    loadUserConfigFor: () => target.loadUserConfig === true,
     ...(target.providers !== undefined ? { providers: target.providers } : {}),
     ...(target.mode === 'in-process'
       ? { spawn: fakeAgentSpawner({ [target.entry.id]: script }, started) as never }

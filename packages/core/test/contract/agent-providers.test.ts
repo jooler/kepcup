@@ -30,7 +30,7 @@ runAgentProviderContract({
   }),
   mode: 'in-process',
   mirrorNameIn: 'claude_meta',
-  // claude-agent-acp 0.86.0 permissions/options/shared.js
+  // claude-agent-acp 0.113.0 permissions/options/shared.js
   permission: {
     options: [
       { optionId: 'allow-once', name: 'Yes', kind: 'allow_once' },
@@ -61,7 +61,7 @@ runAgentProviderContract({
   }),
   mode: 'in-process',
   mirrorNameIn: 'codex_raw_input',
-  // codex-acp 2.1.1 ApprovalOptionId / McpApprovalOptionId
+  // codex-acp 2.12.1 ApprovalOptionId / McpApprovalOptionId
   permission: {
     options: [
       { optionId: 'allow_once', name: 'Yes', kind: 'allow_once' },
@@ -99,9 +99,11 @@ runAgentProviderContract({
     nativeCapabilities: opencode.nativeCapabilities,
   }),
   mode: 'in-process',
-  // ACP tool_call has no structured name (title = free text).
+  // V2 carries a structured name, but this shared fake emits the generic
+  // `mcp__server__tool` spelling. OpenCode's real `server_tool` recognition is
+  // covered directly in agent-providers-p5.test.ts.
   mirrorNameIn: 'opaque',
-  // opencode 1.18.35 ACP permission options.
+  // opencode 2.4.2 ACP permission options.
   permission: {
     options: [
       { optionId: 'once', name: 'Allow once', kind: 'allow_once' },
@@ -112,13 +114,15 @@ runAgentProviderContract({
     reject: 'reject',
   },
   scriptDefaults: {
-    agentInfo: { name: 'OpenCode', version: '1.18.35' },
-    // Terminal auth only in _meta['terminal-auth'] (bare command name).
+    agentInfo: { name: 'OpenCode', version: '2.4.2' },
+    // The control connection advertises both terminal-auth capabilities.
     authMethods: [
       {
         id: 'opencode-login',
         name: 'Login with opencode',
         description: 'Run `opencode auth login` in the terminal',
+        type: 'terminal',
+        args: ['--login'],
         _meta: { 'terminal-auth': { command: 'opencode', args: ['auth', 'login'] } },
       },
     ],
@@ -206,7 +210,7 @@ runAgentProviderContract({
   }),
   mode: 'in-process',
   mirrorNameIn: 'cursor_raw_input',
-  // cursor-agent 2026.10.01 permission options.
+  // cursor-agent 2026.11.22 permission options.
   permission: {
     options: [
       { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
@@ -217,7 +221,7 @@ runAgentProviderContract({
     reject: 'reject-once',
   },
   scriptDefaults: {
-    agentInfo: { name: 'Cursor', version: '2026.10.01' },
+    agentInfo: { name: 'Cursor', version: '2026.11.22' },
     authMethods: [{ id: 'cursor_login', name: 'Cursor Login', description: 'Browser login' }],
     // Sessions start in `agent` (globally forbidden name, safe for Cursor).
     modes: {
@@ -239,7 +243,7 @@ runAgentProviderContract({
   }),
   mode: 'in-process',
   mirrorNameIn: 'antigravity_meta',
-  // agy_acp_server 1.3.0 permission options.
+  // agy_acp_server 1.5.2 permission options.
   permission: {
     options: [
       { optionId: 'allow_always', name: 'Allow Always', kind: 'allow_always' },
@@ -250,7 +254,7 @@ runAgentProviderContract({
     reject: 'deny',
   },
   scriptDefaults: {
-    agentInfo: { name: 'agy_acp_server', version: '1.3.0' },
+    agentInfo: { name: 'agy_acp_server', version: '1.5.2' },
     authMethods: [
       { id: 'oauth-personal', name: 'Google account' },
       { id: 'oauth-business', name: 'Gemini Enterprise' },
@@ -265,5 +269,169 @@ runAgentProviderContract({
         { id: 'yolo', name: 'YOLO' },
       ],
     },
+  },
+});
+
+// —— 2026-11 新增专用 Provider：contract 走真实 engine（session/new、权限
+// optionId、模式切换、MCP 桥与事件映射），不只断言 Provider 描述符。 ——
+
+const cline = AGENT_CATALOG.find((entry) => entry.id === 'cline')!;
+const copilot = AGENT_CATALOG.find((entry) => entry.id === 'github-copilot-cli')!;
+const qwen = AGENT_CATALOG.find((entry) => entry.id === 'qwen-code')!;
+const grok = AGENT_CATALOG.find((entry) => entry.id === 'grok-build')!;
+const kimi = AGENT_CATALOG.find((entry) => entry.id === 'kimi')!;
+const goose = AGENT_CATALOG.find((entry) => entry.id === 'goose')!;
+
+runAgentProviderContract({
+  entry: fakeAgentEntry('fake-cline', {
+    provider: 'cline',
+    tier: 'preview',
+    nativeCapabilities: cline.nativeCapabilities,
+  }),
+  mode: 'in-process',
+  mirrorNameIn: 'name',
+  // Deterministic: the global Hooks/Plugins/Skills scan is covered by the
+  // provider unit test with an injected HOME.
+  loadUserConfig: true,
+  permission: {
+    options: [
+      { optionId: 'allow_once', name: 'Allow once', kind: 'allow_once' },
+      { optionId: 'reject_once', name: 'Reject', kind: 'reject_once' },
+    ],
+    allow: 'allow_once',
+    reject: 'reject_once',
+  },
+  scriptDefaults: {
+    modes: {
+      currentModeId: 'act',
+      availableModes: [
+        { id: 'plan', name: 'Plan' },
+        { id: 'act', name: 'Act' },
+      ],
+    },
+  },
+});
+
+runAgentProviderContract({
+  entry: fakeAgentEntry('fake-copilot', {
+    provider: 'copilot',
+    tier: 'preview',
+    nativeCapabilities: copilot.nativeCapabilities,
+  }),
+  mode: 'in-process',
+  mirrorNameIn: 'name',
+  permission: {
+    options: [
+      { optionId: 'allow_once', name: 'Allow once', kind: 'allow_once' },
+      { optionId: 'reject_once', name: 'Reject', kind: 'reject_once' },
+    ],
+    allow: 'allow_once',
+    reject: 'reject_once',
+  },
+  scriptDefaults: {
+    modes: {
+      currentModeId: 'agent',
+      availableModes: [
+        { id: 'plan', name: 'Plan' },
+        { id: 'agent', name: 'Agent' },
+        { id: 'autopilot', name: 'Autopilot' },
+      ],
+    },
+  },
+});
+
+runAgentProviderContract({
+  entry: fakeAgentEntry('fake-qwen', {
+    provider: 'qwen',
+    tier: 'preview',
+    nativeCapabilities: qwen.nativeCapabilities,
+  }),
+  mode: 'in-process',
+  mirrorNameIn: 'name',
+  loadUserConfig: true,
+  permission: {
+    options: [
+      { optionId: 'proceed_once', name: 'Proceed once', kind: 'allow_once' },
+      { optionId: 'cancel', name: 'Cancel', kind: 'reject_once' },
+    ],
+    allow: 'proceed_once',
+    reject: 'cancel',
+  },
+  scriptDefaults: {
+    modes: {
+      currentModeId: 'default',
+      availableModes: [
+        { id: 'plan', name: 'Plan' },
+        { id: 'default', name: 'Default' },
+        { id: 'auto-edit', name: 'Auto edit' },
+        { id: 'auto', name: 'Auto' },
+        { id: 'yolo', name: 'YOLO' },
+      ],
+    },
+  },
+});
+
+runAgentProviderContract({
+  entry: fakeAgentEntry('fake-kimi', {
+    provider: 'kimi',
+    tier: 'preview',
+    nativeCapabilities: kimi.nativeCapabilities,
+  }),
+  mode: 'in-process',
+  mirrorNameIn: 'name',
+  permission: {
+    options: [
+      { optionId: 'approve_once', name: 'Approve once', kind: 'allow_once' },
+      { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+    ],
+    allow: 'approve_once',
+    reject: 'reject',
+  },
+  scriptDefaults: {
+    modes: {
+      currentModeId: 'default',
+      availableModes: [
+        { id: 'default', name: 'Default' },
+        { id: 'plan', name: 'Plan' },
+        { id: 'auto', name: 'Auto' },
+        { id: 'yolo', name: 'YOLO' },
+      ],
+    },
+  },
+});
+
+runAgentProviderContract({
+  entry: fakeAgentEntry('fake-grok', {
+    provider: 'grok',
+    tier: 'preview',
+    nativeCapabilities: grok.nativeCapabilities,
+  }),
+  mode: 'in-process',
+  mirrorNameIn: 'opaque',
+  permission: {
+    options: [
+      { optionId: 'allow_once', name: 'Allow once', kind: 'allow_once' },
+      { optionId: 'reject_once', name: 'Reject', kind: 'reject_once' },
+    ],
+    allow: 'allow_once',
+    reject: 'reject_once',
+  },
+});
+
+runAgentProviderContract({
+  entry: fakeAgentEntry('fake-goose', {
+    provider: 'goose',
+    tier: 'preview',
+    nativeCapabilities: goose.nativeCapabilities,
+  }),
+  mode: 'in-process',
+  mirrorNameIn: 'name',
+  permission: {
+    options: [
+      { optionId: 'allow_once', name: 'Allow once', kind: 'allow_once' },
+      { optionId: 'reject_once', name: 'Reject', kind: 'reject_once' },
+    ],
+    allow: 'allow_once',
+    reject: 'reject_once',
   },
 });

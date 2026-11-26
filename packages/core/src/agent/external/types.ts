@@ -57,6 +57,12 @@ export interface LaunchContext {
    * 做了整目录隔离的 Provider（Antigravity）生效。
    */
   reuseLocalAuth?: boolean;
+  /**
+   * Working directory the provider should scan: the agent process cwd at
+   * launch, then the session cwd for the per-session check. Providers that
+   * read project config scan from here to the git root.
+   */
+  cwd?: string;
 }
 
 /** `AgentProvider.checkConfig` 的输入：与该进程启动时的 LaunchContext 相同（不含命令）。 */
@@ -256,7 +262,7 @@ export interface AgentProvider {
    * 阶段命中时按「无输出崩溃」同一路径做一次透明重试。
    */
   sessionNotFound?(error: unknown): boolean;
-  /** 过滤 / 排序登录方式（如 Antigravity 去掉 oauth-personal）。 */
+  /** 过滤 / 排序登录方式（如 Antigravity 隐藏 gateway / agent-platform）。 */
   authMethods?(advertised: AcpAuthMethod[]): AcpAuthMethod[];
   /** 厂商扩展请求（如 cursor/ask_question）；未登记的一律立即返回「不支持」。 */
   extRequests?: Readonly<
@@ -268,7 +274,7 @@ export interface AgentProvider {
   /**
    * `PromptResponse.usage`（ACP 不稳定字段）的口径（P5）：`session` = 会话
    * 累计（规范字段注释所写，引擎按会话做差）；`turn` = 本次 prompt 的用量
-   * （claude-agent-acp 0.86.0 在 turn 激活时清零累计器；codex-acp 2.1.1 报
+   * （claude-agent-acp 0.113.0 在 turn 激活时清零累计器；codex-acp 2.12.1 报
    * `lastTokenUsage`）。缺省 `session`。
    */
   usageSemantics?: 'turn' | 'session';

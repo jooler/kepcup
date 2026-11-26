@@ -986,7 +986,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     process.env.PATH = `${bundledBinDir}${path.delimiter}${process.env.PATH ?? ''}`;
   }
   // Dock / Finder launches omit `~/.local/bin` and Homebrew — system Agent
-  // CLIs (InkCop `inkcop-acp`) and `#!/usr/bin/env node` shebangs need them.
+  // CLIs and `#!/usr/bin/env node` shebangs need them.
   process.env.PATH = withUserPath(process.env).PATH ?? process.env.PATH;
 
   let status: CoreStatus = 'starting';

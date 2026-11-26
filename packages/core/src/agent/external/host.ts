@@ -86,10 +86,10 @@ export interface AgentLease {
    */
   openSession<T>(sessionId: string): T | undefined;
   /**
-   * Re-runs the provider's user-config check (`AgentProvider.checkConfig`)
-   * with this process's launch context; throws `AGENT_CONFIG_UNSAFE`.
+   * Re-runs the provider's user/project-config check with this process's launch
+   * context and the session cwd; throws `AGENT_CONFIG_UNSAFE`.
    */
-  checkConfig?(): void;
+  checkConfig?(cwd?: string): void;
   /** Keeps the session open in this process with the engine's state. */
   keepSession(sessionId: string, state: unknown): void;
   /** The session is no longer reusable in this process (closed / poisoned). */
@@ -167,8 +167,8 @@ interface LiveAgent {
 
 /**
  * Directories GUI-launched macOS/Linux apps often miss on PATH (Dock / Finder
- * launchd PATH is typically `/usr/bin:/bin:/usr/sbin:/sbin`). InkCop installs
- * `inkcop-acp` into `~/.local/bin`; Homebrew lives under `/opt/homebrew/bin`.
+ * launchd PATH is typically `/usr/bin:/bin:/usr/sbin:/sbin`). User-installed
+ * CLIs often live in `~/.local/bin`; Homebrew lives under `/opt/homebrew/bin`.
  * Only existing absolute dirs are returned (deduped).
  */
 export function userPathDirs(
@@ -221,7 +221,7 @@ export function withUserPath(
 
 /**
  * True when `file` is a Node entrypoint (`.js` / `.mjs` / `.cjs`, or a
- * `#!/usr/bin/env node` shebang). Extension-less bins like `inkcop-acp` need
+ * `#!/usr/bin/env node` shebang). Extension-less bins like `example-acp` need
  * this so GUI apps without `node` on PATH can still run them via Electron.
  */
 export function isNodeScript(file: string): boolean {
@@ -604,8 +604,10 @@ export class AgentHost {
       forgetSession: (sessionId) => {
         agent.openSessions.delete(sessionId);
       },
-      checkConfig: () => {
-        agent.provider.checkConfig?.(agent.configContext);
+      checkConfig: (cwd?: string) => {
+        agent.provider.checkConfig?.(
+          cwd === undefined ? agent.configContext : { ...agent.configContext, cwd },
+        );
       },
       release: () => {
         if (released) return;
@@ -775,9 +777,11 @@ export class AgentHost {
       throw new AppError('AGENT_INCOMPATIBLE', `智能体「${entry.name}」缺少协议垫片`);
     }
     const target = this.#deps.resolveLaunch(entry);
+    const processCwd = this.#deps.processCwdFor?.(entry.id) ?? this.#deps.processCwd ?? os.tmpdir();
     const configContext: ConfigCheckContext = {
       entry,
       platform: process.platform,
+      cwd: processCwd,
       ...(this.#deps.dataHome !== undefined ? { dataHome: this.#deps.dataHome } : {}),
       ...(this.#deps.stateDirFor !== undefined
         ? { stateDir: this.#deps.stateDirFor(entry.id) }
@@ -800,7 +804,7 @@ export class AgentHost {
     const proc = spawn({
       entry,
       launch: { ...launch, env: buildAgentEnv(process.env, launch.env) },
-      cwd: this.#deps.processCwdFor?.(entry.id) ?? this.#deps.processCwd ?? os.tmpdir(),
+      cwd: processCwd,
       onStderr: (text) => {
         const lines = (stderrTail + text).split(/\r?\n/);
         // A newline-less flood must not grow without bound.

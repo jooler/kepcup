@@ -10,13 +10,18 @@ import { approvedReleaseGates } from '../catalog.js';
 import type { AgentProvider, ProviderRegistry } from '../types.js';
 import { antigravityProvider } from './antigravity.js';
 import { claudeProvider } from './claude.js';
+import { clineProvider } from './cline.js';
 import { codexProvider } from './codex.js';
+import { copilotProvider } from './copilot.js';
 import { cursorProvider } from './cursor.js';
 import { devinProvider } from './devin.js';
 import { dshProvider } from './dsh.js';
 import { genericAcpProvider } from './generic-acp.js';
+import { gooseProvider } from './goose.js';
+import { grokProvider } from './grok.js';
 import { kimiProvider } from './kimi.js';
 import { opencodeProvider } from './opencode.js';
+import { qwenProvider } from './qwen.js';
 
 /**
  * PROVIDERS 登记表（D72 §10）：目录条目的 `provider` 字段 → Provider 模块。
@@ -30,8 +35,13 @@ export const PROVIDERS: ProviderRegistry = {
   dsh: dshProvider,
   cursor: cursorProvider,
   antigravity: antigravityProvider,
+  goose: gooseProvider,
   kimi: kimiProvider,
   devin: devinProvider,
+  cline: clineProvider,
+  copilot: copilotProvider,
+  qwen: qwenProvider,
+  grok: grokProvider,
 };
 
 export function providerFor(

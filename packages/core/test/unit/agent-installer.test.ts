@@ -387,13 +387,22 @@ describe('AgentInstaller — npx', () => {
     expect(readdirSync(path.join(root, 'toolchains', 'agents'))).toEqual([]);
   });
 
-  it('every curated npx catalog entry has a shipped lockfile', () => {
+  it('every curated npx catalog entry has a shipped lockfile with the exact version', () => {
+    const expected: string[] = [];
     for (const entry of AGENT_CATALOG) {
       const npx = entry.distribution.npx;
       if (npx === undefined) continue;
       const spec = parseNpmSpec(npx.package, entry.version);
-      expect(AGENT_NPX_LOCKFILES[`${spec.name}@${spec.version}`], entry.id).toBeDefined();
+      const key = `${spec.name}@${spec.version}`;
+      expected.push(key);
+      const lock = AGENT_NPX_LOCKFILES[key];
+      expect(lock, entry.id).toBeDefined();
+      expect(
+        (lock!.packageJson as { dependencies?: Record<string, string> }).dependencies?.[spec.name],
+        entry.id,
+      ).toBe(spec.version);
     }
+    expect(Object.keys(AGENT_NPX_LOCKFILES).sort()).toEqual(expected.sort());
   });
 
   it('falls back to ELECTRON_RUN_AS_NODE when the managed Node is not installed', async () => {
@@ -711,18 +720,15 @@ describe('AgentInstaller — system CLI', () => {
     'runs extension-less Node system CLIs via Electron/Node (no shebang PATH)',
     async () => {
       const dir = tempDir('kepcup-agent-nodecli-');
-      const file = path.join(dir, 'inkcop-acp');
-      writeFileSync(
-        file,
-        "#!/usr/bin/env node\nprocess.stdout.write('inkcop-acp 0.1.0\\n');\n",
-      );
+      const file = path.join(dir, 'example-acp');
+      writeFileSync(file, "#!/usr/bin/env node\nprocess.stdout.write('example-acp 0.1.0\\n');\n");
       chmodSync(file, 0o755);
       const installer = installerFor(tempDir('kepcup-agent-sys-'), {
         env: { PATH: dir },
       });
       const entry = baseEntry({
         distribution: {
-          system: { cmd: 'inkcop-acp', detect: ['--version'], versionRange: '>=0.1.0' },
+          system: { cmd: 'example-acp', detect: ['--version'], versionRange: '>=0.1.0' },
         },
       });
       const invocation = installer.systemInvocation(entry);
@@ -741,17 +747,17 @@ describe('AgentInstaller — system CLI', () => {
     },
   );
 
-  /** `inkcop-acp`-style Node script (node shebang, no extension) in `dir`. */
+  /** Extension-less Node script (node shebang, no extension) in `dir`. */
   function nodeCli(dir: string): string {
-    const file = path.join(dir, 'inkcop-acp');
-    writeFileSync(file, "#!/usr/bin/env node\nprocess.stdout.write('inkcop-acp 0.1.0\\n');\n");
+    const file = path.join(dir, 'example-acp');
+    writeFileSync(file, "#!/usr/bin/env node\nprocess.stdout.write('example-acp 0.1.0\\n');\n");
     chmodSync(file, 0o755);
     return file;
   }
 
   const nodeCliEntry = baseEntry({
     distribution: {
-      system: { cmd: 'inkcop-acp', detect: ['--version'], versionRange: '>=0.1.0' },
+      system: { cmd: 'example-acp', detect: ['--version'], versionRange: '>=0.1.0' },
     },
   });
 
@@ -773,7 +779,7 @@ describe('AgentInstaller — system CLI', () => {
     async () => {
       const dir = tempDir('kepcup-agent-nodecli-');
       const file = nodeCli(dir);
-      const { exec, calls } = recordingExec({ code: 0, stdout: 'inkcop-acp 0.1.0\n', stderr: '' });
+      const { exec, calls } = recordingExec({ code: 0, stdout: 'example-acp 0.1.0\n', stderr: '' });
       const installer = installerFor(tempDir('kepcup-agent-sys-'), {
         env: { PATH: dir },
         installedNode: () => '/opt/kepcup/node/bin/node',
@@ -809,7 +815,7 @@ describe('AgentInstaller — system CLI', () => {
       vi.stubEnv('HOME', home);
       vi.stubEnv('PATH', emptyPath);
       try {
-        const { exec, calls } = recordingExec({ code: 0, stdout: 'inkcop-acp 0.1.0', stderr: '' });
+        const { exec, calls } = recordingExec({ code: 0, stdout: 'example-acp 0.1.0', stderr: '' });
         // No `env` dep: the production lookup env (process.env + withUserPath).
         const installer = installerFor(tempDir('kepcup-agent-sys-'), {
           installedNode: () => null,

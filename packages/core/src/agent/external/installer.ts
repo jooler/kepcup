@@ -831,7 +831,7 @@ export class AgentInstaller {
   /**
    * Env for system CLI lookup / detect. Test seams pass an exact `deps.env`
    * (isolated PATH); production augments with {@link withUserPath} so Dock-
-   * launched Electron still sees `~/.local/bin` (InkCop) and Homebrew.
+   * launched Electron still sees user-installed CLIs in `~/.local/bin` and Homebrew.
    */
   #systemLookupEnv(): NodeJS.ProcessEnv {
     if (this.#deps.env !== undefined) return this.#deps.env;
@@ -863,7 +863,7 @@ export class AgentInstaller {
     });
     if (command === null) return null;
     const args = [...(system.args ?? [])];
-    // Extension-less Node bins (`inkcop-acp` → `…/inkcop-acp.mjs`) need a
+    // Extension-less Node bins (for example `example-acp` → `…/example-acp.mjs`) need a
     // runtime: GUI PATH often lacks `node`, so run via env-manager Node or
     // Electron (`ELECTRON_RUN_AS_NODE`, this child only) — same pattern as
     // managed npx agents.

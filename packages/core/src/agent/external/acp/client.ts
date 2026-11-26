@@ -70,7 +70,7 @@ export type AcpAgentClientLike = Pick<
 
 export const ACP_PROTOCOL_VERSION = PROTOCOL_VERSION;
 /**
- * ACP steering 扩展请求（claude-agent-acp 0.86.0 / codex-acp 2.1.1 已实现，
+ * ACP steering 扩展请求（claude-agent-acp 0.113.0 / codex-acp 2.12.1 已实现，
  * 由 `InitializeResponse._meta.steering.supported` 声明）：把消息注入进行中的
  * turn。宿主固定 `idleBehavior:'promptRequired'`——没有进行中的 turn 时不得
  * 另起 turn（run 外输出）。

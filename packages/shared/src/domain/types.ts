@@ -142,7 +142,19 @@ export const botRuntimeSchema = z.object({
       capabilities: z.array(z.string()).nullable().default(null).catch(null),
     })
     .prefault({})
-    .catch({ id: '', model: '', effort: '', permission: 'workspace', capabilities: null }),
+    .catch({ id: '', model: '', effort: '', permission: 'workspace', capabilities: null })
+    // InkCop ACP was removed; stale profiles must fall back to the built-in engine.
+    .transform((agent) =>
+      agent.id === 'inkcop'
+        ? {
+            id: 'builtin',
+            model: '',
+            effort: '',
+            permission: 'workspace' as const,
+            capabilities: null,
+          }
+        : agent,
+    ),
   /**
    * 该 Bot 后台整理任务（摘要 / 反思 / 记忆整理 / 画像整理 / Wiki 维护 / 技能
    * 生成）用的内置模型；'' = 跟随全局「后台任务模型」（settings
@@ -1061,7 +1073,13 @@ export const agentSettingSchema = z
      */
     model: z.string().default('').catch(''),
   })
-  .catch({ enabled: false, source: 'managed', loadUserConfig: false, reuseLocalAuth: false, model: '' });
+  .catch({
+    enabled: false,
+    source: 'managed',
+    loadUserConfig: false,
+    reuseLocalAuth: false,
+    model: '',
+  });
 export type AgentSetting = z.infer<typeof agentSettingSchema>;
 
 /**

@@ -3101,18 +3101,16 @@ export const zhCN = {
     'Cursor 的用量计入你的 Cursor 套餐额度。未开启「加载我的个人配置」时，KepCup 不使用你的 Cursor 个人 CLI 配置（其中的命令白名单会绕过逐条确认）。',
   'agents.terms.antigravity':
     '注意：Google 条款禁止第三方软件经个人账号访问 Antigravity——经 OAuth 用个人账号登录违反条款，可能被封号（含 Gemini CLI 账号），是否使用由你决定。Gemini API key 与 Gemini Enterprise（oauth-business）不受此限；Vertex AI 的项目配置入口尚未提供。',
-  'agents.terms.inkcop':
-    'InkCop 须先启动并登录，并在 InkCop「设置 → 服务 → ACP 智能体」开启桥；任务经本机 inkcop-acp 附着其主对话。LLM 密钥只在 InkCop 应用内，KepCup 不注入、不保存。写作任务走 ACP；独立知识库管理请直连 LoomVec，不要经本智能体代管。',
   'agents.terms.cline':
     'Cline 使用你的 Cline 账号或你配置的各家 API key，经 Cline 官方程序登录；用量计入对应厂商。',
   'agents.terms.copilot':
     'GitHub Copilot 使用你的 Copilot 订阅，经 GitHub 官方程序登录；用量计入 Copilot 套餐额度。',
   'agents.terms.goose':
-    'goose 为 Block 的开源智能体；密钥与 provider 在 goose 自己的配置里管理，KepCup 不注入、不保存。',
+    'goose 为 AAIF 的开源智能体；密钥与 provider 在 goose 自己的配置里管理；未开启「加载我的个人配置」时使用私有空配置。',
   'agents.terms.qwen-code':
-    'Qwen Code 使用你的 Qwen 账号（免费额度）或各家 API key，经 Qwen 官方程序登录。',
+    'Qwen Code 使用 OPENAI_API_KEY 作为 ACP 认证，经 Qwen 官方程序登录；KepCup 默认拒绝加载会绕过确认的个人 Skill。',
   'agents.terms.kimi':
-    'Kimi CLI 使用你的 Kimi 会员或 Moonshot API key，经 Moonshot 官方程序登录；官方未提供 Intel Mac（darwin-x86_64）构建。',
+    'Kimi Code 使用 Kimi Code OAuth 或 Kimi Platform API key（`kimi login`），经 Moonshot 官方程序登录。',
   'agents.terms.grok-build':
     'Grok Build 使用你的 grok.com 账号或 xAI API key，经 xAI 官方程序登录；用量计入 xAI 套餐额度。',
   'agents.terms.devin':
@@ -4218,10 +4216,21 @@ export const zhCN = {
   'agent.cursor.authNote': 'Cursor 账号（浏览器登录，计入 Cursor 套餐额度）或 CURSOR_API_KEY',
   'agent.antigravity-acp.description': 'Google 的 AI 编码智能体',
   'agent.antigravity-acp.authNote':
-    'Gemini API key（AI Studio）或 Vertex AI（agent-platform）；不支持 Google 个人账号登录',
-  'agent.inkcop.description': 'InkCop 主对话（写作），经 ACP 暴露给 KepCup 任务引擎',
-  'agent.inkcop.authNote':
-    '请先启动并登录 InkCop，并在 InkCop「设置 → 服务 → ACP 智能体」开启桥；密钥不经 KepCup 注入',
+    'Gemini API key（AI Studio）、Google 账号 OAuth（个人账号有条款风险，需二次确认）或 Gemini Enterprise；Vertex（agent-platform）暂不可用',
+  'agent.cline.description': '自主编码智能体 CLI',
+  'agent.cline.authNote': 'Cline 账号官方登录或 CLINE_API_KEY；用量计入 Cline / 对应厂商',
+  'agent.github-copilot-cli.description': 'GitHub 的 AI 结对编程助手',
+  'agent.github-copilot-cli.authNote': 'GitHub Copilot 订阅，经 GitHub 官方程序登录',
+  'agent.goose.description': '本地可扩展的开源 AI 智能体',
+  'agent.goose.authNote': '在 goose 自己的配置里登录；需开启「加载我的个人配置」以复用已有 key',
+  'agent.qwen-code.description': '阿里巴巴 Qwen 编码助手',
+  'agent.qwen-code.authNote': 'OPENAI_API_KEY（ACP `openai` 认证）',
+  'agent.kimi.description': 'Moonshot AI 的编码助手',
+  'agent.kimi.authNote': 'Kimi Code OAuth 或 Kimi Platform API key（`kimi login`）',
+  'agent.grok-build.description': 'xAI 的编码智能体与 CLI',
+  'agent.grok-build.authNote': 'grok.com 账号或 XAI_API_KEY',
+  'agent.devin.description': 'Cognition 的 Devin CLI 编码智能体',
+  'agent.devin.authNote': 'Devin 账号，经官方浏览器登录',
   'settings.mcpTransportStdio': 'stdio',
   'settings.mcpTransportHttp': 'Streamable HTTP',
   'settings.providerKindCustom': '自定义',

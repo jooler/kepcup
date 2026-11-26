@@ -522,9 +522,14 @@ describe('Claude / Codex providers (fake agent scripts)', () => {
     const methods = claudeProvider.authMethods!([
       { id: 'claude-ai-login', name: 'Claude' },
       { id: 'console-login', name: 'Console' },
+      { id: 'claude-login', name: 'Remote login' },
       { id: 'gateway', name: 'Gateway' },
     ] as never);
-    expect(methods.map((method) => method.id)).toEqual(['claude-ai-login', 'console-login']);
+    expect(methods.map((method) => method.id)).toEqual([
+      'claude-ai-login',
+      'console-login',
+      'claude-login',
+    ]);
     expect(
       claudeProvider.bridgeToolFromCall!(
         { title: 'whatever', _meta: { claudeCode: { toolName: 'mcp__kepcup_ab__remember' } } },
