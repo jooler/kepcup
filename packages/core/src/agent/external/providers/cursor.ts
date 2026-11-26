@@ -6,7 +6,7 @@ import { genericAcpProvider } from './generic-acp.js';
 import { switchToMode } from './mode-tier.js';
 
 /**
- * Cursor（原生 `cursor-agent acp`，2026.10.01，design 28 §9.2）：只覆盖与通用实现
+ * Cursor（原生 `cursor-agent acp`，2026.11.22，design 28 §9.2）：只覆盖与通用实现
  * 的差异。依据：离线探测（todo 附录 A.2）+ 归档内 JS bundle（`dist-package/
  * 6136.index.js` 的 `acp/interaction-handlers/*`，离线阅读，未运行）。
  *
@@ -111,7 +111,7 @@ export const cursorProvider: AgentProvider = {
       genericAcpProvider.toolName(server, tool),
     );
   },
-  // parallelSessions：cursor agent-cli 2026.10.01 随包 JS（dist-package/
+  // parallelSessions：cursor agent-cli 2026.11.22 随包 JS（dist-package/
   // 6136.index.js，模块 ./src/acp/cursor-acp-agent.ts / agent-session.ts）——
   // `this.sessions = new Map`，`prompt` 按 sessionId 取该会话的 AgentSession 再
   // `handlePrompt`；`newSession` 为每个会话各建 agentStore、执行资源

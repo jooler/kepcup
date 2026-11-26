@@ -1,11 +1,3 @@
 {
-  "approved": [
-    "claude",
-    "codex",
-    "opencode",
-    "dsh",
-    "cursor",
-    "antigravity",
-    "inkcop"
-  ]
+  "approved": ["claude", "codex", "opencode", "dsh", "cursor", "antigravity"]
 }

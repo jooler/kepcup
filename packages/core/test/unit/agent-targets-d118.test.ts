@@ -49,10 +49,12 @@ describe('D118 catalog entries', () => {
       'dsh',
       'cursor',
       'antigravity',
-      'inkcop',
     ]);
     for (const id of D118_IDS) {
-      expect(released.some((candidate) => candidate.id === id), id).toBe(false);
+      expect(
+        released.some((candidate) => candidate.id === id),
+        id,
+      ).toBe(false);
     }
   });
 
@@ -69,33 +71,61 @@ describe('D118 catalog entries', () => {
     for (const id of D118_IDS) {
       expect(gates.approved, id).not.toContain(id);
     }
+    expect(gates.approved).not.toContain('inkcop');
+    const catalogGates = new Set(
+      AGENT_CATALOG.filter((candidate) => candidate.releaseGate !== 'testkit').map(
+        (candidate) => candidate.releaseGate,
+      ),
+    );
+    for (const gate of gates.approved) expect(catalogGates, gate).toContain(gate);
   });
 
-  it('every entry resolves to a registered provider; only kimi/devin are dedicated', () => {
+  it('every entry resolves to a dedicated registered provider', () => {
     for (const id of D118_IDS) {
       expect(PROVIDERS[entry(id).provider], id).toBeDefined();
+      expect(entry(id).provider, id).not.toBe('generic-acp');
     }
     expect(entry('kimi').provider).toBe('kimi');
     expect(entry('devin').provider).toBe('devin');
-    for (const id of ['cline', 'github-copilot-cli', 'goose', 'qwen-code', 'grok-build']) {
-      expect(entry(id).provider, id).toBe('generic-acp');
-    }
+    expect(entry('cline').provider).toBe('cline');
+    expect(entry('github-copilot-cli').provider).toBe('copilot');
+    expect(entry('goose').provider).toBe('goose');
+    expect(entry('qwen-code').provider).toBe('qwen');
+    expect(entry('grok-build').provider).toBe('grok');
   });
 
-  it('grok-build disables agent self-update in its launch args', () => {
-    expect(entry('grok-build').distribution.npx?.args).toEqual([
-      '--no-auto-update',
-      'agent',
-      'stdio',
-    ]);
+  it('pins the npx launchers and their self-update flags', () => {
+    expect(entry('cline').distribution.npx).toMatchObject({
+      package: 'cline@3.0.76',
+      args: ['--acp'],
+    });
+    expect(entry('github-copilot-cli').distribution.npx).toMatchObject({
+      package: '@github/copilot@1.0.116',
+      args: ['--acp', '--no-auto-update'],
+    });
+    expect(entry('qwen-code').distribution.npx).toMatchObject({
+      package: '@qwen-code/qwen-code@0.28.6',
+      args: ['--acp'],
+    });
+    expect(entry('kimi').distribution.npx).toMatchObject({
+      package: '@moonshot-ai/kimi-code@2.8.1',
+      args: ['acp'],
+    });
+    expect(entry('grok-build').distribution.npx).toMatchObject({
+      package: '@xai-official/grok@1.0.92',
+      args: ['--no-auto-update', 'agent', 'stdio'],
+    });
   });
 });
 
 describe('D118 provider sessionNotFound shapes (OpenBot-observed, unverified)', () => {
-  it('kimi: -32602 with data.session_id', () => {
-    expect(
-      kimiProvider.sessionNotFound?.({ code: -32602, data: { session_id: 'sess_1' } }),
-    ).toBe(true);
+  it('kimi: 40404, or -32602 with data.sessionId', () => {
+    expect(kimiProvider.sessionNotFound?.({ code: 40404, message: 'Session not found' })).toBe(
+      true,
+    );
+    expect(kimiProvider.sessionNotFound?.({ code: -32602, data: { sessionId: 'sess_1' } })).toBe(
+      true,
+    );
     expect(kimiProvider.sessionNotFound?.({ code: -32602, data: {} })).toBe(false);
     expect(kimiProvider.sessionNotFound?.({ code: -32602 })).toBe(false);
     expect(kimiProvider.sessionNotFound?.({ code: -32002 })).toBe(false);
@@ -109,7 +139,10 @@ describe('D118 provider sessionNotFound shapes (OpenBot-observed, unverified)', 
       }),
     ).toBe(true);
     expect(
-      devinProvider.sessionNotFound?.({ code: -32016, data: { 'cognition.ai/errorKind': 'other' } }),
+      devinProvider.sessionNotFound?.({
+        code: -32016,
+        data: { 'cognition.ai/errorKind': 'other' },
+      }),
     ).toBe(false);
     expect(devinProvider.sessionNotFound?.({ code: -32016 })).toBe(false);
   });

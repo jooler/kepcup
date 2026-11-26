@@ -30,7 +30,13 @@ function settings(
     agents: Object.fromEntries(
       Object.entries(overrides.enabled ?? {}).map(([id, enabled]) => [
         id,
-        { enabled, source: 'managed' as const, loadUserConfig: false, model: '' },
+        {
+          enabled,
+          source: 'managed' as const,
+          loadUserConfig: false,
+          reuseLocalAuth: false,
+          model: '',
+        },
       ]),
     ),
   };

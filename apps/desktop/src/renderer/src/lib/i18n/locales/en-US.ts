@@ -3237,19 +3237,17 @@ export const enUS = {
   'agents.terms.cursor':
     'Cursor usage counts against your Cursor plan quota. When "Load my personal config" is off, KepCup doesn\'t use your personal Cursor CLI config (its command allowlist would bypass per-command confirmation).',
   'agents.terms.antigravity':
-    "Don't sign in with a personal Google account: Google's terms prohibit third-party software from accessing Antigravity through personal accounts, and violations may result in account suspension (including Gemini CLI). KepCup currently only offers Gemini API key sign-in (the project configuration needed for Vertex AI isn't available yet).",
-  'agents.terms.inkcop':
-    "InkCop must be running and signed in, with the bridge enabled in InkCop under Settings → Services → ACP Agents; tasks attach to its main conversation through the local inkcop-acp. LLM keys stay inside the InkCop app; KepCup doesn't inject or store them. Writing tasks go through ACP; for standalone knowledge base management, connect directly to LoomVec instead of going through this agent.",
+    "Note: Google's terms prohibit third-party software from accessing Antigravity through personal accounts — signing in via OAuth with a personal account breaches the terms and may result in account suspension (including Gemini CLI); whether to use it is your call. Gemini API keys and Gemini Enterprise (oauth-business) are not affected; the project configuration needed for Vertex AI isn't available yet.",
   'agents.terms.cline':
     'Cline uses your Cline account or the provider API keys you configure, signing in through the official Cline program; usage counts against the respective vendor.',
   'agents.terms.copilot':
     'GitHub Copilot uses your Copilot subscription and signs in through the official GitHub program; usage counts against your Copilot plan quota.',
   'agents.terms.goose':
-    "goose is Block's open-source agent; keys and providers are managed in goose's own config, which KepCup neither injects nor stores.",
+    "goose is AAIF's open-source agent; keys and providers are managed in goose's own config, which uses an empty private root unless \"Load my personal config\" is on.",
   'agents.terms.qwen-code':
-    'Qwen Code uses your Qwen account (free quota) or provider API keys, signing in through the official Qwen program.',
+    'Qwen Code authenticates with OPENAI_API_KEY through the official Qwen program; KepCup rejects personal skills that could bypass confirmation by default.',
   'agents.terms.kimi':
-    "Kimi CLI uses your Kimi membership or Moonshot API key, signing in through Moonshot's official program; no official Intel Mac (darwin-x86_64) build is available.",
+    "Kimi Code uses Kimi Code OAuth or a Kimi Platform API key (`kimi login`) and signs in through Moonshot's official program.",
   'agents.terms.grok-build':
     'Grok Build uses your grok.com account or xAI API key, signing in through the official xAI program; usage counts against your xAI plan quota.',
   'agents.terms.devin':
@@ -3300,7 +3298,20 @@ export const enUS = {
   'agents.installConfirm': 'Install and enable',
   'agents.cancel': 'Cancel',
   'agents.loginHint':
-    "Sign-in happens through the vendor's official flow (usually opening a browser for authorization). KepCup only runs the official sign-in command and shows its output; it never reads or stores any credentials.",
+    "Credential priority: ① reuse your machine's existing official sign-in (detected automatically) → ② official OAuth / sign-in command (KepCup only runs the official command and shows its output) → ③ API key. KepCup never reads or stores any credentials.",
+  'agents.loginHintApiKey':
+    'This agent signs in with an API key: paste a key issued by the vendor console (e.g. Google AI Studio) and save it. KepCup passes it to the agent as an environment variable and completes the official registration automatically; it never reads or stores other credentials.',
+  'agents.localAuthPreferred':
+    "If this agent is already signed in on this machine, that sign-in is used automatically — no need to sign in again inside KepCup.",
+  'agents.reuseLocalAuth': 'Reuse local sign-in',
+  'agents.reuseLocalAuthHint':
+    "When enabled, KepCup no longer uses its private isolated directory: the agent directly reuses this machine's official sign-in and personal config (e.g. ~/.gemini), with no need to sign in again.",
+  'agents.reuseLocalAuthWarning':
+    "Risk: the machine's sign-in method and personal config take effect wholesale — KepCup sessions may run under an account you picked in another client (including a personal account, a Google-terms breach that can lead to suspension), and global MCP merging, allow rules and hooks are no longer isolated.",
+  'agents.oauthPersonalTitle': 'Sign in to {name} with a personal Google account?',
+  'agents.oauthPersonalBody':
+    "Google's Antigravity terms prohibit third-party software from accessing the service through personal Google accounts; violations can lead to the suspension of both Antigravity and Gemini CLI accounts. KepCup only provides the capability with this honest warning — whether to continue is your decision.",
+  'agents.oauthPersonalProceed': 'Sign in anyway',
   'agents.loginLoading': 'Loading sign-in methods…',
   'agents.loginNoMethods': 'This agent has no sign-in method that KepCup can start.',
   'agents.loginRunning': 'Signing in…',
@@ -4453,11 +4464,24 @@ export const enUS = {
     'Cursor account (browser login, counts against your Cursor plan) or CURSOR_API_KEY',
   'agent.antigravity-acp.description': 'Google’s AI coding agent',
   'agent.antigravity-acp.authNote':
-    'Gemini API key (AI Studio) or Vertex AI (agent-platform); Google personal account login is not supported',
-  'agent.inkcop.description':
-    'InkCop main conversation (writing), exposed to the KepCup task engine via ACP',
-  'agent.inkcop.authNote':
-    'Start and sign in to InkCop, then enable the bridge in InkCop Settings → Services → ACP Agents; keys are not injected through KepCup',
+    'Gemini API key (AI Studio), Google account OAuth (personal accounts carry a terms-risk confirmation), or Gemini Enterprise; Vertex (agent-platform) is unavailable',
+  'agent.cline.description': 'Autonomous coding agent CLI',
+  'agent.cline.authNote':
+    'Official Cline account login or CLINE_API_KEY; usage counts against Cline / the provider',
+  'agent.github-copilot-cli.description': "GitHub's AI pair programmer",
+  'agent.github-copilot-cli.authNote':
+    'GitHub Copilot subscription, signing in through the official GitHub program',
+  'agent.goose.description': 'A local, extensible, open source AI agent',
+  'agent.goose.authNote':
+    'Sign in through goose\'s own config; enable "Load my personal config" to reuse existing keys',
+  'agent.qwen-code.description': "Alibaba's Qwen coding assistant",
+  'agent.qwen-code.authNote': 'OPENAI_API_KEY (ACP `openai` authentication)',
+  'agent.kimi.description': "Moonshot AI's coding assistant",
+  'agent.kimi.authNote': 'Kimi Code OAuth or a Kimi Platform API key (`kimi login`)',
+  'agent.grok-build.description': "xAI's coding agent and CLI",
+  'agent.grok-build.authNote': 'grok.com account or XAI_API_KEY',
+  'agent.devin.description': 'Devin CLI coding agent by Cognition',
+  'agent.devin.authNote': 'Devin account, signing in through the official browser flow',
   'settings.mcpTransportStdio': 'stdio',
   'settings.mcpTransportHttp': 'Streamable HTTP',
   'settings.providerKindCustom': 'custom',

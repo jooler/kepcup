@@ -20,6 +20,7 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@kepcup/testkit": "workspace:*",
     "@playwright/test": "1.63.0",
     "@types/node": "24.19.0",
     "electron": "45.5.0",

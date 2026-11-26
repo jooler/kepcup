@@ -6,6 +6,7 @@ import {
   agentModelRef,
   agentSetupReasonForError,
   agentSetupReasonOf,
+  botProfileSchema,
   botRuntimeSchema,
   CAPABILITY_CALL_TOOL,
   CAPABILITY_SEARCH_TOOL,
@@ -140,7 +141,7 @@ describe('capability resolution (P2)', () => {
 });
 
 describe('agent catalog', () => {
-  it('ships only schema-valid entries: the testkit fake, Claude Agent, Codex (P2), the P5 agents, InkCop and the D118 targets', () => {
+  it('ships only schema-valid entries: the testkit fake, Claude Agent, Codex (P2), the P5 agents and the D118 targets', () => {
     for (const entry of AGENT_CATALOG) {
       expect(agentCatalogEntrySchema.safeParse(entry).success).toBe(true);
     }
@@ -152,7 +153,6 @@ describe('agent catalog', () => {
       'dsh',
       'cursor',
       'antigravity-acp',
-      'inkcop',
       // D118 新目标（todo/acp-hardening-and-new-targets.md §3）：preview 档、
       // releaseGate 未放行，真机 spike 前不出现在发行构建。
       'cline',
@@ -163,17 +163,21 @@ describe('agent catalog', () => {
       'grok-build',
       'devin',
     ]);
+    for (const entry of AGENT_CATALOG) {
+      const npx = entry.distribution.npx;
+      if (npx !== undefined) expect(npx.package.endsWith(`@${entry.version}`), entry.id).toBe(true);
+    }
     expect(AGENT_CATALOG[0]).toMatchObject({ provider: 'generic-acp', releaseGate: 'testkit' });
     expect(AGENT_CATALOG[1]).toMatchObject({
       provider: 'claude',
       releaseGate: 'claude',
-      distribution: { npx: { package: '@agentclientprotocol/claude-agent-acp@0.86.0' } },
+      distribution: { npx: { package: '@agentclientprotocol/claude-agent-acp@0.113.0' } },
       nativeCapabilities: { web: ['WebSearch', 'WebFetch'], vision: ['Read'] },
     });
     expect(AGENT_CATALOG[2]).toMatchObject({
       provider: 'codex',
       releaseGate: 'codex',
-      distribution: { npx: { package: '@agentclientprotocol/codex-acp@2.1.1' } },
+      distribution: { npx: { package: '@agentclientprotocol/codex-acp@2.12.1' } },
       nativeCapabilities: { web: ['web_search'] },
     });
   });
@@ -224,8 +228,60 @@ describe('agent catalog', () => {
     expect(byId('opencode').auth.kinds).toContain('anonymous');
     expect(byId('cursor').auth).toMatchObject({ apiKeyEnv: 'CURSOR_API_KEY' });
     expect(byId('antigravity-acp').auth).toMatchObject({
-      kinds: ['api-key'],
+      kinds: ['subscription', 'api-key'],
       apiKeyEnv: 'GEMINI_API_KEY',
+    });
+    expect(byId('goose')).toMatchObject({ authors: ['AAIF'], license: 'Apache-2.0' });
+    expect(byId('grok-build').license).toBe('Apache-2.0');
+    expect(byId('kimi').name).toBe('Kimi Code');
+  });
+
+  it('pins every binary archive to the catalog version and a platform hash', () => {
+    const six = [
+      'darwin-aarch64',
+      'darwin-x86_64',
+      'linux-aarch64',
+      'linux-x86_64',
+      'windows-aarch64',
+      'windows-x86_64',
+    ];
+    const expected: Record<string, string[]> = {
+      opencode: six,
+      cursor: six,
+      'antigravity-acp': six,
+      devin: six,
+      goose: six.filter((platform) => platform !== 'windows-aarch64'),
+    };
+    for (const [id, platforms] of Object.entries(expected)) {
+      const entry = AGENT_CATALOG.find((candidate) => candidate.id === id)!;
+      const binary = entry.distribution.binary!;
+      expect(Object.keys(binary).sort(), id).toEqual([...platforms].sort());
+      for (const [platform, target] of Object.entries(binary)) {
+        expect(target.archive, `${id}:${platform}`).toContain(entry.version);
+        expect(target.sha256, `${id}:${platform}`).toMatch(/^[0-9a-f]{64}$/);
+      }
+    }
+  });
+
+  it('pins every npx launcher to the catalog package and args', () => {
+    for (const entry of AGENT_CATALOG) {
+      const npx = entry.distribution.npx;
+      if (npx === undefined) continue;
+      expect(npx.package.endsWith(`@${entry.version}`), entry.id).toBe(true);
+    }
+    const byId = (id: string) => AGENT_CATALOG.find((candidate) => candidate.id === id)!;
+    expect(byId('github-copilot-cli').distribution.npx?.args).toEqual([
+      '--acp',
+      '--no-auto-update',
+    ]);
+    expect(byId('grok-build').distribution.npx?.args).toEqual([
+      '--no-auto-update',
+      'agent',
+      'stdio',
+    ]);
+    expect(byId('kimi').distribution.npx).toMatchObject({
+      package: '@moonshot-ai/kimi-code@2.8.1',
+      args: ['acp'],
     });
   });
 
@@ -264,26 +320,6 @@ describe('agent catalog', () => {
     expect(filterReleasedAgents(entries, ['claude']).map((e) => e.id)).toEqual(['claude']);
   });
 
-  it('InkCop: system inkcop-acp via generic-acp, anonymous auth, preview gate', () => {
-    const inkcop = AGENT_CATALOG.find((entry) => entry.id === 'inkcop')!;
-    expect(inkcop).toMatchObject({
-      provider: 'generic-acp',
-      transport: 'acp',
-      tier: 'preview',
-      releaseGate: 'inkcop',
-      auth: {
-        kinds: ['anonymous'],
-        note: expect.stringContaining('设置 → 服务 → ACP 智能体'),
-      },
-      terms: { noticeKey: 'agents.terms.inkcop' },
-      distribution: {
-        system: { cmd: 'inkcop-acp', detect: ['--version'], versionRange: '>=0.1.0' },
-      },
-    });
-    expect(inkcop.distribution.npx).toBeUndefined();
-    expect(inkcop.distribution.binary).toBeUndefined();
-  });
-
   it('every curated entry declares its release gate', () => {
     for (const entry of AGENT_CATALOG) expect(entry.releaseGate, entry.id).toBeTruthy();
   });
@@ -300,6 +336,32 @@ describe('profile and settings defaults', () => {
     });
   });
 
+  it('retired InkCop ACP references fall back to the built-in engine', () => {
+    const runtime = botRuntimeSchema.parse({
+      agent: {
+        id: 'inkcop',
+        model: 'writer',
+        effort: 'high',
+        permission: 'ask',
+        capabilities: ['web'],
+      },
+    });
+    expect(runtime.agent).toEqual({
+      id: 'builtin',
+      model: '',
+      effort: '',
+      permission: 'workspace',
+      capabilities: null,
+    });
+    expect(botRuntimeSchema.parse({ agent: { id: 'claude-acp' } }).agent.id).toBe('claude-acp');
+    expect(botProfileSchema.parse({ runtime: { agent: { id: 'inkcop' } } }).runtime.agent.id).toBe(
+      'builtin',
+    );
+    expect(
+      botProfileSchema.parse({ runtime: { agent: { id: 'claude-acp' } } }).runtime.agent.id,
+    ).toBe('claude-acp');
+  });
+
   it('settings default to no agents', () => {
     const settings = settingsSchema.parse({});
     expect(settings.agents).toEqual({});
@@ -310,6 +372,7 @@ describe('profile and settings defaults', () => {
       enabled: true,
       source: 'managed',
       loadUserConfig: false,
+      reuseLocalAuth: false,
       model: '',
     });
   });
@@ -325,12 +388,14 @@ describe('profile and settings defaults', () => {
       enabled: true,
       source: 'managed',
       loadUserConfig: false,
+      reuseLocalAuth: false,
       model: '',
     });
     expect(settings.agents.b).toEqual({
       enabled: false,
       source: 'managed',
       loadUserConfig: false,
+      reuseLocalAuth: false,
       model: '',
     });
     expect(settings.customAgents).toEqual([{ id: 42 }]);

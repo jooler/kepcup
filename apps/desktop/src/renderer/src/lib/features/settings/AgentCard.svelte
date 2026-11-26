@@ -1,5 +1,11 @@
 <script lang="ts">
-  import type { AgentStatus, AgentTestResult, AgentView, SettingValues } from '@kepcup/shared';
+  import type {
+    AgentAuthMethodView,
+    AgentStatus,
+    AgentTestResult,
+    AgentView,
+    SettingValues,
+  } from '@kepcup/shared';
   import { t, type MessageKey, listSeparator, agentText } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { agentsStore } from '$lib/stores/agents.svelte';
@@ -18,6 +24,12 @@
     DialogTitle,
   } from '$lib/components/ui/dialog';
   import AgentIcon from './AgentIcon.svelte';
+  import {
+    isApiKeyOnlyAgent,
+    requiresOAuthPersonalConfirm,
+    shouldShowLocalAuthPreferred,
+    visibleAgentAuthMethods,
+  } from './agent-card-model';
 
   /**
    * 一个外部智能体的目录卡片（D72，design 28 §2.2）：图标、名称、简介、许可、
@@ -54,7 +66,11 @@
   const suggestEnable = $derived(prefill?.enabled === true && !agent.enabled);
 
   let busy = $state(false);
-  let testResult = $state<AgentTestResult | null>(null);
+  /**
+   * 测试结果记着是谁的：卡片实例会被列表复用（设置页右栏切换智能体不换
+   * 实例），只显示与当前 `agent.id` 匹配的结果——谁的报错留在谁的界面。
+   */
+  let testResult = $state<{ id: string; result: AgentTestResult } | null>(null);
   let installSource = $state<'managed' | 'system'>('managed');
   let installOpen = $state(false);
   let confirmAction = $state<'disable' | 'uninstall' | null>(null);
@@ -64,6 +80,9 @@
   let apiKeyDraft = $state('');
   let loginInputDraft = $state('');
   let optionsBusy = $state(false);
+  /** 待确认的 oauth-personal 登录（条款封号风险，用户自决）。 */
+  let oauthConfirmMethod = $state<AgentAuthMethodView | null>(null);
+  let oauthConfirmOpen = $state(false);
 
   const detected = $derived(agentsStore.options[agent.id]);
   /**
@@ -71,6 +90,16 @@
    * `z.string().default('')`），缺省按「智能体自己的默认」处理，不让整页崩掉。
    */
   const defaultModel = $derived(agent.defaultModel ?? '');
+  /** 纯 api-key 登录的智能体：登录 = 保存 key（core 在保存后自动完成官方登记）。 */
+  const apiKeyOnly = $derived(isApiKeyOnlyAgent(agent));
+  /**
+   * 过滤可展示的登录方式按钮：保存 key 时 core 会对单一 agent 类 key 方式自动
+   * 完成官方登记，因此纯 api-key 智能体隐藏该按钮；多方式智能体（如 Antigravity）
+   * 在未保存 API key 前同样隐藏 `gemini-api-key`，避免无凭据点击误触发报错。
+   */
+  const authMethods = $derived(visibleAgentAuthMethods(agent));
+  const showAuthMethods = $derived(authMethods.length > 0);
+  const showLocalAuthPreferred = $derived(shouldShowLocalAuthPreferred(agent));
 
   const STATUS_VARIANT: Record<AgentStatus, 'default' | 'secondary' | 'destructive' | 'outline'> = {
     available: 'outline',
@@ -145,7 +174,7 @@
   async function test(): Promise<void> {
     await run(async () => {
       const result = await agentsStore.test(agent.id);
-      testResult = result;
+      testResult = { id: agent.id, result };
       onTested?.(result);
       if (result.ok) onSaved?.();
     });
@@ -197,6 +226,32 @@
     const line = loginInputDraft;
     loginInputDraft = '';
     await run(() => agentsStore.login(agent.id, { input: line }));
+  }
+
+  /** 凭据策略第一级：复用本机登录（默认隔离登录根的 Provider 才有此开关）。 */
+  function setReuseLocalAuth(checked: boolean): void {
+    void run(() => agentsStore.configure(agent.id, { reuseLocalAuth: checked }));
+  }
+
+  /**
+   * 官方登录方式入口。oauth-personal 有条款封号风险（Google Antigravity 条款
+   * 第 6 条：第三方软件经个人账号访问属违约）：点击先二次确认，由用户自决。
+   */
+  function loginWithMethod(method: AgentAuthMethodView): void {
+    if (requiresOAuthPersonalConfirm(agent, method.id)) {
+      oauthConfirmMethod = method;
+      oauthConfirmOpen = true;
+      return;
+    }
+    void run(() => agentsStore.login(agent.id, { methodId: method.id }));
+  }
+
+  async function confirmOAuthLogin(): Promise<void> {
+    const method = oauthConfirmMethod;
+    oauthConfirmOpen = false;
+    oauthConfirmMethod = null;
+    if (method === null) return;
+    await run(() => agentsStore.login(agent.id, { methodId: method.id }));
   }
 
   function toggleSystemCli(checked: boolean): void {
@@ -328,17 +383,17 @@
     {/if}
   </div>
 
-  {#if testResult !== null}
-    {#if testResult.ok}
+  {#if testResult !== null && testResult.id === agent.id}
+    {#if testResult.result.ok}
       <p
         class="text-xs text-emerald-600 dark:text-emerald-400"
         data-testid={`agent-test-ok-${agent.id}`}
       >
-        {t('agents.testOk', { ms: testResult.elapsedMs, reply: testResult.reply })}
+        {t('agents.testOk', { ms: testResult.result.elapsedMs, reply: testResult.result.reply })}
       </p>
     {:else}
       <p class="text-xs text-destructive">
-        {t('agents.testFailed', { error: testResult.error ?? '' })}
+        {t('agents.testFailed', { error: testResult.result.error ?? '' })}
       </p>
     {/if}
   {/if}
@@ -406,17 +461,41 @@
 
   {#if loginOpen}
     <div class="space-y-2 rounded-lg bg-muted/40 p-3" data-testid={`agent-login-panel-${agent.id}`}>
-      <p class="text-xs text-muted-foreground">{t('agents.loginHint')}</p>
+      <p class="text-xs text-muted-foreground">
+        {apiKeyOnly ? t('agents.loginHintApiKey') : t('agents.loginHint')}
+      </p>
+      {#if agent.isolatesLocalAuth}
+        <!-- 凭据策略第一级（本地直读）：默认隔离登录根的 Provider 才有开关。 -->
+        <div class="space-y-1" data-testid={`agent-reuse-local-auth-${agent.id}`}>
+          <label class="flex items-center gap-1.5 text-xs">
+            <Checkbox
+              checked={agent.reuseLocalAuth}
+              disabled={busy}
+              onCheckedChange={(checked) => setReuseLocalAuth(checked === true)}
+            />
+            {t('agents.reuseLocalAuth')}
+          </label>
+          <p class="pl-6 text-xs text-muted-foreground">{t('agents.reuseLocalAuthHint')}</p>
+          <p
+            class="pl-6 text-xs font-medium text-amber-700 dark:text-amber-400"
+            data-testid={`agent-reuse-local-auth-warning-${agent.id}`}
+          >
+            {t('agents.reuseLocalAuthWarning')}
+          </p>
+        </div>
+      {:else if showLocalAuthPreferred}
+        <p class="text-xs text-muted-foreground">{t('agents.localAuthPreferred')}</p>
+      {/if}
       {#if loginLoading}
         <p class="text-xs text-muted-foreground">{t('agents.loginLoading')}</p>
-      {:else if agent.authMethods.length > 0}
+      {:else if showAuthMethods}
         <div class="flex flex-wrap gap-2">
-          {#each agent.authMethods as method (method.id)}
+          {#each authMethods as method (method.id)}
             <Button
               size="sm"
               variant="outline"
               disabled={agent.login?.running === true}
-              onclick={() => void run(() => agentsStore.login(agent.id, { methodId: method.id }))}
+              onclick={() => loginWithMethod(method)}
               title={method.description}
             >
               {method.name}
@@ -428,7 +507,7 @@
             </Button>
           {/each}
         </div>
-      {:else if agent.apiKeyEnv === null}
+      {:else if !apiKeyOnly && agent.apiKeyEnv === null && agent.authKinds.length > 0}
         <p class="text-xs text-muted-foreground">{t('agents.loginNoMethods')}</p>
       {/if}
       {#if agent.apiKeyEnv !== null}
@@ -528,6 +607,7 @@
         <label class="flex items-center gap-1.5">
           <Checkbox
             checked={agent.loadUserConfig}
+            disabled={busy}
             onCheckedChange={(checked) =>
               void run(() => agentsStore.configure(agent.id, { loadUserConfig: checked === true }))}
           />
@@ -547,6 +627,7 @@
             type="number"
             min="1"
             max="16"
+            disabled={busy}
             value={agent.concurrency}
             onchange={(event) => {
               const value = Math.min(16, Math.max(1, Number(event.currentTarget.value) || 1));
@@ -558,6 +639,30 @@
     </details>
   {/if}
 </div>
+
+<!-- oauth-personal 二次确认：条款第 6 条封号风险，由用户自决（2026-11-26 凭据策略）。 -->
+<Dialog bind:open={oauthConfirmOpen}>
+  <DialogContent data-testid="agent-oauth-confirm-dialog">
+    {#if oauthConfirmMethod !== null}
+      <DialogHeader>
+        <DialogTitle>{t('agents.oauthPersonalTitle', { name: agent.name })}</DialogTitle>
+        <DialogDescription>{t('agents.oauthPersonalBody')}</DialogDescription>
+      </DialogHeader>
+      <DialogFooter>
+        <Button
+          variant="outline"
+          onclick={() => (oauthConfirmOpen = false)}
+          data-testid="agent-oauth-cancel"
+        >
+          {t('agents.cancel')}
+        </Button>
+        <Button onclick={() => void confirmOAuthLogin()} data-testid="agent-oauth-confirm">
+          {t('agents.oauthPersonalProceed')}
+        </Button>
+      </DialogFooter>
+    {/if}
+  </DialogContent>
+</Dialog>
 
 <Dialog bind:open={installOpen}>
   <DialogContent data-testid="agent-install-dialog">

@@ -17,7 +17,7 @@
 2. **协作开启时**：任意 Bot 详情可多选「关联 InkCop 智能体」= `GET /v1/agents`（展示 name / kind / description）。勾选只写入 `runtime.inkcop_agent_keys`，**不**切换 `message_transport`，**不**整轮直连。
 3. **运行时**：Bot 仍走原 LLM。关联智能体注册工具 `call_inkcop_agent`（`agent_key` 枚举为已勾选 keys；说明注入 description）。用户点名或 Bot 判断需要时调用 → `connections` + `messages` SSE → 工具结果回传 → Bot 整理后回复。
 4. **协作关闭时**：Bot 详情隐藏关联设置；不发现、不注册工具、不调桥。
-5. ACP `agent:inkcop` 仍为调试旁路。知识库仍直连 LoomVec。
+5. **2026-11-27：InkCop ACP 外部智能体条目已移除**（目录、release gate、图标与 i18n 一并下线）。原因：该桥只在本机可用，版本不可由官方稳定源锁定，且已不再是产品支持的 ACP 目标。兼容策略：存量 Bot Profile 的 `agent.id='inkcop'` 在读取时回落为 `builtin`，settings 中的 `agents.inkcop` 与 `defaultTaskAgentId='inkcop'` 在读取时清理并写回；`agent_sessions` 中的旧行惰性保留、不再启动。本机协作仍经 `call_inkcop_agent` 工具移交。知识库仍直连 LoomVec。
 
 ## 设置
 

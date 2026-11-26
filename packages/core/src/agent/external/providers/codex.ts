@@ -10,7 +10,7 @@ import { genericAcpProvider } from './generic-acp.js';
  * - 指令：`prompt-prefix`（会话首个 prompt 的前置段）；进程级 `CODEX_CONFIG`
  *   只在启动时读一次、所有会话共用，**只**放审批 / 沙箱全局项，不承载人设；
  *   `INITIAL_AGENT_MODE=read-only` 让新会话在档位生效前处于最严模式；
- * - 档位（P3，codex-acp 2.1.1 `AgentMode`：每个模式自带 approval_policy
+ * - 档位（P3，codex-acp 2.12.1 `AgentMode`：每个模式自带 approval_policy
  *   on-request，可按会话 `session/set_mode`）：read_only / ask → `read-only`
  *   （任何写入都先发权限请求，宿主按档位拒绝或弹卡）、workspace →
  *   `workspace-write`（cwd 内写入由 Codex 沙箱放行）；**永不** `agent`（auto
@@ -20,10 +20,10 @@ import { genericAcpProvider } from './generic-acp.js';
  * - 无法关闭的 workdir 配置：`AGENTS.md`、`.codex/`（P3 首次运行前弹框确认；
  *   `<workdir>` 段不重复注入 AGENTS.md）；
  * - 未登录：`session/new` 即报 -32000（todo 附录 A.4）；
- * - MCP 仅 http；MCP 工具的 `tool_call` 不带 `name`，结构化名取自适配器构造的
+ * - MCP 支持 stdio / http / acp；MCP 工具的 `tool_call` 不带 `name`，结构化名取自适配器构造的
  *   `rawInput: {server, tool, arguments}`（待登录后 spike 实测确认；MCP 审批
  *   请求是否也带它是 P0 登录 spike 的必验项）；
- * - MCP 工具超时：codex-acp 2.1.1 把 ACP 的 http server 只译成
+ * - MCP 工具超时：codex-acp 2.12.1 把 ACP 的 http server 只译成
  *   `{url, http_headers}`（`createMcpSeverConfig`），且会话配置的 `mcp_servers`
  *   整体覆盖 `CODEX_CONFIG` 里的同名键——无法为桥设 `tool_timeout_sec`，沿用
  *   Codex 默认（约 60 s）。等待用户审批的工具（plugin_request_install /
@@ -87,10 +87,10 @@ export const codexProvider: AgentProvider = {
     },
   }),
   instructionMode: 'prompt-prefix',
-  // codex-acp 2.1.1 reports `lastTokenUsage` (the turn's own usage).
+  // codex-acp 2.12.1 reports `lastTokenUsage` (the turn's own usage).
   usageSemantics: 'turn',
   applyPermissionTier: applyCodexTier,
-  // codex-acp 2.1.1 `ApprovalOptionId`：allow_once；拒绝优先 decline（模型可
+  // codex-acp 2.12.1 `ApprovalOptionId`：allow_once；拒绝优先 decline（模型可
   // 继续），其次 reject_permissions / cancel；allow_for_session /
   // allow_permissions_* / *_amendment 一概不选。
   permissionOptions: {
@@ -117,13 +117,10 @@ export const codexProvider: AgentProvider = {
       ? input.tool
       : null;
   },
-  // parallelSessions：codex-acp 2.1.1 dist/index.js —— 会话状态全部按 sessionId
-  // 分表（:37377-37380 `sessions` / `pendingTurnStarts` / `activePrompts`）；
-  // `prompt` 取本会话状态并 `trackActivePrompt(sessionId)`（:39527-39543，
-  // :39339 每个 prompt 自己的 AbortController）；事件按会话串行分发
-  // （`subscribeToSessionEvents` / `enqueueSessionNotification`，:34297-34330）；
-  // 换 Provider 前等待**所有**会话的进行中 prompt（:38084-38087）——设计上即
-  // 多会话并发（同一 codex app-server 进程的多个 thread）。
+  // parallelSessions：codex-acp 2.12.1 dist/index.js —— `sessions` /
+  // `pendingTurnStarts` / `activePrompts` 按 sessionId 分表（约 :53038-53039）；
+  // 每个 prompt 有自己的 AbortController，事件按会话串行分发；换 Provider 前
+  // 等待所有会话的在途 prompt。真机双会话并发仍待 spike 复核。
   features: {
     steering: true,
     loadSession: true,

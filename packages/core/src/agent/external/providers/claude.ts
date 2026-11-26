@@ -29,7 +29,7 @@ import { genericAcpProvider } from './generic-acp.js';
  *   filesystem 规则只约束 Bash，Read / Edit 工具越界由权限请求兜底；
  * - 宿主强制项：适配器把 `_meta.claudeCode.options` 展开后，再以
  *   `allowDangerouslySkipPermissions: allowBypass`（我方传 false 即 false）与
- *   `permissionMode` 覆盖（claude-agent-acp 0.86.0 `acp-agent.js` ~7110–7135）；
+ *   `permissionMode` 覆盖（claude-agent-acp 0.113.0 `dist/v1/acp-agent.js`）；
  *   我方自己的 options 里强制项也放在最后，日后合入用户自定义项不能覆盖；
  * - 未登录：`session/new` 成功、`session/prompt` 才报 -32000（todo 附录 A.4）；
  * - MCP 工具的结构化名在 `_meta.claudeCode.toolName`（适配器不填 `name`）。
@@ -38,11 +38,11 @@ import { genericAcpProvider } from './generic-acp.js';
 /** 永不进入的模式（Provider 层过滤，UI 不出现）。 */
 export const CLAUDE_FORBIDDEN_MODES: readonly string[] = ['bypassPermissions', 'dontAsk', 'auto'];
 
-/** Claude Code 沙箱网络代理询问宿主时用的工具名（claude-agent-acp 0.86.0）。 */
+/** Claude Code 沙箱网络代理询问宿主时用的工具名（claude-agent-acp 0.113.0）。 */
 export const CLAUDE_SANDBOX_NETWORK_TOOL = 'SandboxNetworkAccess';
 
 /** 保留的登录方式（terminal 类，P4 改写为目录安装路径后运行）。 */
-const CLAUDE_AUTH_METHODS: readonly string[] = ['claude-ai-login', 'console-login'];
+const CLAUDE_AUTH_METHODS: readonly string[] = ['claude-ai-login', 'console-login', 'claude-login'];
 
 /** 只读档禁用的原生工具（写入 / 执行）。 */
 export const CLAUDE_READ_ONLY_DISALLOWED_TOOLS: readonly string[] = [
@@ -162,7 +162,7 @@ export const claudeProvider: AgentProvider = {
     env: { ...(entry.distribution.npx?.env ?? {}), ...target.env, ...CLAUDE_PROCESS_ENV },
   }),
   instructionMode: 'meta-append',
-  // claude-agent-acp 0.86.0 resets its per-session accumulator on each turn.
+  // claude-agent-acp 0.113.0 resets its per-session accumulator on each turn.
   usageSemantics: 'turn',
   sessionNew: ({
     sessionPrompt,
@@ -192,7 +192,7 @@ export const claudeProvider: AgentProvider = {
     };
   },
   applyPermissionTier: applyClaudeTier,
-  // claude-agent-acp 0.86.0 permissions/options/shared.js：allow-once /
+  // claude-agent-acp 0.113.0 permissions/options/shared.js：allow-once /
   // allow-with-updates（= allow_always，不选）/ reject；ExitPlanMode 的
   // exit-plan-* 会切换模式（不在白名单）。
   permissionOptions: { allowOnce: ['allow-once'], rejectOnce: ['reject'] },
@@ -208,7 +208,7 @@ export const claudeProvider: AgentProvider = {
       input.dangerouslyDisableSandbox === true
     );
   },
-  // claude-agent-acp 0.86.0：Claude Code 沙箱代理的主机询问以工具名
+  // claude-agent-acp 0.113.0：Claude Code 沙箱代理的主机询问以工具名
   // `SandboxNetworkAccess`（ACP kind other、title = 主机、rawInput {host}）发来；
   // 2.1.x CLI 的 createSandboxAskCallback 在批准后 addSessionAllowedHost。
   sandboxNetworkHost: (toolCall) => {
@@ -229,12 +229,11 @@ export const claudeProvider: AgentProvider = {
       ? name.slice(prefix.length)
       : null;
   },
-  // parallelSessions（同进程并行会话）：claude-agent-acp 0.86.0 dist/acp-agent.js
-  // —— `this.sessions = {}`（:1168）按 sessionId 存会话；每个会话在 session/new
-  // 时各自 `query()`（:7273，各拉起一个 Claude Code 子进程）并登记独立记录
-  // （:7441：query / input / cancelled / 用量累计器）；`startTurn` 按 sessionId
-  // 取会话、把轮次压进该会话自己的 `turnQueue`（:1944、:2011-2013）；
-  // `cancelTurns` 只动该会话（:5262-5268）。没有进程级「当前 prompt」。
+  // parallelSessions（同进程并行会话）：claude-agent-acp 0.113.0
+  // `dist/v1/acp-agent.js` —— `sessions` map 按 sessionId 存会话（约 :459）；
+  // 每个 session/new 各自 `query()` 拉起 Claude Code 子进程并登记独立记录；
+  // 轮次进该会话自己的 `turnQueue`，`cancelTurns` 只动该会话。没有进程级
+  // 「当前 prompt」。真机双会话并发仍待 spike 复核。
   features: {
     steering: true,
     loadSession: true,

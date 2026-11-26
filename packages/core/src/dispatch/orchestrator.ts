@@ -89,6 +89,7 @@ import {
   effectiveAgentPermission,
   hashAgentConfigFiles,
 } from '../agent/external/permission-bridge.js';
+import { isInsidePath } from '../sandbox/sensitive-paths.js';
 import type { SqliteDatabase } from '../infra/db.js';
 import { persistEngineSteps } from '../agent/step-persistence.js';
 import { ToolUsageTracker } from '../agent/tool-usage.js';
@@ -3605,6 +3606,7 @@ export class Orchestrator {
         ? [...resolvedCapabilityPacks, 'host']
         : resolvedCapabilityPacks;
     const loadUserConfig = this.#deps.settings.get().agents[agentId]?.loadUserConfig === true;
+    const reuseLocalAuth = this.#deps.settings.get().agents[agentId]?.reuseLocalAuth === true;
     // D72 P5 会话复用（design 28 §7）：窗口内、指纹一致的会话只发增量。桥
     // server 名由会话行 id 派生（换会话 = 换名字），会话级提示词里的工具名
     // 随之变化，所以按候选行先算一遍、指纹不符再按新行重算。
@@ -3685,6 +3687,7 @@ export class Orchestrator {
             tools: tools.map((tool) => tool.name).sort(),
             server: hostServerName,
             loadUserConfig,
+            reuseLocalAuth,
           }),
         )
         .digest('hex');
@@ -3932,6 +3935,8 @@ export class Orchestrator {
     agentId: string;
     agentName: string;
     workdirPath: string;
+    /** Session cwd: workdir root or a task subdirectory. */
+    configCwd?: string;
     configFiles: readonly string[];
     writable: boolean;
   }): Promise<'ok' | 'denied' | 'cancelled'> {
@@ -3941,9 +3946,10 @@ export class Orchestrator {
     this.#deps.workdirs.assertInRoots(input.workdirPath);
     // Agents look for their config from the session directory up to the git
     // worktree root (OpenCode, Codex AGENTS.md …, P5 审查 H1): so does the gate.
-    const searchRoot = gitRootAbove(input.workdirPath) ?? input.workdirPath;
+    const configCwd = input.configCwd ?? input.workdirPath;
+    const searchRoot = gitRootAbove(configCwd) ?? input.workdirPath;
     const found: string[] = [];
-    for (const dir of directoryChain(searchRoot, input.workdirPath)) {
+    for (const dir of directoryChain(searchRoot, configCwd)) {
       for (const name of input.configFiles) {
         const bare = name.replace(/[\\/]+$/, '');
         if (!existsSync(nodePath.join(dir, bare))) continue;
@@ -3980,7 +3986,7 @@ export class Orchestrator {
             searchRoot === input.workdirPath
               ? found
               : found.map((name) => nodePath.join(searchRoot, name)),
-          cwd: input.workdirPath,
+          cwd: configCwd,
           options: [],
           durations: ['conversation'],
           reason:
@@ -5682,7 +5688,7 @@ export class Orchestrator {
       // 可写时开工前显式取写入租约、整 run 持有（结算照常 releaseRun）。
       // A D75 task runs there only when its cwd is the workdir; a write
       // task already holds its (pinned) write lease from #startTask (§5.1).
-      if (agentRun !== null && workdirPath !== null && agentCwd === workdirPath) {
+      if (agentRun !== null && workdirPath !== null && isInsidePath(agentCwd, workdirPath)) {
         const gate = await this.#agentWorkdirGate({
           runId,
           identity,
@@ -5691,6 +5697,7 @@ export class Orchestrator {
           agentId,
           agentName: agentRun.agentName,
           workdirPath,
+          configCwd: agentCwd,
           configFiles: agentRun.agentSideConfigFiles,
           writable: !isTask && agentRun.permission !== 'read_only',
         });

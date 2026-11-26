@@ -2597,3 +2597,13 @@
 - 影响：`packages/core/src/workdir/worktree.ts`（apply / restore / 私有索引）、`packages/core/src/dispatch/orchestrator.ts`（结算与回调）、`packages/core/src/dispatch/tasks.ts`（retry）、`packages/core/test/unit/worktree-service.test.ts`、`packages/core/test/integration/tasks-worktree.test.ts`。
 - 决定：① **不补 run_changes**：worktree 任务的改动记录是「应用到工作目录」卡的 `files` / 增删行与 `task.applyState`；任务详情页的改动列表对它为空（代码注释与本节为证）。② 忽略文件**不回流**：只有 tracked 文件与未忽略的未跟踪文件进入补丁；树被删除 / 回收后这些产物一并丢弃（如需保留，让任务写到仓库内未忽略的路径，或用户在终端里自行处理）。③ applyState 兜底：重启后 surviving 树 = `kept`，缺失树 = `applied`（因此**冲突后重启会显示 kept**；被 reaper 回收的树会误显示 applied——唯一可见偏差，卡本身是事实来源）。④ 重启时未决定的卡变 cancelled、树保留（套用全局「待确认审批 → cancelled」），用户可在终端里手动合并；不做「重启后重新出卡」。⑤ 自动重试复用原树（同一任务的连续尝试，保留半成品；用户重试按契约建新树并把 `task_cwd` 重算为主 workdir）。⑥ 三方合并改为在**私有索引副本**上执行：把用户工作区当前 dirty / 未跟踪 / 已删除的被触路径物化进副本（`hash-object --no-filters` + `update-index --cacheinfo`），再 `GIT_INDEX_FILE=<副本> git apply --3way`——「ours」就是磁盘上的真实内容，用户真实索引从不被改写；补丁生成加 `--no-renames`，让 rename 退化为 delete+add（补丁路径集 = 还原点路径集 = 合并路径集；用户改过其中一侧时如实报冲突，绝不半写）。⑦ 「有改动」的判定用 `git diff <baseOid> --numstat` 而不是契约字面的 `git status --porcelain`：树的起点 `baseOid` 已含用户的未提交改动（`git stash create`），`status` 会把用户的既有改动算成任务的工作、无改动也出卡；`diff base` 才是任务自己的改动面，增删行与文件数也取自同一口径。另：建树（`stash create` + `worktree add`）不取主 workdir 的租约（共享租约不排除写任务，独占租约会违背「worktree 任务与主目录任务并行」的契约），因此同一时刻有主目录写任务时，起点快照可能含它写到一半的内容。
 - 已更新的文档：本条；`todo/agent-autonomy-and-parallel-tasks.md` §8 第 10–13 条；`packages/core/src/workdir/worktree.ts` 模块注释与 `apply()` 注释。
+
+### DEV-154 移除 InkCop ACP 外部智能体后的兼容策略
+
+- 状态：已落实
+- 阶段：ACP 稳定版升级（2026-11-27）
+- 是否阻塞：否
+- 问题：InkCop 的 ACP 条目只适用于本机桥、版本无法由官方稳定源锁定，产品决定移除该外部智能体；已有 Bot / settings / agent_sessions 可能仍引用 `inkcop`。
+- 影响：`packages/shared/src/domain/agent-catalog.ts`、`packages/shared/src/domain/types.ts`、`packages/core/src/domain/settings.ts`、`apps/desktop/agent-release-gates.json`。
+- 决定：目录、release gate、图标与 i18n 一并移除；存量 Bot Profile 的 `agent.id='inkcop'` 在 schema 读取时回落为显式 `builtin`（不跟随应用默认去别的外部 Agent）；`agents.inkcop` 与 `defaultTaskAgentId='inkcop'` 在 settings 读取时清理并尽力写回（只读 / 满盘时只告警、不阻断启动）；`agent_sessions` 旧行惰性保留、不再启动。独立的 InkCop 本机协作（`call_inkcop_agent`）不受影响。
+- 已更新的文档：本条；`docs/design/41-inkcop-local-collab.md` §5。

@@ -4,12 +4,12 @@
 import type { NpxLockfile } from './installer.js';
 
 export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
-  '@agentclientprotocol/claude-agent-acp@0.86.0': {
+  '@agentclientprotocol/claude-agent-acp@0.113.0': {
     packageJson: {
       name: 'kepcup-agent-claude-acp',
       private: true,
       dependencies: {
-        '@agentclientprotocol/claude-agent-acp': '0.86.0',
+        '@agentclientprotocol/claude-agent-acp': '0.113.0',
       },
     },
     lockfile: {
@@ -20,21 +20,21 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
         '': {
           name: 'kepcup-agent-claude-acp',
           dependencies: {
-            '@agentclientprotocol/claude-agent-acp': '0.86.0',
+            '@agentclientprotocol/claude-agent-acp': '0.113.0',
           },
         },
         'node_modules/@agentclientprotocol/claude-agent-acp': {
-          version: '0.86.0',
+          version: '0.113.0',
           resolved:
-            'https://registry.npmjs.org/@agentclientprotocol/claude-agent-acp/-/claude-agent-acp-0.86.0.tgz',
+            'https://registry.npmjs.org/@agentclientprotocol/claude-agent-acp/-/claude-agent-acp-0.113.0.tgz',
           integrity:
-            'sha512-TrdQZvT8YT3eOzMZngatm5GJi93dR4/bHoDXRd+8TxfY1cVYtJFK3KApIr6aDreti/Xn15rGCqX7OxxOV/sM4Q==',
+            'sha512-fXX8ulGhIg8qHNsy8iQgPV1ZtISwUSqIAmc0/CN2CgiAeMP1wOn0xbzwwOIKLXqoiNoOkvreT2dqvMhwSFKClw==',
           license: 'Apache-2.0',
           dependencies: {
-            '@agentclientprotocol/sdk': '1.7.0',
-            '@anthropic-ai/claude-agent-sdk': '0.3.287',
+            '@agentclientprotocol/sdk': '2.12.0',
+            '@anthropic-ai/claude-agent-sdk': '0.3.331',
             diff: '9.0.0',
-            zod: '4.6.5',
+            zod: '4.6.7',
           },
           bin: {
             'claude-agent-acp': 'dist/index.js',
@@ -44,34 +44,40 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@agentclientprotocol/sdk': {
-          version: '1.7.0',
-          resolved: 'https://registry.npmjs.org/@agentclientprotocol/sdk/-/sdk-1.7.0.tgz',
+          version: '2.12.0',
+          resolved: 'https://registry.npmjs.org/@agentclientprotocol/sdk/-/sdk-2.12.0.tgz',
           integrity:
-            'sha512-ZORuxsuEnLjRly7t6Ad7zAsWitjWsyprswyPUHz/yycPb+tTm3DGa8XheaHhRXqX8LS9snuxaYavXSRA50TlHw==',
+            'sha512-nSkamfY4Lw9/AVBU5G5V9p82ScXhANDMBybQwcPH/9+euUtZm04/VFUMaLj4gLFEXxQEy+QP1VQiKgSRbYVIPg==',
           license: 'Apache-2.0',
           peerDependencies: {
-            zod: '^3.25.0 || ^4.0.0',
+            '@modelcontextprotocol/server': '^2.4.0',
+            zod: '^3.25.76 || ^4.0.0',
+          },
+          peerDependenciesMeta: {
+            '@modelcontextprotocol/server': {
+              optional: true,
+            },
           },
         },
         'node_modules/@anthropic-ai/claude-agent-sdk': {
-          version: '0.3.287',
+          version: '0.3.331',
           resolved:
-            'https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk/-/claude-agent-sdk-0.3.287.tgz',
+            'https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk/-/claude-agent-sdk-0.3.331.tgz',
           integrity:
-            'sha512-DrYUMzmSVfL1VciNDo/9BhxiVnTsSCKVzxLHB3+NvvRiyN4pfWTKFrUzQesPnWswds9x1Ir10Gi6GRsnjT0UkA==',
+            'sha512-ml/MPqgO95tG5zcApBFxEyoDk57d9htP09R8AtPbKPUCHpsobf84IjkN4zhGvQgk8zsA9dXoeMGrQcCc8gQE/w==',
           license: 'SEE LICENSE IN README.md',
           engines: {
-            node: '>=18.0.0',
+            node: '>=18.14.0',
           },
           optionalDependencies: {
-            '@anthropic-ai/claude-agent-sdk-darwin-arm64': '0.3.287',
-            '@anthropic-ai/claude-agent-sdk-darwin-x64': '0.3.287',
-            '@anthropic-ai/claude-agent-sdk-linux-arm64': '0.3.287',
-            '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': '0.3.287',
-            '@anthropic-ai/claude-agent-sdk-linux-x64': '0.3.287',
-            '@anthropic-ai/claude-agent-sdk-linux-x64-musl': '0.3.287',
-            '@anthropic-ai/claude-agent-sdk-win32-arm64': '0.3.287',
-            '@anthropic-ai/claude-agent-sdk-win32-x64': '0.3.287',
+            '@anthropic-ai/claude-agent-sdk-darwin-arm64': '0.3.331',
+            '@anthropic-ai/claude-agent-sdk-darwin-x64': '0.3.331',
+            '@anthropic-ai/claude-agent-sdk-linux-arm64': '0.3.331',
+            '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': '0.3.331',
+            '@anthropic-ai/claude-agent-sdk-linux-x64': '0.3.331',
+            '@anthropic-ai/claude-agent-sdk-linux-x64-musl': '0.3.331',
+            '@anthropic-ai/claude-agent-sdk-win32-arm64': '0.3.331',
+            '@anthropic-ai/claude-agent-sdk-win32-x64': '0.3.331',
           },
           peerDependencies: {
             '@anthropic-ai/sdk': '>=0.93.0',
@@ -80,33 +86,33 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64': {
-          version: '0.3.287',
+          version: '0.3.331',
           resolved:
-            'https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-darwin-arm64/-/claude-agent-sdk-darwin-arm64-0.3.287.tgz',
+            'https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-darwin-arm64/-/claude-agent-sdk-darwin-arm64-0.3.331.tgz',
           integrity:
-            'sha512-Ic9GCrPBmMroLi7q+IeQQdtVDQLOaaSxkH1NzPsSRZxSvFcMH6M7zz/LahzlLQTdDyebcyMLk4aBXl4H8NnbFw==',
+            'sha512-PQrn7YTiSV5Bg+ueF2hNvswc+wI7YKC2c32XNedvs6vfMCUUnIlq93VEbZiRY23b+JIVkEm8gb1VhkJTjsYISQ==',
           cpu: ['arm64'],
           license: 'SEE LICENSE IN LICENSE.md',
           optional: true,
           os: ['darwin'],
         },
         'node_modules/@anthropic-ai/claude-agent-sdk-darwin-x64': {
-          version: '0.3.287',
+          version: '0.3.331',
           resolved:
-            'https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-darwin-x64/-/claude-agent-sdk-darwin-x64-0.3.287.tgz',
+            'https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-darwin-x64/-/claude-agent-sdk-darwin-x64-0.3.331.tgz',
           integrity:
-            'sha512-7BxpyKMkzLQxCdq4OEnrjtLRC3O69l0LSBZYyUPXPTCFTnvzqpELjPRUssyW9auKEtVoh8eTySwC2rwGzuMUqA==',
+            'sha512-dc3iB+CY3jDpKpDpmvYc4V+UKSkudY29iJ62p0s5TK3h+b7Wqa2Hv0bPow0LUs4ZzDUXxEtCEHzk9X29VfLovw==',
           cpu: ['x64'],
           license: 'SEE LICENSE IN LICENSE.md',
           optional: true,
           os: ['darwin'],
         },
         'node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64': {
-          version: '0.3.287',
+          version: '0.3.331',
           resolved:
-            'https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-linux-arm64/-/claude-agent-sdk-linux-arm64-0.3.287.tgz',
+            'https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-linux-arm64/-/claude-agent-sdk-linux-arm64-0.3.331.tgz',
           integrity:
-            'sha512-CWqO5p3YSBmpi/qHywul0re6fjljbDMZVj45PouNb1Qqws2Wi2h/Wp/ojOnfQAmq4m29pV2qgDnN2UtjaOobKA==',
+            'sha512-xiRxBxoM8Qa5fnjCFk5iFheL5GUroLuHPJ7UnD4v2Sv1tWxGoSL67AYnMZ6OdjMguZK09X4WlgOn1nL1m6NEOA==',
           cpu: ['arm64'],
           libc: ['glibc'],
           license: 'SEE LICENSE IN LICENSE.md',
@@ -114,11 +120,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           os: ['linux'],
         },
         'node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64-musl': {
-          version: '0.3.287',
+          version: '0.3.331',
           resolved:
-            'https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-linux-arm64-musl/-/claude-agent-sdk-linux-arm64-musl-0.3.287.tgz',
+            'https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-linux-arm64-musl/-/claude-agent-sdk-linux-arm64-musl-0.3.331.tgz',
           integrity:
-            'sha512-2WuRGYigs03B0Z7EnG72Ogiz1cMWIAyTwmV+DpNelhFeKb9VUevLkVRvS9nVQvyin/sO3FCBHV8dYsgZEwpmvQ==',
+            'sha512-KdIClOdBUIpvf4PTFe2qedtPCOM3tC/jbsjh8U6WXF0QS8VjYkP0QR9i2AXG1PSAnI24T5xTxQb1scPAgRTIUQ==',
           cpu: ['arm64'],
           libc: ['musl'],
           license: 'SEE LICENSE IN LICENSE.md',
@@ -126,11 +132,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           os: ['linux'],
         },
         'node_modules/@anthropic-ai/claude-agent-sdk-linux-x64': {
-          version: '0.3.287',
+          version: '0.3.331',
           resolved:
-            'https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-linux-x64/-/claude-agent-sdk-linux-x64-0.3.287.tgz',
+            'https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-linux-x64/-/claude-agent-sdk-linux-x64-0.3.331.tgz',
           integrity:
-            'sha512-/6Zw5nym4xfc2eFGaIrS7dt7JoBgASsGUnLWMoPV4M1hGH0tOSPzpixfb4OWO6r9iw9Nn/Zk5Ke1KRuMuja2+Q==',
+            'sha512-nfHSiLJdkpsVAFsXTriyW3r64gS1sp5zxvaoF2dmNqKixR4rf9ISDDi81gF9L1uk/bAEcBGRx34U6Itw+NYIEg==',
           cpu: ['x64'],
           libc: ['glibc'],
           license: 'SEE LICENSE IN LICENSE.md',
@@ -138,11 +144,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           os: ['linux'],
         },
         'node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl': {
-          version: '0.3.287',
+          version: '0.3.331',
           resolved:
-            'https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-linux-x64-musl/-/claude-agent-sdk-linux-x64-musl-0.3.287.tgz',
+            'https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-linux-x64-musl/-/claude-agent-sdk-linux-x64-musl-0.3.331.tgz',
           integrity:
-            'sha512-be7lBO3WihsGbGQbMCAowxmt8vqGgmUo2HkbBee8jrch04LG4LCRj6Ry/gHtYSTle30WAnoyqCLsPHFj064waw==',
+            'sha512-CSeT1JF++Vckf6TSXjQeuSjQ/sJnoTVL/XX44v4jHNAtU5i22nI9b27E6wkzudYVxoRoLWIU00V05dXhYYCvlg==',
           cpu: ['x64'],
           libc: ['musl'],
           license: 'SEE LICENSE IN LICENSE.md',
@@ -150,32 +156,32 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           os: ['linux'],
         },
         'node_modules/@anthropic-ai/claude-agent-sdk-win32-arm64': {
-          version: '0.3.287',
+          version: '0.3.331',
           resolved:
-            'https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-win32-arm64/-/claude-agent-sdk-win32-arm64-0.3.287.tgz',
+            'https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-win32-arm64/-/claude-agent-sdk-win32-arm64-0.3.331.tgz',
           integrity:
-            'sha512-6AdDoLnnVG9aRrWoGVQjS3i4+hceCGFEHVPkMBzbVFs76G1WKlY/ZMnELu3X+ZE5QJFT3j4qqmdJ0y+QbrycEg==',
+            'sha512-FsPHWUpgHBFgSZESwM53JsbEoQiWPnigSCyjSfHDyiWnH66e0NsuksuJ/Nu9qI8UVgBDh/y1NOnnd4eGrB3eFQ==',
           cpu: ['arm64'],
           license: 'SEE LICENSE IN LICENSE.md',
           optional: true,
           os: ['win32'],
         },
         'node_modules/@anthropic-ai/claude-agent-sdk-win32-x64': {
-          version: '0.3.287',
+          version: '0.3.331',
           resolved:
-            'https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-win32-x64/-/claude-agent-sdk-win32-x64-0.3.287.tgz',
+            'https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-win32-x64/-/claude-agent-sdk-win32-x64-0.3.331.tgz',
           integrity:
-            'sha512-fczDcWG2Hu+nYQgxeQEsGn5l+3M06RpJXysIsu/BmHTPl7UceTfTpSYr6O/9GU/sNhU0CADJaIIZNwQTfK0DWw==',
+            'sha512-AsLur4ov9MGTQTrnZ49ZDPasQ35U3X/rZDdF/rPhytN3h1F3w/0IkC6esW3OzldvPlci60QvggOLVGnFlUzdxw==',
           cpu: ['x64'],
           license: 'SEE LICENSE IN LICENSE.md',
           optional: true,
           os: ['win32'],
         },
         'node_modules/@anthropic-ai/sdk': {
-          version: '1.6.0',
-          resolved: 'https://registry.npmjs.org/@anthropic-ai/sdk/-/sdk-1.6.0.tgz',
+          version: '1.14.0',
+          resolved: 'https://registry.npmjs.org/@anthropic-ai/sdk/-/sdk-1.14.0.tgz',
           integrity:
-            'sha512-XqiO/46n8S6So8jQ/6/uNCkHntyW6QHHs1gZ+hlwTx1fWDr929g4VmwIXfdMVk7SuBWNdQvAlwyi1G3t6SEIuQ==',
+            'sha512-nADYXUd5fn9Zgw2nHi1iKyt/kb1UUt1cN3RbdxEI6XjTDTxbx4LLG4GnMrxWyS9GgXQllFOyAKSiFM3joDNK9A==',
           license: 'Apache-2.0',
           peer: true,
           dependencies: {
@@ -196,10 +202,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@babel/runtime': {
-          version: '7.29.13',
-          resolved: 'https://registry.npmjs.org/@babel/runtime/-/runtime-7.29.13.tgz',
+          version: '7.29.15',
+          resolved: 'https://registry.npmjs.org/@babel/runtime/-/runtime-7.29.15.tgz',
           integrity:
-            'sha512-v+oN26xP4YIlQsbQ/CbTH1WG5m/l/DjKKZNy/Kp3f/AFvbgt7Em/D0FeMM3O2hX0YzeN2M16W8lOpyhIkfCBcQ==',
+            'sha512-304gsbbGVmQc+cNGHzwHBlqepYdWLKj3VXCQBGt/EGcV7PUPfKI7kAUNW1FZEOCwlQiLvQjg1JEaAlRQ616h+Q==',
           license: 'MIT',
           peer: true,
           engines: {
@@ -207,10 +213,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@hono/node-server': {
-          version: '2.1.6',
-          resolved: 'https://registry.npmjs.org/@hono/node-server/-/node-server-2.1.6.tgz',
+          version: '2.1.11',
+          resolved: 'https://registry.npmjs.org/@hono/node-server/-/node-server-2.1.11.tgz',
           integrity:
-            'sha512-p/KH9MnfNcsm3sR6x4lNgm5j+QN4Et8srKredl9DZfXiyZ1UQ3aQ2YVpFLbqktYN5JI+DB+VZFKM2PqE5hLKjQ==',
+            'sha512-KzKz9vl4vvr1vgLHamj+g5uonbrj5NwAdO3yzOS6cd2HjALVeOgTgeZOyAzNxejbkfOOPIcvuf/Tg8l1pEFLog==',
           license: 'MIT',
           peer: true,
           engines: {
@@ -568,10 +574,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           peer: true,
         },
         'node_modules/encodeurl': {
-          version: '2.0.1',
-          resolved: 'https://registry.npmjs.org/encodeurl/-/encodeurl-2.0.1.tgz',
+          version: '2.0.3',
+          resolved: 'https://registry.npmjs.org/encodeurl/-/encodeurl-2.0.3.tgz',
           integrity:
-            'sha512-Ev/hIyePLZtpL98x562lvPtenrUfGr0lfaf44HFZ+hDEwso7ccV9QAZrEVLg0hxNAzygaAFxy2dYaAKKM0G06A==',
+            'sha512-mIteYONiEfc4xWf2F1WXovh1c8npzS00vNeiUPdwFF+QlVJni+gNvpQltLMQhob8rew/bWWc/bGTuUr0EUGt0w==',
           license: 'MIT',
           peer: true,
           engines: {
@@ -708,10 +714,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/express-rate-limit': {
-          version: '8.7.3',
-          resolved: 'https://registry.npmjs.org/express-rate-limit/-/express-rate-limit-8.7.3.tgz',
+          version: '8.7.5',
+          resolved: 'https://registry.npmjs.org/express-rate-limit/-/express-rate-limit-8.7.5.tgz',
           integrity:
-            'sha512-zPLqDI2f0gV2WmGnacLf9XSSqn4VldRyP5LCzOwx0BKH40mO6+2PCFkoSsRO2jePx87/Kf6NUF6P2QOTKXHbQA==',
+            'sha512-wi+v38cx2EqD0JnhE/e74o5tFqKWUOAPFJIgyEiqJ8v2MNpoOAA3kI2hXYOI+YM+HE5yqbdAlVxm2GqOIeYOgA==',
           license: 'MIT',
           peer: true,
           dependencies: {
@@ -917,10 +923,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/hono': {
-          version: '4.13.16',
-          resolved: 'https://registry.npmjs.org/hono/-/hono-4.13.16.tgz',
+          version: '4.13.22',
+          resolved: 'https://registry.npmjs.org/hono/-/hono-4.13.22.tgz',
           integrity:
-            'sha512-AOLOEhvrV+iH92xXCnFr/5+3KjPKcI3xP63XJtX5spAnkznPdHijlIsUTpi7/9EhWqrTCekw5c5zh1K+YsVw7A==',
+            'sha512-wncKd5/40Pj8grx0RZ2fgNIicFEmVFwIHT5UFLTnphR8I6AQWFf9c2JoM6ZJ9g8y4pMzg3sNlCVNe0m2Yclg0Q==',
           license: 'MIT',
           peer: true,
           engines: {
@@ -1014,10 +1020,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           peer: true,
         },
         'node_modules/jose': {
-          version: '6.2.15',
-          resolved: 'https://registry.npmjs.org/jose/-/jose-6.2.15.tgz',
+          version: '6.2.18',
+          resolved: 'https://registry.npmjs.org/jose/-/jose-6.2.18.tgz',
           integrity:
-            'sha512-qdF6ewcZARtef63fJ9AKKZPgxw+t7USH6HLXYcD4CrdmSvDp79rpJSPFEKc90QBeGS63u1KQtN2MZQHC0yDIzA==',
+            'sha512-doV4thUwgkrycJH4yLeqwTGIIZphHl+pk7CPReuMIhYhncmgzdko85MaCG4YQFTxqMFr1/oEH32tZuKKovcDEg==',
           license: 'MIT',
           peer: true,
           funding: {
@@ -1178,10 +1184,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/object-inspect': {
-          version: '1.13.4',
-          resolved: 'https://registry.npmjs.org/object-inspect/-/object-inspect-1.13.4.tgz',
+          version: '1.14.0',
+          resolved: 'https://registry.npmjs.org/object-inspect/-/object-inspect-1.14.0.tgz',
           integrity:
-            'sha512-W67iLl4J2EXEGTbfeHCffrjDfitvLANg0UlX3wFUUSTx92KXRFegMHUVgSqE+wvhAbi4WqjGg9czysTV2Epbew==',
+            'sha512-IVgHNlp/jwQX271+Xzoq9LZNTWXxZK+cEOrGBOBxXNbn7fapnZ+Ts6TVMgNOuAezwG2wdtnMX97tTPK6VEnuOQ==',
           license: 'MIT',
           peer: true,
           engines: {
@@ -1255,10 +1261,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/pkce-challenge': {
-          version: '5.0.1',
-          resolved: 'https://registry.npmjs.org/pkce-challenge/-/pkce-challenge-5.0.1.tgz',
+          version: '5.0.2',
+          resolved: 'https://registry.npmjs.org/pkce-challenge/-/pkce-challenge-5.0.2.tgz',
           integrity:
-            'sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==',
+            'sha512-vCc54+qyIfKC5e2UN28AZKElwqjLINgiIV3RKI8pDu93TjaAJoB3QrgMzEBouy8yOKsXVXdAinO1QArJf9x5WA==',
           license: 'MIT',
           peer: true,
           engines: {
@@ -1347,10 +1353,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/router': {
-          version: '2.2.0',
-          resolved: 'https://registry.npmjs.org/router/-/router-2.2.0.tgz',
+          version: '2.3.0',
+          resolved: 'https://registry.npmjs.org/router/-/router-2.3.0.tgz',
           integrity:
-            'sha512-nLTrUKm2UyiL7rlhapu/Zl45FwNgkZGaCpZbIHajDYgwlJCOzLSk+cIPAnsEqV955GjILJnKbdQC1nVPz+gAYQ==',
+            'sha512-bpowRfGjEPe8t9R6fJIzhwmyCGAXwKvxBUsgJm+bJukwdcWmUXbMo7p22w7aYmQBPQTUMNqMV39YX0kMou3z8w==',
           license: 'MIT',
           peer: true,
           dependencies: {
@@ -1362,6 +1368,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
           engines: {
             node: '>= 18',
+          },
+          funding: {
+            type: 'opencollective',
+            url: 'https://opencollective.com/express',
           },
         },
         'node_modules/safer-buffer': {
@@ -1536,10 +1546,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/standardwebhooks': {
-          version: '1.1.1',
-          resolved: 'https://registry.npmjs.org/standardwebhooks/-/standardwebhooks-1.1.1.tgz',
+          version: '1.3.0',
+          resolved: 'https://registry.npmjs.org/standardwebhooks/-/standardwebhooks-1.3.0.tgz',
           integrity:
-            'sha512-bCbX9ZEyFkWPsRz7Bl3NuQUJohmwGSev/yhr7vhaGPlc4AfIrspIRa6cPTBuI1ItmrTDJ4d/S2hCsfe4+vQGnQ==',
+            'sha512-5W9skHjqAm2dlA9wWvglTP+oX47JX4lFXVk1aJV7+TG1snvTR4QXaVgPscEzvOw9GRreeavMwbqEeL+MGhZHCg==',
           license: 'MIT',
           peer: true,
           dependencies: {
@@ -1660,10 +1670,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           peer: true,
         },
         'node_modules/zod': {
-          version: '4.6.5',
-          resolved: 'https://registry.npmjs.org/zod/-/zod-4.6.5.tgz',
+          version: '4.6.7',
+          resolved: 'https://registry.npmjs.org/zod/-/zod-4.6.7.tgz',
           integrity:
-            'sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==',
+            'sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==',
           license: 'MIT',
           funding: {
             url: 'https://github.com/sponsors/colinhacks',
@@ -1683,12 +1693,12 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
       },
     },
   },
-  '@agentclientprotocol/codex-acp@2.1.1': {
+  '@agentclientprotocol/codex-acp@2.12.1': {
     packageJson: {
       name: 'kepcup-agent-codex-acp',
       private: true,
       dependencies: {
-        '@agentclientprotocol/codex-acp': '2.1.1',
+        '@agentclientprotocol/codex-acp': '2.12.1',
       },
     },
     lockfile: {
@@ -1699,19 +1709,20 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
         '': {
           name: 'kepcup-agent-codex-acp',
           dependencies: {
-            '@agentclientprotocol/codex-acp': '2.1.1',
+            '@agentclientprotocol/codex-acp': '2.12.1',
           },
         },
         'node_modules/@agentclientprotocol/codex-acp': {
-          version: '2.1.1',
+          version: '2.12.1',
           resolved:
-            'https://registry.npmjs.org/@agentclientprotocol/codex-acp/-/codex-acp-2.1.1.tgz',
+            'https://registry.npmjs.org/@agentclientprotocol/codex-acp/-/codex-acp-2.12.1.tgz',
           integrity:
-            'sha512-dppZxW3f8kNbTDbR25+lBLtNst5DIC/Sm7GtRF69PI1Ilqv12tDSsIb0hJQW0iNzkx+JdDvX76HOyv5Uibu1qQ==',
+            'sha512-4RGVK+bI2T7kkcfzj4hkmCtX1bVmoXB1nR2IXmzX9KVCXUY6cj9clHkyuGQBuIs2swr9Tf0AdWcY+5fQaYHpZQ==',
           license: 'Apache-2.0',
           dependencies: {
-            '@agentclientprotocol/sdk': '^1.5.0',
-            '@openai/codex': '^0.159.1',
+            '@agentclientprotocol/sdk': '~2.9.1',
+            '@openai/codex': '^0.172.0',
+            'cross-spawn': '^7.0.6',
             diff: '^9.0.0',
             open: '^11.0.1',
             'vscode-jsonrpc': '^9.0.1',
@@ -1722,20 +1733,26 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@agentclientprotocol/sdk': {
-          version: '1.9.0',
-          resolved: 'https://registry.npmjs.org/@agentclientprotocol/sdk/-/sdk-1.9.0.tgz',
+          version: '2.9.1',
+          resolved: 'https://registry.npmjs.org/@agentclientprotocol/sdk/-/sdk-2.9.1.tgz',
           integrity:
-            'sha512-saCOTPYBK1iqWqJFAYHXbg3+zCoFXyZZFoqQAwdTWkbrZZPpAETr80QOnYr2l+dzPwL0jpNhn3eDY8MoEIDbUA==',
+            'sha512-8iJdxGa3SunLfzqLLb3RfQFmr4hnmWeAyeAK6MbkJiXJbrRlMRgKsVnDl/7Hu48yu/30gAlytNDzh5W77rv5SA==',
           license: 'Apache-2.0',
           peerDependencies: {
-            zod: '^3.25.0 || ^4.0.0',
+            '@modelcontextprotocol/server': '^2.4.0',
+            zod: '^3.25.76 || ^4.0.0',
+          },
+          peerDependenciesMeta: {
+            '@modelcontextprotocol/server': {
+              optional: true,
+            },
           },
         },
         'node_modules/@openai/codex': {
-          version: '0.159.3',
-          resolved: 'https://registry.npmjs.org/@openai/codex/-/codex-0.159.3.tgz',
+          version: '0.172.0',
+          resolved: 'https://registry.npmjs.org/@openai/codex/-/codex-0.172.0.tgz',
           integrity:
-            'sha512-hg4nlqCwRb87GocxNnHvz4sadOrdJ71mO0a4CUYWXjAozJe2gtuAdRFldKGSQXw9m7SgR4ydis12KDVVPgzDkQ==',
+            'sha512-yHf/6wbw4Zvha2M2ylDhDrU9FgfKLYgV6xSzSjlz3gxQNsiVLkXo+fPGwBqvP0A5geLtZs9wAbq+1v7+ZVWJ0g==',
           license: 'Apache-2.0',
           bin: {
             codex: 'bin/codex.js',
@@ -1744,20 +1761,20 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             node: '>=16',
           },
           optionalDependencies: {
-            '@openai/codex-darwin-arm64': 'npm:@openai/codex@0.159.3-darwin-arm64',
-            '@openai/codex-darwin-x64': 'npm:@openai/codex@0.159.3-darwin-x64',
-            '@openai/codex-linux-arm64': 'npm:@openai/codex@0.159.3-linux-arm64',
-            '@openai/codex-linux-x64': 'npm:@openai/codex@0.159.3-linux-x64',
-            '@openai/codex-win32-arm64': 'npm:@openai/codex@0.159.3-win32-arm64',
-            '@openai/codex-win32-x64': 'npm:@openai/codex@0.159.3-win32-x64',
+            '@openai/codex-darwin-arm64': 'npm:@openai/codex@0.172.0-darwin-arm64',
+            '@openai/codex-darwin-x64': 'npm:@openai/codex@0.172.0-darwin-x64',
+            '@openai/codex-linux-arm64': 'npm:@openai/codex@0.172.0-linux-arm64',
+            '@openai/codex-linux-x64': 'npm:@openai/codex@0.172.0-linux-x64',
+            '@openai/codex-win32-arm64': 'npm:@openai/codex@0.172.0-win32-arm64',
+            '@openai/codex-win32-x64': 'npm:@openai/codex@0.172.0-win32-x64',
           },
         },
         'node_modules/@openai/codex-darwin-arm64': {
           name: '@openai/codex',
-          version: '0.159.3-darwin-arm64',
-          resolved: 'https://registry.npmjs.org/@openai/codex/-/codex-0.159.3-darwin-arm64.tgz',
+          version: '0.172.0-darwin-arm64',
+          resolved: 'https://registry.npmjs.org/@openai/codex/-/codex-0.172.0-darwin-arm64.tgz',
           integrity:
-            'sha512-aI4UY14YURYxJxnRK+AE4QU+aek0mgtyyo7Rw9rNbCQUYETRQ0NYdJzU9ytljERGpPlht3dHHI1u4NhqHoDJDQ==',
+            'sha512-B239wE7pGeOmjylfqLymDIwuL4QgQR7pQZc5phHpZ3t8UVkno9AS3dNPEprm7AzZHw3kf2I6Uf+uOFfjGegELQ==',
           cpu: ['arm64'],
           license: 'Apache-2.0',
           optional: true,
@@ -1768,10 +1785,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
         },
         'node_modules/@openai/codex-darwin-x64': {
           name: '@openai/codex',
-          version: '0.159.3-darwin-x64',
-          resolved: 'https://registry.npmjs.org/@openai/codex/-/codex-0.159.3-darwin-x64.tgz',
+          version: '0.172.0-darwin-x64',
+          resolved: 'https://registry.npmjs.org/@openai/codex/-/codex-0.172.0-darwin-x64.tgz',
           integrity:
-            'sha512-KTOQOD184DMXpR3TqnDUnLsgad14WJn+x3XmjBaXRHchKYGttjREwqrwzC61xQYFeh6VkogAceybR+SMbbgvYQ==',
+            'sha512-hrL9NQwH9E0WqK8Yofqe6fipE1XDSXx/C2fwSOagXdTRcjYXOrfQ9fSCKaKZXr/xm43ATdsRSjGGAn8IJhGmhA==',
           cpu: ['x64'],
           license: 'Apache-2.0',
           optional: true,
@@ -1782,10 +1799,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
         },
         'node_modules/@openai/codex-linux-arm64': {
           name: '@openai/codex',
-          version: '0.159.3-linux-arm64',
-          resolved: 'https://registry.npmjs.org/@openai/codex/-/codex-0.159.3-linux-arm64.tgz',
+          version: '0.172.0-linux-arm64',
+          resolved: 'https://registry.npmjs.org/@openai/codex/-/codex-0.172.0-linux-arm64.tgz',
           integrity:
-            'sha512-84C1yhAI+i0hqh77Akp/Ma09Z4d5oLKcZKqW1WZpEDh8bKbNvvbNEd6pE+GMUe2Kwg7jCbuvkRNH1zgK+SCM3Q==',
+            'sha512-qLH5VdeTkPlknWgKkU11IlGMyyxKXp9vcj65libT3Zp4P3Kt7gEbK4YDXlDBqWtA09+fGnIUpWERs6BaNo86DA==',
           cpu: ['arm64'],
           license: 'Apache-2.0',
           optional: true,
@@ -1796,10 +1813,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
         },
         'node_modules/@openai/codex-linux-x64': {
           name: '@openai/codex',
-          version: '0.159.3-linux-x64',
-          resolved: 'https://registry.npmjs.org/@openai/codex/-/codex-0.159.3-linux-x64.tgz',
+          version: '0.172.0-linux-x64',
+          resolved: 'https://registry.npmjs.org/@openai/codex/-/codex-0.172.0-linux-x64.tgz',
           integrity:
-            'sha512-xlHydfOksnNt/qz4BEVFvjMWunweaVSNtha/DkVUwWZnVZxbqiJwsXSl2iZDk04b6k/g0OI7jU06XqzHB2s5og==',
+            'sha512-YJq6Wz3PFXV5LZ0OQc3/o+gpM3pLmQ/8n8uM2zF/m0O/8zED+uSPT8Ln1KGRrqR8Q6eon9YdWlhueAunVTZ+eg==',
           cpu: ['x64'],
           license: 'Apache-2.0',
           optional: true,
@@ -1810,10 +1827,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
         },
         'node_modules/@openai/codex-win32-arm64': {
           name: '@openai/codex',
-          version: '0.159.3-win32-arm64',
-          resolved: 'https://registry.npmjs.org/@openai/codex/-/codex-0.159.3-win32-arm64.tgz',
+          version: '0.172.0-win32-arm64',
+          resolved: 'https://registry.npmjs.org/@openai/codex/-/codex-0.172.0-win32-arm64.tgz',
           integrity:
-            'sha512-4C+EuH1zE4rO5w1MsrnS98Tvq6Ff4+zeNr3pVeR/UsQ+VrTY5BCA9nZuXuCXNLKak1tLOw81b+fQM4jKGFCeDA==',
+            'sha512-lO+hS8rLV3xS5ZZZCBVfPTAqpI1VENId12qhzZ1jNPUBSzKQBOGKs+GHNplak1RHXXXpgK9UHkPQ3A2IvQ8lJg==',
           cpu: ['arm64'],
           license: 'Apache-2.0',
           optional: true,
@@ -1824,10 +1841,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
         },
         'node_modules/@openai/codex-win32-x64': {
           name: '@openai/codex',
-          version: '0.159.3-win32-x64',
-          resolved: 'https://registry.npmjs.org/@openai/codex/-/codex-0.159.3-win32-x64.tgz',
+          version: '0.172.0-win32-x64',
+          resolved: 'https://registry.npmjs.org/@openai/codex/-/codex-0.172.0-win32-x64.tgz',
           integrity:
-            'sha512-h8w5nslfQyoYbonZaRlLwvPKFS9Mcxz5vUeCeoHKF5SsZUP9jSBH7hxUdc8RWJffJtfbV2qxdnImVAj9zy2fwA==',
+            'sha512-48pULjlTwpBZ/TfbOnpnmloHaTQAYELbaiKHEX7qmrtLFIcnPigaNN3omyetPdAuvrRXrmNFRlKfvQme19ZmRA==',
           cpu: ['x64'],
           license: 'Apache-2.0',
           optional: true,
@@ -1850,6 +1867,21 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
           funding: {
             url: 'https://github.com/sponsors/sindresorhus',
+          },
+        },
+        'node_modules/cross-spawn': {
+          version: '7.0.6',
+          resolved: 'https://registry.npmjs.org/cross-spawn/-/cross-spawn-7.0.6.tgz',
+          integrity:
+            'sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==',
+          license: 'MIT',
+          dependencies: {
+            'path-key': '^3.1.0',
+            'shebang-command': '^2.0.0',
+            which: '^2.0.1',
+          },
+          engines: {
+            node: '>= 8',
           },
         },
         'node_modules/default-browser': {
@@ -1970,6 +2002,13 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             url: 'https://github.com/sponsors/sindresorhus',
           },
         },
+        'node_modules/isexe': {
+          version: '2.0.0',
+          resolved: 'https://registry.npmjs.org/isexe/-/isexe-2.0.0.tgz',
+          integrity:
+            'sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==',
+          license: 'ISC',
+        },
         'node_modules/open': {
           version: '11.0.4',
           resolved: 'https://registry.npmjs.org/open/-/open-11.0.4.tgz',
@@ -1989,6 +2028,16 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
           funding: {
             url: 'https://github.com/sponsors/sindresorhus',
+          },
+        },
+        'node_modules/path-key': {
+          version: '3.1.1',
+          resolved: 'https://registry.npmjs.org/path-key/-/path-key-3.1.1.tgz',
+          integrity:
+            'sha512-ojmeN0qd+y0jszEtoY48r0Peq5dwMEkIlCOu6Q5f41lfkswXuKtYrhgoTpLnyIcHm24Uhqx+5Tqm2InSwLhE6Q==',
+          license: 'MIT',
+          engines: {
+            node: '>=8',
           },
         },
         'node_modules/powershell-utils': {
@@ -2017,6 +2066,29 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             url: 'https://github.com/sponsors/sindresorhus',
           },
         },
+        'node_modules/shebang-command': {
+          version: '2.0.0',
+          resolved: 'https://registry.npmjs.org/shebang-command/-/shebang-command-2.0.0.tgz',
+          integrity:
+            'sha512-kHxr2zZpYtdmrN1qDjrrX/Z1rR1kG8Dx+gkpK1G4eXmvXswmcE1hTWBWYUzlraYw1/yZp6YuDY77YtvbN0dmDA==',
+          license: 'MIT',
+          dependencies: {
+            'shebang-regex': '^3.0.0',
+          },
+          engines: {
+            node: '>=8',
+          },
+        },
+        'node_modules/shebang-regex': {
+          version: '3.0.0',
+          resolved: 'https://registry.npmjs.org/shebang-regex/-/shebang-regex-3.0.0.tgz',
+          integrity:
+            'sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==',
+          license: 'MIT',
+          engines: {
+            node: '>=8',
+          },
+        },
         'node_modules/vscode-jsonrpc': {
           version: '9.0.3',
           resolved: 'https://registry.npmjs.org/vscode-jsonrpc/-/vscode-jsonrpc-9.0.3.tgz',
@@ -2025,6 +2097,22 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           license: 'MIT',
           engines: {
             node: '>=14.0.0',
+          },
+        },
+        'node_modules/which': {
+          version: '2.0.2',
+          resolved: 'https://registry.npmjs.org/which/-/which-2.0.2.tgz',
+          integrity:
+            'sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA==',
+          license: 'ISC',
+          dependencies: {
+            isexe: '^2.0.0',
+          },
+          bin: {
+            'node-which': 'bin/node-which',
+          },
+          engines: {
+            node: '>= 8',
           },
         },
         'node_modules/wsl-utils': {
@@ -2134,18 +2222,18 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/core': {
-          version: '3.980.0',
-          resolved: 'https://registry.npmjs.org/@aws-sdk/core/-/core-3.980.0.tgz',
+          version: '3.981.2',
+          resolved: 'https://registry.npmjs.org/@aws-sdk/core/-/core-3.981.2.tgz',
           integrity:
-            'sha512-2RVSP/SsPS8HSPPzIPWNYFnSmlOdxx8VDlt5gDOuMaq9UiIi35pUyo6ZEuJcysjVCu0L8Lv5dJevLLpEkyF0/Q==',
+            'sha512-N3XKZdfa+Dcm7Kl8NJnaaHLx860Ts3QYHOraj/wuKOYHqqCApQBIKwzSxrpwZdwrqfbPt7BvJdYVhVMPpsRoGA==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/types': '^3.975.0',
-            '@aws-sdk/xml-builder': '^3.972.42',
+            '@aws-sdk/types': '^3.975.1',
+            '@aws-sdk/xml-builder': '^3.972.43',
             '@aws/lambda-invoke-store': '^0.3.0',
-            '@smithy/core': '^3.38.0',
+            '@smithy/core': '^3.41.1',
             '@smithy/signature-v4': '^5.7.5',
-            '@smithy/types': '^4.19.0',
+            '@smithy/types': '^4.20.0',
             bowser: '^2.11.0',
             tslib: '^2.6.2',
           },
@@ -2154,17 +2242,17 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/credential-provider-env': {
-          version: '3.972.81',
+          version: '3.972.86',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/credential-provider-env/-/credential-provider-env-3.972.81.tgz',
+            'https://registry.npmjs.org/@aws-sdk/credential-provider-env/-/credential-provider-env-3.972.86.tgz',
           integrity:
-            'sha512-VD+EVZ9UHNZhSm4KtakXZAPzgfOw4mRx66dAXNUtHcdJUisbsE7kpi1PRZFMquvuqVfx52fCDBgJgYyOFT/4hQ==',
+            'sha512-ZFIkIzLAiOLOakfrzUuOz938+AF+q4nc/MYINYwFlgBbl8CsI8ofJ8Ueh0/Pp7hXMJfpq10eJdnQ7aaE6kfikQ==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/core': '^3.980.0',
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
-            '@smithy/types': '^4.19.0',
+            '@aws-sdk/core': '^3.981.2',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -2172,19 +2260,19 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/credential-provider-http': {
-          version: '3.972.83',
+          version: '3.972.88',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/credential-provider-http/-/credential-provider-http-3.972.83.tgz',
+            'https://registry.npmjs.org/@aws-sdk/credential-provider-http/-/credential-provider-http-3.972.88.tgz',
           integrity:
-            'sha512-NsLT02HXcWAQAgpuDJznoJDPIDH/Hh2LiQVlYc+1bVGsksEUZuYCMKa1E1L5qvzc5LLTphp7BP9LYVIhf+MbQA==',
+            'sha512-92dpM3lwCyDjcDI3R+olUI2IG8R+qfUdnMQgxWZB4XM37P+N+oBaRd5xGc7uOH7FqMQY03XsrVKQeuWbPfIrKg==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/core': '^3.980.0',
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
-            '@smithy/fetch-http-handler': '^5.8.0',
-            '@smithy/node-http-handler': '^4.14.0',
-            '@smithy/types': '^4.19.0',
+            '@aws-sdk/core': '^3.981.2',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
+            '@smithy/fetch-http-handler': '^5.8.1',
+            '@smithy/node-http-handler': '^4.14.2',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -2208,25 +2296,25 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/credential-provider-ini': {
-          version: '3.973.26',
+          version: '3.973.32',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/credential-provider-ini/-/credential-provider-ini-3.973.26.tgz',
+            'https://registry.npmjs.org/@aws-sdk/credential-provider-ini/-/credential-provider-ini-3.973.32.tgz',
           integrity:
-            'sha512-vRydnN8wPqh5APe5R+/y4/UOts7QQQQP1UTczJq3fLcLzkQblbkYpLn+Srr8w9S/gzXU1pbiPKTv479unRawAA==',
+            'sha512-MdIAf70d701Hj04Yo7AKqI1RfjTW5dFf+tEvUirYFMbs3NRHWiwqQj/C9wGFptZtmX+z/c57H3gQfzTt5Bsn8A==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/core': '^3.980.0',
-            '@aws-sdk/credential-provider-env': '^3.972.81',
-            '@aws-sdk/credential-provider-http': '^3.972.83',
-            '@aws-sdk/credential-provider-login': '^3.972.88',
-            '@aws-sdk/credential-provider-process': '^3.972.81',
-            '@aws-sdk/credential-provider-sso': '^3.973.25',
-            '@aws-sdk/credential-provider-web-identity': '^3.972.87',
-            '@aws-sdk/nested-clients': '^3.998.0',
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
+            '@aws-sdk/core': '^3.981.2',
+            '@aws-sdk/credential-provider-env': '^3.972.86',
+            '@aws-sdk/credential-provider-http': '^3.972.88',
+            '@aws-sdk/credential-provider-login': '^3.972.94',
+            '@aws-sdk/credential-provider-process': '^3.972.86',
+            '@aws-sdk/credential-provider-sso': '^3.973.30',
+            '@aws-sdk/credential-provider-web-identity': '^3.972.92',
+            '@aws-sdk/nested-clients': '^3.998.5',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
             '@smithy/credential-provider-imds': '^4.5.2',
-            '@smithy/types': '^4.19.0',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -2234,18 +2322,18 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/credential-provider-login': {
-          version: '3.972.88',
+          version: '3.972.94',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/credential-provider-login/-/credential-provider-login-3.972.88.tgz',
+            'https://registry.npmjs.org/@aws-sdk/credential-provider-login/-/credential-provider-login-3.972.94.tgz',
           integrity:
-            'sha512-J8IcBpuFj3j3RImHq/dVO5HtnUbFgvzg7JQvzLt5A42VmzLLgPLM+CUWN68jpIMdIPayu1bb1T+mJjDv9Sq1aA==',
+            'sha512-sSq1PxdXT1kqR11/dRvE5AC2dEWMbYJCXzRU03Ulu4stu6vv08zju8uUNhVdqiIX+OrMIcEHHT1maLrUZDBGDA==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/core': '^3.980.0',
-            '@aws-sdk/nested-clients': '^3.998.0',
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
-            '@smithy/types': '^4.19.0',
+            '@aws-sdk/core': '^3.981.2',
+            '@aws-sdk/nested-clients': '^3.998.5',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -2253,23 +2341,23 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/credential-provider-node': {
-          version: '3.972.93',
+          version: '3.972.99',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/credential-provider-node/-/credential-provider-node-3.972.93.tgz',
+            'https://registry.npmjs.org/@aws-sdk/credential-provider-node/-/credential-provider-node-3.972.99.tgz',
           integrity:
-            'sha512-f5Grg1sgckk11ojxZ7NUYG1ZCOvcNhuuPngKWVxOKGuZokj8eOmo/75+GyR6qAQx4wAGytglZ53r4a3UPleAPQ==',
+            'sha512-AgS2qV8P9XmT4M44LfGcFtKbbt/yLgBydETKxPvqN9y7gMnKYv8GY+QfH7JsNvu6eQgDl600uAjvzC6K7ilkJQ==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/credential-provider-env': '^3.972.81',
-            '@aws-sdk/credential-provider-http': '^3.972.83',
-            '@aws-sdk/credential-provider-ini': '^3.973.26',
-            '@aws-sdk/credential-provider-process': '^3.972.81',
-            '@aws-sdk/credential-provider-sso': '^3.973.25',
-            '@aws-sdk/credential-provider-web-identity': '^3.972.87',
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
+            '@aws-sdk/credential-provider-env': '^3.972.86',
+            '@aws-sdk/credential-provider-http': '^3.972.88',
+            '@aws-sdk/credential-provider-ini': '^3.973.32',
+            '@aws-sdk/credential-provider-process': '^3.972.86',
+            '@aws-sdk/credential-provider-sso': '^3.973.30',
+            '@aws-sdk/credential-provider-web-identity': '^3.972.92',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
             '@smithy/credential-provider-imds': '^4.5.2',
-            '@smithy/types': '^4.19.0',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -2277,17 +2365,17 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/credential-provider-process': {
-          version: '3.972.81',
+          version: '3.972.86',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/credential-provider-process/-/credential-provider-process-3.972.81.tgz',
+            'https://registry.npmjs.org/@aws-sdk/credential-provider-process/-/credential-provider-process-3.972.86.tgz',
           integrity:
-            'sha512-6NBoFaNJbHB0YjcKW4WfrYIDmaMjtwbxlRreAf3MnXkD9WJX8XYu62pa78M0AQGgEt2TJmcNxqL3btAAjV67bA==',
+            'sha512-9x/+gtSDNxMQrRXgwIdwdNCVGxzUZtTZArjEeLfsn9xDvyXdsgs4my1g7JN5wKxT61ZLx4bKPREaDXnO8j7gkg==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/core': '^3.980.0',
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
-            '@smithy/types': '^4.19.0',
+            '@aws-sdk/core': '^3.981.2',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -2295,19 +2383,19 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/credential-provider-sso': {
-          version: '3.973.25',
+          version: '3.973.30',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/credential-provider-sso/-/credential-provider-sso-3.973.25.tgz',
+            'https://registry.npmjs.org/@aws-sdk/credential-provider-sso/-/credential-provider-sso-3.973.30.tgz',
           integrity:
-            'sha512-p1fNaa3as6S2L0wrWqe1cEz1r4iGQa7GbW23KJE3rJy+ZZxhPr6pr9cyCAJ7fAnzoMELvQGZZAuv/rG1ogRuOQ==',
+            'sha512-sMvwUIaKQEeprbMT5LXrI6nhM1IUEBDRpJAydEkAMrI7brrsRl7pxnOAJ6nweg/Hn5pJOVS7JgieJIv6CvJ7Sw==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/core': '^3.980.0',
-            '@aws-sdk/nested-clients': '^3.998.0',
-            '@aws-sdk/token-providers': '3.1162.0',
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
-            '@smithy/types': '^4.19.0',
+            '@aws-sdk/core': '^3.981.2',
+            '@aws-sdk/nested-clients': '^3.998.5',
+            '@aws-sdk/token-providers': '3.1177.0',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -2315,18 +2403,18 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/credential-provider-sso/node_modules/@aws-sdk/token-providers': {
-          version: '3.1162.0',
+          version: '3.1177.0',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/token-providers/-/token-providers-3.1162.0.tgz',
+            'https://registry.npmjs.org/@aws-sdk/token-providers/-/token-providers-3.1177.0.tgz',
           integrity:
-            'sha512-vOD6Ac0M43LtXaPu+/+wUMQCd27zIpKt/Le/a645qhx7T1MZeEK71PDhtIHGHgnQjGyNSfC6Z5RNud/hQb3veg==',
+            'sha512-KFQ/2YqE7OIGNu05hys6y9ZUyoNxxLJVHM7NCvjfyjV0Mki0u0Euwjduj5M/HMurdbZJfBV0NjMNQQkGlJEQqg==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/core': '^3.980.0',
-            '@aws-sdk/nested-clients': '^3.998.0',
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
-            '@smithy/types': '^4.19.0',
+            '@aws-sdk/core': '^3.981.2',
+            '@aws-sdk/nested-clients': '^3.998.5',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -2334,18 +2422,18 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/credential-provider-web-identity': {
-          version: '3.972.87',
+          version: '3.972.92',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/credential-provider-web-identity/-/credential-provider-web-identity-3.972.87.tgz',
+            'https://registry.npmjs.org/@aws-sdk/credential-provider-web-identity/-/credential-provider-web-identity-3.972.92.tgz',
           integrity:
-            'sha512-O2P6CUfMP2qi8vgYB6UHYj/NYTEAAdTr2geEVdVchr3JBofK4Q6W917FiVr2sleA72R59YAXMEhrpzPwkX/xdA==',
+            'sha512-AKaUwpy1wPN3B/byFWuvL6v+Qk8Gm840InZJw/bA1A+ciCL3zkzBUyEgxdeghJPEe79VKLs6BvbME74MQa3YKg==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/core': '^3.980.0',
-            '@aws-sdk/nested-clients': '^3.998.0',
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
-            '@smithy/types': '^4.19.0',
+            '@aws-sdk/core': '^3.981.2',
+            '@aws-sdk/nested-clients': '^3.998.5',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -2353,16 +2441,16 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/eventstream-handler-node': {
-          version: '3.972.40',
+          version: '3.972.43',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/eventstream-handler-node/-/eventstream-handler-node-3.972.40.tgz',
+            'https://registry.npmjs.org/@aws-sdk/eventstream-handler-node/-/eventstream-handler-node-3.972.43.tgz',
           integrity:
-            'sha512-LR2mRKFb9EMlGHmJNXMtuMPvVQqN1b9/v68A1UQaE72pb8pHqiHxTtS++vaab8844YesGVzBVrloAis7+EXq/w==',
+            'sha512-q7r2UxyaGdDf+//7esWvC95JLz9oEFljL2sKCZlkHa22HhEiIE4xwaP1CbWSxSPua/P2h2sgTHOgywuw8mVJRQ==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
-            '@smithy/types': '^4.19.0',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -2370,16 +2458,16 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/middleware-eventstream': {
-          version: '3.972.36',
+          version: '3.972.39',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/middleware-eventstream/-/middleware-eventstream-3.972.36.tgz',
+            'https://registry.npmjs.org/@aws-sdk/middleware-eventstream/-/middleware-eventstream-3.972.39.tgz',
           integrity:
-            'sha512-OkV+alDzmJ3DOs2mRPLSM9FUVSul7G1wkpKrbO+tyxxGOT7qLMPZHOlj4Ipjw9OayRmU7nMVPSFo7hvUqOSeJg==',
+            'sha512-FZiEHXudprvzex41hoFZecbVmqYhbrOGsCm2W8C+xBPhKtk4DCkvnCIohh1WfmXPcphoHICeLcdR3sVQClMNUw==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
-            '@smithy/types': '^4.19.0',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -2387,19 +2475,19 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/middleware-websocket': {
-          version: '3.972.63',
+          version: '3.972.68',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/middleware-websocket/-/middleware-websocket-3.972.63.tgz',
+            'https://registry.npmjs.org/@aws-sdk/middleware-websocket/-/middleware-websocket-3.972.68.tgz',
           integrity:
-            'sha512-fgY5UA9oeQYwxR5MyhIHUs9wGrXJGXLK71MQck1z3ArEb/GvQ0TmZm/RPs+cIbcaoKtIGqMb2u8AZ1rGFKYzKg==',
+            'sha512-Jm9R6LtSw8IeolnhInwcUaAUOO74kKTpy+URWthFrCBQKbd5ZulLtePYoGwiRBkao1UiIjvU1vfDjksOJFP1Vw==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/core': '^3.980.0',
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
-            '@smithy/fetch-http-handler': '^5.8.0',
+            '@aws-sdk/core': '^3.981.2',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
+            '@smithy/fetch-http-handler': '^5.8.1',
             '@smithy/signature-v4': '^5.7.5',
-            '@smithy/types': '^4.19.0',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -2407,20 +2495,20 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/nested-clients': {
-          version: '3.998.0',
+          version: '3.998.5',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/nested-clients/-/nested-clients-3.998.0.tgz',
+            'https://registry.npmjs.org/@aws-sdk/nested-clients/-/nested-clients-3.998.5.tgz',
           integrity:
-            'sha512-aOD1oQVWG6UjOOEdp0MsrWE93vG8pPbvtymmeNtglGxAARplh1wzhHs4npqtY5JN5GBSrTaLbn1hQQ3W2Lk8ow==',
+            'sha512-9w5mkwVLOuGqlJkPR1uhod6ZP+TOtaxrKtvK2pY9G/+FEx0e8wYRLIDeg30dYQjFDx27jHGSzEA+OaMqxeyTPg==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/core': '^3.980.0',
-            '@aws-sdk/signature-v4-multi-region': '^3.996.51',
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
-            '@smithy/fetch-http-handler': '^5.8.0',
-            '@smithy/node-http-handler': '^4.14.0',
-            '@smithy/types': '^4.19.0',
+            '@aws-sdk/core': '^3.981.2',
+            '@aws-sdk/signature-v4-multi-region': '^3.996.52',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
+            '@smithy/fetch-http-handler': '^5.8.1',
+            '@smithy/node-http-handler': '^4.14.2',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -2444,16 +2532,16 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/signature-v4-multi-region': {
-          version: '3.996.51',
+          version: '3.996.52',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/signature-v4-multi-region/-/signature-v4-multi-region-3.996.51.tgz',
+            'https://registry.npmjs.org/@aws-sdk/signature-v4-multi-region/-/signature-v4-multi-region-3.996.52.tgz',
           integrity:
-            'sha512-+aHvUugVBuMPXxgkPfWnTMyGdE/yWS8GHi5+qQ37HowS0YqzrbuaDLznj+Dtmtu5jgCdqz36gXmujOToUhNNWw==',
+            'sha512-6W6SjGc8OXUhMzNxU1X922ghD+PP1XvzmCk5Scui0jaYsLezycMYR1RaLp5xTIOUrhTXyb4DnAbPr3fBgmdnzg==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/types': '^3.975.0',
+            '@aws-sdk/types': '^3.975.1',
             '@smithy/signature-v4': '^5.7.5',
-            '@smithy/types': '^4.19.0',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -2480,13 +2568,13 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/types': {
-          version: '3.975.0',
-          resolved: 'https://registry.npmjs.org/@aws-sdk/types/-/types-3.975.0.tgz',
+          version: '3.975.1',
+          resolved: 'https://registry.npmjs.org/@aws-sdk/types/-/types-3.975.1.tgz',
           integrity:
-            'sha512-WQlhs6juByzWOzj5fwxOx0mPJaEqMcG/sDpl3Id61B3XhKE63xY+0QWcnG+sWR/sCfprmreyUo1lM7IKZmHMzw==',
+            'sha512-7rGxUkCB2QPoQOeJmonmAICTN2zrH+fpmi1p4Iwu72lnxNaMhOgqcbpyddifnM1DBb19TWQ1u6z/XjkaFNEDWw==',
           license: 'Apache-2.0',
           dependencies: {
-            '@smithy/types': '^4.19.0',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -2494,13 +2582,13 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/xml-builder': {
-          version: '3.972.42',
-          resolved: 'https://registry.npmjs.org/@aws-sdk/xml-builder/-/xml-builder-3.972.42.tgz',
+          version: '3.972.43',
+          resolved: 'https://registry.npmjs.org/@aws-sdk/xml-builder/-/xml-builder-3.972.43.tgz',
           integrity:
-            'sha512-smX8/gNP8Kjq+CWTBMZQLQ912vOQjiWExzwzvMO+eujPB5RY8IbtF0AGdUUXHKN7KoDWK9dIcuW0WG269kiP6w==',
+            'sha512-rG8QVx4DOrJWptsogu1Aq+CDsnPKaBrAlJpKLxrJrIDXAq1ElnW0yQjjBnlWSXll0cDakCG6UDvaqwz0A9d9Og==',
           license: 'Apache-2.0',
           dependencies: {
-            '@smithy/types': '^4.19.0',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -2545,10 +2633,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@babel/runtime': {
-          version: '7.29.13',
-          resolved: 'https://registry.npmjs.org/@babel/runtime/-/runtime-7.29.13.tgz',
+          version: '7.29.15',
+          resolved: 'https://registry.npmjs.org/@babel/runtime/-/runtime-7.29.15.tgz',
           integrity:
-            'sha512-v+oN26xP4YIlQsbQ/CbTH1WG5m/l/DjKKZNy/Kp3f/AFvbgt7Em/D0FeMM3O2hX0YzeN2M16W8lOpyhIkfCBcQ==',
+            'sha512-304gsbbGVmQc+cNGHzwHBlqepYdWLKj3VXCQBGt/EGcV7PUPfKI7kAUNW1FZEOCwlQiLvQjg1JEaAlRQ616h+Q==',
           license: 'MIT',
           engines: {
             node: '>=6.9.0',
@@ -8064,10 +8152,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@eslint-community/regexpp': {
-          version: '4.12.2',
-          resolved: 'https://registry.npmjs.org/@eslint-community/regexpp/-/regexpp-4.12.2.tgz',
+          version: '4.12.3',
+          resolved: 'https://registry.npmjs.org/@eslint-community/regexpp/-/regexpp-4.12.3.tgz',
           integrity:
-            'sha512-EriSTlt5OC9/7SXkRSCAhfSxxoSUgBm33OH+IkwbdpgoqsSsUg7y3uh+IICI/Qg4BBWr3U2i39RpmycbxMq4ew==',
+            'sha512-R76UKbvsqI68DJJVTVyqFKqU98CN4+B+acxNfEA2IFarSzP0SjtKf/3+fFiXzTyv5Fj3PxLkGHe2wnVWWMxobQ==',
           license: 'MIT',
           engines: {
             node: '^12.0.0 || ^14.0.0 || >=16.0.0',
@@ -8568,11 +8656,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@joplin/turndown-plugin-gfm': {
-          version: '1.0.68',
+          version: '1.0.71',
           resolved:
-            'https://registry.npmjs.org/@joplin/turndown-plugin-gfm/-/turndown-plugin-gfm-1.0.68.tgz',
+            'https://registry.npmjs.org/@joplin/turndown-plugin-gfm/-/turndown-plugin-gfm-1.0.71.tgz',
           integrity:
-            'sha512-m8DfAQNC/V7g0j5H6Jv60WhekBBjodD+zTPGrU+g2m+ux/z8ZX07KQIl6kaAmbKwfvsQhC04op52g63I78sVgg==',
+            'sha512-lzquxBhjG9ad6ykVsUYjs+lQc4Xmh3ob0n+oOUL5cvdQ2xUO0tsAAvIJ8Wm/+Pf59/4NNpmRa/zlbKeYP4XBrw==',
           license: 'MIT',
         },
         'node_modules/@js-temporal/polyfill': {
@@ -9005,13 +9093,13 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@opentelemetry/resources': {
-          version: '2.12.0',
-          resolved: 'https://registry.npmjs.org/@opentelemetry/resources/-/resources-2.12.0.tgz',
+          version: '2.12.1',
+          resolved: 'https://registry.npmjs.org/@opentelemetry/resources/-/resources-2.12.1.tgz',
           integrity:
-            'sha512-+rSRoOdln6NhXTVcBdHSlZxJDNzwxadeweK2ltZO3tVtfp6aklABc06xclDk6ovRR+EiGgIcSbh/6NgjFhnb3A==',
+            'sha512-IwrNcuLCvnJAnNLkXxx0Uw+rjBkVW6VGQrhd7PanNf0LavOzkTk9sDAjdqegM7p/VdxefNRrii6d+wBRJfz35g==',
           license: 'Apache-2.0',
           dependencies: {
-            '@opentelemetry/core': '2.12.0',
+            '@opentelemetry/core': '2.12.1',
             '@opentelemetry/semantic-conventions': '^1.29.0',
           },
           engines: {
@@ -9022,10 +9110,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@opentelemetry/resources/node_modules/@opentelemetry/core': {
-          version: '2.12.0',
-          resolved: 'https://registry.npmjs.org/@opentelemetry/core/-/core-2.12.0.tgz',
+          version: '2.12.1',
+          resolved: 'https://registry.npmjs.org/@opentelemetry/core/-/core-2.12.1.tgz',
           integrity:
-            'sha512-1HsSAuvT4/my0QrXWsyXFdWjKaPeCHsismKZgEEIb8NK13LP6DrMRlsUbvD/0F9mDWK3xDom9AMv3IscxgOnOQ==',
+            'sha512-3hr6Pj0/G0oVgIGb97IVcw9BjZ6eudonKjrmQxw7JquyU/XmVbJelkmyoU0sT/OvHGkv+r1tcrwv8MbSX7aKHw==',
           license: 'Apache-2.0',
           dependencies: {
             '@opentelemetry/semantic-conventions': '^1.29.0',
@@ -9143,11 +9231,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@opentelemetry/semantic-conventions': {
-          version: '1.44.0',
+          version: '1.45.0',
           resolved:
-            'https://registry.npmjs.org/@opentelemetry/semantic-conventions/-/semantic-conventions-1.44.0.tgz',
+            'https://registry.npmjs.org/@opentelemetry/semantic-conventions/-/semantic-conventions-1.45.0.tgz',
           integrity:
-            'sha512-E3JkOlMBi3N8OGGkbl7tFyqk2MAS6/lySRZBK3Mu7AzjF1fT8oIChH9ChE48SUWzDn9Kdwta+G/p5LJ4xW4CLQ==',
+            'sha512-aOP45mbcOKbQVvFWfQmgoOPT8R2iwbbbgl83k4CujGV9BrJhFr3qG55MFpwFs4YLabpuW3HhzUY9eQxPlDqaZw==',
           license: 'Apache-2.0',
           engines: {
             node: '>=14',
@@ -9255,10 +9343,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@smithy/core': {
-          version: '3.39.0',
-          resolved: 'https://registry.npmjs.org/@smithy/core/-/core-3.39.0.tgz',
+          version: '3.41.1',
+          resolved: 'https://registry.npmjs.org/@smithy/core/-/core-3.41.1.tgz',
           integrity:
-            'sha512-JJ/46AWQ4ipS1N2eZmUj7yzIhH8NhQIfAE+dce7NSB6dmFh+7hvD4pbofcoT4I0Xzfy/LNhZx3V2QhwYyAiqdg==',
+            'sha512-24LyiHSY0R/MLcbTylurWXU6Uy4lzI6KJgsdzxkNnjT9/OLWc2zGPb/3k5AM1f0vcgCGrExanUG339t+TBiIrA==',
           license: 'Apache-2.0',
           dependencies: {
             '@smithy/types': '^4.20.0',
@@ -9374,10 +9462,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           license: 'MIT',
         },
         'node_modules/@types/node': {
-          version: '26.6.6',
-          resolved: 'https://registry.npmjs.org/@types/node/-/node-26.6.6.tgz',
+          version: '26.6.11',
+          resolved: 'https://registry.npmjs.org/@types/node/-/node-26.6.11.tgz',
           integrity:
-            'sha512-MzQj+8Kx3XI40OmUAE6Qoh58ZMNstNNMwn2nfd3qWsfe7nDNSqJNzes4njhz6AHwrSHOffSLwXU6yb474Q4aog==',
+            'sha512-uUyQ2XLEz+EXh34lmS3GhKrkqn/8FU7KUiKRpk347At2bmnMVWss45yz8b4FG/tUtmV1tV/+TVkITItPROyeeQ==',
           license: 'MIT',
           dependencies: {
             'undici-types': '~8.9.0',
@@ -9625,10 +9713,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/bowser': {
-          version: '2.15.0',
-          resolved: 'https://registry.npmjs.org/bowser/-/bowser-2.15.0.tgz',
+          version: '2.15.1',
+          resolved: 'https://registry.npmjs.org/bowser/-/bowser-2.15.1.tgz',
           integrity:
-            'sha512-xic6KSZglg/I4ymp45fdM4GWfYpBK79Fxd/TOvJktlaPgQqqDxvmGwOPZl2V0dyeS3Lj5c180bLhXF43iyAjZQ==',
+            'sha512-ma47ABeUiTsmG4McKDtGCgQSiTCatM97Mlbn13K42N1kPSFE14oN3WFMjtyL4KubhGvQTqYheKl4Qx2bJtMXLQ==',
           license: 'MIT',
         },
         'node_modules/brotli': {
@@ -9744,10 +9832,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/commander': {
-          version: '15.0.0',
-          resolved: 'https://registry.npmjs.org/commander/-/commander-15.0.0.tgz',
+          version: '15.1.0',
+          resolved: 'https://registry.npmjs.org/commander/-/commander-15.1.0.tgz',
           integrity:
-            'sha512-z67u4ZhzCL/Tydu1lJARtEZYWbWaN7oYLHbsuzocr6y4N6WZAagG3RQ4FW61V1/0+jImpj293XfrcYnd1qxtPg==',
+            'sha512-cgnQ88TRrWcC7pVq46RzJVRMktu3W2RcbnoidnfBsl1bmDCBwJS/udcIZpKoCrbAYYaCqsz1yZCVIgbIaU3ddQ==',
           license: 'MIT',
           engines: {
             node: '>=22.12.0',
@@ -10522,10 +10610,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           license: 'ISC',
         },
         'node_modules/jose': {
-          version: '6.2.15',
-          resolved: 'https://registry.npmjs.org/jose/-/jose-6.2.15.tgz',
+          version: '6.2.18',
+          resolved: 'https://registry.npmjs.org/jose/-/jose-6.2.18.tgz',
           integrity:
-            'sha512-qdF6ewcZARtef63fJ9AKKZPgxw+t7USH6HLXYcD4CrdmSvDp79rpJSPFEKc90QBeGS63u1KQtN2MZQHC0yDIzA==',
+            'sha512-doV4thUwgkrycJH4yLeqwTGIIZphHl+pk7CPReuMIhYhncmgzdko85MaCG4YQFTxqMFr1/oEH32tZuKKovcDEg==',
           license: 'MIT',
           funding: {
             url: 'https://github.com/sponsors/panva',
@@ -10753,193 +10841,193 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           license: 'MIT',
         },
         'node_modules/node-addon-native-custom-loader': {
-          version: '0.1.9',
+          version: '0.1.10',
           resolved:
-            'https://registry.npmjs.org/node-addon-native-custom-loader/-/node-addon-native-custom-loader-0.1.9.tgz',
+            'https://registry.npmjs.org/node-addon-native-custom-loader/-/node-addon-native-custom-loader-0.1.10.tgz',
           integrity:
-            'sha512-Zh87aubSc1UF8CzZsRws1KtSwXiPDH0tbcg8V/2OA8Tcq9yGJRESFcEOC5NGLFama5IGfC3aJhubZbrj9Un2qA==',
+            'sha512-azSNOM5duU5c1ZiwHRr18a5i9dPMUaRbTiYnQB/kUn19uz6JjyLoKHG2gIcbzoHcE+X7gM9W+/V4bzH4jYzTMA==',
           license: 'MIT',
           engines: {
             node: '>=20',
           },
         },
         'node_modules/node-addon-require-builtin': {
-          version: '0.1.9',
+          version: '0.1.10',
           resolved:
-            'https://registry.npmjs.org/node-addon-require-builtin/-/node-addon-require-builtin-0.1.9.tgz',
+            'https://registry.npmjs.org/node-addon-require-builtin/-/node-addon-require-builtin-0.1.10.tgz',
           integrity:
-            'sha512-BCxXCMZDs/VLLh64SwKNw/me7Qx1I7Be4qxWwYVRRm8tJoOB8fL7qg6CmXhSXeUqsKt72t8RaKCX4EN+5nocVg==',
+            'sha512-oSie9nna4k7/4GVGaLdHeHjZZ16KB5OQa0VnQ8vfIl83c0x6swZrmAqMih6RWq/9/7AdYnuuMXriQndymDEyyA==',
           license: 'MIT',
           dependencies: {
-            'node-addon-native-custom-loader': '0.1.9',
+            'node-addon-native-custom-loader': '0.1.10',
           },
           engines: {
             node: '>=20',
           },
           optionalDependencies: {
-            'node-addon-require-builtin-darwin-arm64': '0.1.9',
-            'node-addon-require-builtin-darwin-x64': '0.1.9',
-            'node-addon-require-builtin-linux-arm64-gnu': '0.1.9',
-            'node-addon-require-builtin-linux-arm64-musl': '0.1.9',
-            'node-addon-require-builtin-linux-x64-gnu': '0.1.9',
-            'node-addon-require-builtin-linux-x64-musl': '0.1.9',
-            'node-addon-require-builtin-win32-arm64-msvc': '0.1.9',
-            'node-addon-require-builtin-win32-ia32-msvc': '0.1.9',
-            'node-addon-require-builtin-win32-x64-msvc': '0.1.9',
+            'node-addon-require-builtin-darwin-arm64': '0.1.10',
+            'node-addon-require-builtin-darwin-x64': '0.1.10',
+            'node-addon-require-builtin-linux-arm64-gnu': '0.1.10',
+            'node-addon-require-builtin-linux-arm64-musl': '0.1.10',
+            'node-addon-require-builtin-linux-x64-gnu': '0.1.10',
+            'node-addon-require-builtin-linux-x64-musl': '0.1.10',
+            'node-addon-require-builtin-win32-arm64-msvc': '0.1.10',
+            'node-addon-require-builtin-win32-ia32-msvc': '0.1.10',
+            'node-addon-require-builtin-win32-x64-msvc': '0.1.10',
           },
         },
         'node_modules/node-addon-require-builtin-darwin-arm64': {
-          version: '0.1.9',
+          version: '0.1.10',
           resolved:
-            'https://registry.npmjs.org/node-addon-require-builtin-darwin-arm64/-/node-addon-require-builtin-darwin-arm64-0.1.9.tgz',
+            'https://registry.npmjs.org/node-addon-require-builtin-darwin-arm64/-/node-addon-require-builtin-darwin-arm64-0.1.10.tgz',
           integrity:
-            'sha512-n45xEILQVOLZ2hVhzRXesTMYS4odHquyI/B/IkPMPUCONa8PjNfBag6lYBH4wDrhgpLNNBwMsUD8d8O/13QPPA==',
+            'sha512-ioP4PJOTwdDwnank1VYXhjb+DGMbiCz2aEw3TSKOA93gZP4x9aJtnj53qLG459hIfMj2tBUX2cXjbc99/hjHeQ==',
           cpu: ['arm64'],
           license: 'MIT',
           optional: true,
           os: ['darwin'],
           dependencies: {
-            'node-addon-native-custom-loader': '0.1.9',
+            'node-addon-native-custom-loader': '0.1.10',
           },
           engines: {
             node: '>=20',
           },
         },
         'node_modules/node-addon-require-builtin-darwin-x64': {
-          version: '0.1.9',
+          version: '0.1.10',
           resolved:
-            'https://registry.npmjs.org/node-addon-require-builtin-darwin-x64/-/node-addon-require-builtin-darwin-x64-0.1.9.tgz',
+            'https://registry.npmjs.org/node-addon-require-builtin-darwin-x64/-/node-addon-require-builtin-darwin-x64-0.1.10.tgz',
           integrity:
-            'sha512-Sm4Liqh1uo9zgJB2F/pACPPZdHu+fj9Qniyr1Q99dDQB0v71VgZgkAgv3K0/E1iPQBlZq9rakFkY7MGUIfWc0A==',
+            'sha512-0NmFhGQW4ooqZ5PUwufFAeAI8wCs+P5DVwdQS5m7nWdwvxzh5kQlAbxN3i3JEh1rOCAgmIhayoAJS4tHnNKVbA==',
           cpu: ['x64'],
           license: 'MIT',
           optional: true,
           os: ['darwin'],
           dependencies: {
-            'node-addon-native-custom-loader': '0.1.9',
+            'node-addon-native-custom-loader': '0.1.10',
           },
           engines: {
             node: '>=20',
           },
         },
         'node_modules/node-addon-require-builtin-linux-arm64-gnu': {
-          version: '0.1.9',
+          version: '0.1.10',
           resolved:
-            'https://registry.npmjs.org/node-addon-require-builtin-linux-arm64-gnu/-/node-addon-require-builtin-linux-arm64-gnu-0.1.9.tgz',
+            'https://registry.npmjs.org/node-addon-require-builtin-linux-arm64-gnu/-/node-addon-require-builtin-linux-arm64-gnu-0.1.10.tgz',
           integrity:
-            'sha512-ToU4wGtOD/069i2y4fJ3cjDJiiWtcjSQTZMf0YKlotb5BmTM7FjhR3X1aub8J/YjlOwl6665J/XAYuvCaDO5sA==',
+            'sha512-1p4/Rmsy3Ry8zfMnpw6SIxmlbMXO8syFhxiPKgODb28Obb7OpsRNJnrOCRIn/r+WUBgX4dvXVp2A6CeeevxDgA==',
           cpu: ['arm64'],
           libc: ['glibc'],
           license: 'MIT',
           optional: true,
           os: ['linux'],
           dependencies: {
-            'node-addon-native-custom-loader': '0.1.9',
+            'node-addon-native-custom-loader': '0.1.10',
           },
           engines: {
             node: '>=20',
           },
         },
         'node_modules/node-addon-require-builtin-linux-arm64-musl': {
-          version: '0.1.9',
+          version: '0.1.10',
           resolved:
-            'https://registry.npmjs.org/node-addon-require-builtin-linux-arm64-musl/-/node-addon-require-builtin-linux-arm64-musl-0.1.9.tgz',
+            'https://registry.npmjs.org/node-addon-require-builtin-linux-arm64-musl/-/node-addon-require-builtin-linux-arm64-musl-0.1.10.tgz',
           integrity:
-            'sha512-85Z5Avp++wfa9iiTIH8LC/r6qvlC/CiwpifiwIz0gYQ9PzajTSkz06gX7YDqf1oUqWYxU9uwNEOmo7mktHOOfA==',
+            'sha512-wGNyRGhIptURcL51eMtwdm3c5qHkahD/gLiPd9iJzcR5BP0krmZz19ayNqKjSAWz0pqvtURItV1fGytsxLiIhg==',
           cpu: ['arm64'],
           libc: ['musl'],
           license: 'MIT',
           optional: true,
           os: ['linux'],
           dependencies: {
-            'node-addon-native-custom-loader': '0.1.9',
+            'node-addon-native-custom-loader': '0.1.10',
           },
           engines: {
             node: '>=20',
           },
         },
         'node_modules/node-addon-require-builtin-linux-x64-gnu': {
-          version: '0.1.9',
+          version: '0.1.10',
           resolved:
-            'https://registry.npmjs.org/node-addon-require-builtin-linux-x64-gnu/-/node-addon-require-builtin-linux-x64-gnu-0.1.9.tgz',
+            'https://registry.npmjs.org/node-addon-require-builtin-linux-x64-gnu/-/node-addon-require-builtin-linux-x64-gnu-0.1.10.tgz',
           integrity:
-            'sha512-fh3K3/JvBfSYwU8vEOpp4Wdp4N/jX0EnZYq5GsaftlQin1FVqgve/yDNoh+asxBMOQyHOG8F4dXlV1WCierrfg==',
+            'sha512-56djgaTd3gHJAbt0Cs26EZJdE3Op+ZOAO0yRQodU3ncld9GwCdjTE9TWeIjPYNXQY2pVl8K+sVdzbSUaOGxVDg==',
           cpu: ['x64'],
           libc: ['glibc'],
           license: 'MIT',
           optional: true,
           os: ['linux'],
           dependencies: {
-            'node-addon-native-custom-loader': '0.1.9',
+            'node-addon-native-custom-loader': '0.1.10',
           },
           engines: {
             node: '>=20',
           },
         },
         'node_modules/node-addon-require-builtin-linux-x64-musl': {
-          version: '0.1.9',
+          version: '0.1.10',
           resolved:
-            'https://registry.npmjs.org/node-addon-require-builtin-linux-x64-musl/-/node-addon-require-builtin-linux-x64-musl-0.1.9.tgz',
+            'https://registry.npmjs.org/node-addon-require-builtin-linux-x64-musl/-/node-addon-require-builtin-linux-x64-musl-0.1.10.tgz',
           integrity:
-            'sha512-B6fu/5xmbRxnifM7nWz0IESkYnUl8dwFZmRDMsxdhzv2nb+EtBRFAXg4lf73qhX3yoZD4SnWJILBQMlIAwBCzw==',
+            'sha512-I9JAS0zhtX7Ch5GGrj5lzAS6eHda8tHyOv9h+TBQcOl65j/qzjD4mIhQcny9zSpjZehU3bDEPP1gT+cOWv+g+g==',
           cpu: ['x64'],
           libc: ['musl'],
           license: 'MIT',
           optional: true,
           os: ['linux'],
           dependencies: {
-            'node-addon-native-custom-loader': '0.1.9',
+            'node-addon-native-custom-loader': '0.1.10',
           },
           engines: {
             node: '>=20',
           },
         },
         'node_modules/node-addon-require-builtin-win32-arm64-msvc': {
-          version: '0.1.9',
+          version: '0.1.10',
           resolved:
-            'https://registry.npmjs.org/node-addon-require-builtin-win32-arm64-msvc/-/node-addon-require-builtin-win32-arm64-msvc-0.1.9.tgz',
+            'https://registry.npmjs.org/node-addon-require-builtin-win32-arm64-msvc/-/node-addon-require-builtin-win32-arm64-msvc-0.1.10.tgz',
           integrity:
-            'sha512-FOQuzNe8B1BANu886rJgdbQuRxPGUQmewkykw87wSr32U0ibQ3AWGuUM/Gh7LG4RekjFaifj7gEI/tq2+6GU6g==',
+            'sha512-KbAyauCiw1Sdbc3Y/yUcNrjfbc08cQ7dizWqUdcfrko6EhX5fS5Yk1g/2DXc4U/DvCfL8ShFBwk9mkGpZ3ZDfg==',
           cpu: ['arm64'],
           license: 'MIT',
           optional: true,
           os: ['win32'],
           dependencies: {
-            'node-addon-native-custom-loader': '0.1.9',
+            'node-addon-native-custom-loader': '0.1.10',
           },
           engines: {
             node: '>=20',
           },
         },
         'node_modules/node-addon-require-builtin-win32-ia32-msvc': {
-          version: '0.1.9',
+          version: '0.1.10',
           resolved:
-            'https://registry.npmjs.org/node-addon-require-builtin-win32-ia32-msvc/-/node-addon-require-builtin-win32-ia32-msvc-0.1.9.tgz',
+            'https://registry.npmjs.org/node-addon-require-builtin-win32-ia32-msvc/-/node-addon-require-builtin-win32-ia32-msvc-0.1.10.tgz',
           integrity:
-            'sha512-N29P0kmIBT6hnkNNFYzxn+o9ydT6OYZe9RFAi8dSxV1rNSul1FlxtuKWYe8w2sQpbQGYuGDEtpOwdeFtq2iFTg==',
+            'sha512-ChwIG0HLO7HHmr9NwTYvP9j8qlOpC+kpHmH+qguxdBu+0OMK1DUeneJMIZbBFvSebt1Jk3udkaC2RNzVEt4RVg==',
           cpu: ['ia32'],
           license: 'MIT',
           optional: true,
           os: ['win32'],
           dependencies: {
-            'node-addon-native-custom-loader': '0.1.9',
+            'node-addon-native-custom-loader': '0.1.10',
           },
           engines: {
             node: '>=20 <23',
           },
         },
         'node_modules/node-addon-require-builtin-win32-x64-msvc': {
-          version: '0.1.9',
+          version: '0.1.10',
           resolved:
-            'https://registry.npmjs.org/node-addon-require-builtin-win32-x64-msvc/-/node-addon-require-builtin-win32-x64-msvc-0.1.9.tgz',
+            'https://registry.npmjs.org/node-addon-require-builtin-win32-x64-msvc/-/node-addon-require-builtin-win32-x64-msvc-0.1.10.tgz',
           integrity:
-            'sha512-+i6N4A7m7txjbw8pDYESdWXiKO9EEVq0SzTzwPS0WZuV4F1MzQnaDJwJJnO7T6zAc0BvqHXBOkpharCrUjFhbQ==',
+            'sha512-c1LTohiRnMpra5fT+1ulrvfnYW9OjypVuydPDHGZ+sShUkF2WllRr32FvyqVBp8iUr3oxge8rhqKmHm8XcqItA==',
           cpu: ['x64'],
           license: 'MIT',
           optional: true,
           os: ['win32'],
           dependencies: {
-            'node-addon-native-custom-loader': '0.1.9',
+            'node-addon-native-custom-loader': '0.1.10',
           },
           engines: {
             node: '>=20',
@@ -11171,10 +11259,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/pkce-challenge': {
-          version: '5.0.1',
-          resolved: 'https://registry.npmjs.org/pkce-challenge/-/pkce-challenge-5.0.1.tgz',
+          version: '5.0.2',
+          resolved: 'https://registry.npmjs.org/pkce-challenge/-/pkce-challenge-5.0.2.tgz',
           integrity:
-            'sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==',
+            'sha512-vCc54+qyIfKC5e2UN28AZKElwqjLINgiIV3RKI8pDu93TjaAJoB3QrgMzEBouy8yOKsXVXdAinO1QArJf9x5WA==',
           license: 'MIT',
           engines: {
             node: '>=16.20.0',
@@ -11568,10 +11656,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/standardwebhooks': {
-          version: '1.1.1',
-          resolved: 'https://registry.npmjs.org/standardwebhooks/-/standardwebhooks-1.1.1.tgz',
+          version: '1.3.0',
+          resolved: 'https://registry.npmjs.org/standardwebhooks/-/standardwebhooks-1.3.0.tgz',
           integrity:
-            'sha512-bCbX9ZEyFkWPsRz7Bl3NuQUJohmwGSev/yhr7vhaGPlc4AfIrspIRa6cPTBuI1ItmrTDJ4d/S2hCsfe4+vQGnQ==',
+            'sha512-5W9skHjqAm2dlA9wWvglTP+oX47JX4lFXVk1aJV7+TG1snvTR4QXaVgPscEzvOw9GRreeavMwbqEeL+MGhZHCg==',
           license: 'MIT',
           dependencies: {
             '@stablelib/base64': '^1.0.0',
@@ -11648,10 +11736,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           license: 'MIT',
         },
         'node_modules/undici': {
-          version: '8.12.4',
-          resolved: 'https://registry.npmjs.org/undici/-/undici-8.12.4.tgz',
+          version: '8.13.1',
+          resolved: 'https://registry.npmjs.org/undici/-/undici-8.13.1.tgz',
           integrity:
-            'sha512-8Mx+uNKKER2bA4AdtedkqRbwUCIJFr2nJckXRe5yrDqzePqwLP7VNcctN8/XdmDSbF7mS+jJKIszlL+vbam1VA==',
+            'sha512-Kt7EaPjh0s93lJH/PmW3d5rhkcpUa6fS3jqZ7+YGxNd9L7Xy/i827xe4C2uhhq+pJebM4tQOl5AgHmW11G5Skg==',
           license: 'MIT',
           engines: {
             node: '>=22.19.0',
@@ -11753,10 +11841,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/ws': {
-          version: '8.22.1',
-          resolved: 'https://registry.npmjs.org/ws/-/ws-8.22.1.tgz',
+          version: '8.23.0',
+          resolved: 'https://registry.npmjs.org/ws/-/ws-8.23.0.tgz',
           integrity:
-            'sha512-oyL6OPYme/CmiFvNuGzeoxCJ4nOrZE2O1FwM9MWM1AsGri6nLXB2pg+lNA8aLeXMSav0J6eIVS1j6vUPzUtK9g==',
+            'sha512-wCkmX8QMOrKjgO8HW2WyDbTSGeqkocxgDzS9iR79rEAexty6/2qzilx3Ag8Tqf9ykop3irLKle0MtVn5qjVnoQ==',
           license: 'MIT',
           engines: {
             node: '>=10.0.0',
@@ -11840,12 +11928,12 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
       },
     },
   },
-  'cline@3.0.74': {
+  'cline@3.0.76': {
     packageJson: {
       name: 'kepcup-agent-cline',
       private: true,
       dependencies: {
-        cline: '3.0.74',
+        cline: '3.0.76',
       },
     },
     lockfile: {
@@ -11856,21 +11944,21 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
         '': {
           name: 'kepcup-agent-cline',
           dependencies: {
-            cline: '3.0.74',
+            cline: '3.0.76',
           },
         },
         'node_modules/@ai-sdk/amazon-bedrock': {
-          version: '5.0.133',
+          version: '5.0.149',
           resolved:
-            'https://registry.npmjs.org/@ai-sdk/amazon-bedrock/-/amazon-bedrock-5.0.133.tgz',
+            'https://registry.npmjs.org/@ai-sdk/amazon-bedrock/-/amazon-bedrock-5.0.149.tgz',
           integrity:
-            'sha512-xWa2bWzm1ZCafu+jj2c4gZ3CXlvjwiHv8464UW+Z0sUCTHdgCR5YaTPj2dpRNjfDPv0Xxf7l1ALaeU0F1PBs9w==',
+            'sha512-fQ1wpIcQIn0j5PXIiCDWeYDEM99SBGoj6ALNBcFzoVrTlokO+HRacxP98u8Xyq7faVzYvmPCFgdQU49n4oClYQ==',
           license: 'Apache-2.0',
           dependencies: {
-            '@ai-sdk/anthropic': '4.0.97',
-            '@ai-sdk/openai': '4.0.109',
-            '@ai-sdk/provider': '4.0.36',
-            '@ai-sdk/provider-utils': '5.0.75',
+            '@ai-sdk/anthropic': '4.0.110',
+            '@ai-sdk/openai': '4.0.125',
+            '@ai-sdk/provider': '4.0.39',
+            '@ai-sdk/provider-utils': '5.0.85',
             '@smithy/eventstream-codec': '^4.3.3',
             '@smithy/util-utf8': '^4.3.3',
             aws4fetch: '^1.0.20',
@@ -11883,14 +11971,14 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@ai-sdk/anthropic': {
-          version: '4.0.97',
-          resolved: 'https://registry.npmjs.org/@ai-sdk/anthropic/-/anthropic-4.0.97.tgz',
+          version: '4.0.110',
+          resolved: 'https://registry.npmjs.org/@ai-sdk/anthropic/-/anthropic-4.0.110.tgz',
           integrity:
-            'sha512-LqCxnaKd4FsKChgBiS26Dgu1kC35jVeuH9OclhRJ6/Hg56kmJSbKlwu6Om6cfCmLgDUiIbn2r3w4um6bz7BivQ==',
+            'sha512-X/8CcIsz5WeUBGXOztjuV2qgz5MVBJ438X7Rf8r3GQUWfd9tKdJcoroPLyzKa3fZUv5OpovPAzIlamsGrZuZiQ==',
           license: 'Apache-2.0',
           dependencies: {
-            '@ai-sdk/provider': '4.0.36',
-            '@ai-sdk/provider-utils': '5.0.75',
+            '@ai-sdk/provider': '4.0.39',
+            '@ai-sdk/provider-utils': '5.0.85',
           },
           engines: {
             node: '>=22',
@@ -11900,14 +11988,14 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@ai-sdk/gateway': {
-          version: '4.0.136',
-          resolved: 'https://registry.npmjs.org/@ai-sdk/gateway/-/gateway-4.0.136.tgz',
+          version: '4.0.156',
+          resolved: 'https://registry.npmjs.org/@ai-sdk/gateway/-/gateway-4.0.156.tgz',
           integrity:
-            'sha512-P851NL80P85Ee6MhblRuuCzNlQdOYU5rKmdt/Wuo5dMtkzvIHhyVZY9wtfKG3wBJUUoxHxWKsI2aR6O75o8diA==',
+            'sha512-Nv1ILpLYNDlIV/beyo6Uc6jZcwTDzLMiSqer4PUEmIHqyOceLHf58lv1bfntAJ0xZxaBa9BtYDOv3/Msu0mQrQ==',
           license: 'Apache-2.0',
           dependencies: {
-            '@ai-sdk/provider': '4.0.36',
-            '@ai-sdk/provider-utils': '5.0.75',
+            '@ai-sdk/provider': '4.0.39',
+            '@ai-sdk/provider-utils': '5.0.85',
             '@vercel/oidc': '3.2.0',
           },
           engines: {
@@ -11918,14 +12006,14 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@ai-sdk/google': {
-          version: '4.0.112',
-          resolved: 'https://registry.npmjs.org/@ai-sdk/google/-/google-4.0.112.tgz',
+          version: '4.0.128',
+          resolved: 'https://registry.npmjs.org/@ai-sdk/google/-/google-4.0.128.tgz',
           integrity:
-            'sha512-z6w+Nlbwrc4/gQ9SDdUc26aFh4/L4DsFrtF3vycOaAd5SpZkbvq07E9aFe5KNMJVXM01VD+uiz6Hrm8G8wfghw==',
+            'sha512-xMgegT/mkDBWBq2LipGTXdKsETYXaMv96zbMn/1PVkD3l40QEygMv3pTy4+YD54MRvm3YKrx4HtWQ4MHcBl7+g==',
           license: 'Apache-2.0',
           dependencies: {
-            '@ai-sdk/provider': '4.0.36',
-            '@ai-sdk/provider-utils': '5.0.75',
+            '@ai-sdk/provider': '4.0.39',
+            '@ai-sdk/provider-utils': '5.0.85',
           },
           engines: {
             node: '>=22',
@@ -11935,17 +12023,17 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@ai-sdk/google-vertex': {
-          version: '5.0.132',
-          resolved: 'https://registry.npmjs.org/@ai-sdk/google-vertex/-/google-vertex-5.0.132.tgz',
+          version: '5.0.148',
+          resolved: 'https://registry.npmjs.org/@ai-sdk/google-vertex/-/google-vertex-5.0.148.tgz',
           integrity:
-            'sha512-Pp8Tbf+5XrVHbQq6t1+3mQj1D/mUMiiBZnd03BukDlLWpL7t4jzHa6wf7oPO5wjr2ym7YtzbAU8QxPZZtzETUA==',
+            'sha512-WDO5h1NbF2HNganwgyTYoUoIugXSHAm4qZrSY6eL0dK3bXxuVBsVAPFBARFGgwdx9sffXyk6X7rVmkcss/uz0w==',
           license: 'Apache-2.0',
           dependencies: {
-            '@ai-sdk/anthropic': '4.0.97',
-            '@ai-sdk/google': '4.0.112',
-            '@ai-sdk/openai-compatible': '3.0.85',
-            '@ai-sdk/provider': '4.0.36',
-            '@ai-sdk/provider-utils': '5.0.75',
+            '@ai-sdk/anthropic': '4.0.110',
+            '@ai-sdk/google': '4.0.128',
+            '@ai-sdk/openai-compatible': '3.0.96',
+            '@ai-sdk/provider': '4.0.39',
+            '@ai-sdk/provider-utils': '5.0.85',
             'google-auth-library': '^11.3.1',
           },
           engines: {
@@ -11956,14 +12044,14 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@ai-sdk/mistral': {
-          version: '4.0.80',
-          resolved: 'https://registry.npmjs.org/@ai-sdk/mistral/-/mistral-4.0.80.tgz',
+          version: '4.0.91',
+          resolved: 'https://registry.npmjs.org/@ai-sdk/mistral/-/mistral-4.0.91.tgz',
           integrity:
-            'sha512-LEvUk/Cy7pCZoMrJHTVgAGovULi7OORh7WW8yR7TYewi5EY/cY8iRTDk5uNw8aoL4CltgnhhZl2GT3LpoPLKfA==',
+            'sha512-Wjv9vJIxFlEJC8Vfs2GRTmgRMo/+QNn7i+7UZdBmfMzzbmEpfkN/aIRZCRY3Uy+0pRgs2vWOWxkSIVlGyvLI0w==',
           license: 'Apache-2.0',
           dependencies: {
-            '@ai-sdk/provider': '4.0.36',
-            '@ai-sdk/provider-utils': '5.0.75',
+            '@ai-sdk/provider': '4.0.39',
+            '@ai-sdk/provider-utils': '5.0.85',
           },
           engines: {
             node: '>=22',
@@ -11979,14 +12067,14 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@ai-sdk/openai': {
-          version: '4.0.109',
-          resolved: 'https://registry.npmjs.org/@ai-sdk/openai/-/openai-4.0.109.tgz',
+          version: '4.0.125',
+          resolved: 'https://registry.npmjs.org/@ai-sdk/openai/-/openai-4.0.125.tgz',
           integrity:
-            'sha512-N20L44ztSicqEWpB0LfV54Ee1iq6IjGfOFTcRfeTD/bRH0v/VDI1uHve7RFOhP2oi1eAluliBhgmurplaOBuVw==',
+            'sha512-YKYn8DVW8YbosdshXfPbcX9J1EORv72TMnw7eLn8i3uX7lHtW+/on5V8cfeGJYci0boDvxv7yD8J7vUovIwaOQ==',
           license: 'Apache-2.0',
           dependencies: {
-            '@ai-sdk/provider': '4.0.36',
-            '@ai-sdk/provider-utils': '5.0.75',
+            '@ai-sdk/provider': '4.0.39',
+            '@ai-sdk/provider-utils': '5.0.85',
           },
           engines: {
             node: '>=22',
@@ -11996,15 +12084,15 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@ai-sdk/openai-compatible': {
-          version: '3.0.85',
+          version: '3.0.96',
           resolved:
-            'https://registry.npmjs.org/@ai-sdk/openai-compatible/-/openai-compatible-3.0.85.tgz',
+            'https://registry.npmjs.org/@ai-sdk/openai-compatible/-/openai-compatible-3.0.96.tgz',
           integrity:
-            'sha512-vZx3MvZjc7h7Ud8GUEvS9Qngtoec+Zogv5Zxw8kVjXrZhp/OOHfEosXoqjScnokoCK/d5cQfurfNNUmTrbZOQQ==',
+            'sha512-1DzzxcIIU5mWx4PDuvgfSh6tF0vRPNaYVrev9UgaCuvREl1VrlwgaQemqIT0jyfRAZKFycfpaEt9WRk9R2DSkg==',
           license: 'Apache-2.0',
           dependencies: {
-            '@ai-sdk/provider': '4.0.36',
-            '@ai-sdk/provider-utils': '5.0.75',
+            '@ai-sdk/provider': '4.0.39',
+            '@ai-sdk/provider-utils': '5.0.85',
           },
           engines: {
             node: '>=22',
@@ -12013,26 +12101,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             zod: '^3.25.76 || ^4.1.8',
           },
         },
-        'node_modules/@ai-sdk/otel': {
-          version: '1.0.163',
-          resolved: 'https://registry.npmjs.org/@ai-sdk/otel/-/otel-1.0.163.tgz',
-          integrity:
-            'sha512-5G7tOE9SgHRaDGKsSygzwnr5sAZOOu+Mpy0MHi5rTMRpDU1DubqpqOdtFnHhGwUR0TZFCtZEd+E3iTv34gp2aQ==',
-          license: 'Apache-2.0',
-          dependencies: {
-            '@ai-sdk/provider': '4.0.36',
-            '@opentelemetry/api': '1.9.1',
-            ai: '7.0.163',
-          },
-          engines: {
-            node: '>=22',
-          },
-        },
         'node_modules/@ai-sdk/provider': {
-          version: '4.0.36',
-          resolved: 'https://registry.npmjs.org/@ai-sdk/provider/-/provider-4.0.36.tgz',
+          version: '4.0.39',
+          resolved: 'https://registry.npmjs.org/@ai-sdk/provider/-/provider-4.0.39.tgz',
           integrity:
-            'sha512-GqvWZSZdBelCGughlBdOoupT258rgM3YMbaLAS9WSZJ0vlt8c9vm3My+ZT31mYhiReMCMCF2qF2axnGbILpk1A==',
+            'sha512-jRvAhvW23+TeMGVCME2WGejP/TjzyDg7TplUep3t8HcEYnC2/8zqhCy9RRrjjVs1ljcygABZ8pQ21MbCRdF01w==',
           license: 'Apache-2.0',
           dependencies: {
             'json-schema': '^0.4.0',
@@ -12042,17 +12115,16 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@ai-sdk/provider-utils': {
-          version: '5.0.75',
-          resolved: 'https://registry.npmjs.org/@ai-sdk/provider-utils/-/provider-utils-5.0.75.tgz',
+          version: '5.0.85',
+          resolved: 'https://registry.npmjs.org/@ai-sdk/provider-utils/-/provider-utils-5.0.85.tgz',
           integrity:
-            'sha512-k4yAsFliGZwoTpyTpm3ptxwIeaPvRh5vGh/UWoqDiLLXKoyz4zuBGS7p3ygf8to5Bh4fAOHynotLBsWLIYdu2A==',
+            'sha512-kpqFmdbhtslrRKbEvX/FuazM/4ZWGweHRczGsz+NTk3lXfqfjLBRrEdyOn+kZV5Lr6RTkfZqH0C5ny/CTFwq+Q==',
           license: 'Apache-2.0',
           dependencies: {
-            '@ai-sdk/provider': '4.0.36',
+            '@ai-sdk/provider': '4.0.39',
             '@standard-schema/spec': '^1.1.0',
             '@workflow/serde': '4.1.0',
-            'eventsource-parser': '^3.0.8',
-            undici: '^7.29.1',
+            'eventsource-parser': '^3.1.1',
           },
           engines: {
             node: '>=22',
@@ -12062,18 +12134,18 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/core': {
-          version: '3.980.0',
-          resolved: 'https://registry.npmjs.org/@aws-sdk/core/-/core-3.980.0.tgz',
+          version: '3.981.2',
+          resolved: 'https://registry.npmjs.org/@aws-sdk/core/-/core-3.981.2.tgz',
           integrity:
-            'sha512-2RVSP/SsPS8HSPPzIPWNYFnSmlOdxx8VDlt5gDOuMaq9UiIi35pUyo6ZEuJcysjVCu0L8Lv5dJevLLpEkyF0/Q==',
+            'sha512-N3XKZdfa+Dcm7Kl8NJnaaHLx860Ts3QYHOraj/wuKOYHqqCApQBIKwzSxrpwZdwrqfbPt7BvJdYVhVMPpsRoGA==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/types': '^3.975.0',
-            '@aws-sdk/xml-builder': '^3.972.42',
+            '@aws-sdk/types': '^3.975.1',
+            '@aws-sdk/xml-builder': '^3.972.43',
             '@aws/lambda-invoke-store': '^0.3.0',
-            '@smithy/core': '^3.38.0',
+            '@smithy/core': '^3.41.1',
             '@smithy/signature-v4': '^5.7.5',
-            '@smithy/types': '^4.19.0',
+            '@smithy/types': '^4.20.0',
             bowser: '^2.11.0',
             tslib: '^2.6.2',
           },
@@ -12082,17 +12154,17 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/credential-provider-cognito-identity': {
-          version: '3.972.80',
+          version: '3.972.85',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/credential-provider-cognito-identity/-/credential-provider-cognito-identity-3.972.80.tgz',
+            'https://registry.npmjs.org/@aws-sdk/credential-provider-cognito-identity/-/credential-provider-cognito-identity-3.972.85.tgz',
           integrity:
-            'sha512-2RtgpNQ5Sg9sqip70sPh1RuF8aNH2H6VDZiqMLas5Qvts++u0veEN1BjMUYKPu6jxs5VfcddoIdXCWwCuaYHcA==',
+            'sha512-N5kunNhwKqqKb5xP2i2cWLvwummwjLI6COqYZH3bDHnASh8o8ot8SAA5uko7XZM25Qh9bx9XSMesGkYR5zSjJA==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/nested-clients': '^3.998.0',
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
-            '@smithy/types': '^4.19.0',
+            '@aws-sdk/nested-clients': '^3.998.5',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -12100,17 +12172,17 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/credential-provider-env': {
-          version: '3.972.81',
+          version: '3.972.86',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/credential-provider-env/-/credential-provider-env-3.972.81.tgz',
+            'https://registry.npmjs.org/@aws-sdk/credential-provider-env/-/credential-provider-env-3.972.86.tgz',
           integrity:
-            'sha512-VD+EVZ9UHNZhSm4KtakXZAPzgfOw4mRx66dAXNUtHcdJUisbsE7kpi1PRZFMquvuqVfx52fCDBgJgYyOFT/4hQ==',
+            'sha512-ZFIkIzLAiOLOakfrzUuOz938+AF+q4nc/MYINYwFlgBbl8CsI8ofJ8Ueh0/Pp7hXMJfpq10eJdnQ7aaE6kfikQ==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/core': '^3.980.0',
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
-            '@smithy/types': '^4.19.0',
+            '@aws-sdk/core': '^3.981.2',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -12118,19 +12190,19 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/credential-provider-http': {
-          version: '3.972.83',
+          version: '3.972.88',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/credential-provider-http/-/credential-provider-http-3.972.83.tgz',
+            'https://registry.npmjs.org/@aws-sdk/credential-provider-http/-/credential-provider-http-3.972.88.tgz',
           integrity:
-            'sha512-NsLT02HXcWAQAgpuDJznoJDPIDH/Hh2LiQVlYc+1bVGsksEUZuYCMKa1E1L5qvzc5LLTphp7BP9LYVIhf+MbQA==',
+            'sha512-92dpM3lwCyDjcDI3R+olUI2IG8R+qfUdnMQgxWZB4XM37P+N+oBaRd5xGc7uOH7FqMQY03XsrVKQeuWbPfIrKg==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/core': '^3.980.0',
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
-            '@smithy/fetch-http-handler': '^5.8.0',
-            '@smithy/node-http-handler': '^4.14.0',
-            '@smithy/types': '^4.19.0',
+            '@aws-sdk/core': '^3.981.2',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
+            '@smithy/fetch-http-handler': '^5.8.1',
+            '@smithy/node-http-handler': '^4.14.2',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -12138,25 +12210,25 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/credential-provider-ini': {
-          version: '3.973.26',
+          version: '3.973.32',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/credential-provider-ini/-/credential-provider-ini-3.973.26.tgz',
+            'https://registry.npmjs.org/@aws-sdk/credential-provider-ini/-/credential-provider-ini-3.973.32.tgz',
           integrity:
-            'sha512-vRydnN8wPqh5APe5R+/y4/UOts7QQQQP1UTczJq3fLcLzkQblbkYpLn+Srr8w9S/gzXU1pbiPKTv479unRawAA==',
+            'sha512-MdIAf70d701Hj04Yo7AKqI1RfjTW5dFf+tEvUirYFMbs3NRHWiwqQj/C9wGFptZtmX+z/c57H3gQfzTt5Bsn8A==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/core': '^3.980.0',
-            '@aws-sdk/credential-provider-env': '^3.972.81',
-            '@aws-sdk/credential-provider-http': '^3.972.83',
-            '@aws-sdk/credential-provider-login': '^3.972.88',
-            '@aws-sdk/credential-provider-process': '^3.972.81',
-            '@aws-sdk/credential-provider-sso': '^3.973.25',
-            '@aws-sdk/credential-provider-web-identity': '^3.972.87',
-            '@aws-sdk/nested-clients': '^3.998.0',
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
+            '@aws-sdk/core': '^3.981.2',
+            '@aws-sdk/credential-provider-env': '^3.972.86',
+            '@aws-sdk/credential-provider-http': '^3.972.88',
+            '@aws-sdk/credential-provider-login': '^3.972.94',
+            '@aws-sdk/credential-provider-process': '^3.972.86',
+            '@aws-sdk/credential-provider-sso': '^3.973.30',
+            '@aws-sdk/credential-provider-web-identity': '^3.972.92',
+            '@aws-sdk/nested-clients': '^3.998.5',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
             '@smithy/credential-provider-imds': '^4.5.2',
-            '@smithy/types': '^4.19.0',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -12164,18 +12236,18 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/credential-provider-login': {
-          version: '3.972.88',
+          version: '3.972.94',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/credential-provider-login/-/credential-provider-login-3.972.88.tgz',
+            'https://registry.npmjs.org/@aws-sdk/credential-provider-login/-/credential-provider-login-3.972.94.tgz',
           integrity:
-            'sha512-J8IcBpuFj3j3RImHq/dVO5HtnUbFgvzg7JQvzLt5A42VmzLLgPLM+CUWN68jpIMdIPayu1bb1T+mJjDv9Sq1aA==',
+            'sha512-sSq1PxdXT1kqR11/dRvE5AC2dEWMbYJCXzRU03Ulu4stu6vv08zju8uUNhVdqiIX+OrMIcEHHT1maLrUZDBGDA==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/core': '^3.980.0',
-            '@aws-sdk/nested-clients': '^3.998.0',
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
-            '@smithy/types': '^4.19.0',
+            '@aws-sdk/core': '^3.981.2',
+            '@aws-sdk/nested-clients': '^3.998.5',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -12183,23 +12255,23 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/credential-provider-node': {
-          version: '3.972.93',
+          version: '3.972.99',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/credential-provider-node/-/credential-provider-node-3.972.93.tgz',
+            'https://registry.npmjs.org/@aws-sdk/credential-provider-node/-/credential-provider-node-3.972.99.tgz',
           integrity:
-            'sha512-f5Grg1sgckk11ojxZ7NUYG1ZCOvcNhuuPngKWVxOKGuZokj8eOmo/75+GyR6qAQx4wAGytglZ53r4a3UPleAPQ==',
+            'sha512-AgS2qV8P9XmT4M44LfGcFtKbbt/yLgBydETKxPvqN9y7gMnKYv8GY+QfH7JsNvu6eQgDl600uAjvzC6K7ilkJQ==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/credential-provider-env': '^3.972.81',
-            '@aws-sdk/credential-provider-http': '^3.972.83',
-            '@aws-sdk/credential-provider-ini': '^3.973.26',
-            '@aws-sdk/credential-provider-process': '^3.972.81',
-            '@aws-sdk/credential-provider-sso': '^3.973.25',
-            '@aws-sdk/credential-provider-web-identity': '^3.972.87',
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
+            '@aws-sdk/credential-provider-env': '^3.972.86',
+            '@aws-sdk/credential-provider-http': '^3.972.88',
+            '@aws-sdk/credential-provider-ini': '^3.973.32',
+            '@aws-sdk/credential-provider-process': '^3.972.86',
+            '@aws-sdk/credential-provider-sso': '^3.973.30',
+            '@aws-sdk/credential-provider-web-identity': '^3.972.92',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
             '@smithy/credential-provider-imds': '^4.5.2',
-            '@smithy/types': '^4.19.0',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -12207,17 +12279,17 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/credential-provider-process': {
-          version: '3.972.81',
+          version: '3.972.86',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/credential-provider-process/-/credential-provider-process-3.972.81.tgz',
+            'https://registry.npmjs.org/@aws-sdk/credential-provider-process/-/credential-provider-process-3.972.86.tgz',
           integrity:
-            'sha512-6NBoFaNJbHB0YjcKW4WfrYIDmaMjtwbxlRreAf3MnXkD9WJX8XYu62pa78M0AQGgEt2TJmcNxqL3btAAjV67bA==',
+            'sha512-9x/+gtSDNxMQrRXgwIdwdNCVGxzUZtTZArjEeLfsn9xDvyXdsgs4my1g7JN5wKxT61ZLx4bKPREaDXnO8j7gkg==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/core': '^3.980.0',
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
-            '@smithy/types': '^4.19.0',
+            '@aws-sdk/core': '^3.981.2',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -12225,19 +12297,19 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/credential-provider-sso': {
-          version: '3.973.25',
+          version: '3.973.30',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/credential-provider-sso/-/credential-provider-sso-3.973.25.tgz',
+            'https://registry.npmjs.org/@aws-sdk/credential-provider-sso/-/credential-provider-sso-3.973.30.tgz',
           integrity:
-            'sha512-p1fNaa3as6S2L0wrWqe1cEz1r4iGQa7GbW23KJE3rJy+ZZxhPr6pr9cyCAJ7fAnzoMELvQGZZAuv/rG1ogRuOQ==',
+            'sha512-sMvwUIaKQEeprbMT5LXrI6nhM1IUEBDRpJAydEkAMrI7brrsRl7pxnOAJ6nweg/Hn5pJOVS7JgieJIv6CvJ7Sw==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/core': '^3.980.0',
-            '@aws-sdk/nested-clients': '^3.998.0',
-            '@aws-sdk/token-providers': '3.1162.0',
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
-            '@smithy/types': '^4.19.0',
+            '@aws-sdk/core': '^3.981.2',
+            '@aws-sdk/nested-clients': '^3.998.5',
+            '@aws-sdk/token-providers': '3.1177.0',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -12245,18 +12317,18 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/credential-provider-web-identity': {
-          version: '3.972.87',
+          version: '3.972.92',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/credential-provider-web-identity/-/credential-provider-web-identity-3.972.87.tgz',
+            'https://registry.npmjs.org/@aws-sdk/credential-provider-web-identity/-/credential-provider-web-identity-3.972.92.tgz',
           integrity:
-            'sha512-O2P6CUfMP2qi8vgYB6UHYj/NYTEAAdTr2geEVdVchr3JBofK4Q6W917FiVr2sleA72R59YAXMEhrpzPwkX/xdA==',
+            'sha512-AKaUwpy1wPN3B/byFWuvL6v+Qk8Gm840InZJw/bA1A+ciCL3zkzBUyEgxdeghJPEe79VKLs6BvbME74MQa3YKg==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/core': '^3.980.0',
-            '@aws-sdk/nested-clients': '^3.998.0',
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
-            '@smithy/types': '^4.19.0',
+            '@aws-sdk/core': '^3.981.2',
+            '@aws-sdk/nested-clients': '^3.998.5',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -12264,28 +12336,28 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/credential-providers': {
-          version: '3.1162.0',
+          version: '3.1178.0',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/credential-providers/-/credential-providers-3.1162.0.tgz',
+            'https://registry.npmjs.org/@aws-sdk/credential-providers/-/credential-providers-3.1178.0.tgz',
           integrity:
-            'sha512-i1F6XYMp68lrYOXTp5Hn+rP6HYnJ2eP6DkuqUizXlecN0R0ToWnupTSoaLbtDacZAch+8OkgjfPzc9c0J4Ib+Q==',
+            'sha512-93tR01qUWdG/vFFw/BvP7xIZXSQSaZ16MEGbOZsurIEYdGTdKHSd5HhFHqyd6VmKmrd+XOgW6GGR5DGgnRGhmA==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/core': '^3.980.0',
-            '@aws-sdk/credential-provider-cognito-identity': '^3.972.80',
-            '@aws-sdk/credential-provider-env': '^3.972.81',
-            '@aws-sdk/credential-provider-http': '^3.972.83',
-            '@aws-sdk/credential-provider-ini': '^3.973.26',
-            '@aws-sdk/credential-provider-login': '^3.972.88',
-            '@aws-sdk/credential-provider-node': '^3.972.93',
-            '@aws-sdk/credential-provider-process': '^3.972.81',
-            '@aws-sdk/credential-provider-sso': '^3.973.25',
-            '@aws-sdk/credential-provider-web-identity': '^3.972.87',
-            '@aws-sdk/nested-clients': '^3.998.0',
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
+            '@aws-sdk/core': '^3.981.2',
+            '@aws-sdk/credential-provider-cognito-identity': '^3.972.85',
+            '@aws-sdk/credential-provider-env': '^3.972.86',
+            '@aws-sdk/credential-provider-http': '^3.972.88',
+            '@aws-sdk/credential-provider-ini': '^3.973.32',
+            '@aws-sdk/credential-provider-login': '^3.972.94',
+            '@aws-sdk/credential-provider-node': '^3.972.99',
+            '@aws-sdk/credential-provider-process': '^3.972.86',
+            '@aws-sdk/credential-provider-sso': '^3.973.30',
+            '@aws-sdk/credential-provider-web-identity': '^3.972.92',
+            '@aws-sdk/nested-clients': '^3.998.5',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
             '@smithy/credential-provider-imds': '^4.5.2',
-            '@smithy/types': '^4.19.0',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -12293,20 +12365,20 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/nested-clients': {
-          version: '3.998.0',
+          version: '3.998.5',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/nested-clients/-/nested-clients-3.998.0.tgz',
+            'https://registry.npmjs.org/@aws-sdk/nested-clients/-/nested-clients-3.998.5.tgz',
           integrity:
-            'sha512-aOD1oQVWG6UjOOEdp0MsrWE93vG8pPbvtymmeNtglGxAARplh1wzhHs4npqtY5JN5GBSrTaLbn1hQQ3W2Lk8ow==',
+            'sha512-9w5mkwVLOuGqlJkPR1uhod6ZP+TOtaxrKtvK2pY9G/+FEx0e8wYRLIDeg30dYQjFDx27jHGSzEA+OaMqxeyTPg==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/core': '^3.980.0',
-            '@aws-sdk/signature-v4-multi-region': '^3.996.51',
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
-            '@smithy/fetch-http-handler': '^5.8.0',
-            '@smithy/node-http-handler': '^4.14.0',
-            '@smithy/types': '^4.19.0',
+            '@aws-sdk/core': '^3.981.2',
+            '@aws-sdk/signature-v4-multi-region': '^3.996.52',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
+            '@smithy/fetch-http-handler': '^5.8.1',
+            '@smithy/node-http-handler': '^4.14.2',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -12314,16 +12386,16 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/signature-v4-multi-region': {
-          version: '3.996.51',
+          version: '3.996.52',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/signature-v4-multi-region/-/signature-v4-multi-region-3.996.51.tgz',
+            'https://registry.npmjs.org/@aws-sdk/signature-v4-multi-region/-/signature-v4-multi-region-3.996.52.tgz',
           integrity:
-            'sha512-+aHvUugVBuMPXxgkPfWnTMyGdE/yWS8GHi5+qQ37HowS0YqzrbuaDLznj+Dtmtu5jgCdqz36gXmujOToUhNNWw==',
+            'sha512-6W6SjGc8OXUhMzNxU1X922ghD+PP1XvzmCk5Scui0jaYsLezycMYR1RaLp5xTIOUrhTXyb4DnAbPr3fBgmdnzg==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/types': '^3.975.0',
+            '@aws-sdk/types': '^3.975.1',
             '@smithy/signature-v4': '^5.7.5',
-            '@smithy/types': '^4.19.0',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -12331,18 +12403,18 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/token-providers': {
-          version: '3.1162.0',
+          version: '3.1177.0',
           resolved:
-            'https://registry.npmjs.org/@aws-sdk/token-providers/-/token-providers-3.1162.0.tgz',
+            'https://registry.npmjs.org/@aws-sdk/token-providers/-/token-providers-3.1177.0.tgz',
           integrity:
-            'sha512-vOD6Ac0M43LtXaPu+/+wUMQCd27zIpKt/Le/a645qhx7T1MZeEK71PDhtIHGHgnQjGyNSfC6Z5RNud/hQb3veg==',
+            'sha512-KFQ/2YqE7OIGNu05hys6y9ZUyoNxxLJVHM7NCvjfyjV0Mki0u0Euwjduj5M/HMurdbZJfBV0NjMNQQkGlJEQqg==',
           license: 'Apache-2.0',
           dependencies: {
-            '@aws-sdk/core': '^3.980.0',
-            '@aws-sdk/nested-clients': '^3.998.0',
-            '@aws-sdk/types': '^3.975.0',
-            '@smithy/core': '^3.38.0',
-            '@smithy/types': '^4.19.0',
+            '@aws-sdk/core': '^3.981.2',
+            '@aws-sdk/nested-clients': '^3.998.5',
+            '@aws-sdk/types': '^3.975.1',
+            '@smithy/core': '^3.41.1',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -12350,13 +12422,13 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/types': {
-          version: '3.975.0',
-          resolved: 'https://registry.npmjs.org/@aws-sdk/types/-/types-3.975.0.tgz',
+          version: '3.975.1',
+          resolved: 'https://registry.npmjs.org/@aws-sdk/types/-/types-3.975.1.tgz',
           integrity:
-            'sha512-WQlhs6juByzWOzj5fwxOx0mPJaEqMcG/sDpl3Id61B3XhKE63xY+0QWcnG+sWR/sCfprmreyUo1lM7IKZmHMzw==',
+            'sha512-7rGxUkCB2QPoQOeJmonmAICTN2zrH+fpmi1p4Iwu72lnxNaMhOgqcbpyddifnM1DBb19TWQ1u6z/XjkaFNEDWw==',
           license: 'Apache-2.0',
           dependencies: {
-            '@smithy/types': '^4.19.0',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -12364,13 +12436,13 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@aws-sdk/xml-builder': {
-          version: '3.972.42',
-          resolved: 'https://registry.npmjs.org/@aws-sdk/xml-builder/-/xml-builder-3.972.42.tgz',
+          version: '3.972.43',
+          resolved: 'https://registry.npmjs.org/@aws-sdk/xml-builder/-/xml-builder-3.972.43.tgz',
           integrity:
-            'sha512-smX8/gNP8Kjq+CWTBMZQLQ912vOQjiWExzwzvMO+eujPB5RY8IbtF0AGdUUXHKN7KoDWK9dIcuW0WG269kiP6w==',
+            'sha512-rG8QVx4DOrJWptsogu1Aq+CDsnPKaBrAlJpKLxrJrIDXAq1ElnW0yQjjBnlWSXll0cDakCG6UDvaqwz0A9d9Og==',
           license: 'Apache-2.0',
           dependencies: {
-            '@smithy/types': '^4.19.0',
+            '@smithy/types': '^4.20.0',
             tslib: '^2.6.2',
           },
           engines: {
@@ -12389,14 +12461,14 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@cline/agents': {
-          version: '0.2.0',
-          resolved: 'https://registry.npmjs.org/@cline/agents/-/agents-0.2.0.tgz',
+          version: '0.2.2',
+          resolved: 'https://registry.npmjs.org/@cline/agents/-/agents-0.2.2.tgz',
           integrity:
-            'sha512-rEOMepQI+9mNtd97CexpIvLzeaUNSTwbcgOjCHHUoPM/rZve/uxKsu98wzzSqfl3NoV6BcF1FJe9srT5VH7u9w==',
+            'sha512-MZ5R9RLqyP1NYPwebpGFmSkUiQYvMaAdIgUZpZO+4gJgT/XgahD27NcFciklJz53K9mKqNeUZPf3TNtoGfBtbg==',
           license: 'Apache-2.0',
           dependencies: {
-            '@cline/llms': '0.2.0',
-            '@cline/shared': '0.2.0',
+            '@cline/llms': '0.2.2',
+            '@cline/shared': '0.2.2',
             nanoid: '^5.1.7',
           },
           engines: {
@@ -12404,11 +12476,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@cline/cli-darwin-arm64': {
-          version: '3.0.74',
+          version: '3.0.76',
           resolved:
-            'https://registry.npmjs.org/@cline/cli-darwin-arm64/-/cli-darwin-arm64-3.0.74.tgz',
+            'https://registry.npmjs.org/@cline/cli-darwin-arm64/-/cli-darwin-arm64-3.0.76.tgz',
           integrity:
-            'sha512-jwEoR9PgJj1RYd02ehJlQFFZ0hXcZYmtiS5Wi9dqid7osmqJRyeAmxYwBzW9vM9BJwiKT3HNjk7TIwyJULMkrw==',
+            'sha512-iJaURxxcG/cu1mVl1QOaBNqpqmyfrLcOcoz0O7zevb63MjCUY4rdTajTIZCaZGXRM3jWuYcfhWmZ3lxDUGSMlA==',
           cpu: ['arm64'],
           optional: true,
           os: ['darwin'],
@@ -12417,10 +12489,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@cline/cli-darwin-x64': {
-          version: '3.0.74',
-          resolved: 'https://registry.npmjs.org/@cline/cli-darwin-x64/-/cli-darwin-x64-3.0.74.tgz',
+          version: '3.0.76',
+          resolved: 'https://registry.npmjs.org/@cline/cli-darwin-x64/-/cli-darwin-x64-3.0.76.tgz',
           integrity:
-            'sha512-Y70yrGFlvartf0w8xYM97XIq/Aaj/epR2UumNLAUrb/2ayssK1EbGaf4DIvoM/qG8uW4OObfLFxIMz4UyxSjUw==',
+            'sha512-xFNCW5TinK/OBNE4PjK+FRd2KkfKQV+pP2IaWQDlGXK5wdZE60XCoxk+4WevCbvdbotFx/PzSxM7KgFvWaYuBw==',
           cpu: ['x64'],
           optional: true,
           os: ['darwin'],
@@ -12429,11 +12501,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@cline/cli-linux-arm64': {
-          version: '3.0.74',
+          version: '3.0.76',
           resolved:
-            'https://registry.npmjs.org/@cline/cli-linux-arm64/-/cli-linux-arm64-3.0.74.tgz',
+            'https://registry.npmjs.org/@cline/cli-linux-arm64/-/cli-linux-arm64-3.0.76.tgz',
           integrity:
-            'sha512-upcm2jrziAsYbQJ3kDWciXs0LgpIl6sPi1AqCEDBFAyoRrGczbbuMmJN5YPqcH0aTp1EqP6dxedf1agpeXeHzA==',
+            'sha512-N/TvGn3aIFGxADrnALq6cam0GpH6w8HZkybFzk+qfoSjgJ2TBMTPkPWUOsc/Ciqbg4ZTzS3gcqK6m72TFo+rJQ==',
           cpu: ['arm64'],
           optional: true,
           os: ['linux'],
@@ -12442,10 +12514,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@cline/cli-linux-x64': {
-          version: '3.0.74',
-          resolved: 'https://registry.npmjs.org/@cline/cli-linux-x64/-/cli-linux-x64-3.0.74.tgz',
+          version: '3.0.76',
+          resolved: 'https://registry.npmjs.org/@cline/cli-linux-x64/-/cli-linux-x64-3.0.76.tgz',
           integrity:
-            'sha512-Em6BmcqAnwV/UXjdaQY7abeECNzq9O1NjQ7N5a/dOQQpVQlP1S04qmP/xOxgWBh0eS5Mln3z6y3m++DBcYYn3Q==',
+            'sha512-BsRfpyiViEkw/Q3CvxjfS5gzEi1Yf11jZYOQFt7GArvk0WSyd2ufL2SX28C4mnqyR7n7RsBSoNqyyJrqnpla7A==',
           cpu: ['x64'],
           optional: true,
           os: ['linux'],
@@ -12454,11 +12526,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@cline/cli-windows-arm64': {
-          version: '3.0.74',
+          version: '3.0.76',
           resolved:
-            'https://registry.npmjs.org/@cline/cli-windows-arm64/-/cli-windows-arm64-3.0.74.tgz',
+            'https://registry.npmjs.org/@cline/cli-windows-arm64/-/cli-windows-arm64-3.0.76.tgz',
           integrity:
-            'sha512-hKgYRXyVdaOHtwRXe00ueG7d3t72xlnIIJQeZi2UFy7HEnNhodrmsvhGlOTDJvsPRBnk3fFjXgRqA3E2+7apmA==',
+            'sha512-PEy5vGHMpBeLGkFKZo+5gpNVGbrWBgz+cGW9W/8xQ6BY0LdyMOsERK6vOoVnLYSwu8CeI1eudEYuL4RDqEY/7Q==',
           cpu: ['arm64'],
           optional: true,
           os: ['win32'],
@@ -12467,11 +12539,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@cline/cli-windows-x64': {
-          version: '3.0.74',
+          version: '3.0.76',
           resolved:
-            'https://registry.npmjs.org/@cline/cli-windows-x64/-/cli-windows-x64-3.0.74.tgz',
+            'https://registry.npmjs.org/@cline/cli-windows-x64/-/cli-windows-x64-3.0.76.tgz',
           integrity:
-            'sha512-JmCN8x3rI+LVODloLhhWW1zoOy2glqRcUKojWff6PP+vQwneP9OVSWfKnOplh0X2+YMSHFR85AwE4sY7XUjfPA==',
+            'sha512-FgrljK97kMhEcikU9Jyvd3NasmLAxZ6Bn0W03applOijXROBvdfDYoHInV3kdOgZzzlhXYn77lY2e4ZmCZXzww==',
           cpu: ['x64'],
           optional: true,
           os: ['win32'],
@@ -12480,14 +12552,15 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@cline/core': {
-          version: '0.2.0',
-          resolved: 'https://registry.npmjs.org/@cline/core/-/core-0.2.0.tgz',
+          version: '0.2.2',
+          resolved: 'https://registry.npmjs.org/@cline/core/-/core-0.2.2.tgz',
           integrity:
-            'sha512-0TmQT9Tof/NtcPQloS2Xt0G0Z6tUHCIRr1wEgLEWt7yMidQ+DYeocEGqMSwE1L7p9oaDKEP5hMwt/pRVWBboYw==',
+            'sha512-8itKxSkfy5XEGXXw4hEaK4fmO6cPTQA6m3HDJkdEk/br/4G9wMCPfNvvouxBZp5xJPXO+5r149H3v1C16121pg==',
+          license: 'Apache-2.0',
           dependencies: {
-            '@cline/agents': '0.2.0',
-            '@cline/llms': '0.2.0',
-            '@cline/shared': '0.2.0',
+            '@cline/agents': '0.2.2',
+            '@cline/llms': '0.2.2',
+            '@cline/shared': '0.2.2',
             '@modelcontextprotocol/sdk': '^1.29.0',
             '@opentelemetry/api': '^1.9.0',
             '@opentelemetry/api-logs': '^0.214.0',
@@ -12524,10 +12597,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@cline/llms': {
-          version: '0.2.0',
-          resolved: 'https://registry.npmjs.org/@cline/llms/-/llms-0.2.0.tgz',
+          version: '0.2.2',
+          resolved: 'https://registry.npmjs.org/@cline/llms/-/llms-0.2.2.tgz',
           integrity:
-            'sha512-ygAvs8LtXLH2F+e+JOKJil4p6mKRks98wHMWFKkyXilRtSK1NjRStXHQLVq0nK/9tLMbQ9oxc5ot4TK07xFlZw==',
+            'sha512-/dTxdan16d4WKTszlTlNyM34HUr9gqd6yupgXMMCgffSSjkkd+QYCS2ZYLlPCbiXAWQmL5BkPHG9cXi9871O5g==',
+          license: 'Apache-2.0',
           dependencies: {
             '@ai-sdk/amazon-bedrock': '^5.0.113',
             '@ai-sdk/anthropic': '^4.0.78',
@@ -12537,20 +12611,12 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             '@ai-sdk/mistral': '^4.0.62',
             '@ai-sdk/openai': '^4.0.91',
             '@ai-sdk/openai-compatible': '^3.0.67',
-            '@ai-sdk/otel': '^1.0.136',
             '@ai-sdk/provider': '^4.0.26',
             '@ai-sdk/provider-utils': '^5.0.58',
             '@aws-sdk/credential-providers': '^3.922.0',
-            '@cline/shared': '0.2.0',
+            '@cline/shared': '0.2.2',
             '@jerome-benoit/sap-ai-provider': '5.0.3',
-            '@langfuse/core': '5.10.1',
-            '@langfuse/otel': '5.10.1',
-            '@langfuse/tracing': '5.10.1',
-            '@langfuse/vercel-ai-sdk': '5.9.1',
             '@openrouter/ai-sdk-provider': '^3',
-            '@opentelemetry/api': '^1.9.0',
-            '@opentelemetry/context-async-hooks': '^2.6.1',
-            '@opentelemetry/sdk-trace-node': '^2.6.1',
             '@streamparser/json': '^0.0.21',
             ai: '^7.0.136',
             'ai-sdk-provider-opencode-sdk': '^3.0.1',
@@ -12580,23 +12646,24 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@cline/sdk': {
-          version: '0.2.0',
-          resolved: 'https://registry.npmjs.org/@cline/sdk/-/sdk-0.2.0.tgz',
+          version: '0.2.2',
+          resolved: 'https://registry.npmjs.org/@cline/sdk/-/sdk-0.2.2.tgz',
           integrity:
-            'sha512-QQkX72+O5kppf9iPjG2in/ErGDT5nE/yC6IhKlY2SEY9UMOon65F6poAeQJj9CRxjvCfttkeqEiX47J+l83sag==',
+            'sha512-vrjoGLeMRkECdH/gHPlB2QQ1zFM/86s5pSITN7CoRvmdA448Wc7haANwiWddTjFXm1qjmtaCqlnzMvGtLrkbIQ==',
           license: 'Apache-2.0',
           dependencies: {
-            '@cline/core': '0.2.0',
+            '@cline/core': '0.2.2',
           },
           engines: {
             node: '>=22',
           },
         },
         'node_modules/@cline/shared': {
-          version: '0.2.0',
-          resolved: 'https://registry.npmjs.org/@cline/shared/-/shared-0.2.0.tgz',
+          version: '0.2.2',
+          resolved: 'https://registry.npmjs.org/@cline/shared/-/shared-0.2.2.tgz',
           integrity:
-            'sha512-kQMxk7FkZGo2e7K3XO4HbRtKrKqpT8TJdzxXqSAFiOPirtI2R1w/b+EEqmtDGsygNTMacI6S/2BGlkpyKXL48Q==',
+            'sha512-yM9+K115Lwi+6QIZev/228NLAmpJs/DaV3M456k7SC/7DkTg8chGuTXvU0JIprw1P59GBnIza6IKqAU+4XDlNw==',
+          license: 'Apache-2.0',
           dependencies: {
             aws4fetch: '^1.0.20',
             jsonrepair: '^3.13.2',
@@ -12640,10 +12707,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@hono/node-server': {
-          version: '2.1.6',
-          resolved: 'https://registry.npmjs.org/@hono/node-server/-/node-server-2.1.6.tgz',
+          version: '2.1.11',
+          resolved: 'https://registry.npmjs.org/@hono/node-server/-/node-server-2.1.11.tgz',
           integrity:
-            'sha512-p/KH9MnfNcsm3sR6x4lNgm5j+QN4Et8srKredl9DZfXiyZ1UQ3aQ2YVpFLbqktYN5JI+DB+VZFKM2PqE5hLKjQ==',
+            'sha512-KzKz9vl4vvr1vgLHamj+g5uonbrj5NwAdO3yzOS6cd2HjALVeOgTgeZOyAzNxejbkfOOPIcvuf/Tg8l1pEFLog==',
           license: 'MIT',
           engines: {
             node: '>=20',
@@ -12695,152 +12762,6 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             'sha512-GaHYm+c0O9MjZRu0ongGBRbinu8gVAMd2UZjji6jVmqKtZluZnptXGWhz1E8j8D2HJ3f/yMxKAUC0b+57wncIw==',
           license: 'MIT',
         },
-        'node_modules/@langfuse/core': {
-          version: '5.10.1',
-          resolved: 'https://registry.npmjs.org/@langfuse/core/-/core-5.10.1.tgz',
-          integrity:
-            'sha512-W8UArizWSy1DdeLGTsTwJwl7bkA7OQQcGZW8RtoopXyJZ93O0rwG7wzzeiZjhjpj5OtWOUTEaJuNkwOrF31UDw==',
-          license: 'MIT',
-          peerDependencies: {
-            '@opentelemetry/api': '^1.9.0',
-          },
-        },
-        'node_modules/@langfuse/otel': {
-          version: '5.10.1',
-          resolved: 'https://registry.npmjs.org/@langfuse/otel/-/otel-5.10.1.tgz',
-          integrity:
-            'sha512-F2153e4PoJ1cN+5tM/xnsS44aQCQwK3p0nPk4NEpITV5pMTqiQVyvpkAvly8GKQ5Qjjr7heJ1dFtghW43ysyPQ==',
-          license: 'MIT',
-          dependencies: {
-            '@langfuse/core': '^5.10.1',
-          },
-          engines: {
-            node: '>=20',
-          },
-          peerDependencies: {
-            '@opentelemetry/api': '^1.9.0',
-            '@opentelemetry/core': '^2.0.1',
-            '@opentelemetry/exporter-trace-otlp-http': '>=0.202.0 <1.0.0',
-            '@opentelemetry/sdk-trace-base': '^2.0.1',
-          },
-        },
-        'node_modules/@langfuse/tracing': {
-          version: '5.10.1',
-          resolved: 'https://registry.npmjs.org/@langfuse/tracing/-/tracing-5.10.1.tgz',
-          integrity:
-            'sha512-m2kK4D0MsH8g4Og6KpnlYk8NLdQTYe0JR5M4KKpfNj99XXLlbdpXE/g3uJSqkcrWFhpiIb+3cyS9+uV6wQ6WtA==',
-          license: 'MIT',
-          dependencies: {
-            '@langfuse/core': '^5.10.1',
-          },
-          engines: {
-            node: '>=20',
-          },
-          peerDependencies: {
-            '@opentelemetry/api': '^1.9.0',
-          },
-        },
-        'node_modules/@langfuse/vercel-ai-sdk': {
-          version: '5.9.1',
-          resolved: 'https://registry.npmjs.org/@langfuse/vercel-ai-sdk/-/vercel-ai-sdk-5.9.1.tgz',
-          integrity:
-            'sha512-gZPZJ3JXYTkT7W61VhbNHXgn/88+laoAQGMc082ESeXBwfuMVVPKDueZzM0xy6s0BTtPLW5WmbJ5NkLNCtR3Nw==',
-          license: 'MIT',
-          dependencies: {
-            '@ai-sdk/otel': '1.0.2',
-            '@langfuse/core': '^5.9.1',
-          },
-          engines: {
-            node: '>=22',
-          },
-          peerDependencies: {
-            '@opentelemetry/api': '^1.9.0',
-            ai: '>=7.0.0 <8',
-          },
-        },
-        'node_modules/@langfuse/vercel-ai-sdk/node_modules/@ai-sdk/gateway': {
-          version: '4.0.2',
-          resolved: 'https://registry.npmjs.org/@ai-sdk/gateway/-/gateway-4.0.2.tgz',
-          integrity:
-            'sha512-Jz1BiiTSvhDsCBJrkFRSqLHDRMVjFtYk9GdbSi3UOqY+/epza+oIESMDzfN4m+YHT/1IYmNEmxaMfjXOvxKDjQ==',
-          license: 'Apache-2.0',
-          dependencies: {
-            '@ai-sdk/provider': '4.0.0',
-            '@ai-sdk/provider-utils': '5.0.0',
-            '@vercel/oidc': '3.2.0',
-          },
-          engines: {
-            node: '>=22',
-          },
-          peerDependencies: {
-            zod: '^3.25.76 || ^4.1.8',
-          },
-        },
-        'node_modules/@langfuse/vercel-ai-sdk/node_modules/@ai-sdk/otel': {
-          version: '1.0.2',
-          resolved: 'https://registry.npmjs.org/@ai-sdk/otel/-/otel-1.0.2.tgz',
-          integrity:
-            'sha512-vmuuwOxJ5OuwMYDktABTLb9V33hwR2k77QIDPZ8mSHSo04seT88IXCmzZwLjTskHfIa5C9IRizzNy6sr2qOQWQ==',
-          license: 'Apache-2.0',
-          dependencies: {
-            '@ai-sdk/provider': '4.0.0',
-            '@opentelemetry/api': '1.9.1',
-            ai: '7.0.2',
-          },
-          engines: {
-            node: '>=22',
-          },
-        },
-        'node_modules/@langfuse/vercel-ai-sdk/node_modules/@ai-sdk/otel/node_modules/ai': {
-          version: '7.0.2',
-          resolved: 'https://registry.npmjs.org/ai/-/ai-7.0.2.tgz',
-          integrity:
-            'sha512-VMU08jHIDJnnKDrbC9AFa5ZsPpOTfAPRLvTRHtJk4FGAoeldmJROMxvZ2ak5lCjEJ2GP2OLPQbMRyEK8w0+S4A==',
-          license: 'Apache-2.0',
-          dependencies: {
-            '@ai-sdk/gateway': '4.0.2',
-            '@ai-sdk/provider': '4.0.0',
-            '@ai-sdk/provider-utils': '5.0.0',
-          },
-          engines: {
-            node: '>=22',
-          },
-          peerDependencies: {
-            zod: '^3.25.76 || ^4.1.8',
-          },
-        },
-        'node_modules/@langfuse/vercel-ai-sdk/node_modules/@ai-sdk/provider': {
-          version: '4.0.0',
-          resolved: 'https://registry.npmjs.org/@ai-sdk/provider/-/provider-4.0.0.tgz',
-          integrity:
-            'sha512-fr9Gs89prDWiuox/T+kCA+i2cJkHpxU5S+tr4megjTzRC27ZsvFhwjU/+XrqqMbvBUlfmXxTOYWy8ng45dsjIg==',
-          license: 'Apache-2.0',
-          dependencies: {
-            'json-schema': '^0.4.0',
-          },
-          engines: {
-            node: '>=22',
-          },
-        },
-        'node_modules/@langfuse/vercel-ai-sdk/node_modules/@ai-sdk/provider-utils': {
-          version: '5.0.0',
-          resolved: 'https://registry.npmjs.org/@ai-sdk/provider-utils/-/provider-utils-5.0.0.tgz',
-          integrity:
-            'sha512-zj66M02jc6ASYwIgWZowsooDUwaVngeNZQ3H10GwcPMZ+KR6gHMhcUuKl6tkai+JPXTKDyHY1pnszuxRtw2D4A==',
-          license: 'Apache-2.0',
-          dependencies: {
-            '@ai-sdk/provider': '4.0.0',
-            '@standard-schema/spec': '^1.1.0',
-            '@workflow/serde': '4.1.0',
-            'eventsource-parser': '^3.0.8',
-          },
-          engines: {
-            node: '>=22',
-          },
-          peerDependencies: {
-            zod: '^3.25.76 || ^4.1.8',
-          },
-        },
         'node_modules/@modelcontextprotocol/sdk': {
           version: '1.32.2',
           resolved: 'https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.32.2.tgz',
@@ -12883,10 +12804,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@opencode-ai/sdk': {
-          version: '1.19.5',
-          resolved: 'https://registry.npmjs.org/@opencode-ai/sdk/-/sdk-1.19.5.tgz',
+          version: '1.19.6',
+          resolved: 'https://registry.npmjs.org/@opencode-ai/sdk/-/sdk-1.19.6.tgz',
           integrity:
-            'sha512-+bqu8gHiwmq96T9q5G34uLNHWCInIMsrE3hytCNHj1cVaxjY0AGJyNCT1rkeeZwgPU7A5TMTNwN+0XxCO2vqDg==',
+            'sha512-jYV7s+Tlc5jDILOyWFIgISkPlfk7z3ByqeC8/T9aESZBgSZosQR784U2UoM3ZrJ8S0LJ2cB+IA9xZN7Jj8tnhQ==',
           license: 'MIT',
           dependencies: {
             'cross-spawn': '7.0.6',
@@ -12931,11 +12852,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@opentelemetry/context-async-hooks': {
-          version: '2.12.0',
+          version: '2.12.1',
           resolved:
-            'https://registry.npmjs.org/@opentelemetry/context-async-hooks/-/context-async-hooks-2.12.0.tgz',
+            'https://registry.npmjs.org/@opentelemetry/context-async-hooks/-/context-async-hooks-2.12.1.tgz',
           integrity:
-            'sha512-iK/1nD7mmZVkuYjVjkdFBiCvzntJdFny1S3CYbUYyOq7V5enL6XX+gJ7eh965L1LnS11VA8mQ7Ej/ck04SB0MQ==',
+            'sha512-1+zgZyD7QvBr0/K6+FVx5UAzdGo0shnQf8pbWUFFbj43qZPIKTtfK4xX4J3bS7AmkifiZzAEMdk8dztiEfkgmg==',
           license: 'Apache-2.0',
           engines: {
             node: '^18.19.0 || >=20.6.0',
@@ -12945,10 +12866,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@opentelemetry/core': {
-          version: '2.12.0',
-          resolved: 'https://registry.npmjs.org/@opentelemetry/core/-/core-2.12.0.tgz',
+          version: '2.6.1',
+          resolved: 'https://registry.npmjs.org/@opentelemetry/core/-/core-2.6.1.tgz',
           integrity:
-            'sha512-1HsSAuvT4/my0QrXWsyXFdWjKaPeCHsismKZgEEIb8NK13LP6DrMRlsUbvD/0F9mDWK3xDom9AMv3IscxgOnOQ==',
+            'sha512-8xHSGWpJP9wBxgBpnqGL0R3PbdWQndL1Qp50qrg71+B28zK5OQmUgcDKLJgzyAAV38t4tOyLMGDD60LneR5W8g==',
           license: 'Apache-2.0',
           dependencies: {
             '@opentelemetry/semantic-conventions': '^1.29.0',
@@ -12981,22 +12902,6 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             '@opentelemetry/api': '^1.3.0',
           },
         },
-        'node_modules/@opentelemetry/exporter-logs-otlp-http/node_modules/@opentelemetry/core': {
-          version: '2.6.1',
-          resolved: 'https://registry.npmjs.org/@opentelemetry/core/-/core-2.6.1.tgz',
-          integrity:
-            'sha512-8xHSGWpJP9wBxgBpnqGL0R3PbdWQndL1Qp50qrg71+B28zK5OQmUgcDKLJgzyAAV38t4tOyLMGDD60LneR5W8g==',
-          license: 'Apache-2.0',
-          dependencies: {
-            '@opentelemetry/semantic-conventions': '^1.29.0',
-          },
-          engines: {
-            node: '^18.19.0 || >=20.6.0',
-          },
-          peerDependencies: {
-            '@opentelemetry/api': '>=1.0.0 <1.10.0',
-          },
-        },
         'node_modules/@opentelemetry/exporter-metrics-otlp-http': {
           version: '0.214.0',
           resolved:
@@ -13016,22 +12921,6 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
           peerDependencies: {
             '@opentelemetry/api': '^1.3.0',
-          },
-        },
-        'node_modules/@opentelemetry/exporter-metrics-otlp-http/node_modules/@opentelemetry/core': {
-          version: '2.6.1',
-          resolved: 'https://registry.npmjs.org/@opentelemetry/core/-/core-2.6.1.tgz',
-          integrity:
-            'sha512-8xHSGWpJP9wBxgBpnqGL0R3PbdWQndL1Qp50qrg71+B28zK5OQmUgcDKLJgzyAAV38t4tOyLMGDD60LneR5W8g==',
-          license: 'Apache-2.0',
-          dependencies: {
-            '@opentelemetry/semantic-conventions': '^1.29.0',
-          },
-          engines: {
-            node: '^18.19.0 || >=20.6.0',
-          },
-          peerDependencies: {
-            '@opentelemetry/api': '>=1.0.0 <1.10.0',
           },
         },
         'node_modules/@opentelemetry/exporter-metrics-otlp-http/node_modules/@opentelemetry/resources':
@@ -13092,22 +12981,6 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             '@opentelemetry/api': '^1.3.0',
           },
         },
-        'node_modules/@opentelemetry/exporter-trace-otlp-http/node_modules/@opentelemetry/core': {
-          version: '2.6.1',
-          resolved: 'https://registry.npmjs.org/@opentelemetry/core/-/core-2.6.1.tgz',
-          integrity:
-            'sha512-8xHSGWpJP9wBxgBpnqGL0R3PbdWQndL1Qp50qrg71+B28zK5OQmUgcDKLJgzyAAV38t4tOyLMGDD60LneR5W8g==',
-          license: 'Apache-2.0',
-          dependencies: {
-            '@opentelemetry/semantic-conventions': '^1.29.0',
-          },
-          engines: {
-            node: '^18.19.0 || >=20.6.0',
-          },
-          peerDependencies: {
-            '@opentelemetry/api': '>=1.0.0 <1.10.0',
-          },
-        },
         'node_modules/@opentelemetry/exporter-trace-otlp-http/node_modules/@opentelemetry/resources':
           {
             version: '2.6.1',
@@ -13165,22 +13038,6 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             '@opentelemetry/api': '^1.3.0',
           },
         },
-        'node_modules/@opentelemetry/otlp-exporter-base/node_modules/@opentelemetry/core': {
-          version: '2.6.1',
-          resolved: 'https://registry.npmjs.org/@opentelemetry/core/-/core-2.6.1.tgz',
-          integrity:
-            'sha512-8xHSGWpJP9wBxgBpnqGL0R3PbdWQndL1Qp50qrg71+B28zK5OQmUgcDKLJgzyAAV38t4tOyLMGDD60LneR5W8g==',
-          license: 'Apache-2.0',
-          dependencies: {
-            '@opentelemetry/semantic-conventions': '^1.29.0',
-          },
-          engines: {
-            node: '^18.19.0 || >=20.6.0',
-          },
-          peerDependencies: {
-            '@opentelemetry/api': '>=1.0.0 <1.10.0',
-          },
-        },
         'node_modules/@opentelemetry/otlp-transformer': {
           version: '0.214.0',
           resolved:
@@ -13202,22 +13059,6 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
           peerDependencies: {
             '@opentelemetry/api': '^1.3.0',
-          },
-        },
-        'node_modules/@opentelemetry/otlp-transformer/node_modules/@opentelemetry/core': {
-          version: '2.6.1',
-          resolved: 'https://registry.npmjs.org/@opentelemetry/core/-/core-2.6.1.tgz',
-          integrity:
-            'sha512-8xHSGWpJP9wBxgBpnqGL0R3PbdWQndL1Qp50qrg71+B28zK5OQmUgcDKLJgzyAAV38t4tOyLMGDD60LneR5W8g==',
-          license: 'Apache-2.0',
-          dependencies: {
-            '@opentelemetry/semantic-conventions': '^1.29.0',
-          },
-          engines: {
-            node: '^18.19.0 || >=20.6.0',
-          },
-          peerDependencies: {
-            '@opentelemetry/api': '>=1.0.0 <1.10.0',
           },
         },
         'node_modules/@opentelemetry/otlp-transformer/node_modules/@opentelemetry/resources': {
@@ -13275,13 +13116,13 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@opentelemetry/resources': {
-          version: '2.12.0',
-          resolved: 'https://registry.npmjs.org/@opentelemetry/resources/-/resources-2.12.0.tgz',
+          version: '2.12.1',
+          resolved: 'https://registry.npmjs.org/@opentelemetry/resources/-/resources-2.12.1.tgz',
           integrity:
-            'sha512-+rSRoOdln6NhXTVcBdHSlZxJDNzwxadeweK2ltZO3tVtfp6aklABc06xclDk6ovRR+EiGgIcSbh/6NgjFhnb3A==',
+            'sha512-IwrNcuLCvnJAnNLkXxx0Uw+rjBkVW6VGQrhd7PanNf0LavOzkTk9sDAjdqegM7p/VdxefNRrii6d+wBRJfz35g==',
           license: 'Apache-2.0',
           dependencies: {
-            '@opentelemetry/core': '2.12.0',
+            '@opentelemetry/core': '2.12.1',
             '@opentelemetry/semantic-conventions': '^1.29.0',
           },
           engines: {
@@ -13289,6 +13130,22 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
           peerDependencies: {
             '@opentelemetry/api': '>=1.3.0 <1.10.0',
+          },
+        },
+        'node_modules/@opentelemetry/resources/node_modules/@opentelemetry/core': {
+          version: '2.12.1',
+          resolved: 'https://registry.npmjs.org/@opentelemetry/core/-/core-2.12.1.tgz',
+          integrity:
+            'sha512-3hr6Pj0/G0oVgIGb97IVcw9BjZ6eudonKjrmQxw7JquyU/XmVbJelkmyoU0sT/OvHGkv+r1tcrwv8MbSX7aKHw==',
+          license: 'Apache-2.0',
+          dependencies: {
+            '@opentelemetry/semantic-conventions': '^1.29.0',
+          },
+          engines: {
+            node: '^18.19.0 || >=20.6.0',
+          },
+          peerDependencies: {
+            '@opentelemetry/api': '>=1.0.0 <1.10.0',
           },
         },
         'node_modules/@opentelemetry/sdk-logs': {
@@ -13310,22 +13167,6 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             '@opentelemetry/api': '>=1.4.0 <1.10.0',
           },
         },
-        'node_modules/@opentelemetry/sdk-logs/node_modules/@opentelemetry/core': {
-          version: '2.6.1',
-          resolved: 'https://registry.npmjs.org/@opentelemetry/core/-/core-2.6.1.tgz',
-          integrity:
-            'sha512-8xHSGWpJP9wBxgBpnqGL0R3PbdWQndL1Qp50qrg71+B28zK5OQmUgcDKLJgzyAAV38t4tOyLMGDD60LneR5W8g==',
-          license: 'Apache-2.0',
-          dependencies: {
-            '@opentelemetry/semantic-conventions': '^1.29.0',
-          },
-          engines: {
-            node: '^18.19.0 || >=20.6.0',
-          },
-          peerDependencies: {
-            '@opentelemetry/api': '>=1.0.0 <1.10.0',
-          },
-        },
         'node_modules/@opentelemetry/sdk-logs/node_modules/@opentelemetry/resources': {
           version: '2.6.1',
           resolved: 'https://registry.npmjs.org/@opentelemetry/resources/-/resources-2.6.1.tgz',
@@ -13344,15 +13185,15 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@opentelemetry/sdk-metrics': {
-          version: '2.12.0',
+          version: '2.12.1',
           resolved:
-            'https://registry.npmjs.org/@opentelemetry/sdk-metrics/-/sdk-metrics-2.12.0.tgz',
+            'https://registry.npmjs.org/@opentelemetry/sdk-metrics/-/sdk-metrics-2.12.1.tgz',
           integrity:
-            'sha512-mVMaEHwCUJuY3S4Esn+nT0yQA3qCEGh+SOPJsXygU0Gl453WcsDNjtEa8EfdewMwoLyr1tlofB4fXytVpiXuow==',
+            'sha512-HeSblYhpds4QWliBE7ANCfoa2p3QH83uUxX4vO2qtk6BhIcqP7qDYYT36z3LOXftEBpdfbDStZxv+Cw5mqKX5g==',
           license: 'Apache-2.0',
           dependencies: {
-            '@opentelemetry/core': '2.12.0',
-            '@opentelemetry/resources': '2.12.0',
+            '@opentelemetry/core': '2.12.1',
+            '@opentelemetry/resources': '2.12.1',
           },
           engines: {
             node: '^18.19.0 || >=20.6.0',
@@ -13361,15 +13202,31 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             '@opentelemetry/api': '>=1.9.0 <1.10.0',
           },
         },
-        'node_modules/@opentelemetry/sdk-trace': {
-          version: '2.12.0',
-          resolved: 'https://registry.npmjs.org/@opentelemetry/sdk-trace/-/sdk-trace-2.12.0.tgz',
+        'node_modules/@opentelemetry/sdk-metrics/node_modules/@opentelemetry/core': {
+          version: '2.12.1',
+          resolved: 'https://registry.npmjs.org/@opentelemetry/core/-/core-2.12.1.tgz',
           integrity:
-            'sha512-ImVuRQ6faOsTi1Wna88s2avgrrf/iDgXPigIeynkUhjstMuoQUDOJXgkez2j1mlU4btjXcXBGa+q7qKFYR3GsA==',
+            'sha512-3hr6Pj0/G0oVgIGb97IVcw9BjZ6eudonKjrmQxw7JquyU/XmVbJelkmyoU0sT/OvHGkv+r1tcrwv8MbSX7aKHw==',
           license: 'Apache-2.0',
           dependencies: {
-            '@opentelemetry/core': '2.12.0',
-            '@opentelemetry/resources': '2.12.0',
+            '@opentelemetry/semantic-conventions': '^1.29.0',
+          },
+          engines: {
+            node: '^18.19.0 || >=20.6.0',
+          },
+          peerDependencies: {
+            '@opentelemetry/api': '>=1.0.0 <1.10.0',
+          },
+        },
+        'node_modules/@opentelemetry/sdk-trace': {
+          version: '2.12.1',
+          resolved: 'https://registry.npmjs.org/@opentelemetry/sdk-trace/-/sdk-trace-2.12.1.tgz',
+          integrity:
+            'sha512-vANdmCYnn+Ka/alBKxwICMl4Koa+aQBlRC9zAZy+Ig1Obbo3RZt2oiyv+8/gET5rrBBYrO3YniPcXfwZrN01rg==',
+          license: 'Apache-2.0',
+          dependencies: {
+            '@opentelemetry/core': '2.12.1',
+            '@opentelemetry/resources': '2.12.1',
             '@opentelemetry/semantic-conventions': '^1.29.0',
           },
           engines: {
@@ -13380,17 +13237,16 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@opentelemetry/sdk-trace-base': {
-          version: '2.12.0',
+          version: '2.12.1',
           resolved:
-            'https://registry.npmjs.org/@opentelemetry/sdk-trace-base/-/sdk-trace-base-2.12.0.tgz',
+            'https://registry.npmjs.org/@opentelemetry/sdk-trace-base/-/sdk-trace-base-2.12.1.tgz',
           integrity:
-            'sha512-JOERgZCxRM06FEJ5kEWxlSRChah6MmXDx3KwCruqEv/iEyLkTokCSemf2y1w8oIHtfrr8EVTpzebq/31vn2Cpg==',
-          deprecated: 'Use @opentelemetry/sdk-trace package',
+            'sha512-CMrcqFxTikYmYQCuHToBO4kQvWIseRk2ztzWidTd7VutIxj1rljvJZCZnFPJEGNOS7FvaSmRL21Jeuu3/wrCAQ==',
           license: 'Apache-2.0',
           dependencies: {
-            '@opentelemetry/core': '2.12.0',
-            '@opentelemetry/resources': '2.12.0',
-            '@opentelemetry/sdk-trace': '2.12.0',
+            '@opentelemetry/core': '2.12.1',
+            '@opentelemetry/resources': '2.12.1',
+            '@opentelemetry/sdk-trace': '2.12.1',
             '@opentelemetry/semantic-conventions': '^1.29.0',
           },
           engines: {
@@ -13400,18 +13256,65 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             '@opentelemetry/api': '>=1.3.0 <1.10.0',
           },
         },
-        'node_modules/@opentelemetry/sdk-trace-node': {
-          version: '2.12.0',
-          resolved:
-            'https://registry.npmjs.org/@opentelemetry/sdk-trace-node/-/sdk-trace-node-2.12.0.tgz',
+        'node_modules/@opentelemetry/sdk-trace-base/node_modules/@opentelemetry/core': {
+          version: '2.12.1',
+          resolved: 'https://registry.npmjs.org/@opentelemetry/core/-/core-2.12.1.tgz',
           integrity:
-            'sha512-9DufH1IlmQMoKAfot5y/FhTP1RnmhLb5K6eKmJO/bvzPjYwPAazoiAUbTZFdPbqxOXN0FEbhZx/e6SB1Og4jmg==',
-          deprecated: 'Use @opentelemetry/sdk-trace package',
+            'sha512-3hr6Pj0/G0oVgIGb97IVcw9BjZ6eudonKjrmQxw7JquyU/XmVbJelkmyoU0sT/OvHGkv+r1tcrwv8MbSX7aKHw==',
           license: 'Apache-2.0',
           dependencies: {
-            '@opentelemetry/context-async-hooks': '2.12.0',
-            '@opentelemetry/core': '2.12.0',
-            '@opentelemetry/sdk-trace-base': '2.12.0',
+            '@opentelemetry/semantic-conventions': '^1.29.0',
+          },
+          engines: {
+            node: '^18.19.0 || >=20.6.0',
+          },
+          peerDependencies: {
+            '@opentelemetry/api': '>=1.0.0 <1.10.0',
+          },
+        },
+        'node_modules/@opentelemetry/sdk-trace-node': {
+          version: '2.12.1',
+          resolved:
+            'https://registry.npmjs.org/@opentelemetry/sdk-trace-node/-/sdk-trace-node-2.12.1.tgz',
+          integrity:
+            'sha512-nRe0mimXZHknAEW2PKN9VbmML+93il5okotyDIUMhgYJ0QPM999fsh7djH6HDheyAbXO/C24t/B4fOQbNap8Vw==',
+          license: 'Apache-2.0',
+          dependencies: {
+            '@opentelemetry/context-async-hooks': '2.12.1',
+            '@opentelemetry/core': '2.12.1',
+            '@opentelemetry/sdk-trace-base': '2.12.1',
+          },
+          engines: {
+            node: '^18.19.0 || >=20.6.0',
+          },
+          peerDependencies: {
+            '@opentelemetry/api': '>=1.0.0 <1.10.0',
+          },
+        },
+        'node_modules/@opentelemetry/sdk-trace-node/node_modules/@opentelemetry/core': {
+          version: '2.12.1',
+          resolved: 'https://registry.npmjs.org/@opentelemetry/core/-/core-2.12.1.tgz',
+          integrity:
+            'sha512-3hr6Pj0/G0oVgIGb97IVcw9BjZ6eudonKjrmQxw7JquyU/XmVbJelkmyoU0sT/OvHGkv+r1tcrwv8MbSX7aKHw==',
+          license: 'Apache-2.0',
+          dependencies: {
+            '@opentelemetry/semantic-conventions': '^1.29.0',
+          },
+          engines: {
+            node: '^18.19.0 || >=20.6.0',
+          },
+          peerDependencies: {
+            '@opentelemetry/api': '>=1.0.0 <1.10.0',
+          },
+        },
+        'node_modules/@opentelemetry/sdk-trace/node_modules/@opentelemetry/core': {
+          version: '2.12.1',
+          resolved: 'https://registry.npmjs.org/@opentelemetry/core/-/core-2.12.1.tgz',
+          integrity:
+            'sha512-3hr6Pj0/G0oVgIGb97IVcw9BjZ6eudonKjrmQxw7JquyU/XmVbJelkmyoU0sT/OvHGkv+r1tcrwv8MbSX7aKHw==',
+          license: 'Apache-2.0',
+          dependencies: {
+            '@opentelemetry/semantic-conventions': '^1.29.0',
           },
           engines: {
             node: '^18.19.0 || >=20.6.0',
@@ -13421,11 +13324,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@opentelemetry/semantic-conventions': {
-          version: '1.44.0',
+          version: '1.45.0',
           resolved:
-            'https://registry.npmjs.org/@opentelemetry/semantic-conventions/-/semantic-conventions-1.44.0.tgz',
+            'https://registry.npmjs.org/@opentelemetry/semantic-conventions/-/semantic-conventions-1.45.0.tgz',
           integrity:
-            'sha512-E3JkOlMBi3N8OGGkbl7tFyqk2MAS6/lySRZBK3Mu7AzjF1fT8oIChH9ChE48SUWzDn9Kdwta+G/p5LJ4xW4CLQ==',
+            'sha512-aOP45mbcOKbQVvFWfQmgoOPT8R2iwbbbgl83k4CujGV9BrJhFr3qG55MFpwFs4YLabpuW3HhzUY9eQxPlDqaZw==',
           license: 'Apache-2.0',
           engines: {
             node: '>=14',
@@ -13498,69 +13401,69 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           license: 'BSD-3-Clause',
         },
         'node_modules/@sap-ai-sdk/ai-api': {
-          version: '2.17.0',
-          resolved: 'https://registry.npmjs.org/@sap-ai-sdk/ai-api/-/ai-api-2.17.0.tgz',
+          version: '2.18.0',
+          resolved: 'https://registry.npmjs.org/@sap-ai-sdk/ai-api/-/ai-api-2.18.0.tgz',
           integrity:
-            'sha512-gX9uEf5KU2QysVNCX+nllVt/fM/aF1uUjiNmT3K+X7LUVV5rPVkDvUScSr+ZNvNRs4BgFkl2t8UoithE6zFfBg==',
+            'sha512-P9Z4Y/AwvcovnghCFMA+vf9zzQg5lHskuVM1eg+bgJ2WBsE+p/jfHEJFo8XY4qps4SX1Wc9HVztg6NOufrtWKg==',
           license: 'Apache-2.0',
           dependencies: {
-            '@sap-ai-sdk/core': '^2.17.0',
-            '@sap-cloud-sdk/connectivity': '^4.9.1',
-            '@sap-cloud-sdk/util': '^4.9.1',
+            '@sap-ai-sdk/core': '^2.18.0',
+            '@sap-cloud-sdk/connectivity': '^4.10.0',
+            '@sap-cloud-sdk/util': '^4.10.0',
           },
         },
         'node_modules/@sap-ai-sdk/core': {
-          version: '2.17.0',
-          resolved: 'https://registry.npmjs.org/@sap-ai-sdk/core/-/core-2.17.0.tgz',
+          version: '2.18.0',
+          resolved: 'https://registry.npmjs.org/@sap-ai-sdk/core/-/core-2.18.0.tgz',
           integrity:
-            'sha512-0eS12ogU5j2jqt+imISqFLntvyjQgkxqkX4vzHVEa1MGibpBJfAOgT+zpwC/F2ZZ5KMEm1r+5q4a+ziemqANUA==',
+            'sha512-d9ped9bFVTsISV11TSSa545KPgCFcv6b05tshZdcSjG5BMoaNvGtzlu2L5LZw52Z5wN0HH4AhCG/IrUmUMTZmQ==',
           license: 'Apache-2.0',
           dependencies: {
-            '@sap-cloud-sdk/connectivity': '^4.9.1',
-            '@sap-cloud-sdk/http-client': '^4.9.1',
-            '@sap-cloud-sdk/openapi': '^4.9.1',
-            '@sap-cloud-sdk/util': '^4.9.1',
+            '@sap-cloud-sdk/connectivity': '^4.10.0',
+            '@sap-cloud-sdk/http-client': '^4.10.0',
+            '@sap-cloud-sdk/openapi': '^4.10.0',
+            '@sap-cloud-sdk/util': '^4.10.0',
           },
         },
         'node_modules/@sap-ai-sdk/foundation-models': {
-          version: '2.17.0',
+          version: '2.18.0',
           resolved:
-            'https://registry.npmjs.org/@sap-ai-sdk/foundation-models/-/foundation-models-2.17.0.tgz',
+            'https://registry.npmjs.org/@sap-ai-sdk/foundation-models/-/foundation-models-2.18.0.tgz',
           integrity:
-            'sha512-2n7F/5Ke09yUwlFuYL+GLMT+XqfypArDp9PSvekuK3Fm4jwVXyoudHimAPRnozYFJEs/6HCLjXWDIR/co8w+hQ==',
+            'sha512-oJmXkMThDen+MqisGuB6Oh8UFVMegCLUJr26jREz3Wa03iidFRtEk1Dl7eEz0I+JJChBxZBNHNTmOFiswzvHkw==',
           license: 'Apache-2.0',
           dependencies: {
-            '@sap-ai-sdk/ai-api': '^2.17.0',
-            '@sap-ai-sdk/core': '^2.17.0',
-            '@sap-cloud-sdk/connectivity': '^4.9.1',
-            '@sap-cloud-sdk/http-client': '^4.9.1',
-            '@sap-cloud-sdk/util': '^4.9.1',
+            '@sap-ai-sdk/ai-api': '^2.18.0',
+            '@sap-ai-sdk/core': '^2.18.0',
+            '@sap-cloud-sdk/connectivity': '^4.10.0',
+            '@sap-cloud-sdk/http-client': '^4.10.0',
+            '@sap-cloud-sdk/util': '^4.10.0',
           },
         },
         'node_modules/@sap-ai-sdk/orchestration': {
-          version: '2.17.0',
+          version: '2.18.0',
           resolved:
-            'https://registry.npmjs.org/@sap-ai-sdk/orchestration/-/orchestration-2.17.0.tgz',
+            'https://registry.npmjs.org/@sap-ai-sdk/orchestration/-/orchestration-2.18.0.tgz',
           integrity:
-            'sha512-wN+5ZIQTB1MLEiNLUXBHm2KqkkiPn2Ji6q3hRw1KstUmUWi637+8/x/hPYgEo38VgSKOarwLN9SDkJ09mRckng==',
+            'sha512-mpq4mx5kSRmW48x2Fz1jNvfIT+nxkblutnjZl1HWm0mL/r4J8BOwZRWc1rX1gic/NFu0GViO5XzCSlLyaI7rrA==',
           license: 'Apache-2.0',
           dependencies: {
-            '@sap-ai-sdk/ai-api': '^2.17.0',
-            '@sap-ai-sdk/core': '^2.17.0',
-            '@sap-ai-sdk/prompt-registry': '^2.17.0',
-            '@sap-cloud-sdk/util': '^4.9.1',
+            '@sap-ai-sdk/ai-api': '^2.18.0',
+            '@sap-ai-sdk/core': '^2.18.0',
+            '@sap-ai-sdk/prompt-registry': '^2.18.0',
+            '@sap-cloud-sdk/util': '^4.10.0',
             yaml: '^2.9.0',
           },
         },
         'node_modules/@sap-ai-sdk/prompt-registry': {
-          version: '2.17.0',
+          version: '2.18.0',
           resolved:
-            'https://registry.npmjs.org/@sap-ai-sdk/prompt-registry/-/prompt-registry-2.17.0.tgz',
+            'https://registry.npmjs.org/@sap-ai-sdk/prompt-registry/-/prompt-registry-2.18.0.tgz',
           integrity:
-            'sha512-2sjT94d1M/Lim0ar/f0kfY41oBcv9utMl829qYjagU4HZt/a4XPn5jVXTjx1cimAcG7qT536C41ABg9yKVFYmQ==',
+            'sha512-+gceKx5683ZYEPqb0GyLqEukxDX9NHZVH4vpay4W1UooZtXIjrG+tZ3Y6sGOwVu6sA3HNnufGk5ILuSiApd8AA==',
           license: 'Apache-2.0',
           dependencies: {
-            '@sap-ai-sdk/core': '^2.17.0',
+            '@sap-ai-sdk/core': '^2.18.0',
             zod: '^4.6.6',
           },
         },
@@ -13682,10 +13585,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@smithy/core': {
-          version: '3.39.0',
-          resolved: 'https://registry.npmjs.org/@smithy/core/-/core-3.39.0.tgz',
+          version: '3.41.1',
+          resolved: 'https://registry.npmjs.org/@smithy/core/-/core-3.41.1.tgz',
           integrity:
-            'sha512-JJ/46AWQ4ipS1N2eZmUj7yzIhH8NhQIfAE+dce7NSB6dmFh+7hvD4pbofcoT4I0Xzfy/LNhZx3V2QhwYyAiqdg==',
+            'sha512-24LyiHSY0R/MLcbTylurWXU6Uy4lzI6KJgsdzxkNnjT9/OLWc2zGPb/3k5AM1f0vcgCGrExanUG339t+TBiIrA==',
           license: 'Apache-2.0',
           dependencies: {
             '@smithy/types': '^4.20.0',
@@ -13826,10 +13729,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           license: 'MIT',
         },
         'node_modules/@types/node': {
-          version: '26.6.6',
-          resolved: 'https://registry.npmjs.org/@types/node/-/node-26.6.6.tgz',
+          version: '26.6.11',
+          resolved: 'https://registry.npmjs.org/@types/node/-/node-26.6.11.tgz',
           integrity:
-            'sha512-MzQj+8Kx3XI40OmUAE6Qoh58ZMNstNNMwn2nfd3qWsfe7nDNSqJNzes4njhz6AHwrSHOffSLwXU6yb474Q4aog==',
+            'sha512-uUyQ2XLEz+EXh34lmS3GhKrkqn/8FU7KUiKRpk347At2bmnMVWss45yz8b4FG/tUtmV1tV/+TVkITItPROyeeQ==',
           license: 'MIT',
           dependencies: {
             'undici-types': '~8.9.0',
@@ -13884,15 +13787,15 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/ai': {
-          version: '7.0.163',
-          resolved: 'https://registry.npmjs.org/ai/-/ai-7.0.163.tgz',
+          version: '7.0.183',
+          resolved: 'https://registry.npmjs.org/ai/-/ai-7.0.183.tgz',
           integrity:
-            'sha512-nm8+qn36NQXO4Hjfj7SlbcNRhUyNXKtdoS9xhXr/z92lvdGFuPkzHmA2tFzhaUQy13IitNYrcw2QSNpEJC/iSA==',
+            'sha512-rrPZNiuOKr8L6j9acxrWpE/lKWgR+rYNHDYr9bOvfMLM8RlsX75WMJsMw4LBPZkX6tdjFL8fiLXhTKN29wkkYQ==',
           license: 'Apache-2.0',
           dependencies: {
-            '@ai-sdk/gateway': '4.0.136',
-            '@ai-sdk/provider': '4.0.36',
-            '@ai-sdk/provider-utils': '5.0.75',
+            '@ai-sdk/gateway': '4.0.156',
+            '@ai-sdk/provider': '4.0.39',
+            '@ai-sdk/provider-utils': '5.0.85',
           },
           engines: {
             node: '>=22',
@@ -13934,15 +13837,15 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/ai-sdk-provider-opencode-sdk/node_modules/@ai-sdk/provider-utils': {
-          version: '4.0.64',
-          resolved: 'https://registry.npmjs.org/@ai-sdk/provider-utils/-/provider-utils-4.0.64.tgz',
+          version: '4.0.69',
+          resolved: 'https://registry.npmjs.org/@ai-sdk/provider-utils/-/provider-utils-4.0.69.tgz',
           integrity:
-            'sha512-NQp/xAFHZbnWLHNjm8EjwUILgEpURsQnE416aO/PS3XrZ/PGfghEcXEcHXkXmIvB5Jem/9SPQxXnm/0wu7Emsg==',
+            'sha512-j4coUNodGSDug1pGqmBOdRJKSoJ+QwbVs+gsfufLUx6YPuO87b3Q5ryUfsk1G5xL7IvGLFH+SNih26Oh8Ucv2Q==',
           license: 'Apache-2.0',
           dependencies: {
             '@ai-sdk/provider': '3.0.19',
             '@standard-schema/spec': '^1.1.0',
-            'eventsource-parser': '^3.0.8',
+            'eventsource-parser': '^3.1.1',
             undici: '^6.28.0',
           },
           engines: {
@@ -13950,16 +13853,6 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
           peerDependencies: {
             zod: '^3.25.76 || ^4.1.8',
-          },
-        },
-        'node_modules/ai-sdk-provider-opencode-sdk/node_modules/undici': {
-          version: '6.29.1',
-          resolved: 'https://registry.npmjs.org/undici/-/undici-6.29.1.tgz',
-          integrity:
-            'sha512-EvRlUt/QqAEvXdQeRMYUfwOQsfzpDztykrG2owGEE/rBOBoYv9uF39ZzsNDh4lTFHhTr2XOZjKkYgueD12ZmGA==',
-          license: 'MIT',
-          engines: {
-            node: '>=18.17',
           },
         },
         'node_modules/ajv': {
@@ -14049,13 +13942,13 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           license: 'MIT',
         },
         'node_modules/axios': {
-          version: '1.21.0',
-          resolved: 'https://registry.npmjs.org/axios/-/axios-1.21.0.tgz',
+          version: '1.21.1',
+          resolved: 'https://registry.npmjs.org/axios/-/axios-1.21.1.tgz',
           integrity:
-            'sha512-YCzXMB53Q9PZBsh7yN7wtapit4WepwcHS2fP8QhGsBxSz5YtgYobV7GGlWlAJi+RxfU77GQTQi2DSLUma42EYA==',
+            'sha512-6eI5Q/Y4u/Um9dDlsRoq5pY2rxnUTv+L4PpLitnbk/i4jb3MxLZ5CsN5Ih3IysbeRYK4pR+P7qfMsOQl9fwwFQ==',
           license: 'MIT',
           dependencies: {
-            'follow-redirects': '^1.16.0',
+            'follow-redirects': '^1.16.2',
             'form-data': '^4.0.6',
             'https-proxy-agent': '^5.0.1',
             'proxy-from-env': '^2.1.0',
@@ -14159,10 +14052,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/bowser': {
-          version: '2.15.0',
-          resolved: 'https://registry.npmjs.org/bowser/-/bowser-2.15.0.tgz',
+          version: '2.15.1',
+          resolved: 'https://registry.npmjs.org/bowser/-/bowser-2.15.1.tgz',
           integrity:
-            'sha512-xic6KSZglg/I4ymp45fdM4GWfYpBK79Fxd/TOvJktlaPgQqqDxvmGwOPZl2V0dyeS3Lj5c180bLhXF43iyAjZQ==',
+            'sha512-ma47ABeUiTsmG4McKDtGCgQSiTCatM97Mlbn13K42N1kPSFE14oN3WFMjtyL4KubhGvQTqYheKl4Qx2bJtMXLQ==',
           license: 'MIT',
         },
         'node_modules/buffer-equal-constant-time': {
@@ -14216,29 +14109,29 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/cline': {
-          version: '3.0.74',
-          resolved: 'https://registry.npmjs.org/cline/-/cline-3.0.74.tgz',
+          version: '3.0.76',
+          resolved: 'https://registry.npmjs.org/cline/-/cline-3.0.76.tgz',
           integrity:
-            'sha512-pCaRaJ6Jx50Urej+BYjpGkpZnFbPDCPsibKEbIjEuVxETXbZ/A1SMij8Thy8FobercevXX6hV7joAzU7OG5lzA==',
+            'sha512-gDi+WV2rKaRXOfGPwfehHJIUhEZpwbSBhI9D4Mgu+KEhrxnJey2JzbTX5pA8HloTqZZD7KyUAWeP9lwU7MLAaQ==',
           hasInstallScript: true,
           license: 'Apache-2.0',
           dependencies: {
-            '@cline/agents': '0.2.0',
-            '@cline/core': '0.2.0',
-            '@cline/llms': '0.2.0',
-            '@cline/sdk': '0.2.0',
-            '@cline/shared': '0.2.0',
+            '@cline/agents': '0.2.2',
+            '@cline/core': '0.2.2',
+            '@cline/llms': '0.2.2',
+            '@cline/sdk': '0.2.2',
+            '@cline/shared': '0.2.2',
           },
           bin: {
             cline: 'bin/cline',
           },
           optionalDependencies: {
-            '@cline/cli-darwin-arm64': '3.0.74',
-            '@cline/cli-darwin-x64': '3.0.74',
-            '@cline/cli-linux-arm64': '3.0.74',
-            '@cline/cli-linux-x64': '3.0.74',
-            '@cline/cli-windows-arm64': '3.0.74',
-            '@cline/cli-windows-x64': '3.0.74',
+            '@cline/cli-darwin-arm64': '3.0.76',
+            '@cline/cli-darwin-x64': '3.0.76',
+            '@cline/cli-linux-arm64': '3.0.76',
+            '@cline/cli-linux-x64': '3.0.76',
+            '@cline/cli-windows-arm64': '3.0.76',
+            '@cline/cli-windows-x64': '3.0.76',
           },
         },
         'node_modules/clone': {
@@ -14473,15 +14366,15 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/dify-ai-provider/node_modules/@ai-sdk/provider-utils': {
-          version: '3.0.44',
-          resolved: 'https://registry.npmjs.org/@ai-sdk/provider-utils/-/provider-utils-3.0.44.tgz',
+          version: '3.0.48',
+          resolved: 'https://registry.npmjs.org/@ai-sdk/provider-utils/-/provider-utils-3.0.48.tgz',
           integrity:
-            'sha512-RmZLXkcoUgSyjp7gBF1Dvg+fYrnLjmIVPU2LXHEsU34RBf0ZA2GyBiUynFsqFXMJoUxhLAVTCVkNfDoT9db5fA==',
+            'sha512-pibs201e7/4fTHRUF/rUa5NKcbxbefRQl0Ujvd/EqLo6eA+IMzeBCrI2vVpusTcatSILKiZIjXX5gVXMPOoYUg==',
           license: 'Apache-2.0',
           dependencies: {
             '@ai-sdk/provider': '2.0.5',
             '@standard-schema/spec': '^1.0.0',
-            'eventsource-parser': '^3.0.6',
+            'eventsource-parser': '^3.1.1',
             undici: '^5.29.0',
           },
           engines: {
@@ -14555,10 +14448,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           license: 'MIT',
         },
         'node_modules/encodeurl': {
-          version: '2.0.1',
-          resolved: 'https://registry.npmjs.org/encodeurl/-/encodeurl-2.0.1.tgz',
+          version: '2.0.3',
+          resolved: 'https://registry.npmjs.org/encodeurl/-/encodeurl-2.0.3.tgz',
           integrity:
-            'sha512-Ev/hIyePLZtpL98x562lvPtenrUfGr0lfaf44HFZ+hDEwso7ccV9QAZrEVLg0hxNAzygaAFxy2dYaAKKM0G06A==',
+            'sha512-mIteYONiEfc4xWf2F1WXovh1c8npzS00vNeiUPdwFF+QlVJni+gNvpQltLMQhob8rew/bWWc/bGTuUr0EUGt0w==',
           license: 'MIT',
           engines: {
             node: '>= 0.8',
@@ -14702,10 +14595,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/express-rate-limit': {
-          version: '8.7.3',
-          resolved: 'https://registry.npmjs.org/express-rate-limit/-/express-rate-limit-8.7.3.tgz',
+          version: '8.7.5',
+          resolved: 'https://registry.npmjs.org/express-rate-limit/-/express-rate-limit-8.7.5.tgz',
           integrity:
-            'sha512-zPLqDI2f0gV2WmGnacLf9XSSqn4VldRyP5LCzOwx0BKH40mO6+2PCFkoSsRO2jePx87/Kf6NUF6P2QOTKXHbQA==',
+            'sha512-wi+v38cx2EqD0JnhE/e74o5tFqKWUOAPFJIgyEiqJ8v2MNpoOAA3kI2hXYOI+YM+HE5yqbdAlVxm2GqOIeYOgA==',
           license: 'MIT',
           dependencies: {
             debug: '^4.4.3',
@@ -14835,10 +14728,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           license: 'MIT',
         },
         'node_modules/follow-redirects': {
-          version: '1.16.2',
-          resolved: 'https://registry.npmjs.org/follow-redirects/-/follow-redirects-1.16.2.tgz',
+          version: '1.16.3',
+          resolved: 'https://registry.npmjs.org/follow-redirects/-/follow-redirects-1.16.3.tgz',
           integrity:
-            'sha512-/kVP2U8z596Ia0gwFrwyIeo74ta5aVmSeU1FfAUMAmcEP5EP7zydmag3SLiN64NaRKef3lxsq7i/g7ltJQDGow==',
+            'sha512-toOSoqN6d51Wjf1aOFJYcoVv1aND9rj/CwjLU0Vz40oDuSpWDayCeKe4JpL5NL0WdFvoOOCI3BRo69HahjbR1A==',
           funding: [
             {
               type: 'individual',
@@ -14939,10 +14832,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/gaxios': {
-          version: '8.3.2',
-          resolved: 'https://registry.npmjs.org/gaxios/-/gaxios-8.3.2.tgz',
+          version: '8.3.3',
+          resolved: 'https://registry.npmjs.org/gaxios/-/gaxios-8.3.3.tgz',
           integrity:
-            'sha512-7VsaTExxjbDv2ZK1YuC4jbgfN33NI/6/7zdYWUHB6mcg51v4tCBZe+xzjqPzOpVzI+C5k1Kk9OQ80WVrXAHOqw==',
+            'sha512-zqPbbtW5bAOZ8BRjS7bxj5VG7PBY5PwKRxpku9NplLqAPmYMoXExL1KOdaK5fHvwRETu3bPplLEsFGDdUUlrpw==',
           license: 'Apache-2.0',
           dependencies: {
             extend: '^3.0.2',
@@ -15008,11 +14901,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/google-auth-library': {
-          version: '11.3.3',
+          version: '11.3.4',
           resolved:
-            'https://registry.npmjs.org/google-auth-library/-/google-auth-library-11.3.3.tgz',
+            'https://registry.npmjs.org/google-auth-library/-/google-auth-library-11.3.4.tgz',
           integrity:
-            'sha512-VxjQ5+zHeR4RcRi001qnT/6KRKy2CIjQ5I7/wFErvRqr0+setlRqjDOAzvjzWEzyvsWswZE6WMQJtS8OpeTqAQ==',
+            'sha512-RaYCDoeYIIFTRgH8hesSxqLrmtC2l+DB3cSCS/SN1TPGjI2VpPdJmF3bfRLUn8VvP/4I2Af9fsktw2f9SvVSVg==',
           license: 'Apache-2.0',
           dependencies: {
             'base64-js': '^1.3.0',
@@ -15027,11 +14920,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/google-logging-utils': {
-          version: '2.1.1',
+          version: '2.2.0',
           resolved:
-            'https://registry.npmjs.org/google-logging-utils/-/google-logging-utils-2.1.1.tgz',
+            'https://registry.npmjs.org/google-logging-utils/-/google-logging-utils-2.2.0.tgz',
           integrity:
-            'sha512-jYZOPMaRGS3Hldyudft6bdibW9ZWUKBkMdB2TeSETkV1c2T9TR4zxEWZETHv9xJ8KHr2hgkNLaSa8kcEcwlpeQ==',
+            'sha512-Q6HuSEyoaxi0AgqUrOYb2gc77fDl4QugRoHpreI8VpW/VzPsoKyxjL8tGKLmZpWlvC1uVBXM85tykoQpCGBF5g==',
           license: 'Apache-2.0',
           engines: {
             node: '>=22',
@@ -15093,10 +14986,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/hono': {
-          version: '4.13.16',
-          resolved: 'https://registry.npmjs.org/hono/-/hono-4.13.16.tgz',
+          version: '4.13.22',
+          resolved: 'https://registry.npmjs.org/hono/-/hono-4.13.22.tgz',
           integrity:
-            'sha512-AOLOEhvrV+iH92xXCnFr/5+3KjPKcI3xP63XJtX5spAnkznPdHijlIsUTpi7/9EhWqrTCekw5c5zh1K+YsVw7A==',
+            'sha512-wncKd5/40Pj8grx0RZ2fgNIicFEmVFwIHT5UFLTnphR8I6AQWFf9c2JoM6ZJ9g8y4pMzg3sNlCVNe0m2Yclg0Q==',
           license: 'MIT',
           engines: {
             node: '>=16.9.0',
@@ -15245,10 +15138,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/jose': {
-          version: '6.2.15',
-          resolved: 'https://registry.npmjs.org/jose/-/jose-6.2.15.tgz',
+          version: '6.2.18',
+          resolved: 'https://registry.npmjs.org/jose/-/jose-6.2.18.tgz',
           integrity:
-            'sha512-qdF6ewcZARtef63fJ9AKKZPgxw+t7USH6HLXYcD4CrdmSvDp79rpJSPFEKc90QBeGS63u1KQtN2MZQHC0yDIzA==',
+            'sha512-doV4thUwgkrycJH4yLeqwTGIIZphHl+pk7CPReuMIhYhncmgzdko85MaCG4YQFTxqMFr1/oEH32tZuKKovcDEg==',
           license: 'MIT',
           funding: {
             url: 'https://github.com/sponsors/panva',
@@ -15599,10 +15492,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/node-forge': {
-          version: '1.4.3',
-          resolved: 'https://registry.npmjs.org/node-forge/-/node-forge-1.4.3.tgz',
+          version: '1.4.4',
+          resolved: 'https://registry.npmjs.org/node-forge/-/node-forge-1.4.4.tgz',
           integrity:
-            'sha512-P6wzfh6t70avmV8FrVEAd/36sOPJQ+hkaJVX1Laap9J/77m7M0eyozDvc8SwnDf4P7MP94gwbAAo0rg3YVXT+g==',
+            'sha512-T6VRRpF3+czIGcXW/LOeoD7Ej28d8CF1UMEAbJyJRUtYMvyXAgxUPW2kbUibumvV9LiUQAznJOFyeYclzSJMMg==',
           license: '(BSD-3-Clause OR GPL-2.0)',
           engines: {
             node: '>= 6.13.0',
@@ -15643,10 +15536,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/object-inspect': {
-          version: '1.13.4',
-          resolved: 'https://registry.npmjs.org/object-inspect/-/object-inspect-1.13.4.tgz',
+          version: '1.14.0',
+          resolved: 'https://registry.npmjs.org/object-inspect/-/object-inspect-1.14.0.tgz',
           integrity:
-            'sha512-W67iLl4J2EXEGTbfeHCffrjDfitvLANg0UlX3wFUUSTx92KXRFegMHUVgSqE+wvhAbi4WqjGg9czysTV2Epbew==',
+            'sha512-IVgHNlp/jwQX271+Xzoq9LZNTWXxZK+cEOrGBOBxXNbn7fapnZ+Ts6TVMgNOuAezwG2wdtnMX97tTPK6VEnuOQ==',
           license: 'MIT',
           engines: {
             node: '>= 0.4',
@@ -15757,10 +15650,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/pkce-challenge': {
-          version: '5.0.1',
-          resolved: 'https://registry.npmjs.org/pkce-challenge/-/pkce-challenge-5.0.1.tgz',
+          version: '5.0.2',
+          resolved: 'https://registry.npmjs.org/pkce-challenge/-/pkce-challenge-5.0.2.tgz',
           integrity:
-            'sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==',
+            'sha512-vCc54+qyIfKC5e2UN28AZKElwqjLINgiIV3RKI8pDu93TjaAJoB3QrgMzEBouy8yOKsXVXdAinO1QArJf9x5WA==',
           license: 'MIT',
           engines: {
             node: '>=16.20.0',
@@ -15902,10 +15795,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/router': {
-          version: '2.2.0',
-          resolved: 'https://registry.npmjs.org/router/-/router-2.2.0.tgz',
+          version: '2.3.0',
+          resolved: 'https://registry.npmjs.org/router/-/router-2.3.0.tgz',
           integrity:
-            'sha512-nLTrUKm2UyiL7rlhapu/Zl45FwNgkZGaCpZbIHajDYgwlJCOzLSk+cIPAnsEqV955GjILJnKbdQC1nVPz+gAYQ==',
+            'sha512-bpowRfGjEPe8t9R6fJIzhwmyCGAXwKvxBUsgJm+bJukwdcWmUXbMo7p22w7aYmQBPQTUMNqMV39YX0kMou3z8w==',
           license: 'MIT',
           dependencies: {
             debug: '^4.4.0',
@@ -15916,6 +15809,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
           engines: {
             node: '>= 18',
+          },
+          funding: {
+            type: 'opencollective',
+            url: 'https://opencollective.com/express',
           },
         },
         'node_modules/safe-buffer': {
@@ -16240,13 +16137,13 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/undici': {
-          version: '7.30.2',
-          resolved: 'https://registry.npmjs.org/undici/-/undici-7.30.2.tgz',
+          version: '6.29.1',
+          resolved: 'https://registry.npmjs.org/undici/-/undici-6.29.1.tgz',
           integrity:
-            'sha512-mLyPQnHwUxaM/rideoK/+KL8DaAJLRl4aBCfmX444aCSLnIaomqPLtNRe2jdCYcsk5wZzXrDIQC8ZeYNRAYyIA==',
+            'sha512-EvRlUt/QqAEvXdQeRMYUfwOQsfzpDztykrG2owGEE/rBOBoYv9uF39ZzsNDh4lTFHhTr2XOZjKkYgueD12ZmGA==',
           license: 'MIT',
           engines: {
-            node: '>=20.18.1',
+            node: '>=18.17',
           },
         },
         'node_modules/undici-types': {
@@ -16378,10 +16275,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           license: 'ISC',
         },
         'node_modules/ws': {
-          version: '8.22.1',
-          resolved: 'https://registry.npmjs.org/ws/-/ws-8.22.1.tgz',
+          version: '8.23.0',
+          resolved: 'https://registry.npmjs.org/ws/-/ws-8.23.0.tgz',
           integrity:
-            'sha512-oyL6OPYme/CmiFvNuGzeoxCJ4nOrZE2O1FwM9MWM1AsGri6nLXB2pg+lNA8aLeXMSav0J6eIVS1j6vUPzUtK9g==',
+            'sha512-wCkmX8QMOrKjgO8HW2WyDbTSGeqkocxgDzS9iR79rEAexty6/2qzilx3Ag8Tqf9ykop3irLKle0MtVn5qjVnoQ==',
           license: 'MIT',
           engines: {
             node: '>=10.0.0',
@@ -16438,12 +16335,12 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
       },
     },
   },
-  '@github/copilot@1.0.105': {
+  '@github/copilot@1.0.116': {
     packageJson: {
       name: 'kepcup-agent-github-copilot-cli',
       private: true,
       dependencies: {
-        '@github/copilot': '1.0.105',
+        '@github/copilot': '1.0.116',
       },
     },
     lockfile: {
@@ -16454,14 +16351,14 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
         '': {
           name: 'kepcup-agent-github-copilot-cli',
           dependencies: {
-            '@github/copilot': '1.0.105',
+            '@github/copilot': '1.0.116',
           },
         },
         'node_modules/@github/copilot': {
-          version: '1.0.105',
-          resolved: 'https://registry.npmjs.org/@github/copilot/-/copilot-1.0.105.tgz',
+          version: '1.0.116',
+          resolved: 'https://registry.npmjs.org/@github/copilot/-/copilot-1.0.116.tgz',
           integrity:
-            'sha512-k5JPVZrc0Ms4YdAmYS80OGxDvwjDZNVqDS3dxphIFUVSTFJRwcHkbHh3yUKk7MEyBjKqQYKLKNAKSF+dVmjl7A==',
+            'sha512-p49NeoOAosQItZ5bnGHYT3UCcJG0wDUkSMz/3+dXtK/Mu3GsFhzDdHVF9D8wg4Wu1YQT20IZd9ryo5U8quCrew==',
           license: 'SEE LICENSE IN LICENSE.md',
           dependencies: {
             'detect-libc': '^2.1.2',
@@ -16470,22 +16367,22 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             copilot: 'npm-loader.js',
           },
           optionalDependencies: {
-            '@github/copilot-darwin-arm64': '1.0.105',
-            '@github/copilot-darwin-x64': '1.0.105',
-            '@github/copilot-linux-arm64': '1.0.105',
-            '@github/copilot-linux-x64': '1.0.105',
-            '@github/copilot-linuxmusl-arm64': '1.0.105',
-            '@github/copilot-linuxmusl-x64': '1.0.105',
-            '@github/copilot-win32-arm64': '1.0.105',
-            '@github/copilot-win32-x64': '1.0.105',
+            '@github/copilot-darwin-arm64': '1.0.116',
+            '@github/copilot-darwin-x64': '1.0.116',
+            '@github/copilot-linux-arm64': '1.0.116',
+            '@github/copilot-linux-x64': '1.0.116',
+            '@github/copilot-linuxmusl-arm64': '1.0.116',
+            '@github/copilot-linuxmusl-x64': '1.0.116',
+            '@github/copilot-win32-arm64': '1.0.116',
+            '@github/copilot-win32-x64': '1.0.116',
           },
         },
         'node_modules/@github/copilot-darwin-arm64': {
-          version: '1.0.105',
+          version: '1.0.116',
           resolved:
-            'https://registry.npmjs.org/@github/copilot-darwin-arm64/-/copilot-darwin-arm64-1.0.105.tgz',
+            'https://registry.npmjs.org/@github/copilot-darwin-arm64/-/copilot-darwin-arm64-1.0.116.tgz',
           integrity:
-            'sha512-cB4CplzVs+k5dlK3/ukr8M5yNI2i8O+lpA8dpMrh4znxW2lknOS+5ZfA++b9jOSz0PmRvK47Ruvq/FrjP33bNw==',
+            'sha512-SxbmggEMNjKcFvnFX99bjYybM44Xzx9Dy/d5nCxfRjpOHoBQwkWCHxV52KY9SAmIwQdLBWmMwJn2Q3FsBZW3Vw==',
           cpu: ['arm64'],
           license: 'SEE LICENSE IN LICENSE.md',
           optional: true,
@@ -16495,11 +16392,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@github/copilot-darwin-x64': {
-          version: '1.0.105',
+          version: '1.0.116',
           resolved:
-            'https://registry.npmjs.org/@github/copilot-darwin-x64/-/copilot-darwin-x64-1.0.105.tgz',
+            'https://registry.npmjs.org/@github/copilot-darwin-x64/-/copilot-darwin-x64-1.0.116.tgz',
           integrity:
-            'sha512-DkqgEvvQxoYbvS55xciNGGo6V18K8gltcqXespReXRa4eBxSYeBeDPO3d0GM1GhBIrjpxHmXtTulCP5YQOItaw==',
+            'sha512-L/dGVLaE2ln5mfkAlY7c+VicB9WsNrEkHSGTK8LQ2cpCrujbfBkHW1kQP4pYu034y0f9PAuiOZHgBTVqkS8r1w==',
           cpu: ['x64'],
           license: 'SEE LICENSE IN LICENSE.md',
           optional: true,
@@ -16509,11 +16406,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@github/copilot-linux-arm64': {
-          version: '1.0.105',
+          version: '1.0.116',
           resolved:
-            'https://registry.npmjs.org/@github/copilot-linux-arm64/-/copilot-linux-arm64-1.0.105.tgz',
+            'https://registry.npmjs.org/@github/copilot-linux-arm64/-/copilot-linux-arm64-1.0.116.tgz',
           integrity:
-            'sha512-L7/4Sq1ibeUdD8aE++cubBjr2oWfAFGe0yKjuY5oe0HDZw8QHYAPrZhB2p79Nkg2lIB88REncsf+qWuVVDVPjA==',
+            'sha512-Ngi0nEvNu5p8bJknNyDZN5lt7ECbKmjiRaCx+K0mTnZWkPiv6hVwH0cz9ar9jiyjAqSNQXvs8cs1u/PS2qUZ4w==',
           cpu: ['arm64'],
           libc: ['glibc'],
           license: 'SEE LICENSE IN LICENSE.md',
@@ -16524,11 +16421,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@github/copilot-linux-x64': {
-          version: '1.0.105',
+          version: '1.0.116',
           resolved:
-            'https://registry.npmjs.org/@github/copilot-linux-x64/-/copilot-linux-x64-1.0.105.tgz',
+            'https://registry.npmjs.org/@github/copilot-linux-x64/-/copilot-linux-x64-1.0.116.tgz',
           integrity:
-            'sha512-3trlyisQQAnlNy3CvYVRDVWC/WK+0CfDId7dDwNbxTFJ9IgM3aoCPyg+QbGPBUeuYNs4sjgtTqFn5l5yfyHVDg==',
+            'sha512-h5dg8l+18ntoh/D67b2S44GzaSt6hzhUd0mTire05hTmXBqS8QtsjMewgBL01BTdSHXiGzNhUkST9KsR9wMDEg==',
           cpu: ['x64'],
           libc: ['glibc'],
           license: 'SEE LICENSE IN LICENSE.md',
@@ -16539,11 +16436,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@github/copilot-linuxmusl-arm64': {
-          version: '1.0.105',
+          version: '1.0.116',
           resolved:
-            'https://registry.npmjs.org/@github/copilot-linuxmusl-arm64/-/copilot-linuxmusl-arm64-1.0.105.tgz',
+            'https://registry.npmjs.org/@github/copilot-linuxmusl-arm64/-/copilot-linuxmusl-arm64-1.0.116.tgz',
           integrity:
-            'sha512-p4iMcOLQ/sp0eOwR56/BByuCkfnQUjywAcrMLrOVLDFYjQdxKBfZGP5wGDPqp3J0XF5Gy+rj6VSzQfz7x6B4lQ==',
+            'sha512-RXHiUouzIuURM9S5/CxhteZybd7UW3NdI9P8/GI8kuu6wxikTiwbutOkcV+HNe6T4uiNVeGZTv1zeHIg9gmn1w==',
           cpu: ['arm64'],
           libc: ['musl'],
           license: 'SEE LICENSE IN LICENSE.md',
@@ -16554,11 +16451,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@github/copilot-linuxmusl-x64': {
-          version: '1.0.105',
+          version: '1.0.116',
           resolved:
-            'https://registry.npmjs.org/@github/copilot-linuxmusl-x64/-/copilot-linuxmusl-x64-1.0.105.tgz',
+            'https://registry.npmjs.org/@github/copilot-linuxmusl-x64/-/copilot-linuxmusl-x64-1.0.116.tgz',
           integrity:
-            'sha512-Ie875DDpje0rwtKgT7k0AMlSuetsGO6hZ3Ry/JoyGYJyZx5ZL5QzTOmngDxato8MchcwcBJf38jk1undPEwe0w==',
+            'sha512-IM7xPaWC28m5o73amGkacX5B8hNqpy4Ey1ODo06opx11HsBuXC5y7IVGBHg2QJEhH0De068i1kNqgbnQvokFSg==',
           cpu: ['x64'],
           libc: ['musl'],
           license: 'SEE LICENSE IN LICENSE.md',
@@ -16569,11 +16466,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@github/copilot-win32-arm64': {
-          version: '1.0.105',
+          version: '1.0.116',
           resolved:
-            'https://registry.npmjs.org/@github/copilot-win32-arm64/-/copilot-win32-arm64-1.0.105.tgz',
+            'https://registry.npmjs.org/@github/copilot-win32-arm64/-/copilot-win32-arm64-1.0.116.tgz',
           integrity:
-            'sha512-lfpsYgZLBSqNXnDemKv4g0ofjWBvIlQIJVZjJXEYmLXbP+zZAKJ7L+ebqQlvs/elnxv0naY7a7+gQJ1lMBXNIg==',
+            'sha512-OWfmiQ4R9MRV42/5Pqqc5of4+3YxiBv+2bm6br2T5zkW2t6aT1NkZjxVHKy2hJMOhMVCWpWtOJR7f96bts2ptw==',
           cpu: ['arm64'],
           license: 'SEE LICENSE IN LICENSE.md',
           optional: true,
@@ -16583,11 +16480,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@github/copilot-win32-x64': {
-          version: '1.0.105',
+          version: '1.0.116',
           resolved:
-            'https://registry.npmjs.org/@github/copilot-win32-x64/-/copilot-win32-x64-1.0.105.tgz',
+            'https://registry.npmjs.org/@github/copilot-win32-x64/-/copilot-win32-x64-1.0.116.tgz',
           integrity:
-            'sha512-Yiy3loRnNICCzmyTQLMs5KnVg1sQUTDkP5JBHu+YrFvzyWVtHIr4nfuLScx5e34qtxcuq/YOHHf0gk4fnxlHcg==',
+            'sha512-Vg4nvur+UIP+vGGuxLB5E/Us4JE8BsgvYWWM1wPXEeIfq7KhjChERqHlc379PgvTpC4HlWehqfcC+/R6kCkBRQ==',
           cpu: ['x64'],
           license: 'SEE LICENSE IN LICENSE.md',
           optional: true,
@@ -16609,12 +16506,12 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
       },
     },
   },
-  '@qwen-code/qwen-code@0.26.7': {
+  '@qwen-code/qwen-code@0.28.6': {
     packageJson: {
       name: 'kepcup-agent-qwen-code',
       private: true,
       dependencies: {
-        '@qwen-code/qwen-code': '0.26.7',
+        '@qwen-code/qwen-code': '0.28.6',
       },
     },
     lockfile: {
@@ -16625,7 +16522,7 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
         '': {
           name: 'kepcup-agent-qwen-code',
           dependencies: {
-            '@qwen-code/qwen-code': '0.26.7',
+            '@qwen-code/qwen-code': '0.28.6',
           },
         },
         'node_modules/@emnapi/runtime': {
@@ -16651,11 +16548,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@img/sharp-darwin-arm64': {
-          version: '0.35.4',
+          version: '0.35.5',
           resolved:
-            'https://registry.npmjs.org/@img/sharp-darwin-arm64/-/sharp-darwin-arm64-0.35.4.tgz',
+            'https://registry.npmjs.org/@img/sharp-darwin-arm64/-/sharp-darwin-arm64-0.35.5.tgz',
           integrity:
-            'sha512-Uhfl4V4lhP2nbUVF9+hyH1+luj86f1gUFeo8ALYxFoULoU+G87D43BfeMP8XHsk9boxAnCY/bf2EHwhA7MuGsA==',
+            'sha512-QRUlFQ0WxvdWyqqG/WtI3iupfD5rBzmCHXSdPsY91sAtVtTo7Q4cb6zOccZ3gqEqkr0f1As1ehLqmEpDsRf+lg==',
           cpu: ['arm64'],
           license: 'Apache-2.0',
           optional: true,
@@ -16667,15 +16564,15 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             url: 'https://opencollective.com/libvips',
           },
           optionalDependencies: {
-            '@img/sharp-libvips-darwin-arm64': '1.3.3',
+            '@img/sharp-libvips-darwin-arm64': '1.3.4',
           },
         },
         'node_modules/@img/sharp-darwin-x64': {
-          version: '0.35.4',
+          version: '0.35.5',
           resolved:
-            'https://registry.npmjs.org/@img/sharp-darwin-x64/-/sharp-darwin-x64-0.35.4.tgz',
+            'https://registry.npmjs.org/@img/sharp-darwin-x64/-/sharp-darwin-x64-0.35.5.tgz',
           integrity:
-            'sha512-hWniXY3bG5qKpkKrAwPe4y+VTPmf086YQAnkxWh7uA1YrlRouWGa0M0Mxj3ZjnXFkv7/TD1bTy9lGUK26vRvWw==',
+            'sha512-+BR255RhDlpygUpOc/Jdt1nT6DQ3XG/ERo5wbcdOf5Q320dKtPCKPLR1LJs9VGXRaMa8l1uUa0tkCNOXiAxZUw==',
           cpu: ['x64'],
           license: 'Apache-2.0',
           optional: true,
@@ -16687,20 +16584,20 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             url: 'https://opencollective.com/libvips',
           },
           optionalDependencies: {
-            '@img/sharp-libvips-darwin-x64': '1.3.3',
+            '@img/sharp-libvips-darwin-x64': '1.3.4',
           },
         },
         'node_modules/@img/sharp-freebsd-wasm32': {
-          version: '0.35.4',
+          version: '0.35.5',
           resolved:
-            'https://registry.npmjs.org/@img/sharp-freebsd-wasm32/-/sharp-freebsd-wasm32-0.35.4.tgz',
+            'https://registry.npmjs.org/@img/sharp-freebsd-wasm32/-/sharp-freebsd-wasm32-0.35.5.tgz',
           integrity:
-            'sha512-lIsKw/BU+kjB4eZjxrYrZmwOJYi3Ajrv66iAlBmUPyKc3HpnloevB1g3wxGD9P/5BbQ1brBGl65VRRrCvQDEqA==',
+            'sha512-Y/z91nEZ4uIBX5X3nfTovjU9lHNKFYbL2lpHCLVNmXQK03VIZvXBBt0KxbPGp2SdGSF+2mQU4e+hQaWOt86iAw==',
           license: 'Apache-2.0',
           optional: true,
           os: ['freebsd'],
           dependencies: {
-            '@img/sharp-wasm32': '0.35.4',
+            '@img/sharp-wasm32': '0.35.5',
           },
           engines: {
             node: '>=20.9.0',
@@ -16710,11 +16607,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@img/sharp-libvips-darwin-arm64': {
-          version: '1.3.3',
+          version: '1.3.4',
           resolved:
-            'https://registry.npmjs.org/@img/sharp-libvips-darwin-arm64/-/sharp-libvips-darwin-arm64-1.3.3.tgz',
+            'https://registry.npmjs.org/@img/sharp-libvips-darwin-arm64/-/sharp-libvips-darwin-arm64-1.3.4.tgz',
           integrity:
-            'sha512-suTBPTDGrI9WodccaDdwZItTSaBYASlBk1NSfElSHrUfzu3szG6lvIF58+WiFvnfzuK8ZBFS5zE00PxqxnRiPg==',
+            'sha512-5R89nBYiRdUlSWJxPhO+GVtaXzXSxKnRu/xqMn3KTA3L9EB9Oy/P+Nn2f2vlhPuUdy/Zusb2DarbyTpGCfEDuw==',
           cpu: ['arm64'],
           license: 'LGPL-3.0-or-later',
           optional: true,
@@ -16724,11 +16621,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@img/sharp-libvips-darwin-x64': {
-          version: '1.3.3',
+          version: '1.3.4',
           resolved:
-            'https://registry.npmjs.org/@img/sharp-libvips-darwin-x64/-/sharp-libvips-darwin-x64-1.3.3.tgz',
+            'https://registry.npmjs.org/@img/sharp-libvips-darwin-x64/-/sharp-libvips-darwin-x64-1.3.4.tgz',
           integrity:
-            'sha512-FVJZ5mITMobmXIz/hPDTw0EintTW5H3WfrxwLqEqjiIihlu+hVRyGrFQ60xl0Lxn7Bt3zdpevPaQi0HEzqz9fw==',
+            'sha512-iR2OKH80yi0U+dUplyh3/xdpFvps6YkCwsXenIJxqxR1v9o+xtKTGbS9H7cps+2Vxjc8B1j96p75NmTGjIhtpQ==',
           cpu: ['x64'],
           license: 'LGPL-3.0-or-later',
           optional: true,
@@ -16738,11 +16635,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@img/sharp-libvips-linux-arm': {
-          version: '1.3.3',
+          version: '1.3.4',
           resolved:
-            'https://registry.npmjs.org/@img/sharp-libvips-linux-arm/-/sharp-libvips-linux-arm-1.3.3.tgz',
+            'https://registry.npmjs.org/@img/sharp-libvips-linux-arm/-/sharp-libvips-linux-arm-1.3.4.tgz',
           integrity:
-            'sha512-3rbU4vqXXc3hY/OiXdl52xZvT0F1yEngWfvqudtPJg/KkyiaQw2DRsFrNzpmLvfavbwOq3qXn36GP8obHRULQA==',
+            'sha512-LmRtTsOHuvM2+wlO2Db37dx5MiZhB0FvSunciw48YjdOkZz9KAiRbm8ujeMOA1INqmei5NapFxYEK1D1ZSidmw==',
           cpu: ['arm'],
           libc: ['glibc'],
           license: 'LGPL-3.0-or-later',
@@ -16753,11 +16650,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@img/sharp-libvips-linux-arm64': {
-          version: '1.3.3',
+          version: '1.3.4',
           resolved:
-            'https://registry.npmjs.org/@img/sharp-libvips-linux-arm64/-/sharp-libvips-linux-arm64-1.3.3.tgz',
+            'https://registry.npmjs.org/@img/sharp-libvips-linux-arm64/-/sharp-libvips-linux-arm64-1.3.4.tgz',
           integrity:
-            'sha512-0DaL0A6Xu6sQSQFwe4iVCrKWU2cCTItnRsYsCdxAMm9NF6twAA9BKnoqy4hqz4+azQ0JHuA26qiUKsf1XJ/v5A==',
+            'sha512-Y3dgX/6lE2QhQb+Gxy0WZxfg9MEm/JBjamZpS2IklP7xIQoKN4hzAm7KcMVGtaVDt3neE9OKBC7vAfonA/Lr1A==',
           cpu: ['arm64'],
           libc: ['glibc'],
           license: 'LGPL-3.0-or-later',
@@ -16768,11 +16665,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@img/sharp-libvips-linux-ppc64': {
-          version: '1.3.3',
+          version: '1.3.4',
           resolved:
-            'https://registry.npmjs.org/@img/sharp-libvips-linux-ppc64/-/sharp-libvips-linux-ppc64-1.3.3.tgz',
+            'https://registry.npmjs.org/@img/sharp-libvips-linux-ppc64/-/sharp-libvips-linux-ppc64-1.3.4.tgz',
           integrity:
-            'sha512-cdn1OvUBwsXhbC0zSzJnNzf5MZ/mTrobawDvNXBTxe8VtqKAm0sRuEY2Evzovb/w9JMk4TvRxqt1mekSuJz64w==',
+            'sha512-Le6boB8Tai0Nis+gIxIpKx68UDVVIqdR8Tin5Yf1z2LJJQLDJvCDRqRu+jC2qCoD+eIomonmOwB4smBRxfVpYQ==',
           cpu: ['ppc64'],
           libc: ['glibc'],
           license: 'LGPL-3.0-or-later',
@@ -16783,11 +16680,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@img/sharp-libvips-linux-riscv64': {
-          version: '1.3.3',
+          version: '1.3.4',
           resolved:
-            'https://registry.npmjs.org/@img/sharp-libvips-linux-riscv64/-/sharp-libvips-linux-riscv64-1.3.3.tgz',
+            'https://registry.npmjs.org/@img/sharp-libvips-linux-riscv64/-/sharp-libvips-linux-riscv64-1.3.4.tgz',
           integrity:
-            'sha512-HjPVx7yKz+0lqdhDlTw1tt90wamBoxhiXpvl1XZpJLiHH4RCJ5yDTqH+VlYPv2fwFs89JFw4c1IexYOcQUi4IQ==',
+            'sha512-aHkkIEHPRdQEegJN20MLmGtxYD9R2wQr3Cwpddnu5+YKMt6Uzax7S9h5gpZTo8wyrGuZSlfQ63OevL5mTyOC7Q==',
           cpu: ['riscv64'],
           libc: ['glibc'],
           license: 'LGPL-3.0-or-later',
@@ -16798,11 +16695,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@img/sharp-libvips-linux-s390x': {
-          version: '1.3.3',
+          version: '1.3.4',
           resolved:
-            'https://registry.npmjs.org/@img/sharp-libvips-linux-s390x/-/sharp-libvips-linux-s390x-1.3.3.tgz',
+            'https://registry.npmjs.org/@img/sharp-libvips-linux-s390x/-/sharp-libvips-linux-s390x-1.3.4.tgz',
           integrity:
-            'sha512-neWLh+3yCNThxnfy3c4BbVBeGgt9aftno+XbT56iK28RgeDs3UOFWviLWlUu0bArYVYJaFDK+RRohbicUNCm8Q==',
+            'sha512-ra/mB6MikESDUO7Yg+Mi95bFBb9GsObURuhnOv3OqknjGe9sZrG8tCe9q0xSIGrtLgvgw0gKnFWcK4blSgQOuQ==',
           cpu: ['s390x'],
           libc: ['glibc'],
           license: 'LGPL-3.0-or-later',
@@ -16813,11 +16710,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@img/sharp-libvips-linux-x64': {
-          version: '1.3.3',
+          version: '1.3.4',
           resolved:
-            'https://registry.npmjs.org/@img/sharp-libvips-linux-x64/-/sharp-libvips-linux-x64-1.3.3.tgz',
+            'https://registry.npmjs.org/@img/sharp-libvips-linux-x64/-/sharp-libvips-linux-x64-1.3.4.tgz',
           integrity:
-            'sha512-4vKmvAst9nrowcqquKFAyZJUDolUaIp8uRiN0mWFguJ1IplC9/pitXtlnnlU4aa/eJw3J7i67V+pwUL+wZGdsA==',
+            'sha512-GJ//SSXbnwSDes02umB3nDJLFcQzw8a18V8fyhqr6tV515tOEMdImjjxj1AoafMRz56F3PHgftnj1QEKSU1zkw==',
           cpu: ['x64'],
           libc: ['glibc'],
           license: 'LGPL-3.0-or-later',
@@ -16828,11 +16725,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@img/sharp-libvips-linuxmusl-arm64': {
-          version: '1.3.3',
+          version: '1.3.4',
           resolved:
-            'https://registry.npmjs.org/@img/sharp-libvips-linuxmusl-arm64/-/sharp-libvips-linuxmusl-arm64-1.3.3.tgz',
+            'https://registry.npmjs.org/@img/sharp-libvips-linuxmusl-arm64/-/sharp-libvips-linuxmusl-arm64-1.3.4.tgz',
           integrity:
-            'sha512-Y9kQaLMuNoB0bPYOOdcZMaseNrFpPodIWWMrx+CZyydf2xn68j9WYc6sWWRrDwNkzCQjKYfc68L7jKjGlHMibw==',
+            'sha512-hvulFwtjUcagsis6BBxHwGFwWoNZjgYmULGVrZcyfNbjA8hKILbRxGg15/7w5HDyXHXUos/j6baAWqnCyQ2DWA==',
           cpu: ['arm64'],
           libc: ['musl'],
           license: 'LGPL-3.0-or-later',
@@ -16843,11 +16740,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@img/sharp-libvips-linuxmusl-x64': {
-          version: '1.3.3',
+          version: '1.3.4',
           resolved:
-            'https://registry.npmjs.org/@img/sharp-libvips-linuxmusl-x64/-/sharp-libvips-linuxmusl-x64-1.3.3.tgz',
+            'https://registry.npmjs.org/@img/sharp-libvips-linuxmusl-x64/-/sharp-libvips-linuxmusl-x64-1.3.4.tgz',
           integrity:
-            'sha512-fj8Mv0HHfD1Rr+4I68+3agJynxDWtBFgicTbSOb9Bke6pIwzGcJ+RX/yHjmiEGFMCavY/dxvem7MyNaJF+wDiw==',
+            'sha512-6zXKeE/p39I1AmA3cJG35eyBGNqNddLnUXjhwBnsGjFPWqf5VKkDBEqaEkPDoTEtkxwi2vv8Tcr2mDyP4So7Fg==',
           cpu: ['x64'],
           libc: ['musl'],
           license: 'LGPL-3.0-or-later',
@@ -16858,10 +16755,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@img/sharp-linux-arm': {
-          version: '0.35.4',
-          resolved: 'https://registry.npmjs.org/@img/sharp-linux-arm/-/sharp-linux-arm-0.35.4.tgz',
+          version: '0.35.5',
+          resolved: 'https://registry.npmjs.org/@img/sharp-linux-arm/-/sharp-linux-arm-0.35.5.tgz',
           integrity:
-            'sha512-7OAS8gI0EReKGVN2HssHlM6umJgxF5VI3xN0p9FA91p/YO+ou5hiNghLdZ5BEHztwaaK5+bLKRf8x/o2L2nk9A==',
+            'sha512-LEaXK2WdXVK5ykcw0buWyPMsmLLL2vpHLD6yrNSW+JGEL3BZPA4tpKN6iaMc4AxTTAoaX/sU1rOL51lcIz48ZQ==',
           cpu: ['arm'],
           libc: ['glibc'],
           license: 'Apache-2.0',
@@ -16874,15 +16771,15 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             url: 'https://opencollective.com/libvips',
           },
           optionalDependencies: {
-            '@img/sharp-libvips-linux-arm': '1.3.3',
+            '@img/sharp-libvips-linux-arm': '1.3.4',
           },
         },
         'node_modules/@img/sharp-linux-arm64': {
-          version: '0.35.4',
+          version: '0.35.5',
           resolved:
-            'https://registry.npmjs.org/@img/sharp-linux-arm64/-/sharp-linux-arm64-0.35.4.tgz',
+            'https://registry.npmjs.org/@img/sharp-linux-arm64/-/sharp-linux-arm64-0.35.5.tgz',
           integrity:
-            'sha512-De4jpEnAU8Hd5oT0j1G3uL4ZvTuipVMn7YC6vPaJhy6/7EwEae0SVAoBrUMYQbkLGDm85taVWwuPc1a44LTzCQ==',
+            'sha512-LYVx5JTsOM2CBzmxreh+nl64/3H6Xb09iSLknqH47z2T2DFFxDeFLP5y4dJwe6H7uGQlHPyEEtIqyo3DYsRwdQ==',
           cpu: ['arm64'],
           libc: ['glibc'],
           license: 'Apache-2.0',
@@ -16895,15 +16792,15 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             url: 'https://opencollective.com/libvips',
           },
           optionalDependencies: {
-            '@img/sharp-libvips-linux-arm64': '1.3.3',
+            '@img/sharp-libvips-linux-arm64': '1.3.4',
           },
         },
         'node_modules/@img/sharp-linux-ppc64': {
-          version: '0.35.4',
+          version: '0.35.5',
           resolved:
-            'https://registry.npmjs.org/@img/sharp-linux-ppc64/-/sharp-linux-ppc64-0.35.4.tgz',
+            'https://registry.npmjs.org/@img/sharp-linux-ppc64/-/sharp-linux-ppc64-0.35.5.tgz',
           integrity:
-            'sha512-2oYZJeIl4kCcMGk4ouZVjnkCtFrpQFlNEtJ6GbxzhHQchwH0NH/qEb9ykmOl29dqwMq+JhFdZn+1ak2FKhI9fQ==',
+            'sha512-QVxAAq8evVRI9ia2vqgwrmWucn5Dfv+JdWzj75pD8omHLPSP7f8p20O8jxzjCcuCEQEOtYOZUmX1hkiZ0kdevA==',
           cpu: ['ppc64'],
           libc: ['glibc'],
           license: 'Apache-2.0',
@@ -16916,15 +16813,15 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             url: 'https://opencollective.com/libvips',
           },
           optionalDependencies: {
-            '@img/sharp-libvips-linux-ppc64': '1.3.3',
+            '@img/sharp-libvips-linux-ppc64': '1.3.4',
           },
         },
         'node_modules/@img/sharp-linux-riscv64': {
-          version: '0.35.4',
+          version: '0.35.5',
           resolved:
-            'https://registry.npmjs.org/@img/sharp-linux-riscv64/-/sharp-linux-riscv64-0.35.4.tgz',
+            'https://registry.npmjs.org/@img/sharp-linux-riscv64/-/sharp-linux-riscv64-0.35.5.tgz',
           integrity:
-            'sha512-cPbNChoRURAWdebDIHSenxRpgEdy7JkPydSnUxRm9VvKD7m0/xVaR/8Fzlu81pk5nHEvHH87UZUA7cTtwnbJSA==',
+            'sha512-LtdreXguaavKODPIfzJ4kffx7UNt1omwtK0rch4EBbbSTXPnxWmYSayXdLJw0fJzQ97kHt1gL/yh4tvU+nCyRQ==',
           cpu: ['riscv64'],
           libc: ['glibc'],
           license: 'Apache-2.0',
@@ -16937,15 +16834,15 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             url: 'https://opencollective.com/libvips',
           },
           optionalDependencies: {
-            '@img/sharp-libvips-linux-riscv64': '1.3.3',
+            '@img/sharp-libvips-linux-riscv64': '1.3.4',
           },
         },
         'node_modules/@img/sharp-linux-s390x': {
-          version: '0.35.4',
+          version: '0.35.5',
           resolved:
-            'https://registry.npmjs.org/@img/sharp-linux-s390x/-/sharp-linux-s390x-0.35.4.tgz',
+            'https://registry.npmjs.org/@img/sharp-linux-s390x/-/sharp-linux-s390x-0.35.5.tgz',
           integrity:
-            'sha512-RY0JFY8Fd6RonCBtHz+DvadaPkXDSI1AUn6yWL9TipqkZ1vY8w8evqdgyDFnkm4/K1ve1TvZiaePP5oSd4+WVQ==',
+            'sha512-UZasTOFiYzotTsGOCu42BfUzP6Tu6Do/947iRm1RsLKvlllxwGcn4RN27LibGWceix4Y+Pmw3jsnTcCQIgWjqA==',
           cpu: ['s390x'],
           libc: ['glibc'],
           license: 'Apache-2.0',
@@ -16958,14 +16855,14 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             url: 'https://opencollective.com/libvips',
           },
           optionalDependencies: {
-            '@img/sharp-libvips-linux-s390x': '1.3.3',
+            '@img/sharp-libvips-linux-s390x': '1.3.4',
           },
         },
         'node_modules/@img/sharp-linux-x64': {
-          version: '0.35.4',
-          resolved: 'https://registry.npmjs.org/@img/sharp-linux-x64/-/sharp-linux-x64-0.35.4.tgz',
+          version: '0.35.5',
+          resolved: 'https://registry.npmjs.org/@img/sharp-linux-x64/-/sharp-linux-x64-0.35.5.tgz',
           integrity:
-            'sha512-9qvvEAuk8k89TfWUoX2htWjbAMX8p+NxCppjpcg5k6xMsjhBQPTsoIh36h9Qde4WRuGpJeYnOjdosDn/cnv+OA==',
+            'sha512-SxFtLTeJInhAA9Q836kux2vZNeOBQEx658qvbboZScr0wIARym3IcGmW7KpVD5sbVg0Ojy+udFQdayYIZyoNog==',
           cpu: ['x64'],
           libc: ['glibc'],
           license: 'Apache-2.0',
@@ -16978,15 +16875,15 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             url: 'https://opencollective.com/libvips',
           },
           optionalDependencies: {
-            '@img/sharp-libvips-linux-x64': '1.3.3',
+            '@img/sharp-libvips-linux-x64': '1.3.4',
           },
         },
         'node_modules/@img/sharp-linuxmusl-arm64': {
-          version: '0.35.4',
+          version: '0.35.5',
           resolved:
-            'https://registry.npmjs.org/@img/sharp-linuxmusl-arm64/-/sharp-linuxmusl-arm64-0.35.4.tgz',
+            'https://registry.npmjs.org/@img/sharp-linuxmusl-arm64/-/sharp-linuxmusl-arm64-0.35.5.tgz',
           integrity:
-            'sha512-KB5jxpfWQTr0nc3xdHtWChdbifHrBGsd2SM62Eyxrl8afikm+f5qGBU75SJIZBT/S1MC8XyacdlXBMSWq6OURA==',
+            'sha512-9HbMclmI1zlNkFRs3z9/eBtDjfD0sGlrX1z6b1qwmiFY5ElDLh4BC0LPBdVp7z1DXFiKlIcznf+ZlsuZzLxQqg==',
           cpu: ['arm64'],
           libc: ['musl'],
           license: 'Apache-2.0',
@@ -16999,15 +16896,15 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             url: 'https://opencollective.com/libvips',
           },
           optionalDependencies: {
-            '@img/sharp-libvips-linuxmusl-arm64': '1.3.3',
+            '@img/sharp-libvips-linuxmusl-arm64': '1.3.4',
           },
         },
         'node_modules/@img/sharp-linuxmusl-x64': {
-          version: '0.35.4',
+          version: '0.35.5',
           resolved:
-            'https://registry.npmjs.org/@img/sharp-linuxmusl-x64/-/sharp-linuxmusl-x64-0.35.4.tgz',
+            'https://registry.npmjs.org/@img/sharp-linuxmusl-x64/-/sharp-linuxmusl-x64-0.35.5.tgz',
           integrity:
-            'sha512-f+eZJZIQNEEd26RPSW+76chwOf1XtA2Y/O+5ocVyLliHkeih3e+jhLVBdNTd2rS3IbNXK8+ug93Vf5ZXtF5Lxg==',
+            'sha512-4KOphqB035HrVdqLZfCgMzzERrQkkzOwRhl4OAkRO1YCldbaFjySXMaK534Mo0V+LndnlJk+sbUyLeU0ULyD1A==',
           cpu: ['x64'],
           libc: ['musl'],
           license: 'Apache-2.0',
@@ -17020,14 +16917,14 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             url: 'https://opencollective.com/libvips',
           },
           optionalDependencies: {
-            '@img/sharp-libvips-linuxmusl-x64': '1.3.3',
+            '@img/sharp-libvips-linuxmusl-x64': '1.3.4',
           },
         },
         'node_modules/@img/sharp-wasm32': {
-          version: '0.35.4',
-          resolved: 'https://registry.npmjs.org/@img/sharp-wasm32/-/sharp-wasm32-0.35.4.tgz',
+          version: '0.35.5',
+          resolved: 'https://registry.npmjs.org/@img/sharp-wasm32/-/sharp-wasm32-0.35.5.tgz',
           integrity:
-            'sha512-zQnl4Kwp7Q6NHsENtU2T/00Zi+w3AQNwz3+UaTyVBy2FpXrzXzGjndpK61onhZjRtRpQXxCTeqw19bVyXOh7jA==',
+            'sha512-Ptsga1su4tQx+LLF1ECS9U6nz5kmrXKo6XVbtR48Ke3ZRxxgaWBu7IDtEe1quo8hiupwm6WFqxVlXaSf7IINGQ==',
           license: 'Apache-2.0 AND LGPL-3.0-or-later AND MIT',
           optional: true,
           dependencies: {
@@ -17041,16 +16938,16 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@img/sharp-webcontainers-wasm32': {
-          version: '0.35.4',
+          version: '0.35.5',
           resolved:
-            'https://registry.npmjs.org/@img/sharp-webcontainers-wasm32/-/sharp-webcontainers-wasm32-0.35.4.tgz',
+            'https://registry.npmjs.org/@img/sharp-webcontainers-wasm32/-/sharp-webcontainers-wasm32-0.35.5.tgz',
           integrity:
-            'sha512-ESfNkywmCfPNyaZjxooddJQiQ+l/nTpGEOGthxiLnIHXC/CmcBixnfwUleX9mCz9ovrUUvKMap/pm8RYbzfwaA==',
+            'sha512-hfhF/FmoQyTUkA0bIKFOtw536BQSeBMe6BF6QyWlrPxT754+TFLaZ7sKKTfvvM0yJgKgaYTwnFCIZ/GuDw5SUA==',
           cpu: ['wasm32'],
           license: 'Apache-2.0',
           optional: true,
           dependencies: {
-            '@img/sharp-wasm32': '0.35.4',
+            '@img/sharp-wasm32': '0.35.5',
           },
           engines: {
             node: '>=20.9.0',
@@ -17060,11 +16957,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@img/sharp-win32-arm64': {
-          version: '0.35.4',
+          version: '0.35.5',
           resolved:
-            'https://registry.npmjs.org/@img/sharp-win32-arm64/-/sharp-win32-arm64-0.35.4.tgz',
+            'https://registry.npmjs.org/@img/sharp-win32-arm64/-/sharp-win32-arm64-0.35.5.tgz',
           integrity:
-            'sha512-iNdlBX9gLVvqe2I3uIJSIKTq6wckP/DYxZtcqxm09x5Gi24DnFBmPAWZmr60ZyYMG0xlzo6goG3670ar+RXvRw==',
+            'sha512-X4t7g+7ZA5DKblCBEXGjUqqemj4vczING/5viFwAL8h4N3qYeyjwdCvRLHi4EdOUI+2Z7UFlp1VM+p/AuEtm6Q==',
           cpu: ['arm64'],
           license: 'Apache-2.0 AND LGPL-3.0-or-later',
           optional: true,
@@ -17077,11 +16974,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@img/sharp-win32-ia32': {
-          version: '0.35.4',
+          version: '0.35.5',
           resolved:
-            'https://registry.npmjs.org/@img/sharp-win32-ia32/-/sharp-win32-ia32-0.35.4.tgz',
+            'https://registry.npmjs.org/@img/sharp-win32-ia32/-/sharp-win32-ia32-0.35.5.tgz',
           integrity:
-            'sha512-kqRsbaa5CS6KHlpxnN7WhE6vAAugXyZButpRdvDWetlv6Qv4N9WTcrWzF7tXfB9T7MsoadqdI8hmwLq6UlLvtw==',
+            'sha512-5Zm82LoBc43nhwNybZlG7Y1KO//Zhsn306fQl29ZOuStHLGTo3BWL83q3cznX0poxSAMuYL1On/BHBxkBeKr6A==',
           cpu: ['ia32'],
           license: 'Apache-2.0 AND LGPL-3.0-or-later',
           optional: true,
@@ -17094,10 +16991,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@img/sharp-win32-x64': {
-          version: '0.35.4',
-          resolved: 'https://registry.npmjs.org/@img/sharp-win32-x64/-/sharp-win32-x64-0.35.4.tgz',
+          version: '0.35.5',
+          resolved: 'https://registry.npmjs.org/@img/sharp-win32-x64/-/sharp-win32-x64-0.35.5.tgz',
           integrity:
-            'sha512-XtmnYhBcrORsJ4XJngyzr/EWP0hRZLAZRFaApdKuviyqF78+ylxh2y06ZmtULAMOnObJ3ucpN0AcwSWnMowTRg==',
+            'sha512-x76eH0vEiHlcMQu8Y8IenntaACtddpT6W0wmXtWrnKcnKI7ME5DdgqhAD6SEWOEl1v2zDvkZDhFA9KnURwpfqg==',
           cpu: ['x64'],
           license: 'Apache-2.0 AND LGPL-3.0-or-later',
           optional: true,
@@ -17236,11 +17133,11 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           os: ['linux'],
         },
         'node_modules/@qwen-code/audio-capture': {
-          version: '0.26.7',
+          version: '0.28.6',
           resolved:
-            'https://registry.npmjs.org/@qwen-code/audio-capture/-/audio-capture-0.26.7.tgz',
+            'https://registry.npmjs.org/@qwen-code/audio-capture/-/audio-capture-0.28.6.tgz',
           integrity:
-            'sha512-dvb7gCOaUdeL+z9BP8KlXa5ZCs0gpsV14nOQoeorYC0t23aBU6AZumPwReZqcJtca8dzNLVWmntosihEZIU/Bg==',
+            'sha512-Xbt1M3FjFqc8zQxmSQym3l1Hb3IeKU41MGhGDTW2/PDy0+1imMBit8AMm42kgRtFmLH+zVi6IJ6joTvA3WvZYw==',
           hasInstallScript: true,
           optional: true,
           dependencies: {
@@ -17251,10 +17148,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/@qwen-code/qwen-code': {
-          version: '0.26.7',
-          resolved: 'https://registry.npmjs.org/@qwen-code/qwen-code/-/qwen-code-0.26.7.tgz',
+          version: '0.28.6',
+          resolved: 'https://registry.npmjs.org/@qwen-code/qwen-code/-/qwen-code-0.28.6.tgz',
           integrity:
-            'sha512-sRFWwmakpvF3bWBfG1M/ijoZG5h8Yxs0IC4cXZP3dJLyEbbTHItyhzMySG4o4CzLGFIfofArummQJo/xcggweQ==',
+            'sha512-8gU3SWVZsn7YnDVlvdDv3qPb0bDUxdWfq3eWPLDPNSgqggTbM4eVtckcAdxFKh/JmZKUis76m7YuWQnUvP1cww==',
           bin: {
             qwen: 'cli-entry.js',
           },
@@ -17273,7 +17170,7 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             '@oven/bun-darwin-x64': '1.4.4',
             '@oven/bun-linux-aarch64': '1.4.4',
             '@oven/bun-linux-x64': '1.4.4',
-            '@qwen-code/audio-capture': '0.26.7',
+            '@qwen-code/audio-capture': '0.28.6',
             '@teddyzhu/clipboard': '0.0.5',
             '@teddyzhu/clipboard-darwin-arm64': '0.0.5',
             '@teddyzhu/clipboard-darwin-x64': '0.0.5',
@@ -17281,7 +17178,7 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             '@teddyzhu/clipboard-linux-x64-gnu': '0.0.5',
             '@teddyzhu/clipboard-win32-arm64-msvc': '0.0.5',
             '@teddyzhu/clipboard-win32-x64-msvc': '0.0.5',
-            sharp: '0.35.4',
+            sharp: '0.35.5',
           },
         },
         'node_modules/@teddyzhu/clipboard': {
@@ -17428,10 +17325,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           },
         },
         'node_modules/sharp': {
-          version: '0.35.4',
-          resolved: 'https://registry.npmjs.org/sharp/-/sharp-0.35.4.tgz',
+          version: '0.35.5',
+          resolved: 'https://registry.npmjs.org/sharp/-/sharp-0.35.5.tgz',
           integrity:
-            'sha512-n++8XWcj+jCOr2IOl7h8LbKnGBDY4aPbmprMONBNFdn0ImXqpGVv5zliDs0V9HbmbCQLpbuo2ej9rAoOQTvMDA==',
+            'sha512-Ywn4OnzGukp7CDMrp08RQ50YKmuwG47brZgIVPTvBaaAfQlRlygrRqSrxdCiL9M+LlzLBiJ68IR1QqvzHyjC7g==',
           license: 'Apache-2.0',
           optional: true,
           dependencies: {
@@ -17446,31 +17343,31 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             url: 'https://opencollective.com/libvips',
           },
           optionalDependencies: {
-            '@img/sharp-darwin-arm64': '0.35.4',
-            '@img/sharp-darwin-x64': '0.35.4',
-            '@img/sharp-freebsd-wasm32': '0.35.4',
-            '@img/sharp-libvips-darwin-arm64': '1.3.3',
-            '@img/sharp-libvips-darwin-x64': '1.3.3',
-            '@img/sharp-libvips-linux-arm': '1.3.3',
-            '@img/sharp-libvips-linux-arm64': '1.3.3',
-            '@img/sharp-libvips-linux-ppc64': '1.3.3',
-            '@img/sharp-libvips-linux-riscv64': '1.3.3',
-            '@img/sharp-libvips-linux-s390x': '1.3.3',
-            '@img/sharp-libvips-linux-x64': '1.3.3',
-            '@img/sharp-libvips-linuxmusl-arm64': '1.3.3',
-            '@img/sharp-libvips-linuxmusl-x64': '1.3.3',
-            '@img/sharp-linux-arm': '0.35.4',
-            '@img/sharp-linux-arm64': '0.35.4',
-            '@img/sharp-linux-ppc64': '0.35.4',
-            '@img/sharp-linux-riscv64': '0.35.4',
-            '@img/sharp-linux-s390x': '0.35.4',
-            '@img/sharp-linux-x64': '0.35.4',
-            '@img/sharp-linuxmusl-arm64': '0.35.4',
-            '@img/sharp-linuxmusl-x64': '0.35.4',
-            '@img/sharp-webcontainers-wasm32': '0.35.4',
-            '@img/sharp-win32-arm64': '0.35.4',
-            '@img/sharp-win32-ia32': '0.35.4',
-            '@img/sharp-win32-x64': '0.35.4',
+            '@img/sharp-darwin-arm64': '0.35.5',
+            '@img/sharp-darwin-x64': '0.35.5',
+            '@img/sharp-freebsd-wasm32': '0.35.5',
+            '@img/sharp-libvips-darwin-arm64': '1.3.4',
+            '@img/sharp-libvips-darwin-x64': '1.3.4',
+            '@img/sharp-libvips-linux-arm': '1.3.4',
+            '@img/sharp-libvips-linux-arm64': '1.3.4',
+            '@img/sharp-libvips-linux-ppc64': '1.3.4',
+            '@img/sharp-libvips-linux-riscv64': '1.3.4',
+            '@img/sharp-libvips-linux-s390x': '1.3.4',
+            '@img/sharp-libvips-linux-x64': '1.3.4',
+            '@img/sharp-libvips-linuxmusl-arm64': '1.3.4',
+            '@img/sharp-libvips-linuxmusl-x64': '1.3.4',
+            '@img/sharp-linux-arm': '0.35.5',
+            '@img/sharp-linux-arm64': '0.35.5',
+            '@img/sharp-linux-ppc64': '0.35.5',
+            '@img/sharp-linux-riscv64': '0.35.5',
+            '@img/sharp-linux-s390x': '0.35.5',
+            '@img/sharp-linux-x64': '0.35.5',
+            '@img/sharp-linuxmusl-arm64': '0.35.5',
+            '@img/sharp-linuxmusl-x64': '0.35.5',
+            '@img/sharp-webcontainers-wasm32': '0.35.5',
+            '@img/sharp-win32-arm64': '0.35.5',
+            '@img/sharp-win32-ia32': '0.35.5',
+            '@img/sharp-win32-x64': '0.35.5',
           },
           peerDependenciesMeta: {
             '@types/node': {
@@ -17489,12 +17386,218 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
       },
     },
   },
-  '@xai-official/grok@1.0.77': {
+  '@moonshot-ai/kimi-code@2.8.1': {
+    packageJson: {
+      name: 'kepcup-agent-kimi',
+      private: true,
+      dependencies: {
+        '@moonshot-ai/kimi-code': '2.8.1',
+      },
+    },
+    lockfile: {
+      name: 'kepcup-agent-kimi',
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
+        '': {
+          name: 'kepcup-agent-kimi',
+          dependencies: {
+            '@moonshot-ai/kimi-code': '2.8.1',
+          },
+        },
+        'node_modules/@mariozechner/clipboard': {
+          version: '0.3.9',
+          resolved: 'https://registry.npmjs.org/@mariozechner/clipboard/-/clipboard-0.3.9.tgz',
+          integrity:
+            'sha512-ABnA53mdfkGZwOFUdZNv2S0CWGO/EIuPj8Vv9xmBFmSYg/qFc7ihO6q5FcQjvoE67kZpWkEc4AhD6B/os04yuA==',
+          license: 'MIT',
+          optional: true,
+          engines: {
+            node: '>= 10',
+          },
+          optionalDependencies: {
+            '@mariozechner/clipboard-darwin-arm64': '0.3.9',
+            '@mariozechner/clipboard-darwin-universal': '0.3.9',
+            '@mariozechner/clipboard-darwin-x64': '0.3.9',
+            '@mariozechner/clipboard-linux-arm64-gnu': '0.3.9',
+            '@mariozechner/clipboard-linux-arm64-musl': '0.3.9',
+            '@mariozechner/clipboard-linux-riscv64-gnu': '0.3.9',
+            '@mariozechner/clipboard-linux-x64-gnu': '0.3.9',
+            '@mariozechner/clipboard-linux-x64-musl': '0.3.9',
+            '@mariozechner/clipboard-win32-arm64-msvc': '0.3.9',
+            '@mariozechner/clipboard-win32-x64-msvc': '0.3.9',
+          },
+        },
+        'node_modules/@mariozechner/clipboard-darwin-arm64': {
+          version: '0.3.9',
+          resolved:
+            'https://registry.npmjs.org/@mariozechner/clipboard-darwin-arm64/-/clipboard-darwin-arm64-0.3.9.tgz',
+          integrity:
+            'sha512-BfgV7vCEWZwJwZJw03r6bP5+tf0iI/ANuQYCxi9RNn7FrWB3yzGuMKCrNLRl6V761vXRdL8+OqZ0wd4TqlsNOQ==',
+          cpu: ['arm64'],
+          license: 'MIT',
+          optional: true,
+          os: ['darwin'],
+          engines: {
+            node: '>= 10',
+          },
+        },
+        'node_modules/@mariozechner/clipboard-darwin-universal': {
+          version: '0.3.9',
+          resolved:
+            'https://registry.npmjs.org/@mariozechner/clipboard-darwin-universal/-/clipboard-darwin-universal-0.3.9.tgz',
+          integrity:
+            'sha512-BGGR4iA9Z2shAjI65eI5xtyb3LYNlDW9X3gxKxDbqtbnREohsrqznov6zpKoIrsRWpzlYVEdKphS7ksJ0/ndSQ==',
+          license: 'MIT',
+          optional: true,
+          os: ['darwin'],
+          engines: {
+            node: '>= 10',
+          },
+        },
+        'node_modules/@mariozechner/clipboard-darwin-x64': {
+          version: '0.3.9',
+          resolved:
+            'https://registry.npmjs.org/@mariozechner/clipboard-darwin-x64/-/clipboard-darwin-x64-0.3.9.tgz',
+          integrity:
+            'sha512-4kURmCbS6nt8uYhtmWpUcJWyPHfmAr5dTpXD1nO3pIfa+TSQ9DbrGOYCKH+aEFW47XhQ4Vp8ZTszie+wfFvDKg==',
+          cpu: ['x64'],
+          license: 'MIT',
+          optional: true,
+          os: ['darwin'],
+          engines: {
+            node: '>= 10',
+          },
+        },
+        'node_modules/@mariozechner/clipboard-linux-arm64-gnu': {
+          version: '0.3.9',
+          resolved:
+            'https://registry.npmjs.org/@mariozechner/clipboard-linux-arm64-gnu/-/clipboard-linux-arm64-gnu-0.3.9.tgz',
+          integrity:
+            'sha512-g59OkUGP2DDfCOIKypHeYgv2M55u/cKvXa5dSxFbEJ34XvIQMdcVmpKCkGUro3ZgefXiGVdwguvTMQGpHWzIXw==',
+          cpu: ['arm64'],
+          libc: ['glibc'],
+          license: 'MIT',
+          optional: true,
+          os: ['linux'],
+          engines: {
+            node: '>= 10',
+          },
+        },
+        'node_modules/@mariozechner/clipboard-linux-arm64-musl': {
+          version: '0.3.9',
+          resolved:
+            'https://registry.npmjs.org/@mariozechner/clipboard-linux-arm64-musl/-/clipboard-linux-arm64-musl-0.3.9.tgz',
+          integrity:
+            'sha512-AGuJdgKsmJdm4Pych7kv3sqe591ERRaAHW3xjLooiFzn8J+PxUyof++7YZrB5Y5tpnTO+K18Og3taj2NpluCRQ==',
+          cpu: ['arm64'],
+          libc: ['musl'],
+          license: 'MIT',
+          optional: true,
+          os: ['linux'],
+          engines: {
+            node: '>= 10',
+          },
+        },
+        'node_modules/@mariozechner/clipboard-linux-riscv64-gnu': {
+          version: '0.3.9',
+          resolved:
+            'https://registry.npmjs.org/@mariozechner/clipboard-linux-riscv64-gnu/-/clipboard-linux-riscv64-gnu-0.3.9.tgz',
+          integrity:
+            'sha512-DXBEAiuMpk7dhS1a9NzNxVAFi1vaKoPu7rQNgY8LIDLGrK3lnIp3nT10DUum+PKVJoJppIP+NAA8IZe4DMNDPw==',
+          cpu: ['riscv64'],
+          libc: ['glibc'],
+          license: 'MIT',
+          optional: true,
+          os: ['linux'],
+          engines: {
+            node: '>= 10',
+          },
+        },
+        'node_modules/@mariozechner/clipboard-linux-x64-gnu': {
+          version: '0.3.9',
+          resolved:
+            'https://registry.npmjs.org/@mariozechner/clipboard-linux-x64-gnu/-/clipboard-linux-x64-gnu-0.3.9.tgz',
+          integrity:
+            'sha512-WORrMLd6EpElEME7JRKfSaY34nW1P5LbdgK5YNCS1ncG2LqmITsSMEJ8nh2mpvxb3TxqbOOKgY7k9eMJYlW9Mw==',
+          cpu: ['x64'],
+          libc: ['glibc'],
+          license: 'MIT',
+          optional: true,
+          os: ['linux'],
+          engines: {
+            node: '>= 10',
+          },
+        },
+        'node_modules/@mariozechner/clipboard-linux-x64-musl': {
+          version: '0.3.9',
+          resolved:
+            'https://registry.npmjs.org/@mariozechner/clipboard-linux-x64-musl/-/clipboard-linux-x64-musl-0.3.9.tgz',
+          integrity:
+            'sha512-/DHn+1DrfL6oRaPPWXaOKvonFFrni666fxd+zFqiQEfvBH0tsHVWjq9iqBk0oDp0qaPA72lIMy5BptxISBEhZQ==',
+          cpu: ['x64'],
+          libc: ['musl'],
+          license: 'MIT',
+          optional: true,
+          os: ['linux'],
+          engines: {
+            node: '>= 10',
+          },
+        },
+        'node_modules/@mariozechner/clipboard-win32-arm64-msvc': {
+          version: '0.3.9',
+          resolved:
+            'https://registry.npmjs.org/@mariozechner/clipboard-win32-arm64-msvc/-/clipboard-win32-arm64-msvc-0.3.9.tgz',
+          integrity:
+            'sha512-O5FHD3ErkMwMhNzAfu3ggy0ug4z7btZuoQgwwxlzPrwV2bxlD6WDpqBY4NCgICAgZdDKdp+loUEKVAVt8aYnhQ==',
+          cpu: ['arm64'],
+          license: 'MIT',
+          optional: true,
+          os: ['win32'],
+          engines: {
+            node: '>= 10',
+          },
+        },
+        'node_modules/@mariozechner/clipboard-win32-x64-msvc': {
+          version: '0.3.9',
+          resolved:
+            'https://registry.npmjs.org/@mariozechner/clipboard-win32-x64-msvc/-/clipboard-win32-x64-msvc-0.3.9.tgz',
+          integrity:
+            'sha512-ihQC3EufqEY81vhXBgVBtK4prL+wc62zJsSvxrgz7K1hsdt6OObz6v9p3Rn1OG3GJksTTKMJF0u/guMISHPhSA==',
+          cpu: ['x64'],
+          license: 'MIT',
+          optional: true,
+          os: ['win32'],
+          engines: {
+            node: '>= 10',
+          },
+        },
+        'node_modules/@moonshot-ai/kimi-code': {
+          version: '2.8.1',
+          resolved: 'https://registry.npmjs.org/@moonshot-ai/kimi-code/-/kimi-code-2.8.1.tgz',
+          integrity:
+            'sha512-v64td7IvZp4Kd7LTNDs/KvTT/4QERkLNp2qZpJhYDOyb6ZwQDQgleo3qvTKbAg7nkWZjWx/ZNLhuhe2A+WLZqw==',
+          hasInstallScript: true,
+          license: 'MIT',
+          bin: {
+            kimi: 'dist/main.mjs',
+          },
+          engines: {
+            node: '>=22.19.0',
+          },
+          optionalDependencies: {
+            '@mariozechner/clipboard': '^0.3.9',
+          },
+        },
+      },
+    },
+  },
+  '@xai-official/grok@1.0.92': {
     packageJson: {
       name: 'kepcup-agent-grok-build',
       private: true,
       dependencies: {
-        '@xai-official/grok': '1.0.77',
+        '@xai-official/grok': '1.0.92',
       },
     },
     lockfile: {
@@ -17505,7 +17608,7 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
         '': {
           name: 'kepcup-agent-grok-build',
           dependencies: {
-            '@xai-official/grok': '1.0.77',
+            '@xai-official/grok': '1.0.92',
           },
         },
         'node_modules/@iarna/toml': {
@@ -17516,10 +17619,10 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
           license: 'ISC',
         },
         'node_modules/@xai-official/grok': {
-          version: '1.0.77',
-          resolved: 'https://registry.npmjs.org/@xai-official/grok/-/grok-1.0.77.tgz',
+          version: '1.0.92',
+          resolved: 'https://registry.npmjs.org/@xai-official/grok/-/grok-1.0.92.tgz',
           integrity:
-            'sha512-zNGi+PGXR/cxL3URtxEIHX91Lm06jOb28ra98FWEO9keIJOO83Pr67rpmLtwufp7A51NvMM4Nm0Kh77/9l9rQg==',
+            'sha512-tLFJjet/By28ylFusdhM+KXA5wlWxYBkhptW6sUbnuPicmROj23f57IIeWULK+VlKIA0pARkI4GKfdjwB1ol3w==',
           cpu: ['arm64', 'x64'],
           hasInstallScript: true,
           license: 'Apache-2.0',
@@ -17534,75 +17637,75 @@ export const AGENT_NPX_LOCKFILES: Readonly<Record<string, NpxLockfile>> = {
             node: '>=20',
           },
           optionalDependencies: {
-            '@xai-official/grok-darwin-arm64': '1.0.77',
-            '@xai-official/grok-darwin-x64': '1.0.77',
-            '@xai-official/grok-linux-arm64': '1.0.77',
-            '@xai-official/grok-linux-x64': '1.0.77',
-            '@xai-official/grok-win32-arm64': '1.0.77',
-            '@xai-official/grok-win32-x64': '1.0.77',
+            '@xai-official/grok-darwin-arm64': '1.0.92',
+            '@xai-official/grok-darwin-x64': '1.0.92',
+            '@xai-official/grok-linux-arm64': '1.0.92',
+            '@xai-official/grok-linux-x64': '1.0.92',
+            '@xai-official/grok-win32-arm64': '1.0.92',
+            '@xai-official/grok-win32-x64': '1.0.92',
           },
         },
         'node_modules/@xai-official/grok-darwin-arm64': {
-          version: '1.0.77',
+          version: '1.0.92',
           resolved:
-            'https://registry.npmjs.org/@xai-official/grok-darwin-arm64/-/grok-darwin-arm64-1.0.77.tgz',
+            'https://registry.npmjs.org/@xai-official/grok-darwin-arm64/-/grok-darwin-arm64-1.0.92.tgz',
           integrity:
-            'sha512-84xJbu3gT5CdY1o3uSxRXtcZyoPLdn2KmrkODUHyzB45+DnlpZDzZK33dSM3nlxh6X9NSeqWoqtO4eQnACo0Wg==',
+            'sha512-sWqlpZz9xHMOfRa66iHBDkSG6BjRrEBSqALpVaCvuQZ/s3ZeME3+1YUXi1JLfq9DY5j0po6Yi34cf9791yqygg==',
           cpu: ['arm64'],
           license: 'Apache-2.0',
           optional: true,
           os: ['darwin'],
         },
         'node_modules/@xai-official/grok-darwin-x64': {
-          version: '1.0.77',
+          version: '1.0.92',
           resolved:
-            'https://registry.npmjs.org/@xai-official/grok-darwin-x64/-/grok-darwin-x64-1.0.77.tgz',
+            'https://registry.npmjs.org/@xai-official/grok-darwin-x64/-/grok-darwin-x64-1.0.92.tgz',
           integrity:
-            'sha512-6nipHWpGs7+SOmA7rSBvykPwjL4e2cevlrvFcAD1uXBvVRxvTZoBB6GrwGYFEK8TZaE/jPj0LtaoZ4zNr889Uw==',
+            'sha512-v6kY1zqEcIwI5my2IrrOi49eet2s0rVc7Wb2ygeBIUAUZAO45SZVFfRi8UD/wuk8YTF2EHcnczXp8KoEvmQH5Q==',
           cpu: ['x64'],
           license: 'Apache-2.0',
           optional: true,
           os: ['darwin'],
         },
         'node_modules/@xai-official/grok-linux-arm64': {
-          version: '1.0.77',
+          version: '1.0.92',
           resolved:
-            'https://registry.npmjs.org/@xai-official/grok-linux-arm64/-/grok-linux-arm64-1.0.77.tgz',
+            'https://registry.npmjs.org/@xai-official/grok-linux-arm64/-/grok-linux-arm64-1.0.92.tgz',
           integrity:
-            'sha512-Kb4yKbVEztX07iM7cvKB2L/xiQP1M/kLjJnyRk84gNtr3IG7ahqJp6005uB/VLvw0isv1Cj50zJ9jYTK7NiOqw==',
+            'sha512-46QIUxdE7OP98cVzxEcMOZ8+aFUudQaOi/Wt7btE83xjpnHt2NbOGCNRLteAn5cAvIOJ+xF2hBpYdw8kVzB+Ug==',
           cpu: ['arm64'],
           license: 'Apache-2.0',
           optional: true,
           os: ['linux'],
         },
         'node_modules/@xai-official/grok-linux-x64': {
-          version: '1.0.77',
+          version: '1.0.92',
           resolved:
-            'https://registry.npmjs.org/@xai-official/grok-linux-x64/-/grok-linux-x64-1.0.77.tgz',
+            'https://registry.npmjs.org/@xai-official/grok-linux-x64/-/grok-linux-x64-1.0.92.tgz',
           integrity:
-            'sha512-DuPSEw1NYj/bwLOCK/7LJw83N1rgKc8hEsIg4CggJ9y74yabAOUdamr4lfI+i2cKLPq9h8TQf2KNbyE/zX89yg==',
+            'sha512-qwls1sZya5yZorl7QcSvICMfANANRUSnCHMLJozAGZrmwwXeuBScJEHijNF5sjrDb3o+ivO0u65vtQNeLPesCA==',
           cpu: ['x64'],
           license: 'Apache-2.0',
           optional: true,
           os: ['linux'],
         },
         'node_modules/@xai-official/grok-win32-arm64': {
-          version: '1.0.77',
+          version: '1.0.92',
           resolved:
-            'https://registry.npmjs.org/@xai-official/grok-win32-arm64/-/grok-win32-arm64-1.0.77.tgz',
+            'https://registry.npmjs.org/@xai-official/grok-win32-arm64/-/grok-win32-arm64-1.0.92.tgz',
           integrity:
-            'sha512-eYZZkszz2Ki/EFQPBarVUTQROQAG984yVKzy5fJFo3sbFvhEIYbv3THJgemf5zW0XCgaYbAhx2H6GcpEUWyM3A==',
+            'sha512-B7VpUeXjYLqjooy30v5WuzFlqxvViSrsD70+u2P9atu0Fkys0cvcWzo8qt3UHTm9szMkAaFaC+Ir6rewI/Pukg==',
           cpu: ['arm64'],
           license: 'Apache-2.0',
           optional: true,
           os: ['win32'],
         },
         'node_modules/@xai-official/grok-win32-x64': {
-          version: '1.0.77',
+          version: '1.0.92',
           resolved:
-            'https://registry.npmjs.org/@xai-official/grok-win32-x64/-/grok-win32-x64-1.0.77.tgz',
+            'https://registry.npmjs.org/@xai-official/grok-win32-x64/-/grok-win32-x64-1.0.92.tgz',
           integrity:
-            'sha512-suC0MKHxQ5fQt7bVpAqFl1pdUMS35AOZiecDi+dIUKhYhrB+3cjpyLXUeCnUyS+nqZNyMnHl2dZMZpYM+chKfw==',
+            'sha512-BK+5YW14gMdiMYwJFhJgjgxmkp/R44KFJpzR021Vka1V8xiHx1OJekA+IOmY2GhDLaNg5mibpwmL0BClVILLpg==',
           cpu: ['x64'],
           license: 'Apache-2.0',
           optional: true,

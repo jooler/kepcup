@@ -54,7 +54,7 @@ A Bot's behavior follows how real people work. Think about how you collaborate w
 2. Only after that first round of communication do I start working. On a team I can call on unlimited resources: I just need to provide the right plan and standards, and the executors actually carry out the task.
 3. After that I keep waiting for your next instruction and can take on other tasks. Tasks I have sent out come back with results when they finish, and I then report the outcome back to you.
 
-Throughout this flow I have two responsibilities: 1. communicate with you; 2. produce plans and drive task execution. In KepCup's design, these two responsibilities are implemented as two loops, each calling the LLM. Every incoming message starts a reply loop; task loops start on demand. All loops run independently, powered underneath by a built-in agent (currently Pi Agent) or third-party agents (Claude Code, Codex, OpenCode, Cursor, and others via ACP). Context stays strictly focused and is designed to stay well clear of the context window limits of mainstream models.
+Throughout this flow I have two responsibilities: 1. communicate with you; 2. produce plans and drive task execution. In KepCup's design, these two responsibilities are implemented as two loops, each calling the LLM. Every incoming message starts a reply loop; task loops start on demand. All loops run independently, powered underneath by a built-in agent (currently Pi Agent) or third-party agents (Claude Agent, Codex, OpenCode, Cursor, and others via ACP). Context stays strictly focused and is designed to stay well clear of the context window limits of mainstream models.
 
 ```mermaid
 sequenceDiagram
@@ -143,7 +143,7 @@ The shared message board, project wiki, and the first version of the board are r
 - [x] Browser use
 - [x] Hardware sensor architecture + mic / camera
 - [x] User profile
-- [x] Third-party agents via ACP (Claude Code / Codex / Cursor / OpenCode)
+- [x] Third-party agents via ACP (Claude Agent / Codex / Cursor / OpenCode)
 - [x] Extension Center — skills
 - [x] Extension Center — connections (Notion, Linear, Cloudflare, and more)
 - [x] Extension Center — MCP
@@ -269,11 +269,19 @@ And to the maintainers of our transitive dependencies (ESLint / Prettier / Vites
 
 The products below are **not** npm dependencies. Users can install them locally and connect them to KepCup via ACP as optional peer CLIs (see [docs/design/28-external-agents-acp.md](docs/design/28-external-agents-acp.md)):
 
-- Claude Code  
-- Codex  
-- Cursor  
-- OpenCode  
+- Claude Agent
+- Codex
+- Cursor
+- OpenCode
 - DeepSeek Harness
+- Google Antigravity
+- Cline
+- GitHub Copilot
+- goose
+- Qwen Code
+- Kimi Code
+- Grok Build
+- Devin
 
 ### Optional sandbox enhancements (not npm)
 

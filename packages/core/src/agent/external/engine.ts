@@ -721,7 +721,7 @@ function formatDuration(ms: number): string {
 
 /**
  * Agents treat a prompt whose text starts with `/` as a slash command
- * (OpenCode 1.18.35: all text blocks joined and trimmed, `/name args` → a
+ * (OpenCode 2.4.2: all text blocks joined and trimmed, `/name args` → a
  * user / MCP / skill command, whose template may run `` !`shell` `` without
  * any permission request; claude-agent-acp likewise). KepCup never sends
  * one (第三轮 #7): such a prompt gets a neutral first line.
@@ -1225,7 +1225,7 @@ class ExternalRunHandle implements RunHandle {
     // The agent may read its user config again per session (OpenCode: per
     // instance / directory): checked before every open, reuse included
     // (第三轮 #4).
-    lease.checkConfig?.();
+    lease.checkConfig?.(spec.cwd);
     const serverName = external.hostServerName ?? newHostServerName();
     this.#optionsHash = hashOf({
       cwd: spec.cwd,
@@ -1812,9 +1812,9 @@ class ExternalRunHandle implements RunHandle {
         return;
       }
       if (outcome === 'startedNewTurn' && (this.#control.prompting.get(sessionId) ?? 0) === 0) {
-        // codex-acp 2.1.1 ignores idleBehavior and starts a detached turn when
-        // none is running: stop it — it belongs to no run. Never when a prompt
-        // (this run's follow-up or a later run) is in flight (审查 #6).
+        // Older codex-acp versions ignored idleBehavior and started a detached
+        // turn when none was running; 2.12.1 respects promptRequired. Keep this
+        // defensive cancel, but never cancel a prompt that is actually in flight.
         void lease.connection.cancel(sessionId).catch(() => undefined);
       }
       this.#warn(

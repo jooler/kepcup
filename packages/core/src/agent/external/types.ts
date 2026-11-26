@@ -48,6 +48,21 @@ export interface LaunchContext {
    * H1 / M2），开启时沿用用户自己的。
    */
   loadUserConfig?: boolean;
+  /**
+   * 用户开启了「复用本机登录」（`settings.agents[id].reuseLocalAuth`，进程
+   * 级，2026-11-26 凭据策略修订）：开启时 Provider 不再隔离该 Agent 的登录 /
+   * 配置根（如 Antigravity 不设 `GEMINI_HOME`），Agent 直接沿用本机官方登录
+   * ——凭据解析优先级「本地直读 → OAuth → API key」的第一级。与
+   * `loadUserConfig` 相互独立：多数 Provider 的凭据本就不隔离，此开关只对
+   * 做了整目录隔离的 Provider（Antigravity）生效。
+   */
+  reuseLocalAuth?: boolean;
+  /**
+   * Working directory the provider should scan: the agent process cwd at
+   * launch, then the session cwd for the per-session check. Providers that
+   * read project config scan from here to the git root.
+   */
+  cwd?: string;
 }
 
 /** `AgentProvider.checkConfig` 的输入：与该进程启动时的 LaunchContext 相同（不含命令）。 */
@@ -130,6 +145,14 @@ export interface AgentProviderFeatures {
    * 所有 ACP Agent 的通用行为，与本字段无关。
    */
   parallelSessions: boolean;
+  /**
+   * 该 Provider 默认把 Agent 的登录 / 配置根整目录隔离到 KepCup 私有位置
+   * （如 Antigravity 的 `GEMINI_HOME`）：本机官方登录不会自动沿用，UI 据此
+   * 显示「复用本机登录」开关（`LaunchContext.reuseLocalAuth`，2026-11-26
+   * 凭据策略修订）。缺省 false = 凭据本就直读（Claude / Codex / OpenCode /
+   * Cursor / Kimi / Devin），无需开关。
+   */
+  isolatesLocalAuth?: boolean;
 }
 
 /** 一个已启动的 Agent（子进程或进程内假 Agent / 垫片）。 */
@@ -239,7 +262,7 @@ export interface AgentProvider {
    * 阶段命中时按「无输出崩溃」同一路径做一次透明重试。
    */
   sessionNotFound?(error: unknown): boolean;
-  /** 过滤 / 排序登录方式（如 Antigravity 去掉 oauth-personal）。 */
+  /** 过滤 / 排序登录方式（如 Antigravity 隐藏 gateway / agent-platform）。 */
   authMethods?(advertised: AcpAuthMethod[]): AcpAuthMethod[];
   /** 厂商扩展请求（如 cursor/ask_question）；未登记的一律立即返回「不支持」。 */
   extRequests?: Readonly<
@@ -251,7 +274,7 @@ export interface AgentProvider {
   /**
    * `PromptResponse.usage`（ACP 不稳定字段）的口径（P5）：`session` = 会话
    * 累计（规范字段注释所写，引擎按会话做差）；`turn` = 本次 prompt 的用量
-   * （claude-agent-acp 0.86.0 在 turn 激活时清零累计器；codex-acp 2.1.1 报
+   * （claude-agent-acp 0.113.0 在 turn 激活时清零累计器；codex-acp 2.12.1 报
    * `lastTokenUsage`）。缺省 `session`。
    */
   usageSemantics?: 'turn' | 'session';

@@ -18,7 +18,7 @@ import grokMono from '@lobehub/icons-static-svg/icons/grok.svg?url';
  * 品牌图标取自 `@lobehub/icons-static-svg`（@lobehub/icons 的静态 SVG 包，
  * 随应用打包）：有品牌色的用 `*-color`；只有单色标记的用 mono（`currentColor`
  * 在 `<img>` 里会退化成黑色，暗色主题下不可见），由 `AgentIcon` 以 CSS mask
- * 按前景色渲染，跟随明暗主题。目录里自己的条目（fake / InkCop）仍用
+ * 按前景色渲染，跟随明暗主题。目录里自己的条目（fake）仍用
  * `apps/desktop/resources/agents/*.svg`，按 `icon` 文件名查找；缺图标时
  * 组件回落为名称首字母。
  */

@@ -43,7 +43,6 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "@kepcup/testkit": "workspace:*",
     "@types/mailparser": "3.9.0",
     "sqlite-vec": "0.1.9"
   }

@@ -33,7 +33,7 @@ import { ensureAgentProcessCwd, resolvePaths } from '../../src/infra/paths.js';
 
 /**
  * P5 第一部分独立审查（REQUEST CHANGES）的修复回归：Provider 注册表不变量
- * （safeModes ⊆ 全局禁止表、只有 Cursor 豁免 `agent`）、Cursor 私有配置目录、
+ * （safeModes ⊆ 全局禁止表；Cursor 与 Copilot 豁免 `agent`）、Cursor 私有配置目录、
  * dsh 只带 id 的权限请求由引擎补全（H2）、dsh 错误匹配收窄、安装后 chmod 的
  * 窄化钩子（H3）、Agent 进程私有 cwd（M1）。OpenCode 的配置层覆盖（H1）在
  * agent-providers-p5.test.ts，workdir 配置确认向上到 git 根在
@@ -55,17 +55,19 @@ function tempDir(prefix: string): string {
 }
 
 describe('provider registry invariants (M2)', () => {
-  it('safeModes only exempt names of the global forbidden table; only Cursor exempts `agent`', () => {
+  it('safeModes only exempt names of the global forbidden table; Cursor and Copilot exempt `agent`', () => {
     for (const [id, provider] of Object.entries(PROVIDERS)) {
       for (const mode of provider.safeModes ?? []) {
         expect(FORBIDDEN_AGENT_MODES.has(mode), `${id}:${mode}`).toBe(true);
         expect(provider.forbiddenModes ?? [], `${id}:${mode}`).not.toContain(mode);
       }
     }
-    const exempting = Object.entries(PROVIDERS)
-      .filter(([, provider]) => (provider.safeModes ?? []).length > 0)
-      .map(([id, provider]) => [id, provider.safeModes]);
-    expect(exempting).toEqual([['cursor', ['agent']]]);
+    const exempting = Object.fromEntries(
+      Object.entries(PROVIDERS)
+        .filter(([, provider]) => (provider.safeModes ?? []).length > 0)
+        .map(([id, provider]) => [id, provider.safeModes]),
+    );
+    expect(exempting).toEqual({ cursor: ['agent'], copilot: ['agent'] });
   });
 
   it('Cursor ignores the user CLI config (command allowlist) unless asked to load it', () => {

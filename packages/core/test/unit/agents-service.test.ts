@@ -74,7 +74,7 @@ describe('synthesizeAgentStatus', () => {
 describe('login methods and terminal command rewrite', () => {
   const npxInvocation = {
     command: '/kepcup/toolchains/node/bin/node',
-    prefixArgs: ['/kepcup/toolchains/agents/claude@0.86.0/node_modules/x/dist/index.js'],
+    prefixArgs: ['/kepcup/toolchains/agents/claude@0.112.0/node_modules/x/dist/index.js'],
     args: [],
     env: {},
   };
@@ -114,7 +114,7 @@ describe('login methods and terminal command rewrite', () => {
     ]);
     expect(method?.type).toBe('terminal');
     const binary = {
-      command: '/kepcup/toolchains/agents/opencode@1.18.35/dist/opencode',
+      command: '/kepcup/toolchains/agents/opencode@2.4.2/dist/opencode',
       prefixArgs: [],
       args: ['acp'],
       env: { OPENCODE_DISABLE_AUTOUPDATE: '1' },

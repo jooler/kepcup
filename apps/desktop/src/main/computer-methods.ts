@@ -1,4 +1,3 @@
-import { z } from 'zod';
 import type { COMPUTER_RPC_METHODS, ComputerInvokeMethod } from '@kepcup/shared';
 import {
   computerCapabilitiesOutputSchema,
@@ -9,11 +8,10 @@ import {
   computerStopInputSchema,
   computerStopOutputSchema,
   okOutputSchema,
+  voidInputSchema,
   type RpcMethodSpec,
 } from '@kepcup/shared';
 import type { ComputerHost } from './computer-host';
-
-const voidInput = z.void();
 
 /**
  * Port B server side (D105, docs/design/52 §3)：core 的 computer_* 工具经
@@ -21,7 +19,8 @@ const voidInput = z.void();
  * 审批 / 门控 / 脱敏都在 core（设计 §5——权限判断不在这里）。
  *
  * 返回类型按 shared 的 COMPUTER_RPC_METHODS 注册表键控：漏写或拼错即编译失败。
- * 无参方法的 input 用 z.void()——birpc 零参调用（`rpc.$call(method)`）必须能过。
+ * 无参方法的 input 用 shared 的 voidInputSchema（z.void()）——birpc 零参调用
+ * （`rpc.$call(method)`）必须能过。
  */
 export function computerMethodSpecs(
   host: ComputerHost,
@@ -39,12 +38,12 @@ export function computerMethodSpecs(
         ),
     },
     'computer.capabilities': {
-      input: voidInput,
+      input: voidInputSchema,
       output: computerCapabilitiesOutputSchema,
       handle: () => host.capabilities(),
     },
     'computer.permissionsStatus': {
-      input: voidInput,
+      input: voidInputSchema,
       output: computerPermissionsStatusOutputSchema,
       handle: () => host.permissionsStatus(),
     },

@@ -3,7 +3,7 @@ import type { AgentProvider } from '../types.js';
 import { genericAcpProvider } from './generic-acp.js';
 
 /**
- * Devin（`devin acp` 3000.11.234，D118 新目标）：只覆盖与通用实现的差异。
+ * Devin（`devin acp` 3000.15.14，D118 新目标）：只覆盖与通用实现的差异。
  * 来源：OpenBot 0.62.0 的 DEVIN_ACP_FLAVOR（acp-flavor.ts:231-234，其实跑
  * 观察）——**未真机复核**，接入 spike 须先验证。
  *
@@ -21,7 +21,9 @@ export const devinProvider: AgentProvider = {
     if (candidate.code !== -32016) return false;
     const data = candidate.data as Record<string, unknown> | null | undefined;
     return (
-      data !== null && typeof data === 'object' && data['cognition.ai/errorKind'] === 'session_not_found'
+      data !== null &&
+      typeof data === 'object' &&
+      data['cognition.ai/errorKind'] === 'session_not_found'
     );
   },
   classifyError: (error: AgentErrorInfo) => defaultClassifyError(error),

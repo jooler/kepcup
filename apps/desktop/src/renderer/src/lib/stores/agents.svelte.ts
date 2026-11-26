@@ -21,7 +21,12 @@ function normalizeAgent(payload: AgentView): AgentView {
   const parsed = agentViewSchema.safeParse(payload);
   if (parsed.success) return parsed.data;
   // schema 校验不过（core 送了不认识的字段）：仍补齐可选字段，别让 UI 崩。
-  return { ...payload, defaultModel: payload.defaultModel ?? '' };
+  return {
+    ...payload,
+    isolatesLocalAuth: payload.isolatesLocalAuth ?? false,
+    reuseLocalAuth: payload.reuseLocalAuth ?? false,
+    defaultModel: payload.defaultModel ?? '',
+  };
 }
 
 /**
@@ -161,12 +166,12 @@ class AgentsState {
   }
 
   /**
-   * 高级设置（加载个人配置 / 并发上限）：逐 Agent 交给 core 合并写入——不在
-   * 渲染端拿可能过期的 settings.agents 整表回写。
+   * 高级设置（加载个人配置 / 复用本机登录 / 并发上限）：逐 Agent 交给 core
+   * 合并写入——不在渲染端拿可能过期的 settings.agents 整表回写。
    */
   async configure(
     id: string,
-    patch: { loadUserConfig?: boolean; concurrency?: number; model?: string },
+    patch: { loadUserConfig?: boolean; reuseLocalAuth?: boolean; concurrency?: number; model?: string },
   ): Promise<void> {
     const { agent } = (await core.call('agents.configure', { id, ...patch })) as {
       agent: AgentView;

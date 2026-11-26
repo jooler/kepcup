@@ -965,6 +965,7 @@ export function externalAgentsAdapter(deps: AdapterDeps): ItemAdapter {
         enabled: false,
         source: 'managed' as const,
         loadUserConfig: false,
+        reuseLocalAuth: false,
         model: '',
       };
       const model = str(next.model);

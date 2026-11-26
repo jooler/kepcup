@@ -69,7 +69,7 @@ export const agentDistributionSchema = z.object({
       detect: z.array(z.string()),
       /**
        * 兼容的版本范围（P4 安装器探测时校验；如 `>=1.2.0 <2`、`3.14.x`、
-       * `^0.86.0`），缺省 = 不限。
+       * `^1.2.0`），缺省 = 不限。
        */
       versionRange: z.string().optional(),
     })
@@ -217,13 +217,13 @@ const FAKE_AGENT_ENTRY: AgentCatalogEntry = {
 const CLAUDE_AGENT_ENTRY: AgentCatalogEntry = {
   id: 'claude-acp',
   name: 'Claude Agent',
-  version: '0.86.0',
+  version: '0.113.0',
   description: "ACP wrapper for Anthropic's Claude",
   repository: 'https://github.com/agentclientprotocol/claude-agent-acp',
   authors: ['Anthropic', 'Zed Industries', 'JetBrains'],
   license: 'proprietary',
   icon: 'claude-acp.svg',
-  distribution: { npx: { package: '@agentclientprotocol/claude-agent-acp@0.86.0' } },
+  distribution: { npx: { package: '@agentclientprotocol/claude-agent-acp@0.113.0' } },
   provider: 'claude',
   transport: 'acp',
   tier: 'supported',
@@ -240,18 +240,18 @@ const CLAUDE_AGENT_ENTRY: AgentCatalogEntry = {
 
 /**
  * Codex（design 28 §9.2）：OpenAI 共同维护的 ACP 适配器（内含 `@openai/codex`），
- * npx 分发、精确锁版本（Registry `codex-acp`）；MCP 仅 http。
+ * npx 分发、精确锁版本（Registry `codex-acp`）；MCP 支持 stdio / http / acp。
  */
 const CODEX_AGENT_ENTRY: AgentCatalogEntry = {
   id: 'codex-acp',
   name: 'Codex',
-  version: '2.1.1',
+  version: '2.12.1',
   description: "ACP adapter for OpenAI's coding assistant",
   repository: 'https://github.com/agentclientprotocol/codex-acp',
   authors: ['OpenAI', 'JetBrains s.r.o', 'Zed Industries'],
   license: 'Apache-2.0',
   icon: 'codex-acp.svg',
-  distribution: { npx: { package: '@agentclientprotocol/codex-acp@2.1.1' } },
+  distribution: { npx: { package: '@agentclientprotocol/codex-acp@2.12.1' } },
   provider: 'codex',
   transport: 'acp',
   tier: 'supported',
@@ -276,7 +276,7 @@ const CODEX_AGENT_ENTRY: AgentCatalogEntry = {
 const OPENCODE_AGENT_ENTRY: AgentCatalogEntry = {
   id: 'opencode',
   name: 'OpenCode',
-  version: '1.18.35',
+  version: '2.4.2',
   description: 'The open source coding agent',
   repository: 'https://github.com/anomalyco/opencode',
   website: 'https://opencode.ai',
@@ -287,52 +287,52 @@ const OPENCODE_AGENT_ENTRY: AgentCatalogEntry = {
     binary: {
       'darwin-aarch64': {
         archive:
-          'https://github.com/anomalyco/opencode/releases/download/v1.18.35/opencode-darwin-arm64.zip',
+          'https://github.com/anomalyco/opencode/releases/download/v2.4.2/opencode-darwin-arm64.zip',
         cmd: './opencode',
         args: ['acp'],
-        sha256: '80b05124357a77cd57945bfde36082a028e829c198d222d5e146617f49a2c4b7',
+        sha256: 'd5a8c9fb4b121ebd531d9369d7ba6ce8af91c9d4d51d6685dbb4e0c7224fa5f3',
       },
       'darwin-x86_64': {
         archive:
-          'https://github.com/anomalyco/opencode/releases/download/v1.18.35/opencode-darwin-x64.zip',
+          'https://github.com/anomalyco/opencode/releases/download/v2.4.2/opencode-darwin-x64.zip',
         cmd: './opencode',
         args: ['acp'],
-        sha256: '8127d69e8e94d7adc496e910435f2f73856d87d456e988d3a947f250c95c1be2',
+        sha256: 'ea4204a75602ce4f1d2121c781a15fa3af6d1c4285cf8b6ae81f61a76deca2a2',
       },
       'linux-aarch64': {
         archive:
-          'https://github.com/anomalyco/opencode/releases/download/v1.18.35/opencode-linux-arm64.tar.gz',
+          'https://github.com/anomalyco/opencode/releases/download/v2.4.2/opencode-linux-arm64.tar.gz',
         cmd: './opencode',
         args: ['acp'],
-        sha256: 'f7f2ba59ee8aa94d388f9696575a32d20e71c2ee48def9f80fc693a60fec6c72',
+        sha256: 'bf8d18dde87224629341ff398e76c7c17216b9b406affc728b6c1a5c136abf93',
       },
       'linux-x86_64': {
         archive:
-          'https://github.com/anomalyco/opencode/releases/download/v1.18.35/opencode-linux-x64.tar.gz',
+          'https://github.com/anomalyco/opencode/releases/download/v2.4.2/opencode-linux-x64.tar.gz',
         cmd: './opencode',
         args: ['acp'],
-        sha256: 'c8f888b451f5494a18f858fffb0e0b68f4e4baa9c241761c5f206884f0fa640d',
+        sha256: '452912288f934d1771bd5bd0d8611ba3a6adc3db3ac3333c37facf373770ba66',
       },
       'windows-aarch64': {
         archive:
-          'https://github.com/anomalyco/opencode/releases/download/v1.18.35/opencode-windows-arm64.zip',
+          'https://github.com/anomalyco/opencode/releases/download/v2.4.2/opencode-windows-arm64.zip',
         cmd: './opencode.exe',
         args: ['acp'],
-        sha256: '3c144f54fea5d56afb00174fd3134709803a7bb6ce990963044831b671bd9882',
+        sha256: '0081574c145d60fc6b0079db558ca1b071394b8ccc4549424dec0acb66706942',
       },
       'windows-x86_64': {
         archive:
-          'https://github.com/anomalyco/opencode/releases/download/v1.18.35/opencode-windows-x64.zip',
+          'https://github.com/anomalyco/opencode/releases/download/v2.4.2/opencode-windows-x64.zip',
         cmd: './opencode.exe',
         args: ['acp'],
-        sha256: 'c90d248cca75e42fd15422a29b5f83a1b30c441af83565635d6b2682adc58dd1',
+        sha256: 'a8ab3034ca5b3ec8476e9ee73b1dc334b6d8e93edaaf224b3d2a5205e2cbfb99',
       },
     },
   },
   provider: 'opencode',
   transport: 'acp',
   tier: 'supported',
-  // 原生工具（opencode 1.18.35 内置 webfetch / websearch / read〔图片〕）；待登录实测。
+  // 原生工具（opencode 2.4.2 内置 webfetch / websearch / read〔图片〕）；待登录实测。
   nativeCapabilities: { web: ['webfetch', 'websearch'], vision: ['read'] },
   auth: {
     kinds: ['subscription', 'api-key', 'anonymous'],
@@ -389,15 +389,14 @@ const DSH_AGENT_ENTRY: AgentCatalogEntry = {
 
 /**
  * Cursor（design 28 §9.2）：原生 `cursor-agent acp`，binary 分发
- * （downloads.cursor.com）。Registry 未给 sha256：6 个平台归档均已由导入脚本
- * （`--hash`）下载计算锁定，并与独立下载的 sha256sum 交叉核对一致。认证：
+ * （downloads.cursor.com）。6 个平台归档均锁定官方 `.sha256` sidecar。认证：
  * `cursor_login`（Agent 自行打开浏览器登录）或 `CURSOR_API_KEY`；用量计入 Cursor
  * 套餐额度。
  */
 const CURSOR_AGENT_ENTRY: AgentCatalogEntry = {
   id: 'cursor',
   name: 'Cursor',
-  version: '2026.10.01',
+  version: '2026.11.22',
   description: "Cursor's coding agent",
   website: 'https://cursor.com/docs/cli/acp',
   authors: ['Cursor'],
@@ -407,45 +406,45 @@ const CURSOR_AGENT_ENTRY: AgentCatalogEntry = {
     binary: {
       'darwin-aarch64': {
         archive:
-          'https://downloads.cursor.com/lab/2026.10.01-14929f9/darwin/arm64/agent-cli-package.tar.gz',
+          'https://downloads.cursor.com/lab/2026.11.22-e9042b2/darwin/arm64/agent-cli-package.tar.gz',
         cmd: './dist-package/cursor-agent',
         args: ['acp'],
-        sha256: '778d04e542adc5c8b6760fda3ebe0757f903b1764f2792c232ef9a35e6e2151b',
+        sha256: '92f39e448218897538bd801cdb01d69106ab37a86aaf3dc0e6b55159c79b75e2',
       },
       'darwin-x86_64': {
         archive:
-          'https://downloads.cursor.com/lab/2026.10.01-14929f9/darwin/x64/agent-cli-package.tar.gz',
+          'https://downloads.cursor.com/lab/2026.11.22-e9042b2/darwin/x64/agent-cli-package.tar.gz',
         cmd: './dist-package/cursor-agent',
         args: ['acp'],
-        sha256: '8930008f9902a4d02d3185c0d34071e0536bac3426439b55bcfd48b78765a3dd',
+        sha256: '16cc7314128243b24d74575cae5f7e1a215656d48115d55084e2d6725ef7c542',
       },
       'linux-aarch64': {
         archive:
-          'https://downloads.cursor.com/lab/2026.10.01-14929f9/linux/arm64/agent-cli-package.tar.gz',
+          'https://downloads.cursor.com/lab/2026.11.22-e9042b2/linux/arm64/agent-cli-package.tar.gz',
         cmd: './dist-package/cursor-agent',
         args: ['acp'],
-        sha256: 'c31ef0ba6b827fdf8053919de57abae4a7bd71afefdf2cab061e276faac42b3a',
+        sha256: '7b7dd0020fb9a2a9e1e7e3f39e2f9f512d1dd9577174ecda8aa82ac31dbc9565',
       },
       'linux-x86_64': {
         archive:
-          'https://downloads.cursor.com/lab/2026.10.01-14929f9/linux/x64/agent-cli-package.tar.gz',
+          'https://downloads.cursor.com/lab/2026.11.22-e9042b2/linux/x64/agent-cli-package.tar.gz',
         cmd: './dist-package/cursor-agent',
         args: ['acp'],
-        sha256: 'ba9a855f8f813c91b9f2707127572d2dc9ae5a62818e1c36719625d0fb8bd452',
+        sha256: '7663b1c5d1b56e095ef8e23bef38d66df6cfd665c4873470214e0e411f0f97b3',
       },
       'windows-aarch64': {
         archive:
-          'https://downloads.cursor.com/lab/2026.10.01-14929f9/windows/arm64/agent-cli-package.zip',
+          'https://downloads.cursor.com/lab/2026.11.22-e9042b2/windows/arm64/agent-cli-package.zip',
         cmd: './dist-package\\cursor-agent.cmd',
         args: ['acp'],
-        sha256: 'eda025bf9cc7632e48d290fa52468104916f0db261e2fa44306ad184cd1274c9',
+        sha256: 'e920523e611c8568a9b137e0e156861d5f6a5781a58a782f0025c311b3093d7f',
       },
       'windows-x86_64': {
         archive:
-          'https://downloads.cursor.com/lab/2026.10.01-14929f9/windows/x64/agent-cli-package.zip',
+          'https://downloads.cursor.com/lab/2026.11.22-e9042b2/windows/x64/agent-cli-package.zip',
         cmd: './dist-package\\cursor-agent.cmd',
         args: ['acp'],
-        sha256: '2558ae1ddc155f43791e8eed145afa0366c5ad6a266b0e40c0b5c9490a945a5f',
+        sha256: '4bf0afdadaa41c2cb58508cb50984656a35b9d494fc92944ed1132a8a067086f',
       },
     },
   },
@@ -453,7 +452,7 @@ const CURSOR_AGENT_ENTRY: AgentCatalogEntry = {
   transport: 'acp',
   tier: 'supported',
   // 权限请求里出现的原生 web 工具（web_fetch / web_search，见 cursor-agent
-  // 2026.10.01 的 tool-call 呈现）；确切工具名待登录实测。
+  // 2026.11.22 的 tool-call 呈现）；确切工具名待登录实测。
   nativeCapabilities: { web: ['web_search', 'web_fetch'] },
   auth: {
     kinds: ['subscription', 'api-key'],
@@ -468,16 +467,18 @@ const CURSOR_AGENT_ENTRY: AgentCatalogEntry = {
 
 /**
  * Google Antigravity（design 28 §9.2 / §9.3）：原生 `agy_acp_server`，binary
- * 分发（dl.google.com）。Registry 未给 sha256：6 个平台归档均已下载计算锁定。
+ * 分发（dl.google.com）。6 个平台归档锁定官方 ACP Registry 的 sha256。
  * 条款第 6 条禁止第三方软件经个人 Google 账号（Antigravity OAuth）访问——
- * Provider 只放行 `gemini-api-key` 与 `agent-platform`（Vertex），过滤
- * `oauth-personal` / `oauth-business`，并以私有 `GEMINI_HOME` 隔离用户在其它
- * 客户端里选过的登录方式。`preview` 档。
+ * 2026-11-26 凭据策略修订：应用只提供能力 + 风险提示，由用户自行权衡
+ * （`oauth-personal` 经 UI 二次确认后可触发；`oauth-business` 为 Google 建议
+ * 的合规通道；`gemini-api-key` 不受限）。默认仍以私有 `GEMINI_HOME` 隔离用户
+ * 在其它客户端里选过的登录方式，「复用本机登录」开启后共享本机 `~/.gemini`。
+ * `preview` 档。
  */
 const ANTIGRAVITY_AGENT_ENTRY: AgentCatalogEntry = {
   id: 'antigravity-acp',
   name: 'Google Antigravity',
-  version: '1.3.0',
+  version: '1.5.2',
   description: 'Google’s AI coding agent',
   website: 'https://antigravity.google/docs/ide/extensions',
   authors: ['Google LLC'],
@@ -487,41 +488,41 @@ const ANTIGRAVITY_AGENT_ENTRY: AgentCatalogEntry = {
     binary: {
       'darwin-aarch64': {
         archive:
-          'https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.3.0-darwin-arm64.zip',
+          'https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.5.2-darwin-arm64.zip',
         cmd: './agy_acp_server.par',
-        sha256: '7cd97045f7b4fe81175a107cdf16f9c51484e3c78a5162cae415338bb6aa5b88',
+        sha256: '123a16d5c40a8ac99e20f01a62b68dd860fd96b1c528dfb8eaa37ca8733d4845',
       },
       'darwin-x86_64': {
         archive:
-          'https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.3.0-darwin-x86_64.zip',
+          'https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.5.2-darwin-x86_64.zip',
         cmd: './agy_acp_server.par',
-        sha256: 'bb23956b89984bf5d354af2c3725e6c57f0cc1b7228e77a0e91c9c2bc1d47646',
+        sha256: '92addb5580577b5356d35484d72d1a113d9c5312ad766bcb304983aa8e3fbb06',
       },
       'linux-aarch64': {
         archive:
-          'https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.3.0-linux-arm64.zip',
+          'https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.5.2-linux-arm64.zip',
         cmd: './agy_acp_server.par',
         args: ['--uid='],
-        sha256: '500b0bc0fb858e88f4df404d4cedf80bf9298c178291e39e383d6c50b111cbdf',
+        sha256: 'e729e05ef54ef0763e48900032466b47fa7c9939cde257f93ba49410ab577acb',
       },
       'linux-x86_64': {
         archive:
-          'https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.3.0-linux-x86_64.zip',
+          'https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.5.2-linux-x86_64.zip',
         cmd: './agy_acp_server.par',
         args: ['--uid='],
-        sha256: '9fb60956af0a9d76220a4db91ca9ac88e2a2372ad68f985ab5fceace6b825b96',
+        sha256: '99dd8612450805011619d7b8447ce374c289e00549d8557f36790e1dd6256852',
       },
       'windows-aarch64': {
         archive:
-          'https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.3.0-windows-arm64.zip',
+          'https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.5.2-windows-arm64.zip',
         cmd: './agy_acp_server.exe',
-        sha256: '4a0f469720e9beb9438a979f543fdbfad5022ebe0992c052c590bd78b3144ca3',
+        sha256: '8a4b2ea8df2ffefae33309348752e9119d21a6d36090c0eb48631c2e8f5781ab',
       },
       'windows-x86_64': {
         archive:
-          'https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.3.0-windows-x86_64.zip',
+          'https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.5.2-windows-x86_64.zip',
         cmd: './agy_acp_server.exe',
-        sha256: '65215e0688681fa3116e048a9eab27ef53af1bbd6f3da3f1c52bd4911d8b17f9',
+        sha256: '5cbadd4f4df698572473d8890fc26ec2dc1724501f06e3a963941daec2bd21d6',
       },
     },
   },
@@ -531,8 +532,8 @@ const ANTIGRAVITY_AGENT_ENTRY: AgentCatalogEntry = {
   // 待登录（配 key）后实测原生工具名（web 检索 / 读图）。
   nativeCapabilities: {},
   auth: {
-    kinds: ['api-key'],
-    note: 'Gemini API key（AI Studio）或 Vertex AI（agent-platform）；不支持 Google 个人账号登录',
+    kinds: ['subscription', 'api-key'],
+    note: 'Gemini API key（AI Studio）、Google 账号 OAuth（浏览器授权，条款风险自负）或 Gemini Enterprise；Vertex 暂不可用',
     apiKeyEnv: 'GEMINI_API_KEY',
   },
   // 解压后：linux ≈ 1.06 GB、macOS ≈ 407 MB、Windows ≈ 227 MB（取最大）。
@@ -542,71 +543,38 @@ const ANTIGRAVITY_AGENT_ENTRY: AgentCatalogEntry = {
 };
 
 /**
- * InkCop（design 28 / InkCop ACP 规划 §10）：本机已装 `inkcop-acp` stdio 适配器，
- * 经通用 ACP Provider 附着已运行的 InkCop 主对话。密钥与登录态只在 InkCop 应用内
- * （桥开关：InkCop「设置 → 服务 → ACP 智能体」）；发行门禁 `inkcop` 预览期不放行。
- */
-const INKCOP_AGENT_ENTRY: AgentCatalogEntry = {
-  id: 'inkcop',
-  name: 'InkCop',
-  version: '0.1.0',
-  description: 'InkCop 主对话（写作），经 ACP 暴露给 KepCup 任务引擎',
-  authors: ['InkCop'],
-  license: 'proprietary',
-  icon: 'inkcop.svg',
-  distribution: {
-    system: {
-      cmd: 'inkcop-acp',
-      detect: ['--version'],
-      versionRange: '>=0.1.0',
-    },
-  },
-  provider: 'generic-acp',
-  transport: 'acp',
-  tier: 'preview',
-  // P0 工具默认关；P1 只读工具名再核对后填入。
-  nativeCapabilities: {},
-  auth: {
-    kinds: ['anonymous'],
-    note: '请先启动并登录 InkCop，并在 InkCop「设置 → 服务 → ACP 智能体」开启桥；密钥不经 KepCup 注入',
-  },
-  terms: { noticeKey: 'agents.terms.inkcop' },
-  releaseGate: 'inkcop',
-};
-
-
-
-/**
- * Cline（D118 新目标，Registry `cline` 3.0.74）：`cline --acp`，npx 分发、精确
+ * Cline（D118 新目标，官方 stable `cline` 3.0.76）：`cline --acp`，npx 分发、精确
  * 锁版本。认证：Cline 账号（ACP authenticate method `cline`，Agent 自行开浏览器
- * ——OpenBot 实跑）或设备码；也接受各家 API key。差异（权限 optionId、原生
- * 工具、错误形态）待真机 spike 后再决定是否需要专属 Provider。
+ * ——OpenBot 实跑）或设备码；也接受各家 API key。专属 Provider 固定 plan / act、
+ * 一次性权限、私有 `CLINE_DIR`，并扫描无法隔离的个人 Hooks / Plugins / Skills。
  */
 const CLINE_AGENT_ENTRY: AgentCatalogEntry = {
   id: 'cline',
   name: 'Cline',
-  version: '3.0.74',
-  description: 'Autonomous coding agent CLI - capable of creating/editing files, running commands, using the browser, and more',
+  version: '3.0.76',
+  description:
+    'Autonomous coding agent CLI - capable of creating/editing files, running commands, using the browser, and more',
   repository: 'https://github.com/cline/cline',
   website: 'https://cline.bot/cli',
   authors: ['Cline Bot Inc.'],
   license: 'Apache-2.0',
   icon: 'cline.svg',
-  distribution: { npx: { package: 'cline@3.0.74', args: ['--acp'] } },
-  provider: 'generic-acp',
+  distribution: { npx: { package: 'cline@3.0.76', args: ['--acp'] } },
+  provider: 'cline',
   transport: 'acp',
   tier: 'preview',
   nativeCapabilities: {},
   auth: {
     kinds: ['subscription', 'api-key'],
     note: 'Cline 账号（官方登录）或各家 API key；用量计入 Cline / 对应厂商',
+    apiKeyEnv: 'CLINE_API_KEY',
   },
   terms: { noticeKey: 'agents.terms.cline' },
   releaseGate: 'cline',
 };
 
 /**
- * GitHub Copilot（D118 新目标，Registry `github-copilot-cli` 1.0.105）：
+ * GitHub Copilot（D118 新目标，官方 stable `github-copilot-cli` 1.0.116）：
  * `copilot --acp`，npx 分发（`@github/copilot`）。认证：Copilot 订阅（`copilot
  * login`，浏览器或设备码）；登出走 ACP `logout` 方法（OpenBot 实跑）。差异待
  * 真机 spike。
@@ -614,15 +582,17 @@ const CLINE_AGENT_ENTRY: AgentCatalogEntry = {
 const COPILOT_AGENT_ENTRY: AgentCatalogEntry = {
   id: 'github-copilot-cli',
   name: 'GitHub Copilot',
-  version: '1.0.105',
+  version: '1.0.116',
   description: "GitHub's AI pair programmer",
   repository: 'https://github.com/github/copilot-cli',
   website: 'https://github.com/features/copilot/cli/',
   authors: ['GitHub'],
   license: 'proprietary',
   icon: 'github-copilot-cli.svg',
-  distribution: { npx: { package: '@github/copilot@1.0.105', args: ['--acp'] } },
-  provider: 'generic-acp',
+  distribution: {
+    npx: { package: '@github/copilot@1.0.116', args: ['--acp', '--no-auto-update'] },
+  },
+  provider: 'copilot',
   transport: 'acp',
   tier: 'preview',
   nativeCapabilities: {},
@@ -635,80 +605,74 @@ const COPILOT_AGENT_ENTRY: AgentCatalogEntry = {
 };
 
 /**
- * goose（D118 新目标，Registry `goose` 1.57.0，Block 开源）：`goose acp`，binary
- * 分发（Registry 自带 sha256；无 windows-aarch64 归档）。认证：goose 配置内的
- * 各家 provider key（goose 自管，不经 KepCup 注入）。差异待真机 spike。
+ * goose（D118 新目标，官方 stable `goose` 1.61.1，AAIF 开源）：直接运行官方
+ * lean `goose-acp` binary（无子命令；无 windows-aarch64 归档）。认证：goose
+ * 配置内的各家 provider key（goose 自管，不经 KepCup 注入）。差异待真机 spike。
  */
 const GOOSE_AGENT_ENTRY: AgentCatalogEntry = {
   id: 'goose',
   name: 'goose',
-  version: '1.57.0',
+  version: '1.61.1',
   description: 'A local, extensible, open source AI agent that automates engineering tasks',
-  repository: 'https://github.com/block/goose',
-  website: 'https://block.github.io/goose/',
-  authors: ['Block'],
+  repository: 'https://github.com/aaif-goose/goose',
+  website: 'https://goose-docs.ai/',
+  authors: ['AAIF'],
   license: 'Apache-2.0',
   icon: 'goose.svg',
   distribution: {
     binary: {
       'darwin-aarch64': {
         archive:
-          'https://github.com/block/goose/releases/download/v1.57.0/goose-aarch64-apple-darwin.tar.bz2',
-        cmd: './goose',
-        args: ['acp'],
-        sha256: '2fbafa227ab28654c47065f1c9ebcd12f527f017e30c08e618bc6fcf363d7935',
+          'https://github.com/aaif-goose/goose/releases/download/v1.61.1/goose-acp-aarch64-apple-darwin.tar.gz',
+        cmd: './goose-acp',
+        sha256: 'b1feb9d08907dc49786b9b0b11bd54f92bbc456dc4b795e694e685013382385b',
       },
       'darwin-x86_64': {
         archive:
-          'https://github.com/block/goose/releases/download/v1.57.0/goose-x86_64-apple-darwin.tar.bz2',
-        cmd: './goose',
-        args: ['acp'],
-        sha256: 'e48fe024891a4c272a89c74b9ae843d76a73229643c917b785b0680fef9c647a',
+          'https://github.com/aaif-goose/goose/releases/download/v1.61.1/goose-acp-x86_64-apple-darwin.tar.gz',
+        cmd: './goose-acp',
+        sha256: '2df980ec9c7a5149d3e6cb0617821f519f089c6c34f813c236c61d77bac552e8',
       },
       'linux-aarch64': {
         archive:
-          'https://github.com/block/goose/releases/download/v1.57.0/goose-aarch64-unknown-linux-gnu.tar.bz2',
-        cmd: './goose',
-        args: ['acp'],
-        sha256: '17c6b090db6acc5605da904bbe19cc2765bc7a6786019d85a6d0a361de06dbf7',
+          'https://github.com/aaif-goose/goose/releases/download/v1.61.1/goose-acp-aarch64-unknown-linux-gnu.tar.gz',
+        cmd: './goose-acp',
+        sha256: 'a7a9bd1da54420872aae2897299a55b98eaef6128d962ccf7029f0101e815c49',
       },
       'linux-x86_64': {
         archive:
-          'https://github.com/block/goose/releases/download/v1.57.0/goose-x86_64-unknown-linux-gnu.tar.bz2',
-        cmd: './goose',
-        args: ['acp'],
-        sha256: 'e54036f3b7f95d3b0d7854c09465af5ef52a28c7fa03d2497d0ea68a6382282d',
+          'https://github.com/aaif-goose/goose/releases/download/v1.61.1/goose-acp-x86_64-unknown-linux-gnu.tar.gz',
+        cmd: './goose-acp',
+        sha256: '515706537cfa1fa38a0744bea004528a37d37f98c9da363cea6e13136e267fb4',
       },
       'windows-x86_64': {
         archive:
-          'https://github.com/block/goose/releases/download/v1.57.0/goose-x86_64-pc-windows-msvc.zip',
-        cmd: './goose-package\\goose.exe',
-        args: ['acp'],
-        sha256: '1ab2117ceec37f95be4d3ad0cdb921d3e97fd8b0fa244046631ecf4b7619d502',
+          'https://github.com/aaif-goose/goose/releases/download/v1.61.1/goose-acp-x86_64-pc-windows-msvc.zip',
+        cmd: './goose-acp.exe',
+        sha256: 'b1d4f1085e1dbd1e6b32ff35aa8abb27cd89cfd858e02c171573b2bcf4988ce8',
       },
     },
   },
-  provider: 'generic-acp',
+  provider: 'goose',
   transport: 'acp',
   tier: 'preview',
   nativeCapabilities: {},
   auth: {
     kinds: ['api-key'],
-    note: 'goose 配置内的各家 provider key（在 goose 自己的配置里登录，不经 KepCup）',
+    note: 'goose 配置内的各家 provider key（在 goose 自己的配置里登录；需开启「加载我的个人配置」才能复用已有 key）',
   },
   terms: { noticeKey: 'agents.terms.goose' },
   releaseGate: 'goose',
 };
 
 /**
- * Qwen Code（D118 新目标，Registry `qwen-code` 0.26.7，Alibaba）：`qwen --acp
- * --experimental-skills`，npx 分发。认证：Qwen OAuth（免费档）或各家 API key。
- * 差异待真机 spike。
+ * Qwen Code（D118 新目标，官方 stable `qwen-code` 0.28.6，Alibaba）：`qwen --acp`，
+ * npx 分发。认证：ACP `openai` API key（`OPENAI_API_KEY`）。差异待真机 spike。
  */
 const QWEN_CODE_AGENT_ENTRY: AgentCatalogEntry = {
   id: 'qwen-code',
   name: 'Qwen Code',
-  version: '0.26.7',
+  version: '0.28.6',
   description: "Alibaba's Qwen coding assistant",
   repository: 'https://github.com/QwenLM/qwen-code',
   website: 'https://qwenlm.github.io/qwen-code-docs/en/users/overview',
@@ -717,126 +681,90 @@ const QWEN_CODE_AGENT_ENTRY: AgentCatalogEntry = {
   icon: 'qwen-code.svg',
   distribution: {
     npx: {
-      package: '@qwen-code/qwen-code@0.26.7',
-      args: ['--acp', '--experimental-skills'],
+      package: '@qwen-code/qwen-code@0.28.6',
+      args: ['--acp'],
     },
   },
-  provider: 'generic-acp',
+  provider: 'qwen',
   transport: 'acp',
   tier: 'preview',
   nativeCapabilities: {},
   auth: {
-    kinds: ['subscription', 'api-key'],
-    note: 'Qwen OAuth（免费额度）或各家 API key（qwen 官方登录）',
+    kinds: ['api-key'],
+    note: 'Qwen Code ACP 的 openai API key（OPENAI_API_KEY）',
+    apiKeyEnv: 'OPENAI_API_KEY',
   },
   terms: { noticeKey: 'agents.terms.qwen-code' },
   releaseGate: 'qwen-code',
 };
 
 /**
- * Kimi CLI（D118 新目标，Registry `kimi` 1.52.0，Moonshot AI）：`kimi acp`，
- * binary 分发（Registry 自带 sha256；**无 darwin-x86_64 归档**——Intel Mac 不可
- * 用，设置卡文案披露）。认证：Kimi 会员 / API key（`kimi login`）。专属
- * Provider 只带 `sessionNotFound`（OpenBot 观察到的 `-32602 + data.session_id`，
- * 未真机复核）；其余差异待 spike。
+ * Kimi Code（D118 新目标，官方 stable `kimi-code` 2.8.1，Moonshot AI）：
+ * `kimi acp`，npx 分发。Kimi CLI Legacy 1.52.0 已归档且 `kimi acp` 只打印弃用
+ * 提示后退出，因此迁移到官方继任实现。认证：Kimi Code OAuth / Kimi Platform
+ * API key（`kimi login`；ACP terminal auth 执行 `kimi acp --login`）。专属
+ * Provider 覆盖 modes、权限 option、
+ * 私有 `KIMI_CODE_HOME` 与会话丢失形态。
  */
 const KIMI_AGENT_ENTRY: AgentCatalogEntry = {
   id: 'kimi',
-  name: 'Kimi CLI',
-  version: '1.52.0',
+  name: 'Kimi Code',
+  version: '2.8.1',
   description: "Moonshot AI's coding assistant",
-  repository: 'https://github.com/MoonshotAI/kimi-cli',
-  website: 'https://moonshotai.github.io/kimi-cli/',
+  repository: 'https://github.com/MoonshotAI/kimi-code',
+  website: 'https://moonshotai.github.io/kimi-code/',
   authors: ['Moonshot AI'],
   license: 'MIT',
   icon: 'kimi.svg',
-  distribution: {
-    binary: {
-      'darwin-aarch64': {
-        archive:
-          'https://github.com/MoonshotAI/kimi-cli/releases/download/1.52.0/kimi-1.52.0-aarch64-apple-darwin.tar.gz',
-        cmd: './kimi',
-        args: ['acp'],
-        sha256: '43fe091f70bbf8860974200f9021a05689a020857cc9926d56f1505f0d0d5cb8',
-      },
-      'linux-aarch64': {
-        archive:
-          'https://github.com/MoonshotAI/kimi-cli/releases/download/1.52.0/kimi-1.52.0-aarch64-unknown-linux-gnu.tar.gz',
-        cmd: './kimi',
-        args: ['acp'],
-        sha256: '9e06eea96273600aed485b1f0bedda95b7084db4f22cf28614fe20138933507a',
-      },
-      'linux-x86_64': {
-        archive:
-          'https://github.com/MoonshotAI/kimi-cli/releases/download/1.52.0/kimi-1.52.0-x86_64-unknown-linux-gnu.tar.gz',
-        cmd: './kimi',
-        args: ['acp'],
-        sha256: 'a676204f7804ed5dae87652a9d66f578e0718d5026c9cb1bfa32b9a5eace4208',
-      },
-      'windows-aarch64': {
-        archive:
-          'https://github.com/MoonshotAI/kimi-cli/releases/download/1.52.0/kimi-1.52.0-aarch64-pc-windows-msvc.zip',
-        cmd: './kimi.exe',
-        args: ['acp'],
-        sha256: '7c77cd413e7a3a59416c171a45ee4ff50534869b331469138aad84b9e3acb6c0',
-      },
-      'windows-x86_64': {
-        archive:
-          'https://github.com/MoonshotAI/kimi-cli/releases/download/1.52.0/kimi-1.52.0-x86_64-pc-windows-msvc.zip',
-        cmd: './kimi.exe',
-        args: ['acp'],
-        sha256: '2c269e15e152b9f28ac1556795280f90a2c9860ff44c60c628c3fce4dd4c58a7',
-      },
-    },
-  },
+  distribution: { npx: { package: '@moonshot-ai/kimi-code@2.8.1', args: ['acp'] } },
   provider: 'kimi',
   transport: 'acp',
   tier: 'preview',
   nativeCapabilities: {},
   auth: {
     kinds: ['subscription', 'api-key'],
-    note: 'Kimi 会员或 Moonshot API key（`kimi login` 官方登录）；Intel Mac 暂不提供官方构建',
+    note: 'Kimi Code OAuth 或 Kimi Platform API key（`kimi login`；ACP terminal auth 用 `kimi acp --login`）',
   },
   terms: { noticeKey: 'agents.terms.kimi' },
   releaseGate: 'kimi',
 };
 
 /**
- * Grok Build（D118 新目标，Registry `grok-build` 1.0.77，xAI）：
+ * Grok Build（D118 新目标，官方 stable `grok-build` 1.0.92，xAI）：
  * `grok --no-auto-update agent stdio`，npx 分发（`@xai-official/grok`）。
- * `--no-auto-update` 取自 OpenBot 的实跑参数（宿主不允许 Agent 自我升级），
- * spike 复核。认证：grok.com 登录（OAuth / 设备码）或 xAI API key。
+ * 认证：grok.com 登录（OAuth / 设备码）或 xAI API key。
  */
 const GROK_BUILD_AGENT_ENTRY: AgentCatalogEntry = {
   id: 'grok-build',
   name: 'Grok Build',
-  version: '1.0.77',
+  version: '1.0.92',
   description: "xAI's coding agent and CLI",
   website: 'https://x.ai/cli',
   authors: ['xAI'],
-  license: 'proprietary',
+  license: 'Apache-2.0',
   icon: 'grok-build.svg',
   distribution: {
     npx: {
-      package: '@xai-official/grok@1.0.77',
+      package: '@xai-official/grok@1.0.92',
       args: ['--no-auto-update', 'agent', 'stdio'],
     },
   },
-  provider: 'generic-acp',
+  provider: 'grok',
   transport: 'acp',
   tier: 'preview',
   nativeCapabilities: {},
   auth: {
     kinds: ['subscription', 'api-key'],
     note: 'grok.com 账号（官方登录，计入 xAI 套餐额度）或 xAI API key',
+    apiKeyEnv: 'XAI_API_KEY',
   },
   terms: { noticeKey: 'agents.terms.grok-build' },
   releaseGate: 'grok-build',
 };
 
 /**
- * Devin（D118 新目标，Registry `devin` 3000.11.234，Cognition）：`devin acp`，
- * binary 分发（Registry 无 sha256 → 导入脚本 `--hash` 下载计算并锁定）。
+ * Devin（D118 新目标，官方 stable `devin` 3000.15.14，Cognition）：`devin acp`，
+ * binary 分发（6 平台 sha256 锁定官方 versioned manifest）。
  * 认证：Devin 账号（ACP authenticate method `devin-browser`）。专属 Provider
  * 只带 `sessionNotFound`（OpenBot 观察到的 `-32016 + cognition.ai/errorKind:
  * session_not_found`，未真机复核）；其余差异待 spike。
@@ -844,7 +772,7 @@ const GROK_BUILD_AGENT_ENTRY: AgentCatalogEntry = {
 const DEVIN_AGENT_ENTRY: AgentCatalogEntry = {
   id: 'devin',
   name: 'Devin',
-  version: '3000.11.234',
+  version: '3000.15.14',
   description: 'Devin CLI coding agent by Cognition',
   website: 'https://docs.devin.ai/cli',
   repository: 'https://github.com/CognitionAI/devin-cli',
@@ -854,40 +782,44 @@ const DEVIN_AGENT_ENTRY: AgentCatalogEntry = {
   distribution: {
     binary: {
       'darwin-aarch64': {
-        archive: 'https://static.devin.ai/cli/3000.11.234/devin-3000.11.234-aarch64-apple-darwin.tar.gz',
+        archive:
+          'https://static.devin.ai/cli/3000.15.14/devin-3000.15.14-aarch64-apple-darwin.tar.gz',
         cmd: './bin/devin',
         args: ['acp'],
-        sha256: '35f17a21e53a49435e42fb9627731726aa8ef7fa63e5c3d9d43d0cc5ca43edaf',
+        sha256: '23911fdf9b5c45ebefa382e57ff1996e762c2b30a2fe1f4b536fa633e2fcbd1f',
       },
       'darwin-x86_64': {
-        archive: 'https://static.devin.ai/cli/3000.11.234/devin-3000.11.234-x86_64-apple-darwin.tar.gz',
+        archive:
+          'https://static.devin.ai/cli/3000.15.14/devin-3000.15.14-x86_64-apple-darwin.tar.gz',
         cmd: './bin/devin',
         args: ['acp'],
-        sha256: '55ef4f2d2b2c82b5258b7516eb1126549e6f10d6b418035676237bcc18e93e46',
+        sha256: '5f9197bac49d90c1c213a9405326588503d7813942f347cdcc4a21bdab6b5189',
       },
       'linux-aarch64': {
-        archive: 'https://static.devin.ai/cli/3000.11.234/devin-3000.11.234-aarch64-unknown-linux.tar.gz',
+        archive:
+          'https://static.devin.ai/cli/3000.15.14/devin-3000.15.14-aarch64-unknown-linux.tar.gz',
         cmd: './bin/devin',
         args: ['acp'],
-        sha256: '438ca7f8280b3ef0747afc406e827d9e182156000277a1660358ac4fbd04156e',
+        sha256: '66a84d89ffff16bb0c4acdd8597102d752b3f4bf4ab53ff249637ac6ec698f87',
       },
       'linux-x86_64': {
-        archive: 'https://static.devin.ai/cli/3000.11.234/devin-3000.11.234-x86_64-unknown-linux.tar.gz',
+        archive:
+          'https://static.devin.ai/cli/3000.15.14/devin-3000.15.14-x86_64-unknown-linux.tar.gz',
         cmd: './bin/devin',
         args: ['acp'],
-        sha256: '201370cddd2924294e3ca6b46fd8ece49b5763953b644a1dd823fce5490cb41a',
+        sha256: 'd219f885ed601d1424ae2ecdf5b37441cf60f15a38a4961d2a6f0b41ec913f28',
       },
       'windows-aarch64': {
-        archive: 'https://static.devin.ai/cli/3000.11.234/devin-3000.11.234-aarch64-pc-windows.zip',
+        archive: 'https://static.devin.ai/cli/3000.15.14/devin-3000.15.14-aarch64-pc-windows.zip',
         cmd: './bin\\devin.exe',
         args: ['acp'],
-        sha256: '1fc2fcedfe0649a9ed370b122064d66f406c9a2e4a7622b4c6712cc098c01b22',
+        sha256: '9caa748fbc943ba8788be245f3ca6f481466501a3c63ea9587f1bd8d52d52209',
       },
       'windows-x86_64': {
-        archive: 'https://static.devin.ai/cli/3000.11.234/devin-3000.11.234-x86_64-pc-windows.zip',
+        archive: 'https://static.devin.ai/cli/3000.15.14/devin-3000.15.14-x86_64-pc-windows.zip',
         cmd: './bin\\devin.exe',
         args: ['acp'],
-        sha256: 'de01a37364c3c09389e20b699e993962296e5b8e1bea60aa48c95cc57dd228e3',
+        sha256: '7cee2a258d9043a66c84d7f1613418b40d6b0a7a7ea5dc4a20f83fd0a30f5ddf',
       },
     },
   },
@@ -906,10 +838,9 @@ const DEVIN_AGENT_ENTRY: AgentCatalogEntry = {
 /**
  * 策展目录（设置页「智能体」列出全部条目，含未启用的）。
  * P2 收录 Claude Agent 与 Codex（安装器在 P4：此前只能经测试缝启动）；
- * P5 收录 OpenCode、DeepSeek Harness、Cursor、Google Antigravity；
- * InkCop 以 system 分发挂入（本机 `inkcop-acp`）。
+ * P5 收录 OpenCode、DeepSeek Harness、Cursor、Google Antigravity。
  * D118 收录 ACP Registry 已有的 7 个新目标（Cline、GitHub Copilot、goose、
- * Qwen Code、Kimi CLI、Grok Build、Devin；来源：OpenBot 0.62.0 预置目标对比
+ * Qwen Code、Kimi Code、Grok Build、Devin；来源：OpenBot 0.62.0 预置目标对比
  * 调研，todo/acp-hardening-and-new-targets.md §3）——全部 `preview` 档，
  * `releaseGate` 未进发行放行清单：真机 spike + 合规确认后才随发行版发布。
  */
@@ -921,7 +852,6 @@ export const AGENT_CATALOG: readonly AgentCatalogEntry[] = [
   DSH_AGENT_ENTRY,
   CURSOR_AGENT_ENTRY,
   ANTIGRAVITY_AGENT_ENTRY,
-  INKCOP_AGENT_ENTRY,
   CLINE_AGENT_ENTRY,
   COPILOT_AGENT_ENTRY,
   GOOSE_AGENT_ENTRY,

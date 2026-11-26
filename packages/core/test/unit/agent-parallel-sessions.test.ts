@@ -44,10 +44,14 @@ const EXPECTED: Readonly<Record<string, boolean>> = {
   dsh: true,
   cursor: false,
   antigravity: false,
-  // D118 新目标：未经真机核实（kimi / devin 专属 Provider 继承通用实现的
-  // false），接入 spike 确认会话表语义后再改。
+  // D118 新目标：全部待真机双会话 prompt 验证，先保持 fail-safe false。
   kimi: false,
   devin: false,
+  cline: false,
+  copilot: false,
+  qwen: false,
+  grok: false,
+  goose: false,
 };
 
 function catalogEntry(id: string): AgentCatalogEntry {
@@ -82,13 +86,13 @@ describe('agentConcurrency (scheduler / router / settings view)', () => {
       );
     }
     expect(agentConcurrency(none, catalogEntry('claude-acp'))).toBe(AGENT_DEFAULT_CONCURRENCY);
-    expect(agentConcurrency(none, catalogEntry('antigravity'))).toBe(1);
+    expect(agentConcurrency(none, catalogEntry('antigravity-acp'))).toBe(1);
   });
 
   it('honours overrides with parallel sessions; clamps them to 1 without (fail-safe)', () => {
-    const config = { default: 4, 'agent:codex-acp': 3, 'agent:antigravity': 4 };
+    const config = { default: 4, 'agent:codex-acp': 3, 'agent:antigravity-acp': 4 };
     expect(agentConcurrency(config, catalogEntry('codex-acp'))).toBe(3);
-    expect(agentConcurrency(config, catalogEntry('antigravity'))).toBe(1);
+    expect(agentConcurrency(config, catalogEntry('antigravity-acp'))).toBe(1);
     expect(agentConcurrency({ default: 4, 'agent:codex-acp': 99 }, catalogEntry('codex-acp'))).toBe(
       16,
     );
@@ -106,16 +110,15 @@ describe('agentConcurrency (scheduler / router / settings view)', () => {
       },
     });
     expect(scheduler.concurrencyFor('agent:claude-acp')).toBe(AGENT_DEFAULT_CONCURRENCY);
-    expect(scheduler.concurrencyFor('agent:antigravity')).toBe(1);
+    expect(scheduler.concurrencyFor('agent:antigravity-acp')).toBe(1);
     expect(scheduler.concurrencyFor('agent:not-in-catalog')).toBe(1);
     expect(scheduler.concurrencyFor('openai')).toBe(4);
-    scheduler.setConcurrency({ default: 6, 'agent:codex-acp': 3, 'agent:antigravity': 3 });
+    scheduler.setConcurrency({ default: 6, 'agent:codex-acp': 3, 'agent:antigravity-acp': 3 });
     expect(scheduler.concurrencyFor('agent:codex-acp')).toBe(3);
-    expect(scheduler.concurrencyFor('agent:antigravity')).toBe(1);
+    expect(scheduler.concurrencyFor('agent:antigravity-acp')).toBe(1);
     expect(scheduler.concurrencyFor('openai')).toBe(6);
     expect(new Scheduler(logger).concurrencyFor('agent:claude-acp')).toBe(1);
   });
-
 });
 
 describe('the clamp end to end (fake agent refusing concurrent prompts)', () => {

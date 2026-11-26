@@ -21,7 +21,7 @@
 | B2 | `AGENT_INIT_TIMEOUT_MS=60s` vs dsh 自记「npx 冷启动约 77s」 | **实现**：目录条目新增可选 `initTimeoutMs`（KepCup 扩展字段），dsh 设 120s；真机验证列为人工项 |
 | C1 | 预置目标缺口（OpenBot 有 / KepCup 无） | **实现**：Registry 已收录的 7 个——cline 3.0.74、github-copilot-cli 1.0.105（`@github/copilot`）、goose 1.57.0、qwen-code 0.26.7、kimi 1.52.0、grok-build 1.0.77（`@xai-official/grok`）、devin 3000.11.234 |
 | C2 | Registry 之外的目标（OpenBot 预置 / 预设） | **暂缓**：hermes（官方 install.sh 安装，无 Registry 条目）、omp / Oh My Pi、gemini（Google 同厂已有 antigravity，条款同源另评）——真机 spike 后按 §11 手册逐个补 |
-| C3 | 版本跟进（KepCup 锁定版本已落后 Registry） | **人工项**：claude-acp 0.86.0→0.100.0、codex-acp 2.1.1→2.5.0、cursor 2026.10.01→2026.10.22、antigravity-acp 1.3.0→1.4.5、opencode 1.18.35→2.2.5——升版须重新过离线核对（Provider 注释里的源码行号） |
+| C3 | 版本跟进（KepCup 锁定版本已落后 Registry） | **已完成（2026-11-27）**：按官方 stable 升到 claude-acp 0.113.0、codex-acp 2.12.1、opencode 2.4.2、cursor 2026.11.22、antigravity-acp 1.5.2、cline 3.0.76、github-copilot-cli 1.0.116、goose 1.61.1、qwen-code 0.28.6、kimi 2.8.1（Legacy 迁移 Kimi Code）、grok-build 1.0.92、devin 3000.15.14；dsh 官方无 stable，保留 0.2.0-rc.2。OpenCode V2 与四个新目标已补专用 Provider / 安全适配；二进制校验和与 npx 锁文件同步。 |
 | C4 | 用户自定义 ACP agent 入口（OpenBot CustomAcpAgentDialog：command/args/env ≤16、env 主进程加密） | **不做**（本期）：与策展模式冲突（未经实测的 agent 不能进权限/沙箱模型），todo 只记设计要点 |
 
 ## 1. A — 连接层加固（`packages/core/src/agent/external/`）
@@ -66,6 +66,8 @@
 ## 3. C — 新目标接入（D118 C1）
 
 ### 3.1 条目（`shared/src/domain/agent-catalog.ts`，骨架由 `scripts/import-acp-registry.mjs --registry <file>` 生成后人工补扩展字段）
+
+> 以下为 2026-11-06 的首次接入记录；当前锁定版本与 Provider 见 §4.4（2026-11-27 稳定版升级）。
 
 | id（=Registry id） | 版本 / 分发 | 启动 args | 认证（catalog `auth`） | provider |
 | --- | --- | --- | --- | --- |
@@ -140,6 +142,17 @@
 - 低风险 nit 不处理：line-limit 逐字节循环可 `indexOf(0x0a)` 提速、host init 超时文案裸毫秒、`#settleDisposed` 不清 stall watch、重试不复位 `#detachedAbort`（需首 turn 零 update + 60 分钟 deadline 才可达）。
 
 验证：`agent-hardening-d118` 13 + `agent-targets-d118` 8 + `external-agent-engine` 36 = 57 单测全绿；P5 集成 + parallel-sessions 19/19；core typecheck 0 错；testkit / core dist 重建。
+
+### 4.4 稳定版升级（2026-11-27）
+
+- 按官方 stable 升级 12 个目标：Claude 0.113.0、Codex 2.12.1、OpenCode 2.4.2、Cursor 2026.11.22、Antigravity standalone ACP 1.5.2、Cline 3.0.76、GitHub Copilot 1.0.116、goose 1.61.1、Qwen Code 0.28.6、Kimi Code 2.8.1、Grok Build 1.0.92、Devin 3000.15.14。
+- **Kimi**：Legacy 1.52.0 的 `kimi acp` 已只打印弃用提示后退出，迁移到官方继任 `@moonshot-ai/kimi-code@2.8.1`；目录 id 保持 `kimi`，配置根改为私有 `KIMI_CODE_HOME`。
+- **OpenCode V2**：补原生 `permissions` / `agents.*.permissions`、插件 deny policy、project-config / filewatcher / `OPENCODE_FLAGS` 强制隔离与用户层扫描；关闭 Code Mode、session、worktree、automation 工具；`features.steering` 改为 true。
+- **四个新目标**：Cline / Copilot / Qwen / Grok 从 `generic-acp` 改为专用 Provider（模式、权限 optionId、私有配置根、错误形态）；goose 新增专用 Provider（强制 `GOOSE_MODE=approve`、私有 `GOOSE_PATH_ROOT`）。
+- **二进制校验**：OpenCode `SHA256SUMS`、Cursor 六个 `.sha256` sidecar、Antigravity ACP Registry、goose GitHub release digest、Devin versioned manifest 全部逐一核对；Kimi / Claude / Codex / Cline / Copilot / Qwen / Grok 的 npx 锁文件重新生成。
+- **DeepSeek Harness**：官方仍无 stable（最新 `0.2.2-rc.5`，要求 Node ≥ 24.9），按「只升稳定版」保留 `0.2.0-rc.2`。
+- **InkCop**：ACP 外部智能体条目已移除；存量 Bot 的 `agent: inkcop` 在 Profile / settings 读取时回落内置引擎。独立的本机协作工具 `call_inkcop_agent` 不变。
+- **验证**：shared 目录测试、12 个 ACP Provider / 契约 / 并行 / 安装器 / settings / engine / integration 测试文件 461 例全绿；`pnpm typecheck` 通过；改动文件 ESLint / Prettier 全绿。全量 `pnpm test`：10071 通过 / 5 失败 / 47 跳过；5 个失败均在 `plugin-host`（4）与 `web-tools`（1），本机 DNS 把 `example.com` / `dashscope.aliyuncs.com` 解析到 Clash fake-IP `198.18.1.116/117`，被 SSRF 守卫拒绝，单跑同样复现，与 ACP 改动无关。
 
 ## 5. 与设计文档的同步
 

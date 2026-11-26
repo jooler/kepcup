@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { load as loadYaml } from 'js-yaml';
@@ -8,158 +8,166 @@ import { genericAcpProvider } from './generic-acp.js';
 import { switchToMode } from './mode-tier.js';
 
 /**
- * OpenCode（原生 `opencode acp`，design 28 §9.2）：只覆盖与通用实现的差异。
- * 依据：opencode 1.18.35 二进制内嵌源码（离线核对，未运行）+ 离线 spike（todo
- * 附录 A.4）。
+ * OpenCode 2.4.2 (`opencode acp`): host-controlled permissions and config isolation.
+ * V2 normalizes V1 `permission` / `agent` / `mode` fields into ordered `permissions`
+ * arrays; layers append and evaluation is last-match-wins. We emit native V2 rules and
+ * retain the V1 fields (and legacy environment switches) for compatibility only.
  *
- * - 指令：`prompt-prefix`；
- * - 配置加载顺序（1.18.35 `Config.loadInstanceState`）：全局配置（`$XDG_CONFIG_HOME/
- *   opencode`）→ `OPENCODE_CONFIG` → workdir 的 opencode.json（从会话目录向上到
- *   git worktree 根）→ 各 `.opencode/` 目录（agent / mode / command / plugin，
- *   并后台往其中安装 `@opencode-ai/plugin`）→ `OPENCODE_CONFIG_CONTENT`（最后的
- *   local 合并）→ 托管配置 → `mode.*` 并入 `agent.*` → `OPENCODE_PERMISSION` 并入
- *   顶层 permission；每个 agent 的有效权限 = 顶层 permission 再合并该 agent 的
- *   `permission`（agent 级优先）。审查 H1：workdir / 全局配置里的
- *   `agent.build.permission.bash:"allow"`、`.opencode/agent/*.md` 的 frontmatter
- *   或经 `task` 调用的自定义子代理都能让命令不发 request_permission。因此：
- *   - `OPENCODE_DISABLE_PROJECT_CONFIG=1`：workdir 的 opencode.json、`.opencode/`
- *     目录（含 agent / plugin，也就不再往 workdir 里装插件）与 AGENTS.md 一概
- *     不读（`ConfigPaths.directories` / `Instruction.systemPaths` 均受它控制）——
- *     AGENTS.md 改由宿主 `<workdir>` 段注入（`agentSideConfigFiles` 为空）；
- *   - 权限块只用**字符串**动作、`"*":"ask"` 打头（`findLast` 下未点名的权限
- *     一律询问）：`edit` / `bash` / `external_directory` / `task` / 联网一律
- *     `ask`——写入、命令、
- *     工作目录外的路径（数据目录由宿主权限桥拒绝）与子代理启动都经 ACP
- *     `request_permission` 交宿主按档位裁决；同一权限块既写顶层，也写进
- *     `agent.{build,plan,general,explore}.permission` 与 `mode.{build,plan}.permission`
- *     （CONTENT 晚于 workdir / `.opencode` 合并，同名覆盖；mode 在其后并入
- *     agent，也带同样的块）；`plan` / `explore` 的 `edit` 保持 `deny`（不放宽其
- *     只读语义）；顶层再经 `OPENCODE_PERMISSION` 合并一次；
- *   - 未开启「加载我的个人配置」时 `XDG_CONFIG_HOME` 指向私有目录（登录凭据在
- *     `XDG_DATA_HOME`，不受影响；它也作用于 OpenCode 执行的命令——gh / git
- *     等读 `~/.config` 的工具看不到用户配置，设置页条款提示中披露）；`~/.opencode/` 仍会被读（HOME 不改，否则
- *     命令里的 git 等也失去用户身份；无正式开关可关）；
- *   - **用户层不能被可靠覆盖（复审 #8）**：1.18.35 的各层以 remeda `mergeDeep`
- *     合并——已有键保持原位置、新键追加在末尾，`OPENCODE_PERMISSION` 同样如此
- *     且只作用于顶层；`mode.*` 在我们的层之后并入 `agent.*`。所以用户层里我们
- *     没点名的键（`"b*":"allow"`、`"**":"allow"`，或把 `"*"` 放在点名键之前再
- *     追加通配键、写在 `mode.build.permission` 里）会排在我们的规则之后，被
- *     `findLast` 选中而直接放行。没有任何机制能让我们的层「最后且按我们的键序」
- *     生效 → 启动前扫描 OpenCode 会读取的、用户可写的配置层
- *     （`opencodeUserConfigIssues`：`~/.opencode/opencode.json(c)`、
- *     `~/.opencode/{agent,agents}/**\/*.md`、`{mode,modes}/*.md` 的 frontmatter、
- *     `{tool,tools}/*.{js,ts}`；开启「加载我的个人配置」时另加
- *     `$XDG_CONFIG_HOME/opencode/` 的 `config.json` / `opencode.json(c)` / 旧版
- *     `config` 与同样的子目录；私有配置目录也扫），只要有一处对非只读权限给出
- *     `ask` / `deny` 以外的动作（含通配键、`tools: {x: true}`、整个 `permission`
- *     字符串；`{file:…}` / `{env:…}` 替换一律拒绝）、存在自定义工具代码、文件
- *     无法解析、或目录过深 / 文件过多，就拒绝运行（`AGENT_CONFIG_UNSAFE`，列出
- *     文件与键）——fail closed。markdown frontmatter 按 gray-matter 的规则切出
- *     （只接受 `---` / `---yaml`：`---js` 等语言会被 eval）、用 js-yaml 解析后
- *     只看 `permission` / `tools`（第三轮审查 #1 / #2）；JSON / JSONC 按 OpenCode
- *     所用 jsonc-parser 3.3.1 的词法切分（`//` 注释止于 `\n` 或 `\r`、空白只有
- *     空格 / 制表符、BOM 按 TextDecoder 去掉一个），`__proto__` 键一律拒绝（第三轮
- *     补充 #1）。扫描在进程启动前和每次
- *     建 / 恢复会话前各做一次（`checkConfig`，第三轮 #4），探测 / 登录 / 退出的
- *     控制进程不扫。残留：登录 OpenCode 控制台
- *     组织后的远程组织配置、`auth.json` 中 wellknown 远程配置（读取它们须读凭据
- *     文件，宿主不读）与管理员的 `/etc/opencode` 不在扫描范围内（后两者在我们的
- *     层之后合并），记入 todo §8.4 复审修复 #8 残留；
- *   - **残留（第三轮补充 #5，有意不拒绝）**：同样这些用户层里的 `mcp.<x>`
- *     （`type:"local"` + `command`）、`formatter.<x>.command`、`lsp.<x>.command`
- *     会由 OpenCode 直接拉起用户配置的命令，不经宿主裁决——用户真实的 MCP /
- *     格式化 / LSP 配置很常见，扫描不拒绝它们（只有用户自己能写这些文件），记入
- *     todo §8.4 第三轮补充修复与 design 28 OpenCode 行；
- *   - 改指配置位置的环境变量（`OPENCODE_CONFIG`、`OPENCODE_CONFIG_DIR`、
- *     `OPENCODE_TEST_HOME`、`OPENCODE_TEST_MANAGED_CONFIG_DIR`、`XDG_CONFIG_HOME`）
- *     与宿主强制的键一样不接受目录 / 启动目标里的值（大小写不敏感剔除；宿主
- *     环境本就按白名单透传，第三轮补充 #2）；
- *   - `OPENCODE_PURE=1`：不加载外部插件（插件是在沙箱外运行的任意代码）；
- *   - `OPENCODE_DISABLE_CLAUDE_CODE=1`：关闭 CLAUDE.md 回退与 `~/.claude/skills`；
- *     `OPENCODE_DISABLE_AUTOUPDATE=1` + `autoupdate:false`：不得自我升级；
- *     `share:'disabled'`：会话永不公开分享；
- *   - 残留（无配置项可关）：全局配置目录（私有目录或用户的 `~/.config/opencode`）
- *     与 `~/.opencode` 仍会被后台安装 `@opencode-ai/plugin`（桥外写入，不在
- *     workdir 里），设置页条款提示中说明；
- * - 档位（session config option `mode`：build / plan）：read_only → `plan`，
- *   ask / workspace → `build`；
- * - 权限选项：`once` / `always` / `reject`（只选 once / reject）；
- * - MCP 工具在模型侧的名字是 `{server}_{tool}`（非字母数字替换为 `_`）；
- *   ACP `tool_call` 不带结构化名（title 是自由文本）→ 宿主桥工具的镜像更新
- *   无法识别（会多出一条原生步骤），待登录实测；
- * - 未登录不报错：自带匿名免费模型（目录 `auth.kinds` 含 `anonymous`）；terminal
- *   登录只在 `_meta['terminal-auth']`，由 terminal-auth.ts 改写为已安装路径；
- * - steering 视为不支持（spike 未见声明）；load / resume 有；
- * - 斜杠命令：ACP prompt 的文本（各 text 块拼接、trim）以 `/` 开头且命中命令
- *   名时走 `session.command`（命令模板可含 `` !`shell` ``，不经权限确认）——
- *   引擎保证发出的 prompt 从不以 `/` 开头（`slashSafePrompt`，第三轮 #7）。
+ * - `OPENCODE_CONFIG_CONTENT` is the enforced layer: unknown actions ask, writes,
+ *   shell, external paths, subagents and network access ask, Code Mode and OpenCode
+ *   session/worktree/automation tools deny, and plan/explore deny edits. The same
+ *   rules are repeated per built-in agent because agent rules append after global rules.
+ * - Both project-config disable variables are set because V2 prefers
+ *   `OPENCODE_CONFIG_PROJECT_DISABLE`. File watching is disabled so a live edit cannot
+ *   reload unscanned configuration. AGENTS.md is supplied by the host instead.
+ * - V2 ignores `OPENCODE_PERMISSION` / `OPENCODE_PURE`. Plugins are disabled with a
+ *   `plugin.use` deny policy; user policies, auto-discovered plugin directories and
+ *   configured external plugins are scanned fail-closed before launch/session reuse.
+ * - User-writable config roots (`~/.opencode`, the active global config root,
+ *   and `configHome/project/**`) are scanned for V1 and V2 permission
+ *   allows, plugin code/policies and dangerous experimental flags. Managed system
+ *   config and remote Console/well-known documents remain outside the scan and load
+ *   with higher authority. User-configured local MCP/formatter/LSP commands remain
+ *   an accepted residual: they can spawn processes outside the host permission bridge.
+ * - Config/home/data redirects from the catalog or launch target are reserved. HOME is
+ *   otherwise retained so git and other child commands keep the user's identity.
+ * - ACP 2.4.2 supplies structured `tool_call.name` and supports steering. Login accepts
+ *   both standard `type:'terminal', args:['--login']` and legacy `_meta` terminal auth.
+ * - read_only maps to plan; ask/workspace map to build. Only once/reject permission
+ *   replies are selected. Host prompts must stay slash-safe: command templates can run
+ *   shell snippets without a permission request.
  */
 
 export function opencodeModeForTier(tier: AgentPermissionTier): string {
   return tier === 'read_only' ? 'plan' : 'build';
 }
 
-/**
- * 顶层权限块（只用字符串动作）。1.18.35 `Permission.fromConfig` 按对象键序
- * 展开成规则、`merge` 直接拼接、`evaluate` 取 `findLast` 命中（权限名与
- * pattern 都按通配匹配）——所以 `"*":"ask"` 放在最前：未点名的权限（含将来
- * 新增的）一律询问，点名的在其后覆盖（审查 #7）。点名放行的只有工作区内的
- * 只读与会话内部工具（`read` 读工作区外的路径时 OpenCode 另走
- * `external_directory`）；`question` / `plan_*` 拒绝（无人在线答题，模式只由
- * 宿主切换）。
- */
-export function opencodePermissionConfig(): Record<string, string> {
-  return {
-    '*': 'ask',
-    read: 'allow',
-    list: 'allow',
-    glob: 'allow',
-    grep: 'allow',
-    lsp: 'allow',
-    todoread: 'allow',
-    todowrite: 'allow',
-    question: 'deny',
-    plan_enter: 'deny',
-    plan_exit: 'deny',
-    edit: 'ask',
-    bash: 'ask',
-    external_directory: 'ask',
-    task: 'ask',
-    webfetch: 'ask',
-    websearch: 'ask',
-    codesearch: 'ask',
-  };
+export interface OpencodePermissionRule {
+  action: string;
+  resource: string;
+  effect: 'allow' | 'ask' | 'deny';
 }
 
-/** 内置 agent 的权限块（plan / explore 保持只读：`edit: deny`）。 */
-function agentPermission(name: string): Record<string, string> {
+const permissionRule = (
+  action: string,
+  effect: OpencodePermissionRule['effect'],
+): OpencodePermissionRule => ({ action, resource: '*', effect });
+
+/**
+ * Native V2 rules. The broad ask comes first so unnamed and future actions ask;
+ * read-only actions are the only unconditional allows. `external_directory` is
+ * checked before read/edit, so allowing read does not grant external path access.
+ */
+export function opencodePermissionConfig(): OpencodePermissionRule[] {
+  return [
+    permissionRule('*', 'ask'),
+    ...['read', 'list', 'glob', 'grep', 'lsp', 'todoread', 'todowrite'].map((action) =>
+      permissionRule(action, 'allow'),
+    ),
+    permissionRule('question', 'deny'),
+    permissionRule('plan_enter', 'deny'),
+    permissionRule('plan_exit', 'deny'),
+    ...[
+      'edit',
+      'shell',
+      'external_directory',
+      'subagent',
+      'webfetch',
+      'websearch',
+      'codesearch',
+    ].map((action) => permissionRule(action, 'ask')),
+    permissionRule('execute', 'deny'),
+    permissionRule('opencode_session_*', 'deny'),
+    permissionRule('opencode_worktree_*', 'deny'),
+    permissionRule('automation_*', 'deny'),
+  ];
+}
+
+/** V1 compatibility: native V2 `agents` wins during V2 normalization. */
+function legacyPermissionConfig(rules: readonly OpencodePermissionRule[]): Record<string, string> {
+  const v1Action: Record<string, string> = { shell: 'bash', subagent: 'task' };
+  return Object.fromEntries(
+    rules.map((rule) => [v1Action[rule.action] ?? rule.action, rule.effect]),
+  );
+}
+
+/** Built-in agent rules (plan / explore stay read-only: `edit: deny`). */
+function agentPermission(name: string): OpencodePermissionRule[] {
   const base = opencodePermissionConfig();
-  return name === 'plan' || name === 'explore' ? { ...base, edit: 'deny' } : base;
+  if (name === 'plan') return [...base, permissionRule('edit', 'deny')];
+  if (name === 'explore') {
+    return [...base, permissionRule('edit', 'deny'), permissionRule('subagent', 'deny')];
+  }
+  return name === 'general' ? [...base, permissionRule('subagent', 'deny')] : base;
 }
 
 const OPENCODE_BUILTIN_AGENTS = ['build', 'plan', 'general', 'explore'] as const;
 const OPENCODE_PRIMARY_MODES = ['build', 'plan'] as const;
+/** Every boolean experimental flag in the 2.4.2 schema is forced off. */
+const OPENCODE_DANGEROUS_FLAGS = [
+  'portable_shell_scanner',
+  'codemode_vm',
+  'todo',
+  'media_blob',
+  'artifacts',
+  'console_watches',
+  'recommended_api',
+  'model_speeds',
+  'full_codemode',
+  'codemode_agents',
+  'machines',
+  'home_memory',
+  'project_overlay',
+  'opencode_api',
+  'mcp_skills',
+  'compaction_jobs',
+  'sqlite_fts',
+  'browser_stream_tunnel',
+  'video_generate',
+  'part_rows',
+  'image_generate',
+  'disable_paste_summary',
+  'batch_tool',
+  'openTelemetry',
+  'continue_loop_on_deny',
+] as const;
 
-/** `OPENCODE_CONFIG_CONTENT`：只放全局项（所有会话共用，不承载人设）。 */
+/** `OPENCODE_CONFIG_CONTENT`: process-wide only; never carries a persona. */
 export function opencodeProcessConfig(): Record<string, unknown> {
+  const top = opencodePermissionConfig();
   return {
     $schema: 'https://opencode.ai/config.json',
+    update: 'disable',
     autoupdate: false,
     share: 'disabled',
-    permission: opencodePermissionConfig(),
+    automations: false,
+    permissions: top,
+    permission: legacyPermissionConfig(top),
+    policies: [{ action: 'plugin.use', resource: '*', effect: 'deny' }],
+    experimental: {
+      all_flags: false,
+      ...Object.fromEntries(OPENCODE_DANGEROUS_FLAGS.map((flag) => [flag, false])),
+    },
     agent: Object.fromEntries(
-      OPENCODE_BUILTIN_AGENTS.map((name) => [name, { permission: agentPermission(name) }]),
+      OPENCODE_BUILTIN_AGENTS.map((name) => [
+        name,
+        { permission: legacyPermissionConfig(agentPermission(name)) },
+      ]),
+    ),
+    agents: Object.fromEntries(
+      // V2 schema: agents.<id> accepts `permissions`, not V1 `permission`.
+      OPENCODE_BUILTIN_AGENTS.map((name) => [name, { permissions: agentPermission(name) }]),
     ),
     mode: Object.fromEntries(
-      OPENCODE_PRIMARY_MODES.map((name) => [name, { permission: agentPermission(name) }]),
+      OPENCODE_PRIMARY_MODES.map((name) => {
+        const rules = agentPermission(name);
+        return [name, { permissions: rules, permission: legacyPermissionConfig(rules) }];
+      }),
     ),
   };
 }
 
-/**
- * Permissions the host lets OpenCode run without asking (our block allows them
- * too): a user layer may allow these, nothing else.
- */
+/** Permissions the host lets OpenCode run without asking (our block allows them too). */
 const OPENCODE_READ_ONLY_PERMISSIONS: ReadonlySet<string> = new Set([
   'read',
   'list',
@@ -175,11 +183,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Keys of one `permission` value that allow something only the host may
- * decide (复审 #8). A key is safe only when it names a read-only permission
- * exactly — wildcard keys ("*", "b*", "**") may match bash / edit / task …
- * Any action other than exactly `ask` / `deny` counts as allowing (第三轮 #3:
- * `{env:…}` / `{file:…}` or an unknown value may turn into `allow`).
+ * Keys of one V1 `permission` value that allow something only the host may
+ * decide. A key is safe only when it names a read-only permission exactly —
+ * wildcard keys ("*", "b*", "**") may match shell / edit / subagent. Any action
+ * other than exactly `ask` / `deny` counts as allowing.
  */
 function permissionAllows(value: unknown): string[] {
   if (value === undefined || value === null) return [];
@@ -192,6 +199,32 @@ function permissionAllows(value: unknown): string[] {
       : !isAskOrDeny(action);
     if (allows && !OPENCODE_READ_ONLY_PERMISSIONS.has(name)) keys.push(`permission.${name}`);
   }
+  return keys;
+}
+
+/** Native V2 rules are arrays; only an exact read-only action may allow. */
+function permissionsAllows(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) return ['permissions'];
+  const keys: string[] = [];
+  value.forEach((rule, index) => {
+    const at = `permissions.${index}`;
+    if (!isPlainObject(rule)) {
+      keys.push(at);
+      return;
+    }
+    const { action, resource, effect } = rule;
+    if (
+      typeof action !== 'string' ||
+      typeof resource !== 'string' ||
+      (effect !== 'allow' && !isAskOrDeny(effect))
+    ) {
+      keys.push(at);
+      return;
+    }
+    if (effect === 'allow' && !OPENCODE_READ_ONLY_PERMISSIONS.has(action))
+      keys.push(`${at}.action`);
+  });
   return keys;
 }
 
@@ -208,16 +241,85 @@ function toolsAllow(value: unknown): string[] {
     .map(([name]) => `tools.${name}`);
 }
 
-/** One agent's own settings (`agent.<name>` / markdown frontmatter): permission + tools only. */
+/** One agent's own settings (`agent.*` / `agents.*` / markdown frontmatter). */
 function agentAllows(agent: Record<string, unknown>): string[] {
-  return [...permissionAllows(agent.permission), ...toolsAllow(agent.tools)];
+  return [
+    ...permissionAllows(agent.permission),
+    ...permissionsAllows(agent.permissions),
+    ...toolsAllow(agent.tools),
+  ];
 }
 
-/** Allowing keys of a parsed opencode.json(c): top level, `agent.*`, `mode.*`. */
+/** Any configured plugin addition can execute code outside the host sandbox. */
+function pluginEntriesAllows(value: unknown, key: 'plugin' | 'plugins'): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) return [key];
+  const keys: string[] = [];
+  value.forEach((entry, index) => {
+    const at = `${key}.${index}`;
+    if (typeof entry === 'string') {
+      if (entry.length > 1 && entry.startsWith('-')) return;
+      keys.push(at);
+      return;
+    }
+    if (key === 'plugin' && Array.isArray(entry) && typeof entry[0] === 'string') {
+      keys.push(at);
+      return;
+    }
+    if (key === 'plugins' && isPlainObject(entry) && typeof entry.package === 'string') {
+      keys.push(at);
+      return;
+    }
+    keys.push(at);
+  });
+  return keys;
+}
+
+/** User plugin allows outrank our CONTENT deny because policy layers evaluate in reverse. */
+function pluginPolicyAllows(value: unknown, key: string): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) return [key];
+  const keys: string[] = [];
+  value.forEach((policy, index) => {
+    if (!isPlainObject(policy) || policy.effect !== 'allow') return;
+    const native = policy.action === 'plugin.use';
+    const legacy =
+      policy.action === 'integration.use' &&
+      typeof policy.resource === 'string' &&
+      policy.resource.startsWith('plugin:');
+    if (native || legacy) keys.push(`${key}.${index}`);
+  });
+  return keys;
+}
+
+const OPENCODE_UNSAFE_EXPERIMENTAL_FLAGS = new Set<string>([
+  'all_flags',
+  ...OPENCODE_DANGEROUS_FLAGS,
+]);
+
+function experimentalAllows(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  if (!isPlainObject(value)) return ['experimental'];
+  const keys = pluginPolicyAllows(value.policies, 'experimental.policies');
+  for (const [flag, enabled] of Object.entries(value)) {
+    if (OPENCODE_UNSAFE_EXPERIMENTAL_FLAGS.has(flag) && enabled !== false) {
+      keys.push(`experimental.${flag}`);
+    }
+  }
+  return keys;
+}
+
+/** Allowing keys of a parsed opencode.json(c): V1 + V2 permissions, agents and plugins. */
 function configAllows(config: unknown): string[] {
   if (!isPlainObject(config)) return ['（不是 JSON 对象）'];
-  const keys = agentAllows(config);
-  for (const section of ['agent', 'mode'] as const) {
+  const keys = [
+    ...agentAllows(config),
+    ...pluginEntriesAllows(config.plugin, 'plugin'),
+    ...pluginEntriesAllows(config.plugins, 'plugins'),
+    ...pluginPolicyAllows(config.policies, 'policies'),
+    ...experimentalAllows(config.experimental),
+  ];
+  for (const section of ['agent', 'agents', 'mode'] as const) {
     const entries = config[section];
     if (entries === undefined || entries === null) continue;
     if (!isPlainObject(entries)) {
@@ -234,7 +336,7 @@ function configAllows(config: unknown): string[] {
 
 /**
  * `{file:…}` / `{env:…}` are substituted into the raw config text before it
- * is parsed (第三轮 #3): what they expand to cannot be checked here.
+ * is parsed: what they expand to cannot be checked here.
  */
 const SUBSTITUTION = /\{(?:file|env):/;
 
@@ -242,10 +344,8 @@ const SUBSTITUTION = /\{(?:file|env):/;
 const JSONC_SEPARATORS = ' \t\n\r{}[]:,"/';
 
 /**
- * JSONC → JSON the way jsonc-parser 3.3.1 tokenizes it (bundled in opencode
- * 1.18.35, `ConfigParse.jsonc` = `parse(text, errors, {allowTrailingComma:
- * true})`, any error → the file is rejected; the package itself is not
- * available offline here, so its scanner is mirrored — 第三轮补充 #1):
+ * JSONC → JSON the way jsonc-parser 3.3.1 tokenizes it (bundled in OpenCode
+ * 2.4.2; any parse error rejects the document, so its scanner is mirrored):
  * whitespace is only space / tab, line breaks `\n` / `\r` (a `//` comment
  * ends at either — a comment ended only at `\n` would hide keys after a lone
  * `\r`), `/* … *\/` comments, a trailing comma before `}` / `]`. Every other
@@ -323,29 +423,88 @@ function jsonConfigAllows(text: string): string[] {
   return configAllows(config);
 }
 
-/**
- * opencode 1.18.35 `ConfigMarkdown.sanitize` (verbatim logic): when the
- * frontmatter fails to parse, OpenCode retries with top-level `key: a:b`
- * values turned into block scalars.
- */
+/** OpenCode 2.4.2 `ConfigMarkdown.sanitize`, used after the first YAML parse fails. */
 function sanitizeFrontmatter(text: string): string {
   const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (match === null) return text;
   const frontmatter = match[1]!;
+  let flow: FlowState | undefined;
   const lines = frontmatter.split(/\r?\n/).flatMap((line) => {
+    if (flow) {
+      flow = scanFlow(line, flow).state;
+      return [line];
+    }
     if (line.trim().startsWith('#') || line.trim() === '' || /^\s+/.test(line)) return [line];
     const entry = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$/);
     if (entry === null) return [line];
     const value = entry[2]!.trim();
-    if (value === '' || value === '>' || value === '|' || value.startsWith('"')) return [line];
-    if (value.startsWith("'") || !value.includes(':')) return [line];
+    if (value === '' || value.startsWith('"') || value.startsWith("'")) return [line];
+    if (value.startsWith('[') || value.startsWith('{')) {
+      const scanned = scanFlow(value, { stack: [], quote: undefined });
+      if (scanned.status === 'open') flow = scanned.state;
+      if (scanned.status !== 'trailing') return [line];
+      return [`${entry[1]}: |-`, `  ${value}`];
+    }
+    if (!value.includes(':') || isValidYaml(line)) return [line];
     return [`${entry[1]}: |-`, `  ${value}`];
   });
   return text.replace(frontmatter, () => lines.join('\n'));
 }
 
+function isValidYaml(line: string): boolean {
+  try {
+    loadYaml(line);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+interface FlowState {
+  stack: string[];
+  quote: string | undefined;
+}
+
+function scanFlow(
+  text: string,
+  state: FlowState,
+): { status: 'open' | 'invalid' | 'closed' | 'trailing'; state?: FlowState } {
+  const stack = [...state.stack];
+  let quote = state.quote;
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i]!;
+    if (quote === '"') {
+      if (char === '\\') i += 1;
+      else if (char === '"') quote = undefined;
+      continue;
+    }
+    if (quote === "'") {
+      if (char === "'" && text[i + 1] === "'") i += 1;
+      else if (char === "'") quote = undefined;
+      continue;
+    }
+    if ((char === '"' || char === "'") && (i === 0 || /[\s[{,:]/.test(text[i - 1]!))) {
+      quote = char;
+      continue;
+    }
+    if (char === '#' && (i === 0 || /\s/.test(text[i - 1]!))) break;
+    if (char === '[') stack.push(']');
+    else if (char === '{') stack.push('}');
+    else if (char === ']' || char === '}') {
+      if (stack.at(-1) !== char) return { status: 'invalid' };
+      stack.pop();
+      if (stack.length === 0) {
+        const rest = text.slice(i + 1).trim();
+        if (rest === '' || rest.startsWith('#')) return { status: 'closed' };
+        return { status: 'trailing' };
+      }
+    }
+  }
+  return { status: 'open', state: { stack, quote } };
+}
+
 /**
- * gray-matter 4 (as bundled in opencode 1.18.35): BOM stripped; frontmatter
+ * gray-matter 4.0.3 (as bundled in opencode 2.4.2): BOM stripped; frontmatter
  * only when the text starts with `---` not followed by a fourth `-`; the
  * rest of the opening line names the language (yaml when empty — `js` /
  * `javascript` would be eval'ed, `json`, `coffee` … other engines); the
@@ -384,12 +543,10 @@ function frontmatterTextAllows(text: string): string[] {
 }
 
 /**
- * Agent / mode markdown (第三轮 #1, #2): the frontmatter is parsed with a
- * real YAML parser (js-yaml — OpenCode uses gray-matter + js-yaml 3
- * `safeLoad`) and checked like an `agent.<name>` entry (`permission` /
- * `tools` only — prose elsewhere is irrelevant). OpenCode re-parses a
- * sanitized text when the first parse fails: both readings are checked;
- * neither parsing → refused.
+ * Agent / mode markdown: gray-matter + YAML, checked like an `agents.<name>`
+ * entry (`permission`, `permissions`, `tools`; prose elsewhere is irrelevant).
+ * OpenCode retries sanitized text after a parse failure, so both readings are
+ * checked and neither parsing successfully fails closed.
  */
 function frontmatterAllows(text: string): string[] {
   const raw = frontmatterTextAllows(text);
@@ -409,15 +566,17 @@ function existingFile(file: string): boolean {
   }
 }
 
-function listDir(dir: string): string[] {
+/** Missing directories are empty; any other listing error is an incomplete scan. */
+function listDir(dir: string): string[] | null {
   try {
     return readdirSync(dir);
-  } catch {
-    return [];
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' || code === 'ENOTDIR' ? [] : null;
   }
 }
 
-/** Walk bounds (第三轮 #5): beyond them the scan is incomplete → refused. */
+/** Walk bounds: beyond them the scan is incomplete and fails closed. */
 const MARKDOWN_SCAN_MAX_DEPTH = 8;
 const MARKDOWN_SCAN_MAX_FILES = 2_000;
 
@@ -426,26 +585,38 @@ const MARKDOWN_SCAN_MAX_FILES = 2_000;
  * Symlinks are followed once (real paths visited at most once); `truncated`
  * = the depth or file cap was hit.
  */
-function markdownFiles(dir: string, deep: boolean): { files: string[]; truncated: boolean } {
+function markdownFiles(
+  dir: string,
+  deep: boolean,
+): { files: string[]; truncated: boolean; unreadable: boolean } {
   const files: string[] = [];
   const visited = new Set<string>();
   let truncated = false;
+  let unreadable = false;
   const walk = (current: string, depth: number) => {
     let real: string;
     try {
       real = realpathSync(current);
-    } catch {
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') unreadable = true;
       return;
     }
     if (visited.has(real)) return;
     visited.add(real);
-    for (const name of listDir(current)) {
+    const names = listDir(current);
+    if (names === null) {
+      unreadable = true;
+      return;
+    }
+    for (const name of names) {
       if (truncated) return;
       const full = path.join(current, name);
       let stat;
       try {
         stat = statSync(full);
       } catch {
+        unreadable = true;
         continue;
       }
       if (stat.isDirectory()) {
@@ -465,70 +636,135 @@ function markdownFiles(dir: string, deep: boolean): { files: string[]; truncated
     }
   };
   walk(dir, 0);
-  return { files, truncated };
+  return { files, truncated, unreadable };
 }
 
-/**
- * User-writable OpenCode config layers that would let a tool run without the
- * host's decision (复审 #8; layer list from opencode 1.18.35
- * `Config.loadInstanceState` / `ConfigPaths.directories`). `configHome` is the
- * global config directory OpenCode reads (`$XDG_CONFIG_HOME/opencode` — the
- * private one, or the user's with 「加载我的个人配置」); `~/.opencode` is read
- * either way. Returns "file: key" findings; empty = safe to launch.
- */
-export function opencodeUserConfigIssues(input: { home: string; configHome: string }): string[] {
-  const issues: string[] = [];
-  const dotDir = path.join(input.home, '.opencode');
-  const configFiles: Array<[string, readonly string[]]> = [
-    [dotDir, ['opencode.json', 'opencode.jsonc']],
-    [input.configHome, ['config.json', 'opencode.json', 'opencode.jsonc']],
-  ];
-  for (const [dir, names] of configFiles) {
-    for (const name of names) {
-      const file = path.join(dir, name);
-      if (!existingFile(file)) continue;
+function scanConfigRoot(
+  dir: string,
+  names: readonly string[],
+  issues: string[],
+  visited: Set<string>,
+  scanSubdirs = true,
+): void {
+  let real = dir;
+  try {
+    real = realpathSync(dir);
+  } catch {
+    // Missing roots have no files; unreadable files are reported below.
+  }
+  if (visited.has(real)) return;
+  visited.add(real);
+  for (const name of names) {
+    const file = path.join(dir, name);
+    let text: string;
+    try {
+      text = readFileSync(file, 'utf8');
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') continue;
+      issues.push(`${file}: 无法读取`);
+      continue;
+    }
+    for (const key of jsonConfigAllows(text)) issues.push(`${file}: ${key}`);
+  }
+  // Plain project directories only carry `opencode.json(c)`; agent / plugin /
+  // tool discovery is rooted at `.opencode`, handled by the caller.
+  if (!scanSubdirs) return;
+  for (const [sub, deep] of [
+    ['agent', true],
+    ['agents', true],
+    ['mode', false],
+    ['modes', false],
+  ] as const) {
+    const root = path.join(dir, sub);
+    const { files, truncated, unreadable } = markdownFiles(root, deep);
+    if (unreadable) issues.push(`${root}: 无法读取目录`);
+    if (truncated) {
+      issues.push(
+        `${root}: 目录过深（>${MARKDOWN_SCAN_MAX_DEPTH} 层）或文件过多（>${MARKDOWN_SCAN_MAX_FILES}），无法完整检查`,
+      );
+    }
+    for (const file of files) {
       let keys: string[];
       try {
-        keys = jsonConfigAllows(readFileSync(file, 'utf8'));
+        keys = frontmatterAllows(readFileSync(file, 'utf8'));
       } catch {
         keys = ['无法读取'];
       }
       for (const key of keys) issues.push(`${file}: ${key}`);
     }
   }
+  // V1 custom tools are imported and run without a permission request.
+  for (const sub of ['tool', 'tools']) {
+    const root = path.join(dir, sub);
+    const names = listDir(root);
+    if (names === null) {
+      issues.push(`${root}: 无法读取目录`);
+      continue;
+    }
+    for (const name of names) {
+      if (/\.(js|ts|mjs|cjs|mts|cts)$/i.test(name)) {
+        issues.push(`${path.join(root, name)}: 自定义工具（不经权限确认执行）`);
+      }
+    }
+  }
+  // V2 discovers direct .ts/.js files and immediate package directories.
+  for (const sub of ['plugin', 'plugins']) {
+    const root = path.join(dir, sub);
+    const names = listDir(root);
+    if (names === null) {
+      issues.push(`${root}: 无法读取目录`);
+      continue;
+    }
+    for (const name of names) {
+      const file = path.join(root, name);
+      try {
+        const stat = statSync(file);
+        if (stat.isDirectory() || (stat.isFile() && /\.(js|ts)$/i.test(name))) {
+          issues.push(`${file}: 自动发现插件（不经权限确认执行）`);
+        }
+      } catch {
+        issues.push(`${file}: 无法检查插件目录项`);
+      }
+    }
+  }
+}
+
+/**
+ * User-writable V2.4.2 config layers that could bypass host decisions. Returns
+ * "file: key" findings; empty = safe to launch. `configHome` is the active
+ * `$XDG_CONFIG_HOME/opencode` root (private unless user config is enabled).
+ */
+export function opencodeUserConfigIssues(input: { home: string; configHome: string }): string[] {
+  const issues: string[] = [];
+  const visited = new Set<string>();
+  const dotDir = path.join(input.home, '.opencode');
+  scanConfigRoot(dotDir, ['opencode.json', 'opencode.jsonc'], issues, visited);
+  scanConfigRoot(
+    input.configHome,
+    ['config.json', 'opencode.json', 'opencode.jsonc'],
+    issues,
+    visited,
+  );
   // Legacy TOML global config: not checked here — refused if present.
   const legacy = path.join(input.configHome, 'config');
   if (existingFile(legacy)) issues.push(`${legacy}: 旧版 TOML 配置（无法检查）`);
-  for (const dir of [dotDir, input.configHome]) {
-    for (const [sub, deep] of [
-      ['agent', true],
-      ['agents', true],
-      ['mode', false],
-      ['modes', false],
-    ] as const) {
-      const root = path.join(dir, sub);
-      const { files, truncated } = markdownFiles(root, deep);
-      if (truncated) {
-        issues.push(
-          `${root}: 目录过深（>${MARKDOWN_SCAN_MAX_DEPTH} 层）或文件过多（>${MARKDOWN_SCAN_MAX_FILES}），无法完整检查`,
-        );
-      }
-      for (const file of files) {
-        let keys: string[];
-        try {
-          keys = frontmatterAllows(readFileSync(file, 'utf8'));
-        } catch {
-          keys = ['无法读取'];
+  // project_overlay is forced off, but scan its would-be layers fail-closed.
+  const projectRoot = path.join(input.configHome, 'project');
+  const projects = listDir(projectRoot);
+  if (projects === null) {
+    issues.push(`${projectRoot}: 无法读取目录`);
+  } else {
+    for (const name of projects) {
+      const dir = path.join(projectRoot, name);
+      try {
+        if (statSync(dir).isDirectory()) {
+          scanConfigRoot(dir, ['opencode.json', 'opencode.jsonc'], issues, visited);
         }
-        for (const key of keys) issues.push(`${file}: ${key}`);
-      }
-    }
-    // Custom tools are imported and run without any permission request.
-    for (const sub of ['tool', 'tools']) {
-      for (const name of listDir(path.join(dir, sub))) {
-        if (/\.(js|ts|mjs|cjs|mts|cts)$/i.test(name)) {
-          issues.push(`${path.join(dir, sub, name)}: 自定义工具（不经权限确认执行）`);
-        }
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT' && code !== 'ENOTDIR')
+          issues.push(`${dir}: 无法读取项目 overlay 目录`);
       }
     }
   }
@@ -540,14 +776,42 @@ export function opencodeConfigHome(stateDir: string): string {
   return path.join(stateDir, 'xdg-config');
 }
 
+function gitRootAbove(start: string): string | null {
+  let dir = path.resolve(start);
+  for (let depth = 0; depth < 64; depth += 1) {
+    if (existsSync(path.join(dir, '.git'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+  return null;
+}
+
+/** Project layers are disabled by env, but scan them too as defence in depth. */
+function scanProjectConfig(cwd: string, issues: string[], visited: Set<string>): void {
+  const root = gitRootAbove(cwd) ?? path.resolve(cwd);
+  const relative = path.relative(root, cwd);
+  const parts = relative === '' ? [] : relative.split(path.sep);
+  const dirs = [root, ...parts.map((_, i) => path.join(root, ...parts.slice(0, i + 1)))];
+  for (const dir of dirs) {
+    scanConfigRoot(dir, ['opencode.json', 'opencode.jsonc'], issues, visited, false);
+    // Project config also lives in `<dir>/.opencode` (config, agents, plugins,
+    // tools) and is read alongside the root files.
+    scanConfigRoot(
+      path.join(dir, '.opencode'),
+      ['opencode.json', 'opencode.jsonc'],
+      issues,
+      visited,
+    );
+  }
+}
+
 /**
- * Fail closed (复审 #8 / 第三轮 #4, #6): a user layer allowing what only the
- * host may decide would win over our rules (key order + findLast). Run before
- * the run process starts and again before every session is opened (OpenCode
- * reads its config per instance / directory, so a later edit applies to the
- * next session) — not for control processes (probe / login / logout).
+ * Fail closed: custom agents and higher-authority layers can append after our
+ * rules. Run before the process starts and every session open/reuse; control
+ * processes (probe / login / logout) do not execute tools and skip the scan.
  */
-function checkOpencodeConfig({ stateDir, loadUserConfig }: ConfigCheckContext): void {
+function checkOpencodeConfig({ stateDir, loadUserConfig, cwd }: ConfigCheckContext): void {
   if (loadUserConfig !== true && stateDir === undefined) {
     throw new AppError('AGENT_UNAVAILABLE', 'OpenCode 缺少私有状态目录，无法隔离个人配置');
   }
@@ -556,32 +820,39 @@ function checkOpencodeConfig({ stateDir, loadUserConfig }: ConfigCheckContext): 
     loadUserConfig === true
       ? path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'opencode')
       : path.join(opencodeConfigHome(stateDir!), 'opencode');
+  const issues = opencodeUserConfigIssues({ home, configHome });
+  if (cwd !== undefined) {
+    scanProjectConfig(cwd, issues, new Set<string>());
+  }
   // Paths under the home directory as `~/…` (no user name in the setup card).
-  const issues = opencodeUserConfigIssues({ home, configHome }).map((issue) =>
+  const shownIssues = issues.map((issue) =>
     issue.startsWith(home + path.sep) ? `~${issue.slice(home.length)}` : issue,
   );
-  if (issues.length > 0) {
+  if (shownIssues.length > 0) {
     throw new AppError(
       'AGENT_CONFIG_UNSAFE',
-      `OpenCode 的配置放行了需要 KepCup 逐条确认的操作，已拒绝运行。请把下列文件中的这些键改为 ask / deny 或删除后重试：${issues.slice(0, 8).join('；')}${issues.length > 8 ? ` 等 ${issues.length} 处` : ''}`,
+      `OpenCode 的配置放行了需要 KepCup 逐条确认的操作或可执行插件，已拒绝运行。请把下列文件中的这些键改为 ask / deny、关闭危险开关或删除后重试：${shownIssues.slice(0, 8).join('；')}${shownIssues.length > 8 ? ` 等 ${shownIssues.length} 处` : ''}`,
       { issues },
     );
   }
 }
 
-/**
- * Variables that point OpenCode at another config file / directory / home
- * (`OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR`, the test-only home and managed
- * config overrides) — none of them is scanned, so the catalog
- * (`distribution.npx.env`) / launch target must not set them (第三轮补充 #2).
- * `XDG_CONFIG_HOME` likewise: the host's own value (or the private root) only.
- */
+/** Catalog/target values that could redirect config, credentials, state or feature flags. */
 const OPENCODE_CONFIG_REDIRECT_ENV = [
   'OPENCODE_CONFIG',
   'OPENCODE_CONFIG_DIR',
   'OPENCODE_TEST_HOME',
   'OPENCODE_TEST_MANAGED_CONFIG_DIR',
+  'OPENCODE_DB',
+  'OPENCODE_FLAGS',
+  'HOME',
+  'USERPROFILE',
+  'HOMEDRIVE',
+  'HOMEPATH',
   'XDG_CONFIG_HOME',
+  'XDG_DATA_HOME',
+  'XDG_CACHE_HOME',
+  'XDG_STATE_HOME',
 ];
 
 async function applyOpencodeTier(
@@ -603,10 +874,15 @@ export const opencodeProvider: AgentProvider = {
     const enforced: Record<string, string> = {
       ...(loadUserConfig !== true ? { XDG_CONFIG_HOME: opencodeConfigHome(stateDir!) } : {}),
       OPENCODE_CONFIG_CONTENT: JSON.stringify(opencodeProcessConfig()),
-      OPENCODE_PERMISSION: JSON.stringify(opencodePermissionConfig()),
+      OPENCODE_FLAGS: OPENCODE_DANGEROUS_FLAGS.map((flag) => `-${flag}`).join(','),
+      OPENCODE_CONFIG_PROJECT_DISABLE: '1',
       OPENCODE_DISABLE_PROJECT_CONFIG: '1',
-      OPENCODE_PURE: '1',
+      OPENCODE_FILEWATCHER_DISABLE: '1',
+      OPENCODE_DISABLE_FILEWATCHER: '1',
       OPENCODE_DISABLE_CLAUDE_CODE: '1',
+      // Legacy V1 switches are retained but V2 relies on CONTENT policies/rules.
+      OPENCODE_PERMISSION: JSON.stringify(legacyPermissionConfig(opencodePermissionConfig())),
+      OPENCODE_PURE: '1',
       OPENCODE_DISABLE_AUTOUPDATE: '1',
     };
     // Host-enforced and config-redirect keys never come from the catalog /
@@ -632,22 +908,17 @@ export const opencodeProvider: AgentProvider = {
     `${server.replace(/[^a-zA-Z0-9_-]/g, '_')}_${tool.replace(/[^a-zA-Z0-9_-]/g, '_')}`,
   // 无 OS 沙箱：命令一律逐条确认（宿主看不出的一律当沙箱外）。
   execSandboxed: () => false,
-  // parallelSessions：opencode 1.18.35 二进制内的 bundle（`opencode acp`）——
-  // ACP 层 `ACP.Session` 用 `Map<sessionId, Info>` 存会话，`ACP.prompt` 按
-  // sessionId 取会话后调内置服务器的 `session.prompt({sessionID})`，并经
-  // `runUntilIdle(sessionId, …)` 只等**该会话**的 idle（`idleWaiters` 按会话分）；
-  // `ACP.cancel` 只 abort 该会话的 backing session。服务器侧
-  // `SessionRunState.runner` 每个 sessionID 一个 runner（`runners` Map），
-  // `SessionRunState.assertNotBusy` 只在**同一会话**已忙时抛 SessionBusyError。
+  // OpenCode 2.4.2 ACP keeps a per-session attachment/turn map and the server
+  // keeps a runner per session; prompt/cancel state is not process-global.
   features: {
-    steering: false,
+    steering: true,
     loadSession: true,
     resume: true,
     osSandbox: false,
     httpMcp: true,
     parallelSessions: true,
   },
-  // OPENCODE_DISABLE_PROJECT_CONFIG：workdir 内的配置（opencode.json、.opencode/、
-  // AGENTS.md）一概不读——AGENTS.md 由宿主 <workdir> 段注入。
+  // Both project-config variables disable workdir opencode.json, .opencode and
+  // AGENTS.md; the host injects AGENTS.md through its <workdir> segment instead.
   agentSideConfigFiles: [],
 };

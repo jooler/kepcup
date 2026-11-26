@@ -392,7 +392,7 @@ describe('ACP client helpers', () => {
 
   it('isNodeScript detects extension-less bins with a node shebang', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'kepcup-nodescript-'));
-    const bin = path.join(dir, 'inkcop-acp');
+    const bin = path.join(dir, 'example-acp');
     writeFileSync(bin, '#!/usr/bin/env node\nconsole.log("0.1.0")\n');
     chmodSync(bin, 0o755);
     expect(isNodeScript(bin)).toBe(true);
@@ -721,6 +721,26 @@ describe('ExternalAgentEngine', () => {
     const outcome = await engine.startRun(spec()).done;
     expect(outcome.error?.code).toBe('AGENT_AUTH_REQUIRED');
     expect(phases).toEqual(['prompt']);
+  });
+
+  it('runs the launch config check in the process cwd, then each session in its own cwd', async () => {
+    const seen: Array<string | undefined> = [];
+    const providers: ProviderRegistry = {
+      'generic-acp': {
+        ...genericAcpProvider,
+        checkConfig: (ctx) => {
+          seen.push(ctx.cwd);
+        },
+      },
+    };
+    const { engine, spec, cwd } = setup(
+      { turns: [agentTurn().text('ok').end('end_turn')] },
+      { providers },
+    );
+    const outcome = await engine.startRun(spec()).done;
+    expect(outcome.status).toBe('completed');
+    expect(seen[0]).toBe(tmpdir());
+    expect(seen.at(-1)).toBe(cwd);
   });
 
   it('reports a missing executable as AGENT_UNAVAILABLE', async () => {

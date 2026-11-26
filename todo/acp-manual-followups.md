@@ -6,11 +6,11 @@
 
 ## 1. 发行与合规决策
 
-- [ ] **发行门禁**：`apps/desktop/agent-release-gates.json` 当前 `approved: []`——发行版不含任何外部 Agent。逐个决定是否放开：
+- [x] **发行门禁**：`apps/desktop/agent-release-gates.json` 当前放行 Claude Agent、Codex、OpenCode、DeepSeek Harness、Cursor、Antigravity（2026-11-27 快照）。逐个决定是否放开：
   - Claude Agent（Anthropic 订阅第三方使用条款为灰色地带；开发期按启用处理）
-  - Codex、OpenCode、DeepSeek Harness、Cursor、Antigravity（仅 API key 登录；个人 / 企业 Google OAuth 已在代码中禁用）
-  - 放开 OpenCode 前请看 §3 的残留风险
-- [ ] **品牌图标授权**：`claude-acp.svg`、`codex-acp.svg` 需确认品牌使用许可后再放入 `apps/desktop/resources/agents/`
+  - Codex、OpenCode、DeepSeek Harness、Cursor、Antigravity（Antigravity 的 `oauth-personal` / `oauth-business` 已于 2026-11-26 凭据策略修订后开放，个人账号有条款风险提示）
+  - OpenCode 已放行；§3 的残留风险（用户层 MCP / formatter / LSP、托管 / Console 配置）视为产品签收项，改动隔离策略时需重新评估
+- [ ] **品牌图标授权**：品牌图标现来自 `@lobehub/icons-static-svg`，需确认该图标集的品牌使用许可（`apps/desktop/resources/agents/` 仅保留 fake 等自有图标）
 - [ ] **ZCode 已放弃**（DEV-008）：app-server 需宿主推送账号配置并按请求提供鉴权头，接入必须中转凭据；edit 模式不分工作区内外、用户级放行无法关闭、无 OS 沙箱。若 ZCode 将来提供 ACP / 独立登录，再重新评估
 
 ## 2. 协调者代为决定的默认值（请确认或改动）

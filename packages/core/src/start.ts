@@ -986,7 +986,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     process.env.PATH = `${bundledBinDir}${path.delimiter}${process.env.PATH ?? ''}`;
   }
   // Dock / Finder launches omit `~/.local/bin` and Homebrew — system Agent
-  // CLIs (InkCop `inkcop-acp`) and `#!/usr/bin/env node` shebangs need them.
+  // CLIs and `#!/usr/bin/env node` shebangs need them.
   process.env.PATH = withUserPath(process.env).PATH ?? process.env.PATH;
 
   let status: CoreStatus = 'starting';
@@ -2067,6 +2067,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       stateDirFor: (agentId) => agentStateDir(paths, agentId),
       processCwdFor: (agentId) => ensureAgentProcessCwd(paths, agentId),
       loadUserConfigFor: (agentId) => settings.get().agents[agentId]?.loadUserConfig === true,
+      reuseLocalAuthFor: (agentId) => settings.get().agents[agentId]?.reuseLocalAuth === true,
     });
     // D72 宿主 MCP 桥（127.0.0.1 随机端口）：外部 Agent run 的宿主工具经它注入；
     // 随 core 启停（关闭见 close()）。
