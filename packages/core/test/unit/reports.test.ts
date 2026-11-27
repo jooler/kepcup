@@ -1408,8 +1408,16 @@ describe('ReportService PoW（任务 5A：challenge → solve → proof → 重�
         .digest();
       expect(leadingZeroBits(digest)).toBeGreaterThanOrEqual(8);
       // proof / challenge / solution 永不进日志。
+      // token 足够长可直接排除；solution 可能是短数字（difficulty=8 时常为个位数），
+      // 不能对整段 JSON 做 substring 断言，否则会误伤 reportId。
       expect(JSON.stringify(rig.logs)).not.toContain(token);
-      expect(JSON.stringify(rig.logs)).not.toContain(body.proof!.solution);
+      expect(rig.logs.length).toBeGreaterThan(0);
+      for (const entry of rig.logs) {
+        const obj = entry.obj as Record<string, unknown>;
+        expect(Object.keys(obj).every((key) => ['reportId', 'status', 'code'].includes(key))).toBe(
+          true,
+        );
+      }
     } finally {
       closeDatabase(rig.db);
     }
