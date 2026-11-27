@@ -130,6 +130,11 @@ export type ReportAttachment = z.infer<typeof reportAttachmentSchema>;
  * 被举报的消息本体（§5.2）：local 来源由 core 从本地 DB 重读（不信任渲染层
  * 正文），team 来源来自渲染层快照。`content` 是卡片消息的原样 JSON（text 消息
  * 为 null）；`truncated` = 文本超出 32KB 被截断。
+ *
+ * 无 `senderType` 字段（已记录的取舍，§9）：可举报的只有 Bot 消息，本机来源由
+ * core 在 `#collectLocal` 按 `senderType === 'bot'` 复核；team 快照不带该字段，
+ * 「消息确为 Bot 所发」由 UI 入口（canReact）保证——已知取舍：被举报的团队消息
+ * 是否真为 Bot 所发，Worker / triage 侧无从复核。
  */
 export const reportMessageSchema = z.object({
   id: z.string(),

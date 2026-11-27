@@ -9,6 +9,7 @@
 //   report-triage.mjs list [--status new|triaged|actioned|dismissed] [--limit N] [--client ID] [--before CURSOR]
 //   report-triage.mjs show <id>                      # 完整 payload（pretty JSON）
 //   report-triage.mjs set <id> <status> [--note …]   # status: triaged|actioned|dismissed
+//   report-triage.mjs stats                          # 按状态计数 + 近 7 天受理数
 //   report-triage.mjs delete-client <clientId> [--yes]  # 删该 client 全部举报（隐私删除）
 //
 // 处置流程（§7.7）：list --status new → show 逐条看 → set triaged 评估 → 需要改产品的
@@ -37,6 +38,7 @@ const USAGE = `用法:
   report-triage.mjs list [--status new|triaged|actioned|dismissed] [--limit N] [--client ID] [--before CURSOR]
   report-triage.mjs show <id>
   report-triage.mjs set <id> <triaged|actioned|dismissed> [--note "..."]
+  report-triage.mjs stats
   report-triage.mjs delete-client <clientId> [--yes]`;
 
 // ---------------------------------------------------------------- API helper
@@ -155,6 +157,13 @@ async function set(args) {
   console.log(`已更新 ${data.id} → ${data.status}（updatedAt ${new Date(data.updatedAt).toISOString()}）`);
 }
 
+async function stats() {
+  const data = await api('GET', '/v1/admin/stats');
+  const statuses = FILTER_STATUSES.map((s) => `${s}=${data.byStatus?.[s] ?? 0}`).join('  ');
+  console.log(`按状态：${statuses}`);
+  console.log(`近 7 天受理：${data.last7Days ?? 0}（generatedAt ${new Date(data.generatedAt).toISOString()}）`);
+}
+
 async function deleteClient(args) {
   let yes = false;
   const rest = [];
@@ -209,6 +218,9 @@ switch (command) {
     break;
   case 'set':
     await set(args);
+    break;
+  case 'stats':
+    await stats();
     break;
   case 'delete-client':
     await deleteClient(args);

@@ -110,7 +110,7 @@ triage：scripts/report-triage.mjs（bearer admin API：list/show/set/delete-cli
 
 | 项 | 实现 |
 |---|---|
-| 传输 | HTTPS（custom domain 自动证书）；core 固定官方端点、`redirect:'error'`、15s 超时；不代理不走用户配置 |
+| 传输 | HTTPS（custom domain 自动证书）；core 固定官方端点、`redirect:'error'`、15s 超时；不代理不走用户配置。`KEPCUP_REPORT_ENDPOINT` 覆盖是测试缝（`__KEPCUP_TEST_HOOKS__` 门控，终审补齐 todo §6.2 的 dev-only 门控）：打包产物 define false 折叠剔除，环境变量无法重定向（`apps/desktop/scripts/dist.mjs` 与 `pack-hooks.cjs` FORBIDDEN_MARKERS 双重复核） |
 | 本机存储 | `main.db` 加密库（payload 含正文，但用户本机本就有原文）；清空应用数据即删本地副本 |
 | 服务端存储 | D1 静态加密；只存清洗/截断后文本 + 完整 payload JSON；不存 API Key |
 | IP | 不存原始 IP；HMAC-SHA256（`IP_HASH_SALT`）后存 `ip_hash`，仅限流用 |

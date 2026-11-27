@@ -108,6 +108,9 @@ node --env-file=.env scripts/report-triage.mjs set rep_… triaged --note "初�
 node --env-file=.env scripts/report-triage.mjs set rep_… actioned --note "已加入系统提示词拦截"
 node --env-file=.env scripts/report-triage.mjs set rep_… dismissed --note "误报"
 
+# 合规询问：按状态计数 + 近 7 天受理数
+node --env-file=.env scripts/report-triage.mjs stats
+
 # 隐私删除（用户要求删数据）；交互确认，脚本化场景加 --yes
 node --env-file=.env scripts/report-triage.mjs delete-client client-…
 ```

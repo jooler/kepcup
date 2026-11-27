@@ -1395,8 +1395,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     bots.attachLeadProjectGuard((botId) => projects.ledProjectsOf(botId));
     const stickies = new StickiesService(mainDb, clock);
     // AI 内容举报（§6.2）：依赖 messages / bots / conversations / settings /
-    // secrets 已就绪。端点只在测试 / 开发用 KEPCUP_REPORT_ENDPOINT 覆盖；打包
-    // 产物固定官方域名，避免被环境变量重定向。
+    // secrets 已就绪。KEPCUP_REPORT_ENDPOINT 是测试缝（todo §6.2「dev-only 门控」）：
+    // 只在 __KEPCUP_TEST_HOOKS__ 构建（dev / e2e 假 Worker）生效；打包产物 define
+    // false 折叠剔除，固定官方域名，环境变量无法重定向举报流量（dist.mjs /
+    // pack-hooks.cjs marker 复核，P13 产物剔除惯例）。
     const reports = new ReportService({
       db: mainDb,
       clock,
@@ -1407,7 +1409,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       settings,
       secrets,
       appVersion: options.appVersion ?? '0.0.0',
-      ...(env.KEPCUP_REPORT_ENDPOINT ? { endpoint: env.KEPCUP_REPORT_ENDPOINT } : {}),
+      ...(__KEPCUP_TEST_HOOKS__ === true && env.KEPCUP_REPORT_ENDPOINT
+        ? { endpoint: env.KEPCUP_REPORT_ENDPOINT }
+        : {}),
     });
     const reactions = new ReactionsService(mainDb, clock);
     const conversationNotes = new ConversationNotesService(mainDb, clock);
