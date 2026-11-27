@@ -22,6 +22,8 @@ import {
   rpcMethodSchemas,
   reactionSummarySchema,
   reportPayloadSchema,
+  reportsCancelInputSchema,
+  reportsCancelOutputSchema,
   reportsSubmitInputSchema,
   reportsSubmitOutputSchema,
   messagesReactInputSchema,
@@ -87,8 +89,13 @@ const teamSnapshot = {
 };
 
 describe('举报 RPC 注册（§6.5）', () => {
-  it('三个方法都进入 APP_RPC_METHODS（port A，渲染层 → core）', () => {
-    for (const name of ['reports.submit', 'messages.react', 'messages.reactions'] as const) {
+  it('四个方法都进入 APP_RPC_METHODS（port A，渲染层 → core）', () => {
+    for (const name of [
+      'reports.submit',
+      'reports.cancel',
+      'messages.react',
+      'messages.reactions',
+    ] as const) {
       expect(APP_RPC_METHODS).toContain(name);
       const io = rpcMethodSchemas[name];
       expect(io.input).toBeDefined();
@@ -99,7 +106,12 @@ describe('举报 RPC 注册（§6.5）', () => {
   });
 
   it('不在平台方法（port B）面上', () => {
-    for (const name of ['reports.submit', 'messages.react', 'messages.reactions']) {
+    for (const name of [
+      'reports.submit',
+      'reports.cancel',
+      'messages.react',
+      'messages.reactions',
+    ]) {
       expect(PLATFORM_RPC_METHODS).not.toContain(name);
     }
   });
@@ -181,6 +193,55 @@ describe('reports.submit 往返', () => {
   it('输出 status 只在三种之间', () => {
     expect(reportsSubmitOutputSchema.safeParse({ status: 'sent' }).success).toBe(false);
     expect(reportsSubmitOutputSchema.safeParse({ status: 'rejected' }).success).toBe(true);
+  });
+});
+
+describe('reports.cancel 往返', () => {
+  const base = { clientId: 'client-9f21c7d4a55e', messageId: 'msg_01JDEMOMESSAGE000000000000A' };
+
+  it('合法输入 parse 通过；cancelled 无 reason、not_revocable 带 sent/sending/none', () => {
+    expect(reportsCancelInputSchema.parse(base)).toEqual(base);
+    const cancelled = reportsCancelOutputSchema.parse({ status: 'cancelled' });
+    expect(cancelled.status).toBe('cancelled');
+    expect(cancelled.reason).toBeUndefined();
+    expect(reportsCancelOutputSchema.parse({ status: 'not_revocable', reason: 'sent' })).toEqual({
+      status: 'not_revocable',
+      reason: 'sent',
+    });
+    expect(reportsCancelOutputSchema.parse({ status: 'not_revocable', reason: 'none' }).reason).toBe(
+      'none',
+    );
+    expect(reportsCancelOutputSchema.parse({ status: 'not_revocable' }).reason).toBeUndefined();
+  });
+
+  it('缺字段拒绝', () => {
+    expect(reportsCancelInputSchema.safeParse({ messageId: base.messageId }).success).toBe(false);
+    expect(reportsCancelInputSchema.safeParse({ clientId: base.clientId }).success).toBe(false);
+    expect(reportsCancelInputSchema.safeParse({ ...base, messageId: '' }).success).toBe(false);
+    expect(reportsCancelInputSchema.safeParse({ ...base, clientId: '' }).success).toBe(false);
+  });
+
+  it('超长（>128）拒绝', () => {
+    expect(
+      reportsCancelInputSchema.safeParse({ ...base, clientId: 'x'.repeat(129) }).success,
+    ).toBe(false);
+    expect(
+      reportsCancelInputSchema.safeParse({ ...base, messageId: 'm'.repeat(129) }).success,
+    ).toBe(false);
+    expect(reportsCancelInputSchema.parse({ ...base, messageId: 'm'.repeat(128) }).messageId).toHaveLength(
+      128,
+    );
+  });
+
+  it('输出 status / reason 枚举外拒绝', () => {
+    expect(reportsCancelOutputSchema.safeParse({ status: 'queued' }).success).toBe(false);
+    expect(
+      reportsCancelOutputSchema.safeParse({ status: 'not_revocable', reason: 'queued' }).success,
+    ).toBe(false);
+    // reason 是可选字段（风格对照 reports.submit）：取消方不携带，但 schema
+    // 层不按 status 判 reason 存在性——只有非法枚举值才拒绝。
+    expect(reportsCancelOutputSchema.safeParse({ status: 'not_revocable', reason: 'sending' }).success)
+      .toBe(true);
   });
 });
 

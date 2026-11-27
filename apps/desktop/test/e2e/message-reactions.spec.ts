@@ -10,9 +10,10 @@ import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
  * Bot 消息 emoji 反馈与举报入口（AI 内容举报 todo §4 / §10.4）：hover 面板点
- * 👎 出 chip 且本地假 Worker 恰好收到一次 POST（hashes.content 可复算）；重复
- * 点 👎 是 UI no-op（POST 数不变）；❤️ 再点即取消（chip 消失）；右键菜单
- * 「举报不当内容」与 👎 同流程（无确认、无 toast）。
+ * 👎 出 chip 且本地假 Worker 恰好收到一次 POST（hashes.content 可复算）；再点
+ * 👎 = 切换关闭（chip 消失；cancel 是纯本机行为，不产生新 POST——首条已发出
+ * 的举报不可撤）；❤️ 再点即取消（chip 消失）；右键菜单「举报不当内容」与 👎
+ * 同流程（无确认、无 toast）。
  *
  * 反滥用 PoW（任务 5A）：假 Worker 实现 GET /v1/challenge（difficulty 4）并要求
  * POST 带 proof 兄弟键（校验存在即可）；challenge GET 不计入 reports 计数。
@@ -226,10 +227,13 @@ test('bot message reactions: dislike reports once, heart toggles, context menu r
     expect(report.proof?.challenge).toMatch(/^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
     expect(report.proof?.solution.length).toBeGreaterThan(0);
 
-    // 同一条再点 👎：UI no-op，POST 数不变。
+    // 同一条再点 👎 = 切换关闭：chip 消失；首条 POST 已落地（已发送不可撤，
+    // reports.cancel 只撤本机队列），cancel 不产生新的 POST。
     await openReactionPanel(page, firstBubble);
     await pickEmoji(page, '👎');
-    await expect(dislikeChip).toBeVisible();
+    await expect(page.locator('[data-testid="reaction-chip-👎"]')).toHaveCount(0, {
+      timeout: 15_000,
+    });
     await page.waitForTimeout(1_500);
     expect(worker.reports).toHaveLength(1);
 
@@ -242,10 +246,12 @@ test('bot message reactions: dislike reports once, heart toggles, context menu r
     await pickEmoji(page, '❤️');
     await expect(heartChip).toHaveCount(0, { timeout: 15_000 });
 
-    // 同一条右键菜单「举报不当内容」：已 👎 → no-op，无确认弹窗，POST 数不变。
+    // 同一条右键菜单「举报不当内容」：👎 已被上面的 toggle 移除 → 走首次举报
+    // 路径（无确认弹窗），chip 重新出现；新举报命中同内容去重窗口（首条已
+    // sent，行仍占 24h/90d 槽位）→ duplicate 不入队，POST 数不变。
     await firstBubble.click({ button: 'right' });
     await page.locator('[data-testid="context-message-report"]').click();
-    await expect(dislikeChip).toBeVisible();
+    await expect(dislikeChip).toBeVisible({ timeout: 15_000 });
     await page.waitForTimeout(1_500);
     expect(worker.reports).toHaveLength(1);
 

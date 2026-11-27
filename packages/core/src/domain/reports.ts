@@ -476,6 +476,33 @@ export class ReportService {
     return { status: 'queued' };
   }
 
+  // --- cancel（§6.5：撤回未发送的举报）-----------------------------------------
+
+  /**
+   * 撤回该 client 在某条消息上尚未发出的举报：pending / failed 行直接删除
+   * （failed 行从未送达，一并清理属正确语义）。删除行即释放去重唯一索引
+   * 槽位——同内容在去重窗口内可重新举报（sent 行保留槽位的原语义不受影响）。
+   * 已进入发送流程的行（sending / sent）不可撤；兜底查询按 client 过滤，不
+   * 泄露他人举报的存在性（不同 client 只能得到 not_revocable/none）。
+   */
+  cancel(
+    clientId: string,
+    messageId: string,
+  ): { status: 'cancelled' | 'not_revocable'; reason?: 'sent' | 'sending' | 'none' } {
+    const deleted = this.#db
+      .prepare(
+        "delete from report_outbox where client_id = ? and message_id = ? and status in ('pending','failed')",
+      )
+      .run(clientId, messageId);
+    if (deleted.changes > 0) return { status: 'cancelled' };
+    const row = this.#db
+      .prepare('select status from report_outbox where client_id = ? and message_id = ? limit 1')
+      .get(clientId, messageId) as { status: 'sending' | 'sent' } | undefined;
+    return row === undefined
+      ? { status: 'not_revocable', reason: 'none' }
+      : { status: 'not_revocable', reason: row.status };
+  }
+
   // --- payload 构建 / 双 hash（§5.4）------------------------------------------
 
   #buildPayload(input: ReportSubmitInput, collected: Collected, now: number): ReportPayload {

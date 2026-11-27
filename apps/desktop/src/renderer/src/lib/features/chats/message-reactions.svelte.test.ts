@@ -10,16 +10,19 @@ import {
 /**
  * reaction store 的纯逻辑单测（AI 内容举报 todo §4 / §6.5 / §10.3）：scope /
  * source 映射、emoji 集合切片、toggle 语义（同 emoji 取消、换 emoji 替换、
- * 👎 no-op、👍 换行替换）、reports.submit 的 local / team 分支、团队快照构建
- * （形状过 shared schema；非法输入降级）与 i18n key 齐全。组件行为靠 e2e。
+ * 👎 再点 = react null + reports.cancel）、reports.submit 的 local / team 分支、
+ * 团队快照构建（形状过 shared schema；非法输入降级）与 i18n key 齐全。组件
+ * 行为靠 e2e。
  */
 
 const calls: Array<{ method: string; payload: Record<string, unknown> }> = [];
 let reactResponse: { reactions: unknown[] } = { reactions: [] };
 let reportResponse: { status: string; reason?: string } = { status: 'queued' };
+let cancelResponse: { status: string; reason?: string } = { status: 'cancelled' };
 let reactionsPrefetchResponse: { reactions: unknown[] } = { reactions: [] };
 let reactShouldFail = false;
 let reportShouldFail = false;
+let cancelShouldFail = false;
 let prefetchShouldFail = false;
 
 vi.mock('$lib/rpc/client.svelte', () => ({
@@ -33,6 +36,10 @@ vi.mock('$lib/rpc/client.svelte', () => ({
       if (method === 'reports.submit') {
         if (reportShouldFail) throw new Error('core unavailable');
         return reportResponse;
+      }
+      if (method === 'reports.cancel') {
+        if (cancelShouldFail) throw new Error('core unavailable');
+        return cancelResponse;
       }
       if (method === 'messages.reactions') {
         if (prefetchShouldFail) throw new Error('core unavailable');
@@ -110,9 +117,11 @@ beforeEach(() => {
   calls.length = 0;
   reactResponse = { reactions: [] };
   reportResponse = { status: 'queued' };
+  cancelResponse = { status: 'cancelled' };
   reactionsPrefetchResponse = { reactions: [] };
   reactShouldFail = false;
   reportShouldFail = false;
+  cancelShouldFail = false;
   prefetchShouldFail = false;
 });
 
@@ -219,17 +228,73 @@ describe('reaction store：toggle 语义（§4.2）', () => {
     expect(messageReactions.reportStatusOf('local', msg.conversationId, msg.id)).toBe('queued');
   });
 
-  it('已是 👎 再点 👎：UI no-op，连 RPC 都不发（举报不可撤回也不重复）', async () => {
+  it('再点 👎 = 切换关闭：react(null) 与 reports.cancel 并发、互不等待；cancelled 清内部状态，再点走首次路径', async () => {
     const msg = messageFixture();
     const target = targetOf(msg);
-    // 先落一份 mine=👎 的状态。
-    applyReact([{ messageId: msg.id, emoji: '👎', count: 3, mine: true }]);
+    // 首次点击：react 👎 + reports.submit，内部状态 queued。
+    applyReact([{ messageId: msg.id, emoji: '👎', count: 1, mine: true }]);
     messageReactions.handleReact(target, '👎');
     await flush();
+    expect(messageReactions.reportStatusOf('local', msg.conversationId, msg.id)).toBe('queued');
+    expect(calls.filter((call) => call.method === 'reports.submit')).toHaveLength(1);
+
+    // 再点 👎：两个 RPC 并发发出——emoji 移除 + 举报撤回。
     calls.length = 0;
+    applyReact([{ messageId: msg.id, emoji: '👎', count: 0, mine: false }]);
     messageReactions.handleReact(target, '👎');
     await flush();
-    expect(calls).toHaveLength(0);
+    const react = calls.find((call) => call.method === 'messages.react');
+    const cancel = calls.find((call) => call.method === 'reports.cancel');
+    expect(react?.payload).toMatchObject({
+      scope: 'local',
+      messageId: msg.id,
+      clientId: 'client-fixed',
+      emoji: null,
+    });
+    expect(cancel?.payload).toEqual({ clientId: 'client-fixed', messageId: msg.id });
+    expect(messageReactions.mineEmojiOf('local', msg.conversationId, msg.id)).toBeNull();
+    // cancelled → 内部举报状态清除。
+    expect(messageReactions.reportStatusOf('local', msg.conversationId, msg.id)).toBeNull();
+
+    // 第三次点 👎：内部状态已清 → 走首次路径（新的 react 👎 + 新的 submit）。
+    calls.length = 0;
+    applyReact([{ messageId: msg.id, emoji: '👎', count: 1, mine: true }]);
+    messageReactions.handleReact(target, '👎');
+    await flush();
+    expect(calls.find((call) => call.method === 'messages.react')?.payload['emoji']).toBe('👎');
+    expect(calls.filter((call) => call.method === 'reports.submit')).toHaveLength(1);
+    expect(calls.some((call) => call.method === 'reports.cancel')).toBe(false);
+    expect(messageReactions.reportStatusOf('local', msg.conversationId, msg.id)).toBe('queued');
+  });
+
+  it('再点 👎 且 cancel 返回 not_revocable：emoji 仍被移除，内部举报状态保留', async () => {
+    const msg = messageFixture();
+    const target = targetOf(msg);
+    applyReact([{ messageId: msg.id, emoji: '👎', count: 1, mine: true }]);
+    messageReactions.handleReact(target, '👎');
+    await flush();
+    expect(messageReactions.reportStatusOf('local', msg.conversationId, msg.id)).toBe('queued');
+
+    cancelResponse = { status: 'not_revocable', reason: 'sent' };
+    calls.length = 0;
+    applyReact([{ messageId: msg.id, emoji: '👎', count: 0, mine: false }]);
+    messageReactions.handleReact(target, '👎');
+    await flush();
+    expect(calls.some((call) => call.method === 'reports.cancel')).toBe(true);
+    expect(messageReactions.mineEmojiOf('local', msg.conversationId, msg.id)).toBeNull();
+    expect(messageReactions.reportStatusOf('local', msg.conversationId, msg.id)).toBe('queued');
+  });
+
+  it('再点 👎 且 cancel RPC 异常：不外抛、内部状态保留（无 toast，错误只进日志）', async () => {
+    const msg = messageFixture();
+    const target = targetOf(msg);
+    applyReact([{ messageId: msg.id, emoji: '👎', count: 1, mine: true }]);
+    messageReactions.handleReact(target, '👎');
+    await flush();
+    cancelShouldFail = true;
+    expect(() => messageReactions.handleReact(target, '👎')).not.toThrow();
+    await flush();
+    expect(messageReactions.reportStatusOf('local', msg.conversationId, msg.id)).toBe('queued');
   });
 
   it('已 👎 时点其他 emoji：替换 reaction 行（举报记录不受影响），不再 submit', async () => {

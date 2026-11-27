@@ -144,6 +144,8 @@ import {
   messagesReactOutputSchema,
   messagesReactionsInputSchema,
   messagesReactionsOutputSchema,
+  reportsCancelInputSchema,
+  reportsCancelOutputSchema,
   reportsSubmitInputSchema,
   reportsSubmitOutputSchema,
   attachmentsUploadInputSchema,
@@ -1612,6 +1614,9 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     // UI 静默。团队来源必须带渲染层快照（团队消息不在本地 DB）。 ---
     'reports.submit': method(reportsSubmitInputSchema, reportsSubmitOutputSchema, async (input) =>
       domain.reports.submit(input),
+    ),
+    'reports.cancel': method(reportsCancelInputSchema, reportsCancelOutputSchema, async (input) =>
+      domain.reports.cancel(input.clientId, input.messageId),
     ),
 
     'attachments.upload': method(

@@ -1631,6 +1631,25 @@ export const reportsSubmitOutputSchema = z.object({
 });
 export type ReportsSubmitOutput = z.infer<typeof reportsSubmitOutputSchema>;
 
+/**
+ * 撤回尚未发出的举报（§6.5）：按 (clientId, messageId) 删 `report_outbox` 里
+ * 仍可撤的行（pending / failed；failed 从未送达，一并清理）。`cancelled` =
+ * 行已删除（去重唯一索引槽位随之释放，同内容窗口内可重新举报），无 reason；
+ * `not_revocable` = 行已进入发送流程（sending/sent）或本 client 无记录——已
+ * 发出的举报无法由客户端撤回，用户侧删除走隐私政策两通道。UI 全程静默。
+ */
+export const reportsCancelInputSchema = z.object({
+  /** 渲染层 clientIdentity.id：只撤本 client 的行，不泄露他人举报存在性。 */
+  clientId: z.string().min(1).max(128),
+  messageId: z.string().min(1).max(128),
+});
+export const reportsCancelOutputSchema = z.object({
+  status: z.enum(['cancelled', 'not_revocable']),
+  /** 仅 not_revocable 时携带：行处于 sent/sending；none = 本 client 无行。 */
+  reason: z.enum(['sent', 'sending', 'none']).optional(),
+});
+export type ReportsCancelOutput = z.infer<typeof reportsCancelOutputSchema>;
+
 // --- attachments ----------------------------------------------------------
 
 export const attachmentsUploadInputSchema = z.object({
@@ -3238,6 +3257,7 @@ export const rpcMethodSchemas = {
     output: messagesReactionsOutputSchema,
   },
   'reports.submit': { input: reportsSubmitInputSchema, output: reportsSubmitOutputSchema },
+  'reports.cancel': { input: reportsCancelInputSchema, output: reportsCancelOutputSchema },
 
   'attachments.upload': {
     input: attachmentsUploadInputSchema,
@@ -4083,6 +4103,7 @@ export const APP_METHODS = [
   'messages.react',
   'messages.reactions',
   'reports.submit',
+  'reports.cancel',
   'attachments.upload',
   'attachments.get',
   'attachments.status',

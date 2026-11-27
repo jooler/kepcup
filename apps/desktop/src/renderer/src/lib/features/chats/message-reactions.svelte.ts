@@ -6,6 +6,7 @@ import {
   type ReactionSummary,
   type ReportSource,
   type ReportTeamSnapshot,
+  type ReportsCancelOutput,
   type ReportsSubmitOutput,
 } from '@kepcup/shared';
 import { clientIdentity } from '$lib/features/collab/client-identity';
@@ -21,7 +22,9 @@ import { core } from '$lib/rpc/client.svelte';
  * 👎 兼为举报入口（§4.3）：点击即「记 👎 reaction + reports.submit」两个
  * RPC 并发发出、互不等待；无弹窗、无 toast（已定稿决策），reports.submit
  * 的 queued / duplicate / rejected 只进 `reports` 内部状态（devtools 可
- * 观察），重复点击已 👎 的消息是 UI no-op（连 RPC 都不发）。
+ * 观察）。已是 👎 再点 = 切换关闭：messages.react(null) 与 reports.cancel
+ * 并发——举报仍待发送（pending/failed）即被撤回，已发送的不可撤、仅移除
+ * emoji。
  */
 
 /** reaction/report 作用域（§5.6）：本机 `local`；团队 `team:<serverHash>`。 */
@@ -148,16 +151,23 @@ class MessageReactionsState {
 
   /**
    * 点击语义（§4.2 / §4.3）：非 👎 切换本机 reaction（同一个再点 = 取消）；
-   * 👎 若已是 👎 则 UI no-op（不发任何 RPC），否则「记 👎 + reports.submit」
-   * 两个 RPC 并发、互不等待，全部静默。切换到非 👎 emoji 会替换（含替换 👎
-   * 的 reaction 行——举报记录本身不受影响，§4.3「举报不可撤回」）。
+   * 👎 首次点击 = 「记 👎 + reports.submit」两个 RPC 并发、互不等待；已是 👎
+   * 再点 = 切换关闭：并发 messages.react(null) 与 reports.cancel——举报若仍
+   * 在待发送队列（pending/failed）即被撤回（内部举报状态清除），已发送 /
+   * 发送中的举报不可撤（not_revocable，仅移除 emoji，内部状态保留）。全部
+   * 静默、互不等待。切换到非 👎 emoji 只替换 reaction 行（举报记录本身不受
+   * 影响，§4.3）。
    */
   handleReact(target: ReactionTarget, emoji: string): void {
     const conversationId = target.message.conversationId;
     const messageId = target.message.id;
     const mine = this.mineEmojiOf(target.source, conversationId, messageId);
     if (emoji === REPORT_EMOJI) {
-      if (mine === REPORT_EMOJI) return;
+      if (mine === REPORT_EMOJI) {
+        void this.#setReaction(target, null);
+        void this.#cancelReport(target);
+        return;
+      }
       void this.#setReaction(target, REPORT_EMOJI);
       void this.#submitReport(target);
       return;
@@ -203,6 +213,29 @@ class MessageReactionsState {
     } catch (error) {
       console.error('[kepcup] reports.submit failed', { messageId: message.id, error });
       this.state(scope, conversationId).reports[message.id] = 'failed';
+    }
+  }
+
+  /**
+   * reports.cancel（§6.5）：撤回本 client 仍在待发送队列（pending/failed）的
+   * 举报——cancelled 即清除该消息的内部举报状态（devtools 里也不再有条目）；
+   * not_revocable（sent/sending/none）内部状态保留（emoji 的移除由 react null
+   * 的响应更新聚合）。RPC 异常只进日志，不外抛、不提示。
+   */
+  async #cancelReport(target: ReactionTarget): Promise<void> {
+    const { source, message } = target;
+    const scope = reactionScopeOf(source);
+    const conversationId = message.conversationId;
+    try {
+      const result = (await core.call('reports.cancel', {
+        clientId: clientIdentity.id,
+        messageId: message.id,
+      })) as ReportsCancelOutput;
+      if (result.status === 'cancelled') {
+        delete this.state(scope, conversationId).reports[message.id];
+      }
+    } catch (error) {
+      console.error('[kepcup] reports.cancel failed', { messageId: message.id, error });
     }
   }
 

@@ -45,7 +45,7 @@ triage：scripts/report-triage.mjs（bearer admin API：list/show/set/delete-cli
 ## 3. 数据契约
 
 - **唯一事实来源**：`packages/shared/src/domain/report.ts`——payload 顶层 schema（`reportPayloadSchema`）、子结构（client / source / bot / message / replyTo / context / usage / tools / providers / hashes）、内容上限常量（`REPORT_*_MAX_BYTES`）、去重窗口（`REPORT_CONTENT_DEDUPE_MS` 24h、`REPORT_PAYLOAD_DEDUPE_MS` 90d）、reaction 白名单（`MESSAGE_REACTION_EMOJIS` 12 个）与 scope 形状（`^local$|^team:[0-9a-f]{16}$`）。
-- **RPC**：`packages/shared/src/rpc/methods.ts` 的 `messages.react` / `messages.reactions` / `reports.submit`（均在 `APP_RPC_METHODS`）。`reports.submit` 输出 `queued | duplicate | rejected`（`rejected` 只作诊断，UI 静默）。
+- **RPC**：`packages/shared/src/rpc/methods.ts` 的 `messages.react` / `messages.reactions` / `reports.submit` / `reports.cancel`（均在 `APP_RPC_METHODS`）。`reports.submit` 输出 `queued | duplicate | rejected`（`rejected` 只作诊断，UI 静默）；`reports.cancel` 撤回本机队列里尚未发出的举报——按 (clientId, messageId) 删 `report_outbox` 的 pending/failed 行（输出 `cancelled`），行已 sending/sent 或本 client 无行输出 `not_revocable` + `reason: sent|sending|none`（见 §11.j）。
 - **固定向量**：`packages/shared/test/fixtures/report-v1.json`——content hash 前缀 `69a79ef1…`、payload hash 前缀 `66f397f8…`。core（`node:crypto`）与 Worker（`crypto.subtle`）各有一份 hash 实现，以该向量逐字节互锁，禁止只改一边。
 - **hash 定义**：content = 正文（text）或卡片 canonicalJson（card）的 sha256；payload = 去掉 `reportId / createdAt / hashes / proof` 后的 canonicalJson 的 sha256（递归按 key 字典序排序、数组保序；`proof` 是 PoW 传输层兄弟键，任务 5A，shared schema 不知道它）。bucket 由两侧各自时钟计算，不进 hash。
 - **上限**：正文 32KB、卡片 16KB、replyTo 2KB、每条 context 2KB×最多 4 条、profile 8KB、附件元数据 ≤20 条、整包 128KB；清洗顺序 = `secrets.redact()` → 去 C0 控制字符（保留 `\n` `\t`）→ UTF-8 字节截断（不劈多字节/代理对，置 `truncated`）。
@@ -55,7 +55,7 @@ triage：scripts/report-triage.mjs（bearer admin API：list/show/set/delete-cli
 
 **迁移 `0084_ai_reporting.sql`**（`packages/core/migrations/main/`）：
 
-- `report_outbox`：发送队列。唯一索引 `(client_id, content_hash, content_bucket)` 与 `(client_id, payload_hash, payload_bucket)`（`INSERT OR IGNORE` 判重，并发安全）；`status ∈ pending/sending/sent/failed`；不建 FK 到 `messages`（团队消息不在本机库）。sent/failed 行保留不清理。
+- `report_outbox`：发送队列。唯一索引 `(client_id, content_hash, content_bucket)` 与 `(client_id, payload_hash, payload_bucket)`（`INSERT OR IGNORE` 判重，并发安全）；`status ∈ pending/sending/sent/failed`；不建 FK 到 `messages`（团队消息不在本机库）。sent 行保留不清理（占住去重槽位）；pending/failed 行可被 `reports.cancel` 按 (client_id, message_id) 删除（§11.j）——删除即释放去重槽位，同内容窗口内可重新举报。
 - `message_reactions`：`PRIMARY KEY (scope, message_id, client_id)`，每条消息每 client 至多一个 emoji；只存本机，不进消息内容、不参与团队同步。
 
 **`ReportService`**（`packages/core/src/domain/reports.ts`）：
@@ -100,9 +100,9 @@ triage：scripts/report-triage.mjs（bearer admin API：list/show/set/delete-cli
 ## 7. UX（桌面端）
 
 - Bot 消息（`senderType==='bot'`、kind text/card、未撤回）hover 操作组第一个按钮是 emoji（lucide `Smile`）；用户消息没有。
-- 面板：5 个快捷 emoji `👍 👎 ❤️ 😂 🎉` + 展开常用网格（合计固定 12 个白名单）。非 👎：切换本机 reaction（再点取消），持久化到 `message_reactions`，刷新仍在；👎：加 👎 reaction 并 `reports.submit` 入队。
-- **👎 语义**：点击即入队并视为同意发送；不弹隐私确认、不弹成功/重复 toast（👎 chip 就是状态）；同一条已是 👎 再点 no-op；举报不可撤回（其他 emoji 可取消）。
-- 气泡下方 reaction chip 行：`😊 3`（>1 显示数量），自己的 reaction 高亮；scope 按 client 聚合，不跨设备同步。
+- 面板：5 个快捷 emoji `👍 👎 ❤️ 😂 🎉` + 展开常用网格（合计固定 12 个白名单）。非 👎：切换本机 reaction（再点取消），持久化到 `message_reactions`，刷新仍在；👎：加 👎 reaction 并 `reports.submit` 入队；已是 👎 再点 = 切换关闭（见下）。
+- **👎 语义**：首次点击即入队并视为同意发送；不弹隐私确认、不弹成功/重复 toast（👎 chip 就是状态）。已是 👎 再点 = 切换关闭：移除 👎 emoji（`messages.react null`）并 `reports.cancel` 撤回尚未发出的举报（pending/failed 本机删除；sending/sent 不可撤，仅移除 emoji）——全程静默，两个 RPC 并发互不等待。撤回只承诺「尚未发出的举报」：sending 窗口（点击后 challenge+POST 往返的数秒）内举报可能已在线路上，UI 无法与已送达区分（§11.j）。
+- 气泡下方 reaction chip 行：`😊 3`（>1 显示数量），自己的 reaction 高亮且可点（非 👎 点击 = 取消 reaction；自己的 👎 chip 点击 = 同上的切换关闭路径，aria-label 复用 `messages.reactions.emoji.👎`）；他人的 chip（含 👎）只读；scope 按 client 聚合，不跨设备同步。
 - 右键菜单「举报不当内容」（`data-testid="context-message-report"`）与 👎 同流程——窄屏（hover 组不渲染）与键盘用户的可达路径。
 - `rejected / duplicate` 全静默；发送失败只写本机日志，不提示。
 
@@ -137,9 +137,9 @@ triage：scripts/report-triage.mjs（bearer admin API：list/show/set/delete-cli
 
 | 层 | 文件 | 覆盖点 |
 |---|---|---|
-| shared 契约 | `packages/shared/test/unit/reports-contracts.test.ts` | 三 RPC 进 `APP_RPC_METHODS`、输入输出 schema 往返 |
+| shared 契约 | `packages/shared/test/unit/reports-contracts.test.ts` | 四 RPC 进 `APP_RPC_METHODS`、输入输出 schema 往返 |
 | 固定向量 | `packages/shared/test/fixtures/report-v1.json` | content/payload hash 共同锚点（两侧实现互锁） |
-| core | `packages/core/test/unit/reports.test.ts` | payload 构建（bot/profile/usage/tools/providers/context/replyTo/附件）、local 重读防篡改、team 快照、拒绝路径、redact、截断、hash、去重窗口/时间桶边界、排队与 429/5xx/4xx 退避、启动恢复 |
+| core | `packages/core/test/unit/reports.test.ts` | payload 构建（bot/profile/usage/tools/providers/context/replyTo/附件）、local 重读防篡改、team 快照、拒绝路径、redact、截断、hash、去重窗口/时间桶边界、排队与 429/5xx/4xx 退避、启动恢复、cancel（pending/failed 删并释放槽位、跨桶多行全删、sending/sent/none 不可撤、撤后 kick 零 POST） |
 | core | `packages/core/test/unit/reactions.test.ts` | set/toggle/聚合/mine/scope 隔离/白名单 |
 | core | `packages/core/test/unit/ai-reporting-migration.test.ts` | 0083→0084 升级、表/索引/约束、重复插入 changes=0 |
 | core | `packages/core/test/unit/report-contract.test.ts` | core 构建结果与 fixture 双 hash 逐字节一致 |
@@ -147,8 +147,8 @@ triage：scripts/report-triage.mjs（bearer admin API：list/show/set/delete-cli
 | Worker | `infra/cloudflare/reports/test/dedupe.test.ts` | canonicalJson 边界值与 hash 复算（与 fixture parity） |
 | Worker | `infra/cloudflare/reports/test/admin.test.ts` | 鉴权/隐藏入口/list/detail/patch/delete-client/stats/分页 |
 | Worker | `infra/cloudflare/reports/test/contract.test.ts` | Worker 实现与 fixture 双 hash 一致 |
-| 桌面 UI | `apps/desktop/src/renderer/src/lib/features/chats/message-reactions.svelte.test.ts` | 面板/👎 入队/chip 聚合高亮/重复点击 no-op（配套 `MessageReactionBar.svelte`、`MessageReactionChips.svelte`、`message-reactions.svelte.ts`、`message-reaction-target.ts`） |
-| e2e | `apps/desktop/test/e2e/message-reactions.spec.ts` | hover → 👎 → chip；右键菜单 `context-message-report`；假 Worker 的 challenge（difficulty 4）→ 带 proof 的 POST 恰好一次、重复点击不增发 |
+| 桌面 UI | `apps/desktop/src/renderer/src/lib/features/chats/message-reactions.svelte.test.ts` | 面板/👎 入队/chip 聚合高亮/👎 再点 = react null + reports.cancel（cancelled 清状态、not_revocable 保留）（配套 `MessageReactionBar.svelte`、`MessageReactionChips.svelte`、`message-reactions.svelte.ts`、`message-reaction-target.ts`） |
+| e2e | `apps/desktop/test/e2e/message-reactions.spec.ts` | hover → 👎 → chip；右键菜单 `context-message-report`；假 Worker 的 challenge（difficulty 4）→ 带 proof 的 POST 恰好一次、再点 👎 chip 消失且不增发 POST |
 | 线上冒烟 | `infra/cloudflare/reports/verify.mjs` | healthz / 201 / duplicate / 429 / admin 拒绝与放行 / challenge→solve→201、challenge_reused、missing_proof |
 
 ## 11. 与方案的偏差记录（todo/ai-content-reporting.md → as-built）
@@ -170,6 +170,8 @@ triage：scripts/report-triage.mjs（bearer admin API：list/show/set/delete-cli
 (h) **反滥用 PoW + 全局日上限（任务 5A 增补）**：原方案 §7.5 明确「可选全局日上限：本期不做」；上线后增补——`GET /v1/challenge` 签发 HMAC challenge（`REPORT_POW_SECRET`），POST 以顶层兄弟键 `proof` 提交（§6.5，先于幂等读；payload hash 剥离清单 + proof，shared 契约不变），六种 challenge 失败一律 400 不带 Retry-After；`report_daily` 日上限 2000/UTC 天（§10.5，去重后计数，duplicate 不占额度）。逃生开关 `REPORT_POW_DIFFICULTY=0`；core 侧 challenge→solve→重试恰好一次，详见 §5。
 
 (i) **任务 5A 已接受的四个现状缺口（评审定案，不改行为，留档）**：① **challenge GET 无鉴权/无限流**——`GET /v1/challenge` 不校验、不限量，任何人可预取任意多枚 challenge；接受理由：签发只是一次 HMAC（成本可忽略），真实成本压在求解（difficulty）与单次使用表（6.5），预取换不来绕过；若日后签发本身被打成成本点，再给该端点加 IP 粗限流。② **日上限被拒占额**——步 10.5 先 `bumpDailyCount` 再比较，超限的 429 请求已消耗一次计数（与 IP 限流同语义，README/§5 均已注明）；极端后果只是当日额度少 1，不会放大。③ **入库 payload_json 含 proof**——`reports.payload_json` 存整份 POST body（含已消费的 challenge token 与 solution），admin 详情可见；接受理由：token 已单次消费、不含用户数据，且剥离需要改 insert 路径（不影响 hash/去重）。④ **REPORT_POW_SECRET 未配置 = PoW 静默不强制**（fail-open 逃生开关，challenge 返回 `{enabled:false}`、提交不要求 proof）——部署必配已在 README/§9 注明；接受理由：宁可临时降级也不让举报入口 5xx。
+
+(j) **「举报不可撤回」决策修订为「发送前可撤」（👎 toggle 定稿，任务 6）**：原 §7 定稿决策「已是 👎 再点 no-op；举报不可撤回」与 §6.4「failed 行保留不清理」修订为——已是 👎 再点 = 切换关闭：移除 👎 emoji 并调 `reports.cancel`，把本机 `report_outbox` 里该 (clientId, messageId) 的 **pending 与 failed 行直接删除**（failed 行从未送达，本地丢弃属正确语义），返回 `cancelled` 并释放去重唯一索引槽位（同内容窗口内可重新举报——与 §6.4 原本的「sent/failed 行保留」表述相比，failed 行不再永久占用槽位）；行已进入 sending/sent 或本 client 无行 → `not_revocable`（reason `sent`/`sending`/`none`），仅移除 emoji。**已发送的举报不可由客户端撤回**，用户侧删除仍走隐私政策两通道（本机清数据 + 邮件 `delete-client`）。`reports.cancel` 是纯本机行为：不联系 Worker、不产生网络请求，Worker 与 D1 契约零改动。**已知竞态（接受，不改行为）**：`submit` 的同步 kick 会在返回前把新行认领成 sending（条件 UPDATE 先于首个 await），所以「点 👎 后立刻再点撤回」通常落在 sending 窗口内得到 `not_revocable('sending')`；若该次发送随后失败，`#retry` 会把行拨回 `pending` 并稍后照常送达——举报最终发出而 UI 已移除 👎（崩溃恢复 `start()` 的 sending→pending 同理）。该窗口内「发送中」与「已送达」对用户不可区分，撤回语义因此只承诺「撤尚未发出的举报」：pending/failed 撤得掉，sending 之后的一切不追回。
 
 **团队配套（嵌套私有仓 `jooler/kepcup-team-server`，commit `08e5aeb`）**：`apps/team-server/server/src/policy/method-policy.ts` 新增 3 个受控方法——`messages.react` / `messages.reactions` / `reports.submit`，均 `guarded('conversation')`；团队来源举报经团队服务器转发到宿主 core 处理，payload 的 `source` 只带 `team:<serverHash>`，不含团队服务器地址。
 

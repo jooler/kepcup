@@ -873,6 +873,163 @@ describe('ReportService 时间桶去重（§5.5）', () => {
   });
 });
 
+describe('ReportService.cancel（§6.5：撤回未发送的举报）', () => {
+  it('cancels a pending row: deleted, and the dedupe slot is released (immediate re-submit queues)', () => {
+    const rig = makeRig();
+    try {
+      const target = appendBotMessage(rig, '撤回后重报');
+      expect(submitText(rig, target.id).status).toBe('queued');
+      // submit 的同步 kick 会立即把行认领为 sending（#tickOnce 首个 await 前的
+      // 条件 UPDATE）；显式置回 pending 表示「尚未发出的待发举报」。
+      rig.db.prepare("update report_outbox set status = 'pending'").run();
+      expect(rig.reports.cancel('client-1', target.id)).toEqual({ status: 'cancelled' });
+      expect(outboxRows(rig)).toHaveLength(0);
+      // 删除行即释放 (client, hash, bucket) 唯一索引槽位：同内容同窗口立即可重报。
+      expect(submitText(rig, target.id).status).toBe('queued');
+      expect(outboxRows(rig)).toHaveLength(1);
+    } finally {
+      closeDatabase(rig.db);
+    }
+  });
+
+  it('cancels a failed row (never delivered; local discard is the correct semantics)', async () => {
+    const rig = makeRig();
+    try {
+      rig.setFetch(() => okResponse({ error: 'bad_request' }, 400));
+      const target = appendBotMessage(rig, '失败行撤回');
+      submitText(rig, target.id);
+      await rig.reports.drain();
+      expect(outboxRows(rig)[0]!.status).toBe('failed');
+      expect(rig.reports.cancel('client-1', target.id)).toEqual({ status: 'cancelled' });
+      expect(outboxRows(rig)).toHaveLength(0);
+    } finally {
+      closeDatabase(rig.db);
+    }
+  });
+
+  it('refuses to cancel a sent row (not_revocable/sent) and keeps it', async () => {
+    const rig = makeRig();
+    try {
+      rig.setFetch(() => okResponse({ status: 'accepted' }, 201));
+      const target = appendBotMessage(rig, '已发送不可撤');
+      submitText(rig, target.id);
+      await rig.reports.drain();
+      expect(outboxRows(rig)[0]!.status).toBe('sent');
+      expect(rig.reports.cancel('client-1', target.id)).toEqual({
+        status: 'not_revocable',
+        reason: 'sent',
+      });
+      expect(outboxRows(rig)).toHaveLength(1);
+    } finally {
+      closeDatabase(rig.db);
+    }
+  });
+
+  it('refuses to cancel a sending row (not_revocable/sending)', () => {
+    const rig = makeRig();
+    try {
+      const target = appendBotMessage(rig, '发送中不可撤');
+      submitText(rig, target.id);
+      // submit 的同步 kick 已把行认领为 sending（#tickOnce 首个 await 前的
+      // 条件 UPDATE）；显式置 sending 保证确定性。
+      rig.db.prepare("update report_outbox set status = 'sending'").run();
+      expect(rig.reports.cancel('client-1', target.id)).toEqual({
+        status: 'not_revocable',
+        reason: 'sending',
+      });
+      expect(outboxRows(rig)).toHaveLength(1);
+    } finally {
+      closeDatabase(rig.db);
+    }
+  });
+
+  it('returns not_revocable/none when there is no row for the (client, message)', () => {
+    const rig = makeRig();
+    try {
+      expect(rig.reports.cancel('client-1', 'msg_missing')).toEqual({
+        status: 'not_revocable',
+        reason: 'none',
+      });
+      // 不同 client 传同一 messageId：按 client 过滤，既删不掉也看不见别人的行。
+      const target = appendBotMessage(rig, '别人的举报');
+      submitText(rig, target.id, 'client-1');
+      expect(rig.reports.cancel('client-2', target.id)).toEqual({
+        status: 'not_revocable',
+        reason: 'none',
+      });
+      expect(outboxRows(rig)).toHaveLength(1);
+      expect(outboxRows(rig)[0]!.client_id).toBe('client-1');
+    } finally {
+      closeDatabase(rig.db);
+    }
+  });
+
+  it('a cancelled row is never sent by later kick/tick (fetch counter counts no POST)', async () => {
+    const rig = makeRig();
+    try {
+      // challenge GET 500：行被认领后按网络错误退避回 pending（不发 POST）——
+      // 先 settle 到「尚未发出的待发举报」状态再撤回。
+      rig.setChallenge(() => okResponse({ error: 'boom' }, 500));
+      rig.setFetch(() => okResponse({ status: 'accepted' }, 201));
+      const target = appendBotMessage(rig, '撤回后不再发送');
+      submitText(rig, target.id);
+      await rig.reports.drain();
+      const row = outboxRows(rig)[0]!;
+      expect(row.status).toBe('pending');
+      expect(row.attempts).toBe(1);
+      expect(rig.reports.cancel('client-1', target.id)).toEqual({ status: 'cancelled' });
+      rig.reports.kick();
+      await rig.reports.drain();
+      const posts = rig.fetchCalls.filter((call) => !String(call.url).includes('/v1/challenge'));
+      expect(posts).toHaveLength(0);
+      expect(rig.reports.listPending()).toHaveLength(0);
+      expect(outboxRows(rig)).toHaveLength(0);
+    } finally {
+      closeDatabase(rig.db);
+    }
+  });
+
+  it('cancel deletes every revocable row of the (client, message) across dedupe buckets', async () => {
+    const rig = makeRig();
+    try {
+      // 全程离线：第一次举报被同步 kick 认领 sending 后发送失败 → 退回 pending
+      // （退避中，next_attempt_at 在未来）。
+      rig.setFetch(() => {
+        throw new Error('offline');
+      });
+      const target = appendBotMessage(rig, '跨桶多行撤回', { runId: 'run-x' });
+      submitText(rig, target.id);
+      await rig.reports.drain();
+      expect(outboxRows(rig)[0]!.status).toBe('pending');
+      // run 结束后 usage 落库 → 第二次举报的 payload hash 变化；时钟跨过 24h
+      // 内容桶 → 两个唯一索引都不命中，同 (client, message) 落出第二行。
+      rig.db
+        .prepare(
+          "insert into usage_ledger (id, run_id, loop_type, provider, model, input_tokens, output_tokens, created_at) values ('u1','run-x','turn','openai','gpt-5.1',1000,400,1)",
+        )
+        .run();
+      rig.setNow(BASE + REPORT_CONTENT_DEDUPE_MS + 60_000);
+      expect(submitText(rig, target.id).status).toBe('queued');
+      // 第二次 submit 的同步 kick 会先认领仍到期的第一行（sending）再按网络
+      // 错误退避回 pending；await drain 让在途 tick 落定，两行都是「尚未发出的
+      // 待发举报」——cancel 面对的正是这个确定状态。
+      await rig.reports.drain();
+      const rows = outboxRows(rig);
+      expect(rows).toHaveLength(2);
+      expect(
+        rows.every((row) => row.client_id === 'client-1' && row.message_id === target.id),
+      ).toBe(true);
+      expect(rows[0]!.content_bucket).not.toBe(rows[1]!.content_bucket);
+      expect(rows.every((row) => row.status === 'pending')).toBe(true);
+      // cancel 按 (client, message) 全删可撤行（跨桶多行一并清理）。
+      expect(rig.reports.cancel('client-1', target.id)).toEqual({ status: 'cancelled' });
+      expect(outboxRows(rig)).toHaveLength(0);
+    } finally {
+      closeDatabase(rig.db);
+    }
+  });
+});
+
 describe('ReportService 排队（§6.3）', () => {
   it('queues the first report immediately, then +60s per client, clients independent', () => {
     const rig = makeRig();
