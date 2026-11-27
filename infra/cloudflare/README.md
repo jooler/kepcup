@@ -89,6 +89,7 @@ infra/cloudflare/with-env.sh check
 
 | 日期 | 动作 | 结果 |
 | ---- | ---- | ---- |
+| 2026-11-27 | 部署 `kepcup-reports`（AI 生成内容举报接收端，Store 11.16，`infra/cloudflare/reports/`：Worker + 新 D1 `kepcup-reports`，id `1e63e07f-bd54-40b3-852f-7b4665bdc7d1`，WNAM + Cron `23 4 * * *` 保留期清理），custom domain `reports.kepcup.com`（DNS 与证书由 wrangler 自动创建）；写入 secrets `REPORT_ADMIN_TOKEN`（admin bearer，同值放 `.env` 的 `KEPCUP_REPORT_ADMIN_TOKEN` 供 CLI/冒烟）与 `IP_HASH_SALT`（只进 secret，不进 `.env`/仓库） | 已上线，版本 `ed171fe7…`；`reports/verify.mjs` 冒烟 11/11 PASS（healthz、坏 JSON 400、合法 201、同内容 200 duplicate 不占限流、异内容立即重发 429 带 Retry-After、admin 无 token 401、list/PATCH/stats/delete-client 及删除后为空）；限流在 Worker+D1 内实现（1/min/client + 100/h/IP + 时间桶去重），**不依赖 WAF、不占免费套餐仅有的 1 条 zone 限速规则名额（registry 已占用）**；日常处置 CLI `scripts/report-triage.mjs` 已对线上 API 实测（list/show/set/delete-client，测试行已按 clientId 删除） |
 | 2026-10-23 | 部署 `kepcup-relay`（D96 远程遥控中转，`infra/cloudflare/relay/`：Worker + RelaySession DO SQLite 型 migration v1 + PWA 静态资产 434 文件），custom domain `remote.kepcup.com`（DNS 与证书由 wrangler 自动创建） | 已上线，版本 `31229d6e…`；`relay/verify.mjs` 通过（/healthz、静态资产 200、WSS 握手）；补充冒烟：跨源 Origin viewer 403（CSWSH 防护生效）、无效 sid 400、`/` 与 manifest 200。用 `apps/website` 依赖带入的 wrangler 4.151.1 部署（本机无全局 wrangler；`with-env.sh` 已修到 stock bash 3.2 可用——`declare -A` 换白名单直接导出） |
 | 2026-10-10 | 只读盘点：DNS、Worker、D1、Bot Management | kepcup.com **没有任何 DNS 记录**；Bot Fight Mode 本来就是关的（`fight_mode:false`）；账号里没有 D1 |
 | 2026-10-10 | `cf d1 create --name kepcup-registry` | 已建，id `efc7712f-a979-414e-b315-3640cd00a600`（WEUR，无管辖区限制；公开元数据，无用户数据） |

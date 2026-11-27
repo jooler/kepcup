@@ -4,12 +4,13 @@ Microsoft Store 政策 11.16（Live Generative AI Content）的举报接收端�
 `todo/ai-content-reporting.md` §7 / §11）：Cloudflare Workers + D1 + Cron，独立部署单元
 （独立 D1 / 域名，与 `../registry/` 同构）。桌面端点 👎 后 core 异步推送举报 payload，
 Worker 重算 hash 校验、按 client 时间桶去重、限流后入库；管理员经 bearer-token admin API
-triage。**本期（第 1 轮）只交付骨架 + 单测，不部署**；部署在阶段 2（§12 第 2 轮）。
+triage（`scripts/report-triage.mjs`）。
 
 ```
 infra/cloudflare/reports/
-  wrangler.jsonc    Worker + D1 绑定（database_id 占位 TODO_FILL_AFTER_D1_CREATE）+ cron + custom domain
+  wrangler.jsonc    Worker + D1 绑定 + cron + custom domain（database_id 已回填真实值）
   schema.sql        D1 表：reports（两条 UNIQUE 去重约束）/ report_rate / report_ip_rate
+  verify.mjs        线上冒烟脚本（部署后跑，零依赖；见下文「部署后冒烟」）
   src/index.ts      导出 fetch + scheduled（默认导出 ExportedHandler）
   src/worker.ts     公开管线（§7.4 十二步，去重先于限流）、IP/客户端限流、日志
   src/admin.ts      /v1/admin/*（bearer、常量时间比较、list/detail/patch/delete-client/stats）
@@ -20,7 +21,24 @@ infra/cloudflare/reports/
   src/cf-types.d.ts 本地声明的最小 Cloudflare 类型（@cloudflare/workers-types 可直接替换）
   tsconfig.json     独立类型检查：npx tsc -p infra/cloudflare/reports --noEmit（不在 pnpm 工作区内）
   test/             vitest（根 vitest.config.ts 的 `infra-reports` 项目）
+scripts/report-triage.mjs   日常处置 CLI（本目录之外的唯一配套，零依赖）
 ```
+
+## 资源清单
+
+| 资源 | 值 | 说明 |
+|---|---|---|
+| Worker | `kepcup-reports` | 独立部署单元，`workers_dev:false` |
+| 域名 | `reports.kepcup.com` | custom domain；DNS 与证书由 wrangler 部署时自动创建 |
+| D1 | `kepcup-reports` | id 是公开资源标识，见 `wrangler.jsonc` 的 `database_id`（建库时回填）与 `../README.md` §7（线上变更表） |
+| Secret | `REPORT_ADMIN_TOKEN` | admin API bearer，随机 32 字节 hex；**同一值**放仓库根 `.env` 的 `KEPCUP_REPORT_ADMIN_TOKEN`（已 gitignore），供 CLI/冒烟使用 |
+| Secret | `IP_HASH_SALT` | IP 限流的 HMAC 盐，随机 32 字节 hex；**只**在 Worker secret，不进 `.env`、不进任何仓库文件 |
+| vars | 见 `wrangler.jsonc` | 客户端限流 60s、IP 100/h、去重窗口 content 24h / payload 90d、保留 365 天 |
+| Cron | `23 4 * * *` | 每日清理过期 reports / report_rate / report_ip_rate |
+
+限流（客户端 1/min、IP 100/h）**全部在 Worker + D1 内实现**，不依赖 WAF——kepcup.com
+免费套餐仅允许 1 条 zone 级限速规则，已被 registry 占用；本 Worker 不需要（也不要再）
+动 WAF。发现滥用时调低 `REPORT_IP_LIMIT`（改 `wrangler.jsonc` vars 后 `wrangler deploy`）。
 
 ## 契约
 
@@ -31,7 +49,8 @@ infra/cloudflare/reports/
   - content hash = `69a79ef1…`（`message.text` 原文 utf8 sha256）；
   - payload hash = `66f397f8…`（去 reportId/createdAt/hashes 后 canonicalJson utf8 sha256）。
   core（node:crypto）与 Worker（crypto.subtle）各有一份 hash 实现，**禁止只改一边**；
-  `test/dedupe.test.ts` 与 `test/contract.test.ts` 复算校验。
+  `test/dedupe.test.ts` 与 `test/contract.test.ts` 复算校验。`verify.mjs` 里还有一份
+  只读的 node:crypto 副本用于自建 fixture。
 
 ## 公开接口
 
@@ -57,16 +76,130 @@ HMAC(ip)，`IP_HASH_SALT` 未配置时跳过——**部署必配**）→ 客户�
 ## Admin API（§7.6）
 
 全部要求 `Authorization: Bearer <REPORT_ADMIN_TOKEN>`；secret 未配置时整棵子树 404（隐藏
-入口）；比较先各自 sha256 再逐字节 diff（常量时间）。本期无 Web UI；阶段 2 提供
-`scripts/report-triage.mjs`（`list` / `show` / `set` / `delete-client`）。
+入口）；比较先各自 sha256 再逐字节 diff（常量时间）。无 Web UI，处置一律走
+`scripts/report-triage.mjs`。
 
 | 方法与路径 | 说明 |
 |---|---|
 | `GET /v1/admin/reports?status=&limit=&before=&client=` | 列表，默认 new / limit 20 / keyset 分页（`nextBefore` 游标）；返回摘要 + 200 字正文预览，**不含 payload_json** |
 | `GET /v1/admin/reports/:id` | 详情：全部列 + 解析后的完整 `payload` |
-| `PATCH /v1/admin/reports/:id` | `{status:'triaged'\|'actioned'\|'dismissed', note?}`；写 `updated_at` |
+| `PATCH /v1/admin/reports/:id` | `{status:'triaged'\|'actioned'\|'dismissed', note?}`；写 `updated_at`（`new` 是系统初始态，不可手工设置） |
 | `DELETE /v1/admin/clients/:clientId` | 删该 client 全部 reports + report_rate 行（隐私删除请求） |
 | `GET /v1/admin/stats` | 按状态计数 + 最近 7 天计数 |
+
+## 日常处置（triage CLI，§7.7）
+
+token 从环境变量 `KEPCUP_REPORT_ADMIN_TOKEN` 读（与 Worker secret 同值，放仓库根 `.env`，
+已 gitignore；脚本缺它直接退出，**永不打印 token**）。以下命令在**仓库根**执行。
+`KEPCUP_REPORT_ENDPOINT` 可覆盖域名（默认 `https://reports.kepcup.com`，不带 `/v1`）。
+错误响应原样展示状态码与 body。
+
+```bash
+# 列待处理（默认 status=new、limit 20）
+node --env-file=.env scripts/report-triage.mjs list
+node --env-file=.env scripts/report-triage.mjs list --status new --limit 50
+node --env-file=.env scripts/report-triage.mjs list --client client-… --before '<nextBefore 游标>'
+
+# 看单条完整 payload
+node --env-file=.env scripts/report-triage.mjs show rep_…
+
+# 处置：标记状态 + 备注
+node --env-file=.env scripts/report-triage.mjs set rep_… triaged --note "初判：越权内容"
+node --env-file=.env scripts/report-triage.mjs set rep_… actioned --note "已加入系统提示词拦截"
+node --env-file=.env scripts/report-triage.mjs set rep_… dismissed --note "误报"
+
+# 隐私删除（用户要求删数据）；交互确认，脚本化场景加 --yes
+node --env-file=.env scripts/report-triage.mjs delete-client client-…
+```
+
+处置流程（§7.7 五步）：
+
+1. 每日（至少每周）`list --status new` 过一遍。
+2. 逐条 `show` 看详情；涉及违法 / 严重有害内容的当天处理。
+3. `set … triaged` 评估；需要改提示词 / 模型 / 过滤的进入发版，无需处理的 `dismissed`。
+4. 处理完 `set … actioned --note …`（备注写明动作，便于审计）。
+5. 数据保留 365 天；用户要求删除时按 `delete-client` 删；若收到 Microsoft 合规询问，
+   用 `GET /v1/admin/stats` 与下面的 D1 查询证明有机制、有处置记录。
+
+## 部署状态（2026-11-27）
+
+已由 Agent 按 §11.1 完成：创建 D1（`kepcup-reports`，id 已回填 `wrangler.jsonc`）、建表、
+写入两个 secret、部署 Worker 与 Cron，并绑定 custom domain `reports.kepcup.com`（DNS 与
+证书由 wrangler 自动创建）。`verify.mjs` 冒烟全部 PASS。线上变更记录见
+`../README.md` §7。
+
+## 部署（从零参考）
+
+> 凭证经 `infra/cloudflare/with-env.sh` 从仓库根 `.env` 注入（先清 shell 里的
+> `CLOUDFLARE_*` 再取值，**永不回显 token**）；wrangler 用仓库内
+> `apps/website/node_modules/.bin/wrangler`（本机无全局安装）。以下命令在
+> `infra/cloudflare/reports/` 目录里执行，相对路径按该目录写。
+
+1. **建 D1**（输出的 database_id 回填 `wrangler.jsonc`；资源标识非机密）：
+   ```bash
+   ../../../infra/cloudflare/with-env.sh \
+     ../../../apps/website/node_modules/.bin/wrangler d1 create kepcup-reports
+   ```
+2. **建表**（全新库，`schema.sql` 全部 IF NOT EXISTS，幂等）：
+   ```bash
+   ../../../infra/cloudflare/with-env.sh \
+     ../../../apps/website/node_modules/.bin/wrangler d1 execute kepcup-reports --remote --file=schema.sql
+   ```
+3. **写 secrets**（值不进终端历史、不进仓库；token 同值追加进 `.env`）：
+   ```bash
+   grep -q '^KEPCUP_REPORT_ADMIN_TOKEN=' ../../../.env || \
+     printf 'KEPCUP_REPORT_ADMIN_TOKEN=%s\n' "$(openssl rand -hex 32)" >> ../../../.env
+   TOKEN=$(grep '^KEPCUP_REPORT_ADMIN_TOKEN=' ../../../.env | cut -d= -f2-)
+   printf '%s' "$TOKEN" | ../../../infra/cloudflare/with-env.sh \
+     ../../../apps/website/node_modules/.bin/wrangler secret put REPORT_ADMIN_TOKEN
+   printf '%s' "$(openssl rand -hex 32)" | ../../../infra/cloudflare/with-env.sh \
+     ../../../apps/website/node_modules/.bin/wrangler secret put IP_HASH_SALT
+   # 回读校验（只列名字不显示值）：wrangler secret list 应含两个 secret 名
+   ```
+   token 轮换：重新 `wrangler secret put REPORT_ADMIN_TOKEN`，并同步更新 `.env`。
+4. **部署**（custom domain 首次生效可能要几秒）：
+   ```bash
+   ../../../infra/cloudflare/with-env.sh \
+     ../../../apps/website/node_modules/.bin/wrangler deploy
+   ```
+5. **冒烟**：
+   ```bash
+   node --env-file=../../../.env verify.mjs
+   ```
+   检查项：healthz、坏 JSON 400、合法 payload 201 accepted、同内容重发 200 duplicate
+   （不占限流名额）、不同内容立即重发 429（带 Retry-After/retryAfterMs）、admin 无
+   token 401/404、有 token 的 list/PATCH/stats/DELETE-client 与删除后列表为空。脚本自建
+   fixture（随机 clientId + 随机正文后缀）并**自己清理**测试行。注意：clientId 与正文
+   每次随机，重跑（哪怕 60 秒内连跑）不会命中上一轮的去重/限流行，第 3 项仍是 201；
+   只有为调试固定后缀时，重跑第 3 项才会拿到 duplicate（content 去重窗口 24 小时，
+   等一分钟不够），换后缀或改正文即可。
+
+## D1 排查 SQL
+
+```bash
+# 在 infra/cloudflare/reports/ 里；--command 换成下面的语句
+../../../infra/cloudflare/with-env.sh \
+  ../../../apps/website/node_modules/.bin/wrangler d1 execute kepcup-reports --remote --command "…"
+```
+
+```sql
+-- 按状态计数（§11.3）
+select status, count(*) from reports group by status;
+
+-- 待处理 newest first（正文截 80 字，便于直接 triage）
+select id, received_at, bot_name, model_provider, model_id, substr(message_text, 1, 80)
+  from reports where status = 'new' order by received_at desc limit 20;
+
+-- 某个 client 的全部举报（隐私删除前确认影响面）
+select id, status, received_at from reports where client_id = '…' order by received_at desc;
+
+-- 最近 7 天受理量
+select count(*) from reports where received_at >= (strftime('%s','now') * 1000 - 7*86400000);
+
+-- 校验表结构与索引都在（应列出 reports / report_rate / report_ip_rate 及 5 个索引）
+select name, type from sqlite_master where type in ('table','index') and name not like 'sqlite_%'
+  order by type, name;
+```
 
 ## 数据保留与清理
 
@@ -76,6 +209,21 @@ HMAC(ip)，`IP_HASH_SALT` 未配置时跳过——**部署必配**）→ 客户�
 - 去重窗口：content 24h / payload 90d（时间桶，§5.5），与
   `packages/shared/src/domain/report.ts` 的 `REPORT_*_DEDUPE_MS` 默认一致；改 wrangler vars
   即可调整（设 0 = 永久去重，bucket 恒 0）。
+
+## 已知限制
+
+- **无 Web UI**：处置只有本 CLI；`nextBefore` 游标翻页是 keyset 分页（`--before`）。
+- **限流不依赖 WAF**：免费套餐唯一的 zone 限速规则名额已被 registry 占用；本 Worker 的
+  限流全在 Worker + D1（客户端 1/min + IP 100/h + 去重）。要更紧的 IP 限制只能改 vars
+  或买 WAF 额度。
+- **IP 限流依赖 `CF-Connecting-IP`**：该头缺失时跳过 IP 限流（见 src/worker.ts）——只有
+  本地 dev 直连会这样，生产经 Cloudflare 必带。
+- **免费额度**：Workers Free 每天 10 万次请求、D1 免费档每天 10 万行读 / 1 千行写；举报
+  量级（1/min/client + 100/h/IP）远低于此。`wrangler tail kepcup-reports` 可看路由级
+  JSON 日志（不含 payload）。
+- **admin token 单值**：无多管理员 / 权限分级；轮换即覆盖（见上「部署」第 3 步）。
+- **去重窗口即 vars**：改窗口不用动 schema（bucket 服务端计算）；但改短只影响新受理，
+  库内旧行不回填。
 
 ## 测试
 
@@ -91,22 +239,9 @@ npx tsc -p infra/cloudflare/reports --noEmit
 `now`（推进即模拟时间桶/窗口翻转）。fixture 复用
 `packages/shared/test/fixtures/report-v1.json`。
 
-## 部署（阶段 2，占位）
-
-一次性部署步骤以方案 §11.1 为准（`infra/cloudflare/with-env.sh` 注入凭证；不要在命令行
-回显 token）：
-
-1. 建 D1：`wrangler d1 create kepcup-reports`，把输出的 database_id 回填
-   `wrangler.jsonc`（现为 `TODO_FILL_AFTER_D1_CREATE` 占位）。
-2. 建表：`wrangler d1 execute kepcup-reports --remote --file=schema.sql`。
-3. Secrets：`wrangler secret put REPORT_ADMIN_TOKEN`（随机 32 字节 hex）与
-   `wrangler secret put IP_HASH_SALT`（未配置则跳过 IP 限流，见 src/worker.ts）。
-4. 部署：`wrangler deploy`（custom domain 自动建 reports.kepcup.com 的 DNS/证书）。
-5. 冒烟：阶段 2 提供 `verify.mjs`（health / 400 / 201 / duplicate / 429 / admin 拒绝与放行）。
-6. 记录到 `../README.md` §7 线上变更表。
-
 ## 日志与隐私（§8）
 
 console.log 只输出两种 JSON 行：`{reportId, status, httpStatus}` 或
-`{path, method, status}`——绝不打 payload、正文、clientId、IP、token。原始 IP 不落库
-（只存 HMAC）；admin 列表只带正文预览，完整 payload 仅在详情接口出现。
+`{path, method, status}`——绝不打 payload、正文、clientId、IP、token（admin 详情路径里的
+id 会被折叠成 `/v1/admin/<资源>`）。原始 IP 不落库（只存 HMAC）；admin 列表只带正文预览，
+完整 payload 仅在详情接口出现。verify.mjs / report-triage.mjs 同样不打印 token。
