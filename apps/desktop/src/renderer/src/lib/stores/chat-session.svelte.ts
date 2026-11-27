@@ -205,10 +205,13 @@ export class ChatSession {
   };
 
   constructor(
-    host: ChatSessionHost = noopHost,
+    host: ChatSessionHost | undefined = noopHost,
     options: { attach?: boolean; foreground?: boolean } = {},
   ) {
-    this.#host = host;
+    // Dialogs call `new ChatSession(undefined, { foreground: false })`.
+    // An explicit undefined does not trigger the default argument, and
+    // open() now calls applyMessagePreview — that used to throw before view was set.
+    this.#host = host ?? noopHost;
     // Only an explicit foreground session (the main chat) may replace the
     // right-panel grants list or the main task page. `new ChatSession()` is
     // a dialog and must not steal either.

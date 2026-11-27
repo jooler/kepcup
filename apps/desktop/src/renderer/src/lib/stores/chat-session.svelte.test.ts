@@ -843,4 +843,16 @@ describe('ChatSession', () => {
     session.dispose();
     messageVisibility.forget('local', conversationId);
   });
+
+  it('open() still sets the view when constructed as dialogs do (undefined host, empty history)', async () => {
+    // CardChat / TaskRunView / DelegationDetailView pass `undefined` as the host.
+    const conversationId = 'dialog-undefined-host';
+    state.messages = [];
+    const session = new ChatSession(undefined, { foreground: false });
+    await expect(session.open(conversationId)).resolves.toBe(true);
+    expect(session.view).not.toBeNull();
+    expect(session.view?.conversation.id).toBe(conversationId);
+    expect(session.view?.messages).toEqual([]);
+    session.dispose();
+  });
 });
