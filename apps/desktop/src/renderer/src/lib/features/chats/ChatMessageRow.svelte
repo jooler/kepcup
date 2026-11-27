@@ -7,6 +7,7 @@
     Copy,
     Pin,
     Reply,
+    ShieldAlert,
     Undo2,
     type LucideIcon,
   } from '@lucide/svelte';
@@ -24,6 +25,10 @@
   import { connections } from '$lib/rpc/connections.svelte';
   import { teamContext } from '$lib/features/team/team-context.svelte';
   import MessageBody from './MessageBody.svelte';
+  import MessageReactionBar from './MessageReactionBar.svelte';
+  import MessageReactionChips from './MessageReactionChips.svelte';
+  import { messageReactions, REPORT_EMOJI } from './message-reactions.svelte';
+  import { reactionTargetOf } from './message-reaction-target';
   import { avatarOriginBotName, exchangeMessageShape, teamMessageSide } from './exchange-message';
   import MessageAttachments from './MessageAttachments.svelte';
   import QuotedMedia from './QuotedMedia.svelte';
@@ -194,6 +199,30 @@
 
   // hover / 右键共用的操作集合：引用对所有消息可用。
   const canAct = $derived(message.status !== 'recalled');
+  /**
+   * 可反应 / 可举报的消息（AI 内容举报 §3.1 / §4.1）：Bot 发出的 text / card
+   * 且未撤回。交换会话两侧都是 Bot——B 侧消息同样可举报；团队对端成员消息
+   * senderType 非 bot，天然不出入口。
+   */
+  const canReact = $derived(
+    message.senderType === 'bot' &&
+      (message.kind === 'text' || message.kind === 'card') &&
+      message.status !== 'recalled',
+  );
+  /** 一次 reaction / 举报点击所需的全部输入（Bar 与右键菜单共用同一构造）。 */
+  const reactionTarget = $derived(canReact ? reactionTargetOf(session, message) : null);
+  // 进入会话时预取整个 conversation 的 reaction 聚合（幂等，store 内部去重；
+  // core 无 reaction 事件，靠打开时一次拉取）。挂在消息行上而非会话 store，
+  // 是为了不改既有 store 的行为。
+  $effect(() => {
+    void messageReactions.prefetch(session.source, message.conversationId);
+  });
+  /** 举报不当内容（§4.5）：与 👎 完全同流程——记 👎 reaction + reports.submit，无确认。 */
+  function reportMessage(): void {
+    if (reactionTarget === null) return;
+    messageReactions.handleReact(reactionTarget, REPORT_EMOJI);
+  }
+
   /** 可复制的纯文本：仅文本消息（卡片、任务事件等结构化内容不提供复制）。 */
   const messageText = $derived('text' in message.content ? message.content.text : '');
   const hasText = $derived(messageText.length > 0);
@@ -390,6 +419,10 @@
 
     <MessageBody {message} {merge} userStyle={exchangeShape?.side === 'issuer'} />
 
+    <!-- reaction chips（§4.4）：紧跟正文、独立一行，不参与 merge 圆角计算；
+         无 reaction 时整行不渲染。 -->
+    <MessageReactionChips {message} />
+
     {#if avatarBadgeName !== null}
       <!-- 分身代回徽标（T10 预留，本阶段只渲染；62.06）。 -->
       <span class="mt-0.5 text-[11px] text-muted-foreground" data-testid="avatar-origin-badge">
@@ -460,6 +493,11 @@
         : 'ml-1'} group-focus-within:visible group-hover:visible"
       data-testid="message-actions"
     >
+      {#if reactionTarget !== null}
+        <!-- 可反应 / 可举报的 Bot 消息：emoji 入口排第一个（§4.1）；用户消息
+             与不可反应消息不渲染，其后顺序保持 引用→复制→固定→撤回。 -->
+        <MessageReactionBar {reactionTarget} />
+      {/if}
       {#if !exchangeChat}
         <!-- 交换会话没有输入组件（宿主写入、用户不可发言），引用内容无处
              落点——引用按钮隐藏（右键菜单同步）。 -->
@@ -566,6 +604,19 @@
           pinMessage();
         },
         'context-message-pin',
+      )}
+    {/if}
+    {#if reactionTarget !== null}
+      <!-- 举报不当内容（§4.5）：与 👎 同流程（记 👎 + reports.submit），无确认；
+           窄屏 / 键盘用户从这里举报。 -->
+      {@render menuRow(
+        ShieldAlert,
+        t('messages.reactions.report'),
+        () => {
+          menuPos = null;
+          reportMessage();
+        },
+        'context-message-report',
       )}
     {/if}
   </div>
