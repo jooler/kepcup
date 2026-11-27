@@ -140,6 +140,12 @@ import {
   messagesRecallInputSchema,
   messagesSendInputSchema,
   messagesSendOutputSchema,
+  messagesReactInputSchema,
+  messagesReactOutputSchema,
+  messagesReactionsInputSchema,
+  messagesReactionsOutputSchema,
+  reportsSubmitInputSchema,
+  reportsSubmitOutputSchema,
   attachmentsUploadInputSchema,
   attachmentsUploadOutputSchema,
   attachmentsGetInputSchema,
@@ -1576,6 +1582,37 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       };
       return orchestrator.sendMessage(input.conversationId, payload);
     }),
+
+    // --- 消息 reaction（AI 内容举报 §5.6 / §6.6）：只存本机 main.db，不进消息
+    // 内容、不参与团队同步；emoji 白名单由 ReactionsService 二次校验，null =
+    // 取消。不校验消息存在（团队消息可能不在本机库）。 ---
+    'messages.react': method(
+      messagesReactInputSchema,
+      messagesReactOutputSchema,
+      async (input) => {
+        domain.reactions.set(
+          input.scope,
+          input.conversationId,
+          input.messageId,
+          input.clientId,
+          input.emoji,
+        );
+        return { reactions: domain.reactions.list(input.scope, input.conversationId, input.clientId) };
+      },
+    ),
+    'messages.reactions': method(
+      messagesReactionsInputSchema,
+      messagesReactionsOutputSchema,
+      async (input) => ({
+        reactions: domain.reactions.list(input.scope, input.conversationId, input.clientId),
+      }),
+    ),
+
+    // --- AI 内容举报（§6.5）：只入队不等网络；rejected = 不是可举报的 Bot 消息，
+    // UI 静默。团队来源必须带渲染层快照（团队消息不在本地 DB）。 ---
+    'reports.submit': method(reportsSubmitInputSchema, reportsSubmitOutputSchema, async (input) =>
+      domain.reports.submit(input),
+    ),
 
     'attachments.upload': method(
       attachmentsUploadInputSchema,

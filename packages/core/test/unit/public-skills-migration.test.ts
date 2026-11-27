@@ -196,6 +196,9 @@ describe('0013 public_skills 迁移', () => {
     db.exec('drop table micro_app_context;');
     db.exec('drop table micro_app_diagnostics;');
     db.exec('drop table micro_app_audit;');
+    // main 0084（AI 内容举报）的两张表同样摘除，回放时重建。
+    db.exec('drop table report_outbox;');
+    db.exec('drop table message_reactions;');
     // main 0031（D84 邮件）的新表同样摘除，回放时才能重建（0058 的 instance_id 列
     // 已随整表摘除，回放 0058 时重建）。
     // main 0036（D88 资产移交）的两张表同样摘除（先子后父）。

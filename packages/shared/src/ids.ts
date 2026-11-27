@@ -77,6 +77,8 @@ export const ID_PREFIXES = {
   bcol: 'bcol_',
   /** 插件实例（D105，main.db plugin_instances）。 */
   pli: 'pli_',
+  /** AI 生成内容举报（main.db report_outbox，todo/ai-content-reporting.md §5.2）。 */
+  rep: 'rep_',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

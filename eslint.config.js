@@ -134,4 +134,14 @@ export default tseslint.config(
       'no-console': 'off',
     },
   },
+  {
+    // AI 内容举报 Worker（todo/ai-content-reporting.md §7.4 步骤 12 / §8）：
+    // console.log 是这个 Worker 的结构化日志管线本身（只打 {reportId,status,
+    // httpStatus} / {path,method,status} JSON 行，与 D102 服务端同域——服务端
+    // 日志输出是产品面，不适用桌面 renderer 的约束）。
+    files: ['infra/cloudflare/reports/src/**'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
 );

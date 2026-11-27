@@ -93,6 +93,9 @@ import { UserProfileAvatarService } from './domain/user-profile.js';
 import { BotTemplateService } from './domain/bot-templates.js';
 import { ConversationsService } from './domain/conversations.js';
 import { MessagesService } from './domain/messages.js';
+// AI 内容举报（todo/ai-content-reporting.md §6.2 / §6.6）：本机 outbox 队列与消息 reaction。
+import { ReportService } from './domain/reports.js';
+import { ReactionsService } from './domain/reactions.js';
 import { StickiesService } from './domain/stickies.js';
 import { ConversationNotesService } from './domain/conversation-notes.js';
 import { SidebarService } from './domain/sidebar.js';
@@ -602,6 +605,16 @@ export interface CoreDomainServices {
   audit: AuditService;
   conversations: ConversationsService;
   messages: MessagesService;
+  /**
+   * AI 内容举报（todo/ai-content-reporting.md §6.2）：本机 report_outbox 发送
+   * 队列（`reports.submit` RPC 的落点；start() 启动发送器，close() 前必须 stop()）。
+   */
+  reports: ReportService;
+  /**
+   * 消息 reaction（todo/ai-content-reporting.md §6.6）：本机 main.db
+   * message_reactions（`messages.react` / `messages.reactions` RPC 的落点）。
+   */
+  reactions: ReactionsService;
   /** 辅助阅读便签（main.db stickies）。 */
   stickies: StickiesService;
   /** 对话便签（main.db conversation_notes，右栏 Bot 详情「便签」tab）。 */
@@ -1169,6 +1182,12 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       // D81：杀掉组件查询子进程（它另开了一条到 main.db 的只读连接）。
       services.widgets?.dispose();
       services.microAppAi?.dispose();
+      // AI 内容举报发送器先停（§6.7）：清轮询定时器、不等在途网络，再关 main.db。
+      try {
+        services.domain?.reports.stop();
+      } catch {
+        // Timer already gone.
+      }
       if (services.mainDb) closeDatabase(services.mainDb);
       if (services.runsDb) closeDatabase(services.runsDb);
       services.mainDb = null;
@@ -1375,6 +1394,22 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
     bots.attachLeadProjectGuard((botId) => projects.ledProjectsOf(botId));
     const stickies = new StickiesService(mainDb, clock);
+    // AI 内容举报（§6.2）：依赖 messages / bots / conversations / settings /
+    // secrets 已就绪。端点只在测试 / 开发用 KEPCUP_REPORT_ENDPOINT 覆盖；打包
+    // 产物固定官方域名，避免被环境变量重定向。
+    const reports = new ReportService({
+      db: mainDb,
+      clock,
+      logger,
+      bots,
+      messages,
+      conversations,
+      settings,
+      secrets,
+      appVersion: options.appVersion ?? '0.0.0',
+      ...(env.KEPCUP_REPORT_ENDPOINT ? { endpoint: env.KEPCUP_REPORT_ENDPOINT } : {}),
+    });
+    const reactions = new ReactionsService(mainDb, clock);
     const conversationNotes = new ConversationNotesService(mainDb, clock);
     const sidebar = new SidebarService(mainDb, clock);
     const delegations = new DelegationsService(mainDb, clock);
@@ -3882,6 +3917,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       warnQuietly('environment startup check failed', error);
     });
     jobsRunner.start();
+    // AI 内容举报发送器（§6.7）：崩溃残留 sending → pending，启动立即 tick 一轮
+    //（关应用时没发完的举报续发）。
+    services.domain?.reports.start();
     // P10: fire tasks missed while the app was closed, then arm the single
     // schedule timer (docs/dev/phases/P10-proactive.md 范围: 错过补触发).
     // D90: memos trashed longer than the retention window go for good; todos whose executor /
@@ -4002,6 +4040,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       botTemplates,
       conversations,
       messages,
+      reports,
+      reactions,
       stickies,
       conversationNotes,
       sidebar,
