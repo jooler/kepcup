@@ -1,3 +1,4 @@
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -18,7 +19,14 @@ import { ConversationsService } from '../../src/domain/conversations.js';
 import { MessagesService } from '../../src/domain/messages.js';
 import { SettingsService } from '../../src/domain/settings.js';
 import { SecretsService } from '../../src/domain/secrets.js';
-import { canonicalJson, ReportService, sha256Hex } from '../../src/domain/reports.js';
+import {
+  canonicalJson,
+  challengeEndpointOf,
+  leadingZeroBits,
+  ReportService,
+  sha256Hex,
+  solveChallenge,
+} from '../../src/domain/reports.js';
 import type { Clock } from '../../src/infra/clock.js';
 
 /**
@@ -64,6 +72,8 @@ interface Rig {
   logs: LogEntry[];
   fetchCalls: FetchCall[];
   setFetch: (handler: FetchHandler) => void;
+  /** GET /v1/challenge 的应答；null = 默认 disabled 形状（PoW 关闭，直发无 proof）。 */
+  setChallenge: (handler: FetchHandler | null) => void;
 }
 
 let rigCount = 0;
@@ -99,8 +109,16 @@ function makeRig(): Rig {
   });
   const fetchCalls: FetchCall[] = [];
   let handler: FetchHandler = () => okResponse({ status: 'accepted' }, 201);
+  let challengeHandler: FetchHandler | null = null;
   const fetchImpl: typeof globalThis.fetch = (url, init) => {
     fetchCalls.push({ url, init });
+    const urlText =
+      typeof url === 'string' ? url : url instanceof URL ? url.toString() : url.url;
+    if (urlText.includes('/v1/challenge')) {
+      return challengeHandler !== null
+        ? challengeHandler(url, init)
+        : okResponse({ enabled: false, difficulty: 0 }, 200);
+    }
     return handler(url, init);
   };
   const reports = new ReportService({
@@ -143,6 +161,7 @@ function makeRig(): Rig {
     logs,
     fetchCalls,
     setFetch: (next) => (handler = next),
+    setChallenge: (next) => (challengeHandler = next),
   };
 }
 
@@ -191,6 +210,41 @@ interface OutboxRow {
 
 function outboxRows(rig: Rig): OutboxRow[] {
   return rig.db.prepare('select * from report_outbox order by created_at, id').all() as OutboxRow[];
+}
+
+// --- PoW（任务 5A 协议 v1；node:crypto 镜像 Worker src/pow.ts 的构造） ----------
+
+const POW_SECRET = 'core-test-pow-secret';
+const CHALLENGE_URL = challengeEndpointOf(ENDPOINT);
+
+/** 签出 `v1.<payload>.<hmac>` challenge token（HMAC-SHA256，协议 v1）。 */
+function signChallengeToken(
+  payload: { n: string; exp: number; d: number },
+  secret: string = POW_SECRET,
+): string {
+  const payloadPart = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  const mac = createHmac('sha256', Buffer.from(secret, 'utf8'))
+    .update(Buffer.from(`v1.${payloadPart}`, 'utf8'))
+    .digest();
+  return `v1.${payloadPart}.${mac.toString('base64url')}`;
+}
+
+/** fake challenge 应答（enabled 模式）：随机 nonce + 低难度，测试秒解。 */
+function challengeResponse(
+  rig: Rig,
+  opts: { d?: number; n?: string } = {},
+): Response {
+  const n = opts.n ?? randomBytes(16).toString('hex');
+  const d = opts.d ?? 8;
+  return okResponse(
+    {
+      challenge: signChallengeToken({ n, exp: rig.getNow() + 600_000, d }),
+      difficulty: d,
+      expiresAt: rig.getNow() + 600_000,
+      algorithm: 'sha256',
+    },
+    200,
+  );
 }
 
 function payloadOf(row: OutboxRow): ReturnType<typeof reportPayloadSchema.parse> {
@@ -879,13 +933,54 @@ describe('ReportService 发送状态机（§6.2 / §6.4）', () => {
       expect(row.status).toBe('sent');
       expect(row.sent_at).toBe(BASE);
       expect(row.last_error).toBeNull();
+      // PoW（任务 5A）：先 GET /v1/challenge（默认 disabled 应答）→ POST /v1/reports。
+      expect(rig.fetchCalls).toHaveLength(2);
+      const [challengeCall, call] = rig.fetchCalls;
+      expect(challengeCall!.url).toBe(CHALLENGE_URL);
+      expect(challengeCall!.init?.method).toBe('GET');
+      expect(challengeCall!.init?.redirect).toBe('error');
+      expect(call!.url).toBe(ENDPOINT);
+      expect(call!.init?.method).toBe('POST');
+      expect(call!.init?.redirect).toBe('error');
+      expect((call!.init?.headers as Record<string, string>)['content-type']).toBe('application/json');
+      // disabled 模式直发：body 就是入队时的 payload_json，无 proof 兄弟键。
+      expect(call!.init?.body).toBe(row.payload_json);
+    } finally {
+      closeDatabase(rig.db);
+    }
+  });
+
+  it('keeps pending when the challenge endpoint 5xx (no POST attempted)', async () => {
+    const rig = makeRig();
+    try {
+      rig.setChallenge(() => new Response('boom', { status: 500 }));
+      const target = appendBotMessage(rig, 'challenge 不可达');
+      submitText(rig, target.id);
+      await rig.reports.drain();
+      const row = outboxRows(rig)[0]!;
+      expect(row.status).toBe('pending');
+      expect(row.attempts).toBe(1);
+      expect(row.last_error).toBe('network');
+      // 只有 challenge GET，没有 POST。
       expect(rig.fetchCalls).toHaveLength(1);
-      const call = rig.fetchCalls[0]!;
-      expect(call.url).toBe(ENDPOINT);
-      expect(call.init?.method).toBe('POST');
-      expect(call.init?.redirect).toBe('error');
-      expect((call.init?.headers as Record<string, string>)['content-type']).toBe('application/json');
-      expect(call.init?.body).toBe(row.payload_json);
+      expect(rig.fetchCalls[0]!.init?.method).toBe('GET');
+    } finally {
+      closeDatabase(rig.db);
+    }
+  });
+
+  it('falls back to a proof-less POST when the challenge endpoint is 404 (old worker)', async () => {
+    const rig = makeRig();
+    try {
+      rig.setChallenge(() => new Response('{}', { status: 404 }));
+      rig.setFetch(() => okResponse({ status: 'accepted' }, 201));
+      const target = appendBotMessage(rig, '旧版 Worker');
+      submitText(rig, target.id);
+      await rig.reports.drain();
+      expect(outboxRows(rig)[0]!.status).toBe('sent');
+      const [, call] = rig.fetchCalls;
+      expect(call!.init?.method).toBe('POST');
+      expect(call!.init?.body).toBe(outboxRows(rig)[0]!.payload_json);
     } finally {
       closeDatabase(rig.db);
     }
@@ -1024,6 +1119,178 @@ describe('ReportService 发送状态机（§6.2 / §6.4）', () => {
     } finally {
       closeDatabase(rig.db);
     }
+  });
+});
+
+describe('ReportService PoW（任务 5A：challenge → solve → proof → 重试一次）', () => {
+  it('full flow: fetches the challenge, solves it, POSTs a proof and marks sent', async () => {
+    const rig = makeRig();
+    try {
+      let token = '';
+      let nonce = '';
+      rig.setChallenge(() => {
+        nonce = randomBytes(16).toString('hex');
+        token = signChallengeToken({ n: nonce, exp: rig.getNow() + 600_000, d: 8 });
+        return okResponse(
+          {
+            challenge: token,
+            difficulty: 8,
+            expiresAt: rig.getNow() + 600_000,
+            algorithm: 'sha256',
+          },
+          200,
+        );
+      });
+      rig.setFetch(() => okResponse({ status: 'accepted' }, 201));
+      const target = appendBotMessage(rig, '带 proof 发送');
+      submitText(rig, target.id);
+      await rig.reports.drain();
+      expect(outboxRows(rig)[0]!.status).toBe('sent');
+      expect(rig.fetchCalls).toHaveLength(2);
+      const [challengeCall, call] = rig.fetchCalls;
+      expect(challengeCall!.url).toBe(CHALLENGE_URL);
+      expect(challengeCall!.init?.method).toBe('GET');
+      const body = JSON.parse(call!.init?.body as string) as {
+        proof?: { challenge: string; solution: string };
+        hashes?: { content: string; payload: string };
+      };
+      // proof 是顶层兄弟键；payload 契约字段原样保留（hashes 在入队时已算好）。
+      expect(body.proof).toEqual({ challenge: token, solution: expect.any(String) });
+      expect(typeof body.proof?.solution).toBe('string');
+      // 求解规则（协议 v1）：sha256(n:solution) 前导零比特 ≥ 8，独立复算。
+      const digest = createHash('sha256')
+        .update(Buffer.from(`${nonce}:${body.proof!.solution}`, 'utf8'))
+        .digest();
+      expect(leadingZeroBits(digest)).toBeGreaterThanOrEqual(8);
+      // proof / challenge / solution 永不进日志。
+      expect(JSON.stringify(rig.logs)).not.toContain(token);
+      expect(JSON.stringify(rig.logs)).not.toContain(body.proof!.solution);
+    } finally {
+      closeDatabase(rig.db);
+    }
+  });
+
+  it('retries exactly once with a fresh challenge on a PoW 400, then succeeds', async () => {
+    const rig = makeRig();
+    try {
+      const tokens: string[] = [];
+      rig.setChallenge(() => {
+        const n = randomBytes(16).toString('hex');
+        const token = signChallengeToken({ n, exp: rig.getNow() + 600_000, d: 8 });
+        tokens.push(token);
+        return challengeResponse(rig, { n, d: 8 });
+      });
+      let posts = 0;
+      rig.setFetch(() => {
+        posts += 1;
+        return posts === 1
+          ? okResponse({ error: 'missing_proof' }, 400)
+          : okResponse({ status: 'accepted' }, 201);
+      });
+      const target = appendBotMessage(rig, '首次 400 重试');
+      submitText(rig, target.id);
+      await rig.reports.drain();
+      const row = outboxRows(rig)[0]!;
+      expect(row.status).toBe('sent');
+      expect(row.last_error).toBeNull();
+      expect(posts).toBe(2);
+      expect(rig.fetchCalls).toHaveLength(4); // GET, POST(400), GET, POST(201)
+      // 第二次 POST 携带的是新 challenge（同 reportId 同 payload）。
+      const secondBody = JSON.parse(rig.fetchCalls[3]!.init?.body as string) as {
+        proof: { challenge: string };
+      };
+      expect(secondBody.proof.challenge).toBe(tokens[1]);
+      expect(tokens[0]).not.toBe(tokens[1]);
+    } finally {
+      closeDatabase(rig.db);
+    }
+  });
+
+  it('marks failed after two PoW 400s (exactly one retry)', async () => {
+    const rig = makeRig();
+    try {
+      rig.setChallenge(() => challengeResponse(rig, { d: 8 }));
+      rig.setFetch(() => okResponse({ error: 'proof_invalid' }, 400));
+      const target = appendBotMessage(rig, '两次 PoW 失败');
+      submitText(rig, target.id);
+      await rig.reports.drain();
+      const row = outboxRows(rig)[0]!;
+      expect(row.status).toBe('failed');
+      expect(row.last_error).toBe('HTTP 400');
+      // GET + POST + GET + POST：恰好重试一次，不再第三轮。
+      expect(rig.fetchCalls).toHaveLength(4);
+    } finally {
+      closeDatabase(rig.db);
+    }
+  });
+
+  it('does not retry a non-PoW 400', async () => {
+    const rig = makeRig();
+    try {
+      rig.setFetch(() => okResponse({ error: 'hash_mismatch' }, 400));
+      const target = appendBotMessage(rig, '普通 400');
+      submitText(rig, target.id);
+      await rig.reports.drain();
+      expect(outboxRows(rig)[0]!.status).toBe('failed');
+      expect(rig.fetchCalls).toHaveLength(2); // GET + POST，无重试
+    } finally {
+      closeDatabase(rig.db);
+    }
+  });
+
+  it('treats an unparseable challenge token as a network-style failure (stays pending)', async () => {
+    const rig = makeRig();
+    try {
+      rig.setChallenge(() => okResponse({ challenge: 'garbage-token', difficulty: 8 }, 200));
+      const target = appendBotMessage(rig, '坏 token');
+      submitText(rig, target.id);
+      await rig.reports.drain();
+      const row = outboxRows(rig)[0]!;
+      expect(row.status).toBe('pending');
+      expect(row.last_error).toBe('network');
+      expect(rig.fetchCalls).toHaveLength(1); // 只有 GET，没有 POST
+    } finally {
+      closeDatabase(rig.db);
+    }
+  });
+});
+
+describe('solveChallenge 求解器（任务 5A 协议 v1）', () => {
+  it.each([4, 6, 8])('finds a solution meeting difficulty %d quickly', (difficulty) => {
+    const nonce = randomBytes(16).toString('hex');
+    const solution = solveChallenge(nonce, difficulty);
+    // ASCII 解。
+    expect(solution).toMatch(/^[\x20-\x7e]+$/);
+    // 前导零比特规则（协议 v1）：sha256(utf8(n + ':' + solution)) ≥ difficulty。
+    const digest = createHash('sha256')
+      .update(Buffer.from(`${nonce}:${solution}`, 'utf8'))
+      .digest();
+    expect(leadingZeroBits(digest)).toBeGreaterThanOrEqual(difficulty);
+    // 边界：减一比特的难度对同一解也成立（≥ 语义），但解不该比要求多出太多（首解）。
+    expect(leadingZeroBits(digest)).toBeLessThan(difficulty + 8);
+  });
+
+  it('throws when maxIterations is exhausted (caller backs off like a network error)', () => {
+    const nonce = randomBytes(16).toString('hex');
+    expect(() => solveChallenge(nonce, 30, 1000)).toThrow(/unsolved/);
+    expect(() => solveChallenge(nonce, -1)).toThrow(/bad difficulty/);
+    expect(() => solveChallenge(nonce, 1.5)).toThrow(/bad difficulty/);
+  });
+
+  it('derives the challenge endpoint by swapping the trailing /v1/reports segment', () => {
+    expect(challengeEndpointOf('https://reports.kepcup.com/v1/reports')).toBe(
+      'https://reports.kepcup.com/v1/challenge',
+    );
+    expect(challengeEndpointOf('http://127.0.0.1:8787/v1/reports')).toBe(
+      'http://127.0.0.1:8787/v1/challenge',
+    );
+    // 不在 v1/reports 结尾：同源 + /v1/challenge。
+    expect(challengeEndpointOf('https://example.com/reports')).toBe(
+      'https://example.com/v1/challenge',
+    );
+    expect(challengeEndpointOf('https://example.com')).toBe('https://example.com/v1/challenge');
+    // 解析失败：字符串拼接兜底。
+    expect(challengeEndpointOf('not-a-url')).toBe('not-a-url/v1/challenge');
   });
 });
 

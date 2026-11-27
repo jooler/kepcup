@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -13,12 +13,34 @@ import { rmHomeTolerant } from './helpers/home-cleanup';
  * 👎 出 chip 且本地假 Worker 恰好收到一次 POST（hashes.content 可复算）；重复
  * 点 👎 是 UI no-op（POST 数不变）；❤️ 再点即取消（chip 消失）；右键菜单
  * 「举报不当内容」与 👎 同流程（无确认、无 toast）。
+ *
+ * 反滥用 PoW（任务 5A）：假 Worker 实现 GET /v1/challenge（difficulty 4）并要求
+ * POST 带 proof 兄弟键（校验存在即可）；challenge GET 不计入 reports 计数。
  */
 
 const REPLY_1 = '这是一条被举报的回复';
 const REPLY_2 = '第二条被举报的回复';
 
-/** 本地假举报 Worker：记录 POST /v1/reports 的整份 body，恒回 201。 */
+/** 假 challenge 难度：4（≈16 次哈希，测试秒解）。 */
+const FAKE_POW_DIFFICULTY = 4;
+
+/** 签出协议 v1 形状的假 token `v1.<payload>.<hmac>`（core 不验签，只解 n）。 */
+function fakeChallengeToken(nonce: string, expiresAt: number, difficulty: number): string {
+  const payloadPart = Buffer.from(
+    JSON.stringify({ n: nonce, exp: expiresAt, d: difficulty, ipf: '' }),
+    'utf8',
+  ).toString('base64url');
+  const mac = createHmac('sha256', 'e2e-fake-pow-secret')
+    .update(`v1.${payloadPart}`, 'utf8')
+    .digest();
+  return `v1.${payloadPart}.${mac.toString('base64url')}`;
+}
+
+/**
+ * 本地假举报 Worker：GET /v1/challenge 发 difficulty 4 的假 challenge；
+ * POST /v1/reports 要求带 proof（校验存在），记录整份 body 后回 201。
+ * `reports` 只数被受理的 POST（challenge GET 与被拒 POST 都不计入）。
+ */
 class FakeReportWorker {
   reports: Array<Record<string, unknown>> = [];
   url = '';
@@ -27,11 +49,45 @@ class FakeReportWorker {
   async start(): Promise<void> {
     await new Promise<void>((resolve) => {
       this.#server = createServer((req, res) => {
+        if (req.method === 'GET' && (req.url ?? '').includes('/v1/challenge')) {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(
+            JSON.stringify({
+              challenge: fakeChallengeToken(
+                randomBytes(16).toString('hex'),
+                Date.now() + 600_000,
+                FAKE_POW_DIFFICULTY,
+              ),
+              difficulty: FAKE_POW_DIFFICULTY,
+              expiresAt: Date.now() + 600_000,
+              algorithm: 'sha256',
+            }),
+          );
+          return;
+        }
         if (req.method === 'POST' && (req.url ?? '').includes('/v1/reports')) {
           const chunks: Buffer[] = [];
           req.on('data', (chunk: Buffer) => chunks.push(chunk));
           req.on('end', () => {
-            this.reports.push(JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>);
+            const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
+              proof?: { challenge?: unknown; solution?: unknown };
+            };
+            // PoW 反滥用（任务 5A）：无 proof / 形状不对 → 400 missing_proof。
+            const proof = body.proof;
+            if (
+              typeof proof !== 'object' ||
+              proof === null ||
+              typeof proof.challenge !== 'string' ||
+              proof.challenge.length === 0 ||
+              typeof proof.solution !== 'string'
+            ) {
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: 'missing_proof' }));
+              return;
+            }
+            this.reports.push(body as Record<string, unknown>);
             res.statusCode = 201;
             res.setHeader('Content-Type', 'application/json');
             res.end(JSON.stringify({ status: 'accepted', id: 'rep_e2e' }));
@@ -155,6 +211,7 @@ test('bot message reactions: dislike reports once, heart toggles, context menu r
       client: { surface: string };
       message: { text: string; kind: string };
       hashes: { content: string };
+      proof?: { challenge: string; solution: string };
     };
     // content hash（§5.4）：text 消息 = sha256(utf8(正文))，可复算。
     expect(report.schemaVersion).toBe(1);
@@ -165,6 +222,9 @@ test('bot message reactions: dislike reports once, heart toggles, context menu r
     expect(report.message.kind).toBe('text');
     expect(report.message.text).toBe(REPLY_1);
     expect(report.hashes.content).toBe(createHash('sha256').update(REPLY_1, 'utf8').digest('hex'));
+    // PoW（任务 5A）：POST 带 proof 兄弟键（challenge token v1 形状 + 非 ASCII 空解）。
+    expect(report.proof?.challenge).toMatch(/^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+    expect(report.proof?.solution.length).toBeGreaterThan(0);
 
     // 同一条再点 👎：UI no-op，POST 数不变。
     await openReactionPanel(page, firstBubble);

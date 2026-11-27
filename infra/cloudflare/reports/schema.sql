@@ -59,3 +59,22 @@ CREATE TABLE IF NOT EXISTS report_ip_rate (
   count         INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS report_ip_rate_age ON report_ip_rate(window_start);
+
+-- PoW 单次使用表（反滥用任务 5A）：challenge_id = sha256(完整 challenge 字符串)。
+-- INSERT OR IGNORE 判重；changes=0 且已存 report_id === 本次 reportId → 放行
+-- （崩溃重发幂等），否则 challenge_reused（防预解算池重放）。
+-- 清理：cron 删 used_at < now-1d 的行（challenge TTL 只有 10 分钟，1 天绰绰有余）。
+CREATE TABLE IF NOT EXISTS report_pow_used (
+  challenge_id  TEXT PRIMARY KEY,
+  report_id     TEXT NOT NULL,
+  used_at       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS report_pow_used_age ON report_pow_used(used_at);
+
+-- 全局日上限（反滥用任务 5A）：按 UTC 日期计数的受理总数（REPORT_DAILY_LIMIT，
+-- 默认 2000；超过 → 429 + Retry-After 至次日 UTC）。去重先于计数：duplicate
+-- 不占额度。day 用 'YYYY-MM-DD'，字典序即时间序；cron 删 day < now-7d 的行。
+CREATE TABLE IF NOT EXISTS report_daily (
+  day    TEXT PRIMARY KEY,
+  count  INTEGER NOT NULL DEFAULT 0
+);

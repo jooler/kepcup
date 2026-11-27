@@ -9,14 +9,15 @@ triage（`scripts/report-triage.mjs`）。
 ```
 infra/cloudflare/reports/
   wrangler.jsonc    Worker + D1 绑定 + cron + custom domain（database_id 已回填真实值）
-  schema.sql        D1 表：reports（两条 UNIQUE 去重约束）/ report_rate / report_ip_rate
+  schema.sql        D1 表：reports（两条 UNIQUE 去重约束）/ report_rate / report_ip_rate / report_pow_used / report_daily
   verify.mjs        线上冒烟脚本（部署后跑，零依赖；见下文「部署后冒烟」）
   src/index.ts      导出 fetch + scheduled（默认导出 ExportedHandler）
-  src/worker.ts     公开管线（§7.4 十二步，去重先于限流）、IP/客户端限流、日志
+  src/worker.ts     公开管线（§7.4 十二步 + PoW 6.5 + 日上限 10.5，去重先于限流）、IP/客户端限流、日志
+  src/pow.ts        PoW challenge 签发 / 验证（任务 5A 协议 v1；WebCrypto + atob/btoa，禁 node:crypto）
   src/admin.ts      /v1/admin/*（bearer、常量时间比较、list/detail/patch/delete-client/stats）
-  src/dedupe.ts     canonicalJson + content/payload hash（WebCrypto；与 core 的 node:crypto 实现以 fixture 向量互锁）
+  src/dedupe.ts     canonicalJson + content/payload hash（WebCrypto；与 core 的 node:crypto 实现以 fixture 向量互锁；proof 剥离）
   src/validate.ts   手写校验（shape/enum/长度/控制字符；数值与 shared REPORT_* 常量同步）
-  src/db.ts         D1 语句封装（§7.5 限流 SQL 逐字一致）
+  src/db.ts         D1 语句封装（§7.5 限流 SQL 逐字一致；PoW 单次使用 / 日上限 / 清理）
   src/types.ts      D1Like / Env / ReportPayload（手写镜像 shared schema，注释注明同步维护）
   src/cf-types.d.ts 本地声明的最小 Cloudflare 类型（@cloudflare/workers-types 可直接替换）
   tsconfig.json     独立类型检查：npx tsc -p infra/cloudflare/reports --noEmit（不在 pnpm 工作区内）
@@ -33,12 +34,15 @@ scripts/report-triage.mjs   日常处置 CLI（本目录之外的唯一配套，
 | D1 | `kepcup-reports` | id 是公开资源标识，见 `wrangler.jsonc` 的 `database_id`（建库时回填）与 `../README.md` §7（线上变更表） |
 | Secret | `REPORT_ADMIN_TOKEN` | admin API bearer，随机 32 字节 hex；**同一值**放仓库根 `.env` 的 `KEPCUP_REPORT_ADMIN_TOKEN`（已 gitignore），供 CLI/冒烟使用 |
 | Secret | `IP_HASH_SALT` | IP 限流的 HMAC 盐，随机 32 字节 hex；**只**在 Worker secret，不进 `.env`、不进任何仓库文件 |
-| vars | 见 `wrangler.jsonc` | 客户端限流 60s、IP 100/h、去重窗口 content 24h / payload 90d、保留 365 天 |
-| Cron | `23 4 * * *` | 每日清理过期 reports / report_rate / report_ip_rate |
+| Secret | `REPORT_POW_SECRET` | PoW challenge 签名密钥（任务 5A），随机 32 字节 hex；**只**在 Worker secret，不进 `.env`、不进任何仓库文件；未配置时不启用 PoW |
+| vars | 见 `wrangler.jsonc` | 客户端限流 60s、IP 100/h、去重窗口 content 24h / payload 90d、保留 365 天、PoW 难度 20 / TTL 10 分钟、日上限 2000 |
+| Cron | `23 4 * * *` | 每日清理过期 reports / report_rate / report_ip_rate / report_pow_used / report_daily |
 
-限流（客户端 1/min、IP 100/h）**全部在 Worker + D1 内实现**，不依赖 WAF——kepcup.com
-免费套餐仅允许 1 条 zone 级限速规则，已被 registry 占用；本 Worker 不需要（也不要再）
-动 WAF。发现滥用时调低 `REPORT_IP_LIMIT`（改 `wrangler.jsonc` vars 后 `wrangler deploy`）。
+限流与反滥用（客户端 1/min、IP 100/h、PoW、日上限 2000/天）**全部在 Worker + D1 内
+实现**，不依赖 WAF——kepcup.com 免费套餐仅允许 1 条 zone 级限速规则，已被 registry
+占用；本 Worker 不需要（也不要再）动 WAF。发现滥用时调低 `REPORT_IP_LIMIT`、调低
+`REPORT_DAILY_LIMIT` 或调高 `REPORT_POW_DIFFICULTY`（改 `wrangler.jsonc` vars 后
+`wrangler deploy`；PoW 逃生开关见下文「反滥用」节）。
 
 ## 契约
 
@@ -57,21 +61,77 @@ scripts/report-triage.mjs   日常处置 CLI（本目录之外的唯一配套，
 | 方法与路径 | 说明 |
 |---|---|
 | `GET /healthz` | `{ok:true, version}`，无鉴权 |
+| `GET /v1/challenge` | PoW challenge 签发（任务 5A，见「反滥用」节） |
 | `POST /v1/reports` | 举报受理，见下方管线 |
 
 错误为 JSON `{error, issues?}`：415（非 application/json）、413（body > 128 KiB，流式计数）、
-400（坏 JSON / 校验失败 / hash 不一致）、429（限流，带 `Retry-After` 与 `retryAfterMs`）、
-405（其他方法，带 `Allow`）、404（未知路径）。所有响应带
+400（坏 JSON / 校验失败 / hash 不一致 / PoW 失败）、429（限流 / 日上限，带 `Retry-After` 与
+`retryAfterMs`）、405（其他方法，带 `Allow`）、404（未知路径）。所有响应带
 `Content-Type: application/json`、`Cache-Control: no-store`、`X-Content-Type-Options:
 nosniff`；**不带任何 CORS 头**（原生 core fetch 不需要，浏览器页面不可读响应，§8）。
 
-### 管线顺序（§7.4，顺序即语义）
+### 管线顺序（§7.4 + 任务 5A，顺序即语义）
 
 方法/路径 → Content-Type → 流式 body 计数（128 KiB 硬上限）→ JSON.parse → 手写校验 →
-重算两 hash → reportId 幂等 → 时间桶去重预检（服务端时钟）→ IP 粗限流（100/h，
-HMAC(ip)，`IP_HASH_SALT` 未配置时跳过——**部署必配**）→ 客户端限流（§7.5 条件 upsert，
-1/min）→ `INSERT OR IGNORE`（UNIQUE 索引并发兜底）。**去重先于限流**：重复点击返回
-`200 {status:'duplicate', reason}`，不占 1/min 名额。
+重算两 hash（`proof` 是传输层字段，不进 hash）→ **PoW 验证（6.5）** → reportId 幂等 →
+时间桶去重预检（服务端时钟）→ IP 粗限流（100/h，HMAC(ip)，`IP_HASH_SALT` 未配置时跳过
+——**部署必配**）→ 客户端限流（§7.5 条件 upsert，1/min）→ **全局日上限（10.5）** →
+`INSERT OR IGNORE`（UNIQUE 索引并发兜底）。**去重先于限流**：重复点击返回
+`200 {status:'duplicate', reason}`，不占 1/min 名额、也不占日额度；**PoW 先于幂等读**：
+proof 失败的请求不产生任何 D1 读，重放预解算池拿不到 duplicate。
+
+## 反滥用（PoW + 日上限，任务 5A）
+
+举报端点是匿名写入口（无账号体系），在既有的 1/min/client + 100/h/IP + 双 hash 去重之上，
+再加两层：**工作量证明（PoW）**抬高批量提交的单价，**全局日上限**封顶绝对量。
+
+### PoW 协议 v1
+
+1. 客户端 `GET /v1/challenge` → 200 `{challenge, difficulty, expiresAt, algorithm:'sha256'}`。
+   challenge = `v1.<base64url(JSON payload)>.<base64url(HMAC-SHA256)>`，payload =
+   `{ n: 16字节hex随机数, exp: 过期ms, d: difficulty, ipf: ip_hash }`；HMAC 密钥是
+   `REPORT_POW_SECRET`。TTL 默认 10 分钟（`REPORT_POW_TTL_MS`）。`ipf` 复用
+   `IP_HASH_SALT` 的 HMAC 逻辑把 token 绑定到请求 IP（防换 IP 重放）；盐未配置时两侧
+   都按空串比对（与 IP 限流的「未配则跳过」语义一致）。
+2. 求解：找 ASCII `solution` 使 `sha256(utf8(n + ':' + solution))` 的**前导零比特数 ≥
+   difficulty**（默认 20，约 2^20 次 ≈ 0.3s Node 单核）；验证端一次哈希 + 计数。
+3. 提交：POST body 顶层加兄弟键 `proof: { challenge, solution }`。**payload schema/hash
+   契约不变**——`proof` 是传输层字段，payload hash 剥离清单从 [reportId, createdAt,
+   hashes] 扩为 + proof；`packages/shared` 的 `reportPayloadSchema` 不知道 proof。
+4. 验证（管线 6.5）：无 proof → 400 `missing_proof`；验签失败 / 格式错 →
+   `challenge_invalid`；过期 → `challenge_expired`；`ipf` 与本次请求 ip_hash 不符 →
+   `challenge_ip_mismatch`；解不满足难度 → `proof_invalid`；单次使用冲突 →
+   `challenge_reused`。**challenge 失败一律 400、不带 Retry-After**（客户端解新题，
+   不是等待）。单次使用表 `report_pow_used` 以 `sha256(完整 challenge 字符串)` 为主键、
+   记首次绑定的 report_id：`INSERT OR IGNORE`，changes=0 且已存 report_id === 本次
+   reportId → 放行（崩溃重发幂等），否则拒绝（防预解算池重放）。
+5. 客户端（core 发送器）：POST 前先 GET challenge 并求解；`enabled:false`（PoW 关闭）
+   或 challenge 端点 404（旧版 Worker）→ 无 proof 直发；收到 400 且 error 是上述六种
+   原因 → 换新 challenge 重解重试**恰好一次**；求解超上限按网络错误退避。
+
+### 参数
+
+| var / secret | 默认 | 说明 |
+|---|---|---|
+| `REPORT_POW_SECRET` | （secret，部署必配） | challenge 的 HMAC-SHA256 密钥；未配置时不启用 PoW |
+| `REPORT_POW_DIFFICULTY` | `20` | 解的前导零比特数；**0 = 逃生开关**，challenge 返回 `{enabled:false, difficulty:0, …}` 且提交不要求 proof |
+| `REPORT_POW_TTL_MS` | `600000` | challenge 有效期（10 分钟） |
+| `REPORT_DAILY_LIMIT` | `2000` | 全局日上限：按 UTC 日期计数的受理总数（`report_daily` 表）；超过 → 429 + `Retry-After` 至次日 UTC。duplicate 不占额度（去重先于计数）；被拒请求与 IP 限流同语义，消耗一次计数 |
+
+`REPORT_POW_SECRET` 部署步骤（值不进终端历史、不进仓库）：
+
+```bash
+printf '%s' "$(openssl rand -hex 32)" | ../../../infra/cloudflare/with-env.sh \
+  ../../../apps/website/node_modules/.bin/wrangler secret put REPORT_POW_SECRET
+```
+
+应急开关：被滥用时调低 `REPORT_DAILY_LIMIT` 或调高 `REPORT_POW_DIFFICULTY`（改
+`wrangler.jsonc` vars 后 `wrangler deploy`）；PoW 出问题时设 `REPORT_POW_DIFFICULTY=0`
+整体关闭（旧客户端带 proof 提交也会被接受——proof 是普通字段，校验只在 difficulty>0 时进行）。
+
+与 Turnstile 的取舍：Turnstile 需要域名密钥对与浏览器 widget/iframe，而本端点的唯一
+客户端是桌面 core 的原生 fetch（无浏览器环境），故用自托管 PoW（无第三方依赖、无
+隐私外泄面）；真被打穿时再评估付费 WAF。
 
 ## Admin API（§7.6）
 
@@ -157,7 +217,9 @@ node --env-file=.env scripts/report-triage.mjs delete-client client-…
      ../../../apps/website/node_modules/.bin/wrangler secret put REPORT_ADMIN_TOKEN
    printf '%s' "$(openssl rand -hex 32)" | ../../../infra/cloudflare/with-env.sh \
      ../../../apps/website/node_modules/.bin/wrangler secret put IP_HASH_SALT
-   # 回读校验（只列名字不显示值）：wrangler secret list 应含两个 secret 名
+   printf '%s' "$(openssl rand -hex 32)" | ../../../infra/cloudflare/with-env.sh \
+     ../../../apps/website/node_modules/.bin/wrangler secret put REPORT_POW_SECRET
+   # 回读校验（只列名字不显示值）：wrangler secret list 应含三个 secret 名
    ```
    token 轮换：重新 `wrangler secret put REPORT_ADMIN_TOKEN`，并同步更新 `.env`。
 4. **部署**（custom domain 首次生效可能要几秒）：
@@ -171,7 +233,10 @@ node --env-file=.env scripts/report-triage.mjs delete-client client-…
    ```
    检查项：healthz、坏 JSON 400、合法 payload 201 accepted、同内容重发 200 duplicate
    （不占限流名额）、不同内容立即重发 429（带 Retry-After/retryAfterMs）、admin 无
-   token 401/404、有 token 的 list/PATCH/stats/DELETE-client 与删除后列表为空。脚本自建
+   token 401/404、有 token 的 list/PATCH/stats/DELETE-client 与删除后列表为空、
+   PoW（任务 5A）：`GET /v1/challenge` 200 → 脚本内求解（difficulty 20 约 1s）→ 201、
+   同 proof 换 reportId → 400 `challenge_reused`、无 proof → 400 `missing_proof`
+   （服务端 PoW 关闭时降级为「无 proof → 201」并标注）。脚本自建
    fixture（随机 clientId + 随机正文后缀）并**自己清理**测试行。注意：clientId 与正文
    每次随机，重跑（哪怕 60 秒内连跑）不会命中上一轮的去重/限流行，第 3 项仍是 201；
    只有为调试固定后缀时，重跑第 3 项才会拿到 duplicate（content 去重窗口 24 小时，
@@ -199,7 +264,8 @@ select id, status, received_at from reports where client_id = '…' order by rec
 -- 最近 7 天受理量
 select count(*) from reports where received_at >= (strftime('%s','now') * 1000 - 7*86400000);
 
--- 校验表结构与索引都在（应列出 reports / report_rate / report_ip_rate 及 5 个索引）
+-- 校验表结构与索引都在（应列出 reports / report_rate / report_ip_rate /
+-- report_pow_used / report_daily 及对应索引）
 select name, type from sqlite_master where type in ('table','index') and name not like 'sqlite_%'
   order by type, name;
 ```
@@ -208,7 +274,9 @@ select name, type from sqlite_master where type in ('table','index') and name no
 
 - `reports` 保留 365 天（`REPORT_RETENTION_DAYS`）；cron `23 4 * * *` 删除
   `received_at < now-365d` 的 reports、`last_at < now-24h` 的 report_rate、
-  `window_start < now-IP_WINDOW` 的 report_ip_rate。
+  `window_start < now-IP_WINDOW` 的 report_ip_rate、`used_at < now-24h` 的
+  report_pow_used（challenge TTL 只有 10 分钟，1 天绰绰有余）与 `day < now-7d` 的
+  report_daily。
 - 去重窗口：content 24h / payload 90d（时间桶，§5.5），与
   `packages/shared/src/domain/report.ts` 的 `REPORT_*_DEDUPE_MS` 默认一致；改 wrangler vars
   即可调整（设 0 = 永久去重，bucket 恒 0）。
@@ -245,6 +313,7 @@ npx tsc -p infra/cloudflare/reports --noEmit
 ## 日志与隐私（§8）
 
 console.log 只输出两种 JSON 行：`{reportId, status, httpStatus}` 或
-`{path, method, status}`——绝不打 payload、正文、clientId、IP、token（admin 详情路径里的
-id 会被折叠成 `/v1/admin/<资源>`）。原始 IP 不落库（只存 HMAC）；admin 列表只带正文预览，
-完整 payload 仅在详情接口出现。verify.mjs / report-triage.mjs 同样不打印 token。
+`{path, method, status}`——绝不打 payload、正文、clientId、IP、token，也不打
+challenge / solution 原文（admin 详情路径里的 id 会被折叠成 `/v1/admin/<资源>`）。
+原始 IP 不落库（只存 HMAC）；admin 列表只带正文预览，完整 payload 仅在详情接口出现。
+verify.mjs / report-triage.mjs 同样不打印 token 与 PoW 原文。

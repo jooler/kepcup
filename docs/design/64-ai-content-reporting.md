@@ -29,10 +29,12 @@ core（本机，main.db 加密库；packages/core/src/domain/reports.ts + reacti
         │  后台发送器：1 条/分钟/client，POST https://reports.kepcup.com/v1/reports
         ▼
 Worker kepcup-reports（infra/cloudflare/reports/，Cloudflare Workers）
-  12 步管线：校验 → 重算 hash → 幂等 → 时间桶去重 → IP/客户端限流 → 入库
+  管线：校验 → 重算 hash → PoW 验证（6.5，任务 5A）→ 幂等 → 时间桶去重
+    → IP/客户端限流 → 全局日上限（10.5）→ 入库
         ▼
 D1 kepcup-reports（静态加密）
-  reports / report_rate / report_ip_rate；cron「23 4 * * *」删过期行（365 天保留）
+  reports / report_rate / report_ip_rate / report_pow_used / report_daily；
+  cron「23 4 * * *」删过期行（365 天保留）
         ▼
 triage：scripts/report-triage.mjs（bearer admin API：list/show/set/delete-client/stats）
 ```
@@ -44,7 +46,7 @@ triage：scripts/report-triage.mjs（bearer admin API：list/show/set/delete-cli
 - **唯一事实来源**：`packages/shared/src/domain/report.ts`——payload 顶层 schema（`reportPayloadSchema`）、子结构（client / source / bot / message / replyTo / context / usage / tools / providers / hashes）、内容上限常量（`REPORT_*_MAX_BYTES`）、去重窗口（`REPORT_CONTENT_DEDUPE_MS` 24h、`REPORT_PAYLOAD_DEDUPE_MS` 90d）、reaction 白名单（`MESSAGE_REACTION_EMOJIS` 12 个）与 scope 形状（`^local$|^team:[0-9a-f]{16}$`）。
 - **RPC**：`packages/shared/src/rpc/methods.ts` 的 `messages.react` / `messages.reactions` / `reports.submit`（均在 `APP_RPC_METHODS`）。`reports.submit` 输出 `queued | duplicate | rejected`（`rejected` 只作诊断，UI 静默）。
 - **固定向量**：`packages/shared/test/fixtures/report-v1.json`——content hash 前缀 `69a79ef1…`、payload hash 前缀 `66f397f8…`。core（`node:crypto`）与 Worker（`crypto.subtle`）各有一份 hash 实现，以该向量逐字节互锁，禁止只改一边。
-- **hash 定义**：content = 正文（text）或卡片 canonicalJson（card）的 sha256；payload = 去掉 `reportId / createdAt / hashes` 后的 canonicalJson 的 sha256（递归按 key 字典序排序、数组保序）。bucket 由两侧各自时钟计算，不进 hash。
+- **hash 定义**：content = 正文（text）或卡片 canonicalJson（card）的 sha256；payload = 去掉 `reportId / createdAt / hashes / proof` 后的 canonicalJson 的 sha256（递归按 key 字典序排序、数组保序；`proof` 是 PoW 传输层兄弟键，任务 5A，shared schema 不知道它）。bucket 由两侧各自时钟计算，不进 hash。
 - **上限**：正文 32KB、卡片 16KB、replyTo 2KB、每条 context 2KB×最多 4 条、profile 8KB、附件元数据 ≤20 条、整包 128KB；清洗顺序 = `secrets.redact()` → 去 C0 控制字符（保留 `\n` `\t`）→ UTF-8 字节截断（不劈多字节/代理对，置 `truncated`）。
 - **永不发送**：API Key（已知 Key 替换 `[REDACTED]`）、完整系统提示词（`systemRole` 只允许 `null` 或 `'butler'` 枚举）、工具输出全文、记忆条目、附件二进制、团队服务器地址（团队来源只带 16 hex 的 `serverHash`）。
 
@@ -67,7 +69,11 @@ triage：scripts/report-triage.mjs（bearer admin API：list/show/set/delete-cli
 
 ## 5. Worker（reports.kepcup.com）
 
-**公开管线**（`src/worker.ts`，顺序即语义）：方法/路径（405/404）→ Content-Type（415）→ 流式 body 计数（硬上限 128 KiB，超 413）→ JSON.parse（400）→ 手写校验（shape/枚举/长度/控制字符，400 + issues 不回显正文）→ WebCrypto 重算双 hash（不一致 400）→ `reportId` 幂等（200 duplicate/report_id）→ 服务端时钟时间桶去重预检（200 duplicate/content|payload）→ IP 粗限流（`CF-Connecting-IP` 的 HMAC-SHA256，固定 1h 窗口 100 次，429）→ 客户端限流（`report_rate` 条件 upsert 60s，429 + `Retry-After` + `retryAfterMs`）→ `INSERT OR IGNORE`（200 duplicate 并发兜底 / 201 accepted）。**去重先于限流**：重复点击不占 1/min 名额。
+**公开管线**（`src/worker.ts`，顺序即语义）：方法/路径（405/404）→ Content-Type（415）→ 流式 body 计数（硬上限 128 KiB，超 413）→ JSON.parse（400）→ 手写校验（shape/枚举/长度/控制字符，400 + issues 不回显正文）→ WebCrypto 重算双 hash（不一致 400；`proof` 是传输层兄弟键，不进 hash）→ **PoW 验证（6.5，任务 5A，见下）** → `reportId` 幂等（200 duplicate/report_id）→ 服务端时钟时间桶去重预检（200 duplicate/content|payload）→ IP 粗限流（`CF-Connecting-IP` 的 HMAC-SHA256，固定 1h 窗口 100 次，429）→ 客户端限流（`report_rate` 条件 upsert 60s，429 + `Retry-After` + `retryAfterMs`）→ **全局日上限（10.5，任务 5A，见下）** → `INSERT OR IGNORE`（200 duplicate 并发兜底 / 201 accepted）。**去重先于限流**：重复点击不占 1/min 名额、也不占日额度。
+
+**反滥用 PoW（任务 5A，协议 v1）**：举报端点是匿名写入口，`GET /v1/challenge` 签发 HMAC 签名的 challenge（`v1.<base64url(payload)>.<base64url(HMAC)>`，payload `{n:16字节hex, exp, d, ipf}`，密钥 `REPORT_POW_SECRET`），客户端求解 `sha256(utf8(n + ':' + solution))` 前导零比特 ≥ difficulty（默认 20，`REPORT_POW_DIFFICULTY`；TTL 10 分钟 `REPORT_POW_TTL_MS`），POST 时以顶层兄弟键 `proof: {challenge, solution}` 提交（shared payload 契约不变）。验证（6.5）在幂等读**之前**：无 proof / 验签失败 / 过期 / IP 绑定不符 / 解不满足难度 / 单次使用冲突分别返回 `missing_proof / challenge_invalid / challenge_expired / challenge_ip_mismatch / proof_invalid / challenge_reused`，一律 400、不带 Retry-After（客户端解新题而非等待）。`ipf` 把 token 绑定到签发时的 ip_hash（复用 `IP_HASH_SALT`；盐未配时两侧按空串比对）——**防换 IP 重放**；单次使用表 `report_pow_used` 以 `sha256(完整 challenge)` 为主键并绑定首个 report_id（`INSERT OR IGNORE`，同 challenge 同 reportId 的崩溃重发放行、换 reportId 拒绝）——**防预解算池**。逃生开关：`REPORT_POW_DIFFICULTY=0` 或 secret 未配置 → challenge 返回 `{enabled:false, difficulty:0, …}` 且提交不要求 proof；core 发送器对 disabled / 旧版端点 404 降级为无 proof 直发，对 PoW 400 换新 challenge 重试恰好一次，求解超上限按网络错误退避。与 Turnstile 的取舍：本端点唯一客户端是桌面 core 的原生 fetch（无浏览器 widget 环境），自托管 PoW 无第三方依赖、无隐私外泄面，真被打穿再评估付费 WAF。
+
+**全局日上限（任务 5A）**：`report_daily(day, count)` 按 UTC 日期原子累加（步 10.5，在去重之后——duplicate 不占额度），超过 `REPORT_DAILY_LIMIT`（默认 2000）→ 429 + `Retry-After` 至次日 UTC；被拒请求消耗一次计数（与 IP 限流同语义）。cron 同步清理 `used_at < now-1d` 的 pow 行与 `day < now-7d` 的日计数行。
 
 **Admin API**（`src/admin.ts`，`/v1/admin/*`）：bearer `REPORT_ADMIN_TOKEN`，先各自 sha256 再逐字节比较（常量时间）；secret 未配置时整棵子树 404（隐藏入口）。`GET /v1/admin/reports`（keyset 分页，摘要不含 payload_json）、`GET /v1/admin/reports/:id`（完整 payload）、`PATCH`（status: triaged/actioned/dismissed + note）、`DELETE /v1/admin/clients/:clientId`（隐私删除：删该 client 全部举报与限流行）、`GET /v1/admin/stats`。无 Web UI，处置走 CLI。
 
@@ -84,8 +90,9 @@ triage：scripts/report-triage.mjs（bearer admin API：list/show/set/delete-cli
 | D1 | `kepcup-reports`，database_id `1e63e07f-bd54-40b3-852f-7b4665bdc7d1`（公开资源标识） |
 | Secret | `REPORT_ADMIN_TOKEN`（admin bearer；同值放仓库根 `.env` 的 `KEPCUP_REPORT_ADMIN_TOKEN` 供 CLI，已 gitignore） |
 | Secret | `IP_HASH_SALT`（IP HMAC 盐；只在 Worker secret，不进任何仓库文件） |
+| Secret | `REPORT_POW_SECRET`（PoW challenge 签名密钥，任务 5A；只在 Worker secret，不进任何仓库文件；主代理部署阶段写入） |
 | Cron | `23 4 * * *` |
-| vars | `REPORT_RATE_LIMIT_MS=60000`、`REPORT_IP_LIMIT=100`、`REPORT_IP_WINDOW_MS=3600000`、`REPORT_CONTENT_DEDUPE_MS=86400000`、`REPORT_PAYLOAD_DEDUPE_MS=7776000000`、`REPORT_RETENTION_DAYS=365`、`BUILD_VERSION=1.0.0`（与 shared 常量默认值一致） |
+| vars | `REPORT_RATE_LIMIT_MS=60000`、`REPORT_IP_LIMIT=100`、`REPORT_IP_WINDOW_MS=3600000`、`REPORT_CONTENT_DEDUPE_MS=86400000`、`REPORT_PAYLOAD_DEDUPE_MS=7776000000`、`REPORT_RETENTION_DAYS=365`、`REPORT_POW_DIFFICULTY=20`、`REPORT_POW_TTL_MS=600000`、`REPORT_DAILY_LIMIT=2000`、`BUILD_VERSION=1.0.0`（与 shared 常量默认值一致） |
 
 部署与冒烟流程见 `infra/cloudflare/reports/README.md`（`verify.mjs` 全 PASS；线上变更记录 `infra/cloudflare/README.md` §7）。限流全部在 Worker + D1 内实现，不动 WAF（kepcup.com 免费套餐唯一 zone 限速规则已被 registry 占用）。
 
@@ -118,7 +125,7 @@ triage：scripts/report-triage.mjs（bearer admin API：list/show/set/delete-cli
 | Admin | bearer + 常量时间比较；未配置 404；token 只在 Worker secret 与本地 `.env` |
 | CORS | 不返回任何 CORS 头（原生 fetch 不需要；浏览器页面不可读响应） |
 | 输入 | 128 KiB 流式计数、手写校验（不执行内容）、hash 重算 |
-| 滥用 | 去重（content 24h / payload 90d 时间桶）→ IP 100/h → client 1/min；Cloudflare 边缘兜底 |
+| 滥用 | 去重（content 24h / payload 90d 时间桶）→ PoW challenge（HMAC 签名 + IP 绑定 + 单次使用 + reportId 绑定，400 不带 Retry-After）→ IP 100/h → client 1/min → 全局日上限 2000/UTC 天（429 + Retry-After 至次日零点）；`proof`/challenge 原文不进日志；Cloudflare 边缘兜底 |
 | 同意 | 点击 👎 即显式同意发送该条举报（10.5.2）；不点击不发送；无二次弹窗（定稿决策），披露在隐私政策/产品条款完整给出 |
 | 删除 | admin `DELETE /v1/admin/clients/:clientId`（邮箱请求通道）+ 本机清数据；服务端保留 365 天后 cron 自动删 |
 
@@ -132,13 +139,13 @@ triage：scripts/report-triage.mjs（bearer admin API：list/show/set/delete-cli
 | core | `packages/core/test/unit/reactions.test.ts` | set/toggle/聚合/mine/scope 隔离/白名单 |
 | core | `packages/core/test/unit/ai-reporting-migration.test.ts` | 0083→0084 升级、表/索引/约束、重复插入 changes=0 |
 | core | `packages/core/test/unit/report-contract.test.ts` | core 构建结果与 fixture 双 hash 逐字节一致 |
-| Worker | `infra/cloudflare/reports/test/worker.test.ts` | 管线顺序、校验、413/415/400/429、幂等、日志无泄漏 |
+| Worker | `infra/cloudflare/reports/test/worker.test.ts` | 管线顺序、校验、413/415/400/429、幂等、日志无泄漏、PoW 六种 400 与单次使用/reportId 幂等（任务 5A）、日上限 429/次日重置/duplicate 不占额度、cron 清理 pow/daily 行 |
 | Worker | `infra/cloudflare/reports/test/dedupe.test.ts` | canonicalJson 边界值与 hash 复算（与 fixture parity） |
 | Worker | `infra/cloudflare/reports/test/admin.test.ts` | 鉴权/隐藏入口/list/detail/patch/delete-client/stats/分页 |
 | Worker | `infra/cloudflare/reports/test/contract.test.ts` | Worker 实现与 fixture 双 hash 一致 |
 | 桌面 UI | `apps/desktop/src/renderer/src/lib/features/chats/message-reactions.svelte.test.ts` | 面板/👎 入队/chip 聚合高亮/重复点击 no-op（配套 `MessageReactionBar.svelte`、`MessageReactionChips.svelte`、`message-reactions.svelte.ts`、`message-reaction-target.ts`） |
-| e2e | `apps/desktop/test/e2e/message-reactions.spec.ts` | hover → 👎 → chip；右键菜单 `context-message-report`；假 Worker 收到一次 POST、重复点击不增发 |
-| 线上冒烟 | `infra/cloudflare/reports/verify.mjs` | healthz / 201 / duplicate / 429 / admin 拒绝与放行 |
+| e2e | `apps/desktop/test/e2e/message-reactions.spec.ts` | hover → 👎 → chip；右键菜单 `context-message-report`；假 Worker 的 challenge（difficulty 4）→ 带 proof 的 POST 恰好一次、重复点击不增发 |
+| 线上冒烟 | `infra/cloudflare/reports/verify.mjs` | healthz / 201 / duplicate / 429 / admin 拒绝与放行 / challenge→solve→201、challenge_reused、missing_proof |
 
 ## 11. 与方案的偏差记录（todo/ai-content-reporting.md → as-built）
 
@@ -155,6 +162,10 @@ triage：scripts/report-triage.mjs（bearer admin API：list/show/set/delete-cli
 (f) **admin 路径日志折叠**：方案 §8 只约束「禁止打印 payload、正文、clientId、IP」；实现加 `logPath()` 把 `/v1/admin/<resource>/<id>` 折叠为 `/v1/admin/<resource>`——举报 id 与 `DELETE /v1/admin/clients/:clientId` 的 clientId 因此永不进 console（Cloudflare observability 会原样持久化 stdout）。
 
 (g) **profile 的 runtime 段走 `payload.bot.runtime` 专段**：`profile_json` 的 runtime 段带插件/连接/MCP id 等与举报无关的字段（§5.3 要求去掉）；实现 `#trimmedProfile` 只保留画像五段（identity/persona/role/boundaries/behavior），模型配置单行走 `payload.bot.runtime`（`reportBotRuntimeSchema`），`systemRole` 只允许 `null` 或 `'butler'` 枚举——完整系统提示词在任何路径都不出本机。
+
+(h) **反滥用 PoW + 全局日上限（任务 5A 增补）**：原方案 §7.5 明确「可选全局日上限：本期不做」；上线后增补——`GET /v1/challenge` 签发 HMAC challenge（`REPORT_POW_SECRET`），POST 以顶层兄弟键 `proof` 提交（§6.5，先于幂等读；payload hash 剥离清单 + proof，shared 契约不变），六种 challenge 失败一律 400 不带 Retry-After；`report_daily` 日上限 2000/UTC 天（§10.5，去重后计数，duplicate 不占额度）。逃生开关 `REPORT_POW_DIFFICULTY=0`；core 侧 challenge→solve→重试恰好一次，详见 §5。
+
+(i) **任务 5A 已接受的四个现状缺口（评审定案，不改行为，留档）**：① **challenge GET 无鉴权/无限流**——`GET /v1/challenge` 不校验、不限量，任何人可预取任意多枚 challenge；接受理由：签发只是一次 HMAC（成本可忽略），真实成本压在求解（difficulty）与单次使用表（6.5），预取换不来绕过；若日后签发本身被打成成本点，再给该端点加 IP 粗限流。② **日上限被拒占额**——步 10.5 先 `bumpDailyCount` 再比较，超限的 429 请求已消耗一次计数（与 IP 限流同语义，README/§5 均已注明）；极端后果只是当日额度少 1，不会放大。③ **入库 payload_json 含 proof**——`reports.payload_json` 存整份 POST body（含已消费的 challenge token 与 solution），admin 详情可见；接受理由：token 已单次消费、不含用户数据，且剥离需要改 insert 路径（不影响 hash/去重）。④ **REPORT_POW_SECRET 未配置 = PoW 静默不强制**（fail-open 逃生开关，challenge 返回 `{enabled:false}`、提交不要求 proof）——部署必配已在 README/§9 注明；接受理由：宁可临时降级也不让举报入口 5xx。
 
 **团队配套（嵌套私有仓 `jooler/kepcup-team-server`，commit `08e5aeb`）**：`apps/team-server/server/src/policy/method-policy.ts` 新增 3 个受控方法——`messages.react` / `messages.reactions` / `reports.submit`，均 `guarded('conversation')`；团队来源举报经团队服务器转发到宿主 core 处理，payload 的 `source` 只带 `team:<serverHash>`，不含团队服务器地址。
 

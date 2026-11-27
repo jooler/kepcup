@@ -7,16 +7,23 @@
  *   4. JSON.parse           else 400
  *   5. validate             shape/enum/length/control chars, else 400 + issues (no values echoed)
  *   6. recompute hashes     WebCrypto sha256 over canonical JSON, mismatch 400
+ *   6.5 proof-of-work       HMAC-signed challenge, single-use, IP-bound (task 5A);
+ *                           400 missing_proof / challenge_invalid / challenge_expired /
+ *                           challenge_ip_mismatch / proof_invalid / challenge_reused
+ *                           (skipped when difficulty=0 or REPORT_POW_SECRET unset)
  *   7. idempotency          reportId already stored -> 200 duplicate/report_id
  *   8. dedupe precheck      server-clock buckets -> 200 duplicate/content|payload
  *   9. IP rate limit        HMAC(ip) fixed 1h window -> 429 (skipped without salt; deploy MUST set it)
  *   10. client rate limit   conditional upsert (§7.5 verbatim SQL), changes==0 -> 429 + Retry-After
+ *   10.5 daily cap          global per-UTC-day counter -> 429 + Retry-After to next UTC midnight
  *   11. INSERT OR IGNORE    changes==0 -> 200 duplicate (concurrency backstop), else 201 accepted
  *
  * Dedupe BEFORE rate limiting (§7.4 order note): repeated clicks on the same message
- * are answered as duplicates and never consume the 1/min slot. Logs are JSON with
- * either {reportId,status,httpStatus} or {path,method,status} — never payload, body
- * text, clientId, IP or token (§8).
+ * are answered as duplicates and never consume the 1/min slot — nor the daily cap
+ * (steps 7-8 short-circuit before 10.5). PoW BEFORE idempotency: a request failing
+ * 6.5 never touches D1 reads, so a spent-challenge replay cannot harvest duplicates.
+ * Logs are JSON with either {reportId,status,httpStatus} or {path,method,status} —
+ * never payload, body text, clientId, IP, token or any challenge/solution (§8).
  */
 
 import { handleAdminRequest } from './admin';
@@ -25,18 +32,23 @@ import {
   computeContentHash,
   computePayloadHash,
   contentSource,
+  utcDayOf,
 } from './dedupe';
 import {
+  bumpDailyCount,
   findById,
   findContentDuplicate,
   findPayloadDuplicate,
   getClientRate,
   getIpRate,
+  getPowUsed,
+  insertPowUsed,
   insertReport,
   upsertClientRate,
   upsertIpRate,
 } from './db';
 import { HttpError, jsonResponse } from './http';
+import { POW_ALGORITHM, isUsableProof, issueChallenge, verifyProof } from './pow';
 import type { D1Like, Env, ReportPayload, WorkerConfig } from './types';
 import { validateReportPayload } from './validate';
 
@@ -45,6 +57,8 @@ export const MAX_BODY_BYTES = 128 * 1024;
 
 /** Defaults mirror wrangler.jsonc vars and packages/shared REPORT_* constants (§5.5). */
 export function parseConfig(env: Env): WorkerConfig {
+  const powSecret = env.REPORT_POW_SECRET;
+  const powDifficulty = nonNegativeInt(env.REPORT_POW_DIFFICULTY, 20);
   return {
     rateLimitMs: positiveInt(env.REPORT_RATE_LIMIT_MS, 60_000),
     ipLimit: positiveInt(env.REPORT_IP_LIMIT, 100),
@@ -54,6 +68,13 @@ export function parseConfig(env: Env): WorkerConfig {
     retentionDays: positiveInt(env.REPORT_RETENTION_DAYS, 365),
     adminToken: env.REPORT_ADMIN_TOKEN,
     ipHashSalt: env.IP_HASH_SALT,
+    // Escape hatch: difficulty 0 disables the challenge; a missing secret cannot
+    // sign or verify tokens, so it disables enforcement too (deploy MUST set it).
+    powEnabled: powDifficulty > 0 && powSecret !== undefined && powSecret !== '',
+    powSecret,
+    powDifficulty,
+    powTtlMs: positiveInt(env.REPORT_POW_TTL_MS, 600_000),
+    dailyLimit: positiveInt(env.REPORT_DAILY_LIMIT, 2000),
     buildVersion: env.BUILD_VERSION ?? 'dev',
   };
 }
@@ -125,6 +146,13 @@ async function routeRequest(
     if (request.method !== 'POST') throw methodNotAllowed('POST');
     return submitReport(request, deps);
   }
+  if (pathname === '/v1/challenge') {
+    if (request.method !== 'GET') throw methodNotAllowed('GET');
+    // 200 {challenge, difficulty, expiresAt, algorithm} — or the disabled shape
+    // {enabled:false, difficulty:0, …} when PoW is off (escape hatch). Log falls
+    // through to the generic route line: no token content ever (§8).
+    return { response: await challengeResponse(request, deps) };
+  }
   if (pathname === '/v1/admin' || pathname.startsWith('/v1/admin/')) {
     return { response: await handleAdminRequest(request, deps) };
   }
@@ -139,6 +167,41 @@ function errorResponse(error: unknown): Response {
   if (error instanceof HttpError) return jsonResponse(error.status, error.body, error.headers);
   console.error('reports: unhandled error', error instanceof Error ? error.message : 'unknown');
   return jsonResponse(500, { error: 'internal_error' });
+}
+
+// ------------------------------------------------------------------ GET /v1/challenge
+
+/**
+ * Issues a fresh PoW challenge (task 5A, protocol v1). ip_hash binds the token to
+ * the requester (empty string without header/salt — the client compares against
+ * the same value at submit time, so unset salt never mismatches). Disabled mode
+ * answers `{enabled:false, difficulty:0, …}` and the client then posts without a
+ * proof.
+ */
+async function challengeResponse(request: Request, deps: HandlerDeps): Promise<Response> {
+  const { config } = deps;
+  const now = deps.now();
+  if (!config.powEnabled) {
+    return jsonResponse(200, {
+      enabled: false,
+      difficulty: 0,
+      expiresAt: now + config.powTtlMs,
+      algorithm: POW_ALGORITHM,
+    });
+  }
+  const ipHeader = request.headers.get('cf-connecting-ip');
+  const ipf =
+    ipHeader !== null && config.ipHashSalt !== undefined
+      ? await hmacSha256Hex(config.ipHashSalt, ipHeader)
+      : '';
+  const issued = await issueChallenge({
+    secret: config.powSecret!,
+    difficulty: config.powDifficulty,
+    ttlMs: config.powTtlMs,
+    now,
+    ipf,
+  });
+  return jsonResponse(200, issued);
 }
 
 // ------------------------------------------------------------------ POST /v1/reports
@@ -173,6 +236,8 @@ async function submitReport(request: Request, deps: HandlerDeps): Promise<Submit
   const payload = parsed as ReportPayload;
 
   // 6. Recompute both hashes (§5.4); a client cannot send hashes and be believed.
+  //    The proof sibling field is transport-only: dedupePayload strips it, so a
+  //    proofed and an unproofed submission hash identically (task 5A).
   const [contentHash, payloadHash] = await Promise.all([
     computeContentHash(payload.message),
     computePayloadHash(payload),
@@ -183,6 +248,37 @@ async function submitReport(request: Request, deps: HandlerDeps): Promise<Submit
 
   const now = deps.now();
   const { db, config } = deps;
+
+  // ipf for the PoW ip-binding (task 5A) and step 9 share one HMAC computation:
+  // '' when the header or the IP_HASH_SALT secret is missing (same skip semantics).
+  const ipHeader = request.headers.get('cf-connecting-ip');
+  const ipf =
+    ipHeader !== null && config.ipHashSalt !== undefined
+      ? await hmacSha256Hex(config.ipHashSalt, ipHeader)
+      : '';
+
+  // 6.5 Proof-of-work (task 5A). Enforced only when difficulty > 0 and the secret
+  // is configured (escape hatch: REPORT_POW_DIFFICULTY=0). Order matters: PoW
+  // runs BEFORE the reportId idempotency read, so a failed proof costs no D1
+  // read and a spent challenge cannot be replayed even against a stored reportId.
+  if (config.powEnabled) {
+    const rawProof: unknown = (payload as unknown as { proof?: unknown }).proof;
+    if (!isUsableProof(rawProof)) throw new HttpError(400, { error: 'missing_proof' });
+    const verified = await verifyProof(rawProof, { secret: config.powSecret!, now, ipf });
+    if (!verified.ok) throw new HttpError(400, { error: verified.reason });
+    // Single use, bound to the reportId (crash-resend idempotency): the first
+    // submission of (challenge, reportId) wins; the exact same pair passes (its
+    // 200 duplicate comes from step 7), any other reportId is a pre-solved-pool
+    // replay -> challenge_reused. All challenge failures are bare 400s — never
+    // Retry-After (the client solves a fresh challenge instead of sleeping).
+    const changes = await insertPowUsed(db, verified.challengeId, payload.reportId, now);
+    if (changes === 0) {
+      const spent = await getPowUsed(db, verified.challengeId);
+      if ((spent?.report_id ?? null) !== payload.reportId) {
+        throw new HttpError(400, { error: 'challenge_reused' });
+      }
+    }
+  }
 
   // 7. Idempotency by reportId (retries after crash/network loss must not re-store).
   if (await findById(db, payload.reportId)) return duplicate(payload.reportId, 'report_id');
@@ -200,9 +296,8 @@ async function submitReport(request: Request, deps: HandlerDeps): Promise<Submit
   // 9. Coarse IP limit on HMAC(ip), fixed 1h window. Skipped when the header or the
   // IP_HASH_SALT secret is missing — production deploys MUST set the secret (§7.1).
   let ipHash: string | null = null;
-  const ipHeader = request.headers.get('cf-connecting-ip');
-  if (ipHeader !== null && config.ipHashSalt !== undefined) {
-    ipHash = await hmacSha256Hex(config.ipHashSalt, ipHeader);
+  if (ipf !== '') {
+    ipHash = ipf;
     const windowStart = Math.floor(now / config.ipWindowMs) * config.ipWindowMs;
     await upsertIpRate(db, ipHash, windowStart);
     const row = await getIpRate(db, ipHash);
@@ -217,6 +312,20 @@ async function submitReport(request: Request, deps: HandlerDeps): Promise<Submit
     const row = await getClientRate(db, payload.client.id);
     const retryAfterMs = Math.max(0, (row?.last_at ?? now) + config.rateLimitMs - now);
     throw rateLimited(retryAfterMs);
+  }
+
+  // 10.5 Global daily cap (task 5A): counts accepted submissions per UTC day,
+  // AFTER dedupe so duplicates and replays never consume quota. Over the limit
+  // -> 429 with Retry-After pointing at the next UTC midnight.
+  const day = utcDayOf(now);
+  const dayCount = await bumpDailyCount(db, day);
+  if (dayCount > config.dailyLimit) {
+    const midnight = Date.UTC(
+      new Date(now).getUTCFullYear(),
+      new Date(now).getUTCMonth(),
+      new Date(now).getUTCDate() + 1,
+    );
+    throw rateLimited(Math.max(0, midnight - now));
   }
 
   // 11. INSERT OR IGNORE: the two UNIQUE indexes are the concurrent-request backstop.

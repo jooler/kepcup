@@ -40,7 +40,7 @@ export type ReportSubmitInput = z.infer<typeof reportsSubmitInputSchema>;
 const DEFAULT_ENDPOINT = 'https://reports.kepcup.com/v1/reports';
 /** 同一 client 相邻两条举报的发送间隔（§6.3：1 条/分钟）。 */
 const QUEUE_STEP_MS = 60_000;
-/** 单次 POST 超时（§6.2）。 */
+/** 单次请求（GET challenge / POST report）超时（§6.2）。 */
 const SEND_TIMEOUT_MS = 15_000;
 /** 429 兜底退避下限（§6.2：max(retryAfter, 60s)）。 */
 const RETRY_FLOOR_MS = 60_000;
@@ -51,6 +51,127 @@ const BACKOFF_CAP_MS = 3_600_000;
 const MAX_ATTEMPTS = 20;
 /** 后台轮询间隔：到期行最多延迟这么久才被拾起。 */
 const POLL_INTERVAL_MS = 15_000;
+
+// --- PoW（反滥用任务 5A，协议 v1）----------------------------------------------
+
+/**
+ * POST 收到 400 且 error 属于这六个 PoW 原因 → 换新 challenge 重解并重试恰好一次
+ * （同 reportId 同 payload）；仍失败按「其他 4xx → failed」处理。challenge 失败
+ * 一律 400 且不带 Retry-After，所以这里不读重试头。
+ */
+const POW_RETRY_REASONS: ReadonlySet<string> = new Set([
+  'missing_proof',
+  'challenge_invalid',
+  'challenge_expired',
+  'challenge_ip_mismatch',
+  'challenge_reused',
+  'proof_invalid',
+]);
+/** 求解器默认上限：difficulty 20 ≈ 2^20 次；超过视为服务端配置异常，按网络错误退避。 */
+const POW_MAX_ITERATIONS = 20_000_000;
+
+/** proof 兄弟键（传输层字段）：POST body 顶层，payload hash 不覆盖它（§5.4 剥离清单）。 */
+interface ReportProof {
+  challenge: string;
+  solution: string;
+}
+
+/**
+ * 发送端点 → challenge 端点（任务 5A）：把末尾 `/v1/reports` 段换成
+ * `/v1/challenge`；端点不以 v1/reports 结尾（自定义路径）时按同源 + /v1/challenge。
+ * parse URL 失败时退化为字符串拼接。
+ */
+export function challengeEndpointOf(endpoint: string): string {
+  try {
+    const url = new URL(endpoint);
+    const segments = url.pathname.split('/');
+    const last = segments[segments.length - 1] ?? '';
+    const prev = segments[segments.length - 2] ?? '';
+    if (last === 'reports' && prev === 'v1') {
+      segments[segments.length - 1] = 'challenge';
+      url.pathname = segments.join('/');
+    } else {
+      url.pathname = '/v1/challenge';
+    }
+    url.search = '';
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return `${endpoint.replace(/\/+$/, '')}/v1/challenge`;
+  }
+}
+
+/** sha256 摘要的前导零比特数（难度度量，协议 v1；与 Worker pow.ts 同规则）。 */
+export function leadingZeroBits(digest: Buffer): number {
+  let bits = 0;
+  for (const byte of digest) {
+    if (byte === 0) {
+      bits += 8;
+      continue;
+    }
+    let mask = 0x80;
+    while (mask !== 0 && (byte & mask) === 0) {
+      bits += 1;
+      mask >>= 1;
+    }
+    break;
+  }
+  return bits;
+}
+
+/**
+ * PoW 求解器（协议 v1）：找 ASCII 字符串 solution 使
+ * `sha256(utf8(n + ':' + solution))` 的前导零比特数 ≥ difficulty。
+ * 同步循环（core 的 outbox tick 本就跑在后台 utilityProcess，无 UI 阻塞）；
+ * difficulty 20 ≈ 2^20 次 ≈ 0.3s 单核。超过 maxIterations 抛错，由调用方按
+ * 网络错误退避处理（保持 pending，等服务端配置恢复）。
+ */
+export function solveChallenge(
+  nonce: string,
+  difficulty: number,
+  maxIterations: number = POW_MAX_ITERATIONS,
+): string {
+  if (!Number.isInteger(difficulty) || difficulty < 0 || difficulty > 256) {
+    throw new Error(`pow: bad difficulty ${difficulty}`);
+  }
+  for (let i = 0; i < maxIterations; i += 1) {
+    const solution = i.toString(36);
+    const digest = createHash('sha256').update(Buffer.from(`${nonce}:${solution}`, 'utf8')).digest();
+    if (leadingZeroBits(digest) >= difficulty) return solution;
+  }
+  throw new Error(`pow: unsolved after ${maxIterations} iterations (difficulty ${difficulty})`);
+}
+
+/** challenge token 的 payload 段（`v1.<payload>.<hmac>` 中段）：客户端解出 n / d 用于求解。 */
+interface ChallengeTokenPayload {
+  n: string;
+  exp: number;
+  d: number;
+}
+
+/** 解 token（不验签——验签是服务端的事；客户端只需要 n / d 来求解）。 */
+function decodeChallengePayload(token: string): ChallengeTokenPayload | null {
+  const parts = token.split('.');
+  if (parts.length !== 3 || parts[0] !== 'v1' || parts[1] === undefined) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as {
+      n?: unknown;
+      exp?: unknown;
+      d?: unknown;
+    };
+    if (
+      typeof parsed.n !== 'string' ||
+      parsed.n.length === 0 ||
+      typeof parsed.exp !== 'number' ||
+      typeof parsed.d !== 'number'
+    ) {
+      return null;
+    }
+    return { n: parsed.n, exp: parsed.exp, d: parsed.d };
+  } catch {
+    return null;
+  }
+}
 
 interface OutboxRow {
   id: string;
@@ -183,6 +304,16 @@ async function readRetryAfterMs(response: Response): Promise<number | null> {
   return null;
 }
 
+/** 400 的 JSON body 错误码（`{error}`）；非 JSON / 已消费 / 缺字段返回 null。 */
+async function readErrorReason(response: Response): Promise<string | null> {
+  try {
+    const body = (await response.json()) as { error?: unknown };
+    return typeof body?.error === 'string' ? body.error : null;
+  } catch {
+    return null;
+  }
+}
+
 /** 消息展示正文（textContent / cardContent 的 text 段；卡片正文可为空）。 */
 function messageTextOf(message: Message): string {
   const content = message.content;
@@ -229,10 +360,12 @@ export interface ReportServiceDeps {
  *   replyTo → redact + 清洗 + 截断 → 计算 canonicalJson 双 hash → 按时间桶
  *   `INSERT OR IGNORE` 入 `report_outbox`（唯一索引判重，并发安全）→ kick 发送器。
  *   不做网络等待，立即返回 queued / duplicate / rejected。
- * - 发送状态机（`#tickOnce`）：pending → sending（条件 UPDATE 抢占）→ POST；
- *   2xx sent；429 按 Retry-After / retryAfterMs 退避（下限 60s）；408 / 425 /
- *   5xx / 网络错误指数退避（60s×2^n 上限 1h ±20% jitter）；其余 4xx/3xx failed
- *   （schema 不兼容需要发版修，不自动重试）；最多 20 次。
+ * - 发送状态机（`#tickOnce`）：pending → sending（条件 UPDATE 抢占）→ GET
+ *   /v1/challenge 并求解 PoW（任务 5A；disabled / 旧版端点缺失 → 无 proof 直发）→
+ *   POST（proof 作顶层兄弟键，payload 契约不变）；2xx sent；429 按 Retry-After /
+ *   retryAfterMs 退避（下限 60s）；400 且为 PoW 原因 → 换新 challenge 重试恰好
+ *   一次；408 / 425 / 5xx / 网络错误指数退避（60s×2^n 上限 1h ±20% jitter）；
+ *   其余 4xx/3xx failed（schema 不兼容需要发版修，不自动重试）；最多 20 次。
  * - `start()` 把崩溃残留的 sending 行重置回 pending；定时器 unref()，不阻止退出。
  * - 日志只记 reportId / status / 错误码，禁止正文 / clientId（§8）。
  */
@@ -247,6 +380,7 @@ export class ReportService {
   readonly #secrets: SecretsService;
   readonly #appVersion: string;
   readonly #endpoint: string;
+  readonly #challengeEndpoint: string;
   readonly #fetch: typeof globalThis.fetch;
 
   #started = false;
@@ -266,6 +400,7 @@ export class ReportService {
     this.#secrets = deps.secrets;
     this.#appVersion = deps.appVersion;
     this.#endpoint = deps.endpoint ?? DEFAULT_ENDPOINT;
+    this.#challengeEndpoint = challengeEndpointOf(this.#endpoint);
     this.#fetch = deps.fetch ?? globalThis.fetch.bind(globalThis);
   }
 
@@ -760,40 +895,111 @@ export class ReportService {
     if (claimed.changes === 0) return true;
 
     try {
-      const response = await this.#fetch(this.#endpoint, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: row.payload_json,
-        redirect: 'error',
-        signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
-      });
-      const code = response.status;
-      const retryAfterMs = code === 429 ? await readRetryAfterMs(response) : null;
-      try {
-        await response.arrayBuffer();
-      } catch {
-        // body 读取失败不影响状态机。
-      }
-      if (response.ok) {
-        this.#finish(row, 'sent', null);
+      // PoW（任务 5A）：POST 前先 GET challenge 并求解；disabled / 旧版 Worker
+      // （无端点 4xx）→ 直接 POST 无 proof。求解超上限抛错 → catch 走网络退避。
+      let proof = await this.#solveProofOrNull();
+      let response = await this.#postReport(row, proof);
+      let powRetried = false;
+      for (;;) {
+        const code = response.status;
+        if (response.ok) {
+          this.#finish(row, 'sent', null);
+          return true;
+        }
+        const retryAfterMs = code === 429 ? await readRetryAfterMs(response) : null;
+        const errorReason = code === 400 ? await readErrorReason(response) : null;
+        try {
+          await response.arrayBuffer();
+        } catch {
+          // body 读取失败不影响状态机。
+        }
+        if (
+          code === 400 &&
+          !powRetried &&
+          errorReason !== null &&
+          POW_RETRY_REASONS.has(errorReason)
+        ) {
+          // PoW 失败：换新 challenge 重解、重试恰好一次（同 reportId 同 payload）。
+          // 仍失败按下方常规分支处理（其他 4xx → failed）。
+          powRetried = true;
+          proof = await this.#solveProofOrNull();
+          response = await this.#postReport(row, proof);
+          continue;
+        }
+        if (code === 429) {
+          // 服务端限流：按 Retry-After / retryAfterMs 退避，下限 60s（§6.2）。
+          this.#retry(row, Math.max(retryAfterMs ?? 0, RETRY_FLOOR_MS), `HTTP ${code}`);
+        } else if (code === 408 || code === 425 || code >= 500) {
+          // 可重试：指数退避，保持 pending。
+          this.#retry(row, backoffDelay(row.attempts + 1), `HTTP ${code}`);
+        } else {
+          // 其余 4xx / 3xx：schema 不兼容 / 端点配错，重试无意义 → failed（§6.4）。
+          this.#finish(row, 'failed', `HTTP ${code}`);
+        }
         return true;
       }
-      if (code === 429) {
-        // 服务端限流：按 Retry-After / retryAfterMs 退避，下限 60s（§6.2）。
-        this.#retry(row, Math.max(retryAfterMs ?? 0, RETRY_FLOOR_MS), `HTTP ${code}`);
-      } else if (code === 408 || code === 425 || code >= 500) {
-        // 可重试：指数退避，保持 pending。
-        this.#retry(row, backoffDelay(row.attempts + 1), `HTTP ${code}`);
-      } else {
-        // 其余 4xx / 3xx：schema 不兼容 / 端点配错，重试无意义 → failed（§6.4）。
-        this.#finish(row, 'failed', `HTTP ${code}`);
-      }
-      return true;
     } catch {
-      // 网络错误 / 超时：留在本机队列，指数退避（§9 离线行为）。
+      // 网络错误 / 超时 / challenge GET 5xx·429 / 求解超上限：留在本机队列，
+      // 指数退避（§9 离线行为）。
       this.#retry(row, backoffDelay(row.attempts + 1), 'network');
       return true;
     }
+  }
+
+  /** POST /v1/reports（proof 非 null 时注入 body 顶层兄弟键；payload 契约不变）。 */
+  async #postReport(row: OutboxRow, proof: ReportProof | null): Promise<Response> {
+    const body =
+      proof === null
+        ? row.payload_json
+        : JSON.stringify({ ...(JSON.parse(row.payload_json) as Record<string, unknown>), proof });
+    return this.#fetch(this.#endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+      redirect: 'error',
+      signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
+    });
+  }
+
+  /**
+   * GET /v1/challenge 并求解；返回 null 表示无需 proof（响应没有 challenge 字段 =
+   * 服务端 PoW 关闭；其他 4xx = 旧版 Worker 没有该端点，直发让 POST 给出裁决）。
+   * 可重试错误（429 / 408 / 425 / 5xx）抛出 → 走网络退避保持 pending。challenge /
+   * solution 原文永不进日志（§8）。
+   */
+  async #solveProofOrNull(): Promise<ReportProof | null> {
+    const response = await this.#fetch(this.#challengeEndpoint, {
+      method: 'GET',
+      redirect: 'error',
+      signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      try {
+        await response.arrayBuffer();
+      } catch {
+        // body 读取失败不影响分支判断。
+      }
+      if (response.status === 429 || response.status === 408 || response.status === 425 || response.status >= 500) {
+        throw new Error(`challenge HTTP ${response.status}`);
+      }
+      return null; // 其他 4xx：服务端无 challenge 端点（旧版本）→ 无 proof 直发。
+    }
+    const body = (await response.json().catch(() => null)) as {
+      challenge?: unknown;
+      difficulty?: unknown;
+    } | null;
+    // enabled:false（PoW 关闭）→ 无 proof 直发（服务端同样不要求）。
+    if (body === null || typeof body.challenge !== 'string' || body.challenge === '') return null;
+    const token = body.challenge;
+    const payload = decodeChallengePayload(token);
+    if (payload === null) throw new Error('challenge: unparseable token');
+    // 服务端按 token 里绑定的难度校验；响应 difficulty 仅作参考，取两者较大者。
+    const difficulty = Math.max(
+      typeof body.difficulty === 'number' && Number.isFinite(body.difficulty) ? body.difficulty : 0,
+      payload.d,
+    );
+    const solution = solveChallenge(payload.n, difficulty);
+    return { challenge: token, solution };
   }
 
   /** 失败重试：attempts+1；到上限置 failed，否则保持 pending 定下次时间。 */

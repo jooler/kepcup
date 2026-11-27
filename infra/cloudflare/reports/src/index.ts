@@ -29,10 +29,20 @@ export async function scheduled(
         console.log(
           JSON.stringify({ path: '/cron/cleanup', method: 'CRON', status: 'ok' }),
         );
-        if (counts.reports + counts.clientRate + counts.ipRate === 0) return;
+        if (
+          counts.reports +
+            counts.clientRate +
+            counts.ipRate +
+            counts.powUsed +
+            counts.daily ===
+          0
+        ) {
+          return;
+        }
         console.error(
           `reports cleanup removed ${counts.reports} reports, ` +
-            `${counts.clientRate} rate rows, ${counts.ipRate} ip rows`,
+            `${counts.clientRate} rate rows, ${counts.ipRate} ip rows, ` +
+            `${counts.powUsed} pow rows, ${counts.daily} daily rows`,
         );
       })
       .catch((error: unknown) => {

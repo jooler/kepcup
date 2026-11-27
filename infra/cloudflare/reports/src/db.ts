@@ -5,10 +5,13 @@
  * conditional upserts is the concurrency-safe signal (0 = ignored / not applied).
  */
 
+import { utcDayOf } from './dedupe';
 import type {
   ClientRateRow,
+  DailyRow,
   D1Like,
   IpRateRow,
+  PowUsedRow,
   ReportRow,
   WorkerConfig,
 } from './types';
@@ -253,12 +256,60 @@ export async function getIpRate(db: D1Like, ipHash: string): Promise<IpRateRow |
     .first<IpRateRow>();
 }
 
+// ------------------------------------------------------------------ PoW single-use + daily cap
+
+/**
+ * Claims a challenge for a report (task 5A): INSERT OR IGNORE keyed on
+ * `sha256(full challenge string)`. changes===0 means the challenge was already
+ * spent — the caller then compares the stored report_id with the incoming one
+ * (equal = crash-resend idempotency, pass; different = challenge_reused).
+ */
+export async function insertPowUsed(
+  db: D1Like,
+  challengeId: string,
+  reportId: string,
+  usedAt: number,
+): Promise<number> {
+  const result = await db
+    .prepare('INSERT OR IGNORE INTO report_pow_used (challenge_id, report_id, used_at) VALUES (?, ?, ?)')
+    .bind(challengeId, reportId, usedAt)
+    .run();
+  return result.meta?.changes ?? 0;
+}
+
+export async function getPowUsed(db: D1Like, challengeId: string): Promise<PowUsedRow | null> {
+  return db
+    .prepare('SELECT challenge_id, report_id, used_at FROM report_pow_used WHERE challenge_id = ?')
+    .bind(challengeId)
+    .first<PowUsedRow>();
+}
+
+/**
+ * Global daily cap counter (task 5A): atomically increments the UTC-day row and
+ * returns the post-increment count. Callers compare against REPORT_DAILY_LIMIT
+ * (`count > limit` rejects). Runs only after dedupe, so duplicates never count.
+ */
+export async function bumpDailyCount(db: D1Like, day: string): Promise<number> {
+  await db
+    .prepare('INSERT INTO report_daily (day, count) VALUES (?, 1)\n' +
+      '  ON CONFLICT(day) DO UPDATE SET count = report_daily.count + 1')
+    .bind(day)
+    .run();
+  const row = await db
+    .prepare('SELECT day, count FROM report_daily WHERE day = ?')
+    .bind(day)
+    .first<DailyRow>();
+  return row?.count ?? 0;
+}
+
 // ------------------------------------------------------------------ cron cleanup
 
 export interface CleanupCounts {
   reports: number;
   clientRate: number;
   ipRate: number;
+  powUsed: number;
+  daily: number;
 }
 
 /** Cron (§7.3): retention for reports, stale rate rows. Windows come from config. */
@@ -270,6 +321,10 @@ export async function runCleanup(
   const reportCutoff = now - config.retentionDays * 86_400_000;
   const rateCutoff = now - 86_400_000; // 限流窗口才 1 分钟，1 天前的 last_at 无用
   const ipCutoff = now - config.ipWindowMs;
+  // PoW 单次使用行：challenge TTL 只有 10 分钟，1 天前的行永不复用（重放由过期兜底）。
+  const powCutoff = now - 86_400_000;
+  // 日上限行：保留 7 天（够观察用量即可），字典序 'YYYY-MM-DD' 比较即时间比较。
+  const dailyCutoffDay = utcDayOf(now - 7 * 86_400_000);
   const reports = await db
     .prepare('DELETE FROM reports WHERE received_at < ?')
     .bind(reportCutoff)
@@ -282,9 +337,19 @@ export async function runCleanup(
     .prepare('DELETE FROM report_ip_rate WHERE window_start < ?')
     .bind(ipCutoff)
     .run();
+  const powUsed = await db
+    .prepare('DELETE FROM report_pow_used WHERE used_at < ?')
+    .bind(powCutoff)
+    .run();
+  const daily = await db
+    .prepare('DELETE FROM report_daily WHERE day < ?')
+    .bind(dailyCutoffDay)
+    .run();
   return {
     reports: reports.meta?.changes ?? 0,
     clientRate: clientRate.meta?.changes ?? 0,
     ipRate: ipRate.meta?.changes ?? 0,
+    powUsed: powUsed.meta?.changes ?? 0,
+    daily: daily.meta?.changes ?? 0,
   };
 }

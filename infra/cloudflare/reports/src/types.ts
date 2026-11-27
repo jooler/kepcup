@@ -39,6 +39,14 @@ export interface Env {
   REPORT_CONTENT_DEDUPE_MS?: string;
   REPORT_PAYLOAD_DEDUPE_MS?: string;
   REPORT_RETENTION_DAYS?: string;
+  /** PoW HMAC key (random 32-byte hex). Unset => PoW is not enforced (deploy MUST set it). */
+  REPORT_POW_SECRET?: string;
+  /** Leading zero bits required of the solution; 0 disables the challenge (escape hatch). */
+  REPORT_POW_DIFFICULTY?: string;
+  /** Challenge TTL in ms (default 10 min). */
+  REPORT_POW_TTL_MS?: string;
+  /** Global per-UTC-day accept cap (default 2000); 429 + Retry-After until next UTC midnight. */
+  REPORT_DAILY_LIMIT?: string;
   /** Reported by GET /healthz. */
   BUILD_VERSION?: string;
 }
@@ -53,6 +61,12 @@ export interface WorkerConfig {
   retentionDays: number;
   adminToken?: string;
   ipHashSalt?: string;
+  /** PoW enforced only when difficulty > 0 AND the secret is configured. */
+  powEnabled: boolean;
+  powSecret?: string;
+  powDifficulty: number;
+  powTtlMs: number;
+  dailyLimit: number;
   buildVersion: string;
 }
 
@@ -152,6 +166,17 @@ export interface ReportHashes {
   payload: string;
 }
 
+/**
+ * Transport-only sibling field for the PoW protocol (task 5A): present on the
+ * POST body, NEVER part of the payload hash — dedupePayload strips it alongside
+ * reportId/createdAt/hashes, and the shared reportPayloadSchema deliberately does
+ * not know about it.
+ */
+export interface ReportProof {
+  challenge: string;
+  solution: string;
+}
+
 export interface ReportPayload {
   schemaVersion: number;
   reportId: string;
@@ -168,6 +193,8 @@ export interface ReportPayload {
   tools: ReportToolItem[];
   providers: ReportProviderItem[];
   hashes: ReportHashes;
+  /** PoW proof (transport-only); stripped before the payload hash. */
+  proof?: ReportProof;
 }
 
 // ------------------------------------------------------------------ rows
@@ -205,5 +232,18 @@ export interface ClientRateRow {
 export interface IpRateRow {
   ip_hash: string;
   window_start: number;
+  count: number;
+}
+
+/** `report_pow_used` row: one consumed challenge (single-use PoW, task 5A). */
+export interface PowUsedRow {
+  challenge_id: string;
+  report_id: string;
+  used_at: number;
+}
+
+/** `report_daily` row: per-UTC-day accept counter (global daily cap). */
+export interface DailyRow {
+  day: string;
   count: number;
 }

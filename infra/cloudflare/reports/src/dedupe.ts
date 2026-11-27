@@ -81,11 +81,21 @@ export async function computeContentHash(message: ReportMessage): Promise<string
   return sha256Hex(contentSource(message));
 }
 
-/** Payload minus the transport-only fields (§5.4) — what the payload hash covers. */
-export type DedupePayload = Omit<ReportPayload, 'reportId' | 'createdAt' | 'hashes'>;
+/**
+ * Payload minus the transport-only fields (§5.4) — what the payload hash covers.
+ * `proof` (PoW, task 5A) is transport-only too: it never enters the hash, and the
+ * shared reportPayloadSchema deliberately does not know about it.
+ */
+export type DedupePayload = Omit<ReportPayload, 'reportId' | 'createdAt' | 'hashes' | 'proof'>;
 
 export function dedupePayload(payload: ReportPayload): DedupePayload {
-  const { reportId: _reportId, createdAt: _createdAt, hashes: _hashes, ...rest } = payload;
+  const {
+    reportId: _reportId,
+    createdAt: _createdAt,
+    hashes: _hashes,
+    proof: _proof,
+    ...rest
+  } = payload;
   return rest;
 }
 
@@ -102,4 +112,9 @@ export async function computePayloadHash(payload: ReportPayload): Promise<string
 export function bucketOf(nowMs: number, windowMs: number): number {
   if (windowMs <= 0) return 0;
   return Math.floor(nowMs / windowMs);
+}
+
+/** UTC calendar day of a ms epoch as 'YYYY-MM-DD' (report_daily primary key; lexical = chronological). */
+export function utcDayOf(nowMs: number): string {
+  return new Date(nowMs).toISOString().slice(0, 10);
 }
