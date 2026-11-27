@@ -259,7 +259,11 @@ describe('latestPreviewByConversation（左栏「最后一条消息」预览）'
       // 会话 1：文本 → 卡片（最新，预览取卡片）→ 系统事件（不算预览）。
       append(rig, { senderType: 'user', kind: 'text', text: '第一条' });
       append(rig, { senderType: 'bot', kind: 'text', text: '**最后一条**' });
-      append(rig, { senderType: 'system', kind: 'card', cardType: 'environment' });
+      const previewCard = append(rig, {
+        senderType: 'system',
+        kind: 'card',
+        cardType: 'environment',
+      });
       // 任务中间进度不算对话内容，跳到更早的卡片。
       append(rig, {
         senderType: 'bot',
@@ -274,7 +278,7 @@ describe('latestPreviewByConversation（左栏「最后一条消息」预览）'
         text: '执行被中断',
       });
       // 会话 2：文本 → 撤回（回退到前一条）→ 空文本（跳过）。
-      append(rig, {
+      const otherPreview = append(rig, {
         conversationId: other,
         senderType: 'user',
         kind: 'text',
@@ -291,8 +295,8 @@ describe('latestPreviewByConversation（左栏「最后一条消息」预览）'
       append(rig, { conversationId: other, senderType: 'user', kind: 'text', text: '\t\n' });
 
       const result = rig.messages.latestPreviewByConversation();
-      expect(result[rig.conversationId]).toBe('📦 环境安装请求');
-      expect(result[other]).toBe('会话二的预览');
+      expect(result[rig.conversationId]).toEqual({ text: '📦 环境安装请求', seq: previewCard.seq });
+      expect(result[other]).toEqual({ text: '会话二的预览', seq: otherPreview.seq });
     } finally {
       closeDatabase(rig.db);
     }
@@ -315,7 +319,7 @@ describe('latestPreviewByConversation（左栏「最后一条消息」预览）'
           mailSubject: '2026 CSDN 1024 Builder 大会报名火热进行中！',
         },
       });
-      expect(rig.messages.latestPreviewByConversation()[conversation]).toBe(
+      expect(rig.messages.latestPreviewByConversation()[conversation]?.text).toBe(
         '✉️ 新邮件 "CSDN" <csdn@example.com> · 2026 CSDN 1024 Builder 大会报名火热进行中！',
       );
 
@@ -326,7 +330,7 @@ describe('latestPreviewByConversation（左栏「最后一条消息」预览）'
         cardType: 'watch',
         cardWatch: { watchId: 'w1', watchEvent: 'alert', watchSummary: '价格从 99 降到 79' },
       });
-      expect(rig.messages.latestPreviewByConversation()[conversation]).toBe(
+      expect(rig.messages.latestPreviewByConversation()[conversation]?.text).toBe(
         '👁️ 网页监看提醒 价格从 99 降到 79',
       );
 
@@ -337,7 +341,7 @@ describe('latestPreviewByConversation（左栏「最后一条消息」预览）'
         cardType: 'present',
         cardPresent: { kind: 'bar', title: '各渠道销量', data: {} },
       });
-      expect(rig.messages.latestPreviewByConversation()[conversation]).toBe('📊 各渠道销量');
+      expect(rig.messages.latestPreviewByConversation()[conversation]?.text).toBe('📊 各渠道销量');
 
       append(rig, {
         conversationId: conversation,
@@ -356,7 +360,9 @@ describe('latestPreviewByConversation（左栏「最后一条消息」预览）'
           createdAt: 1,
         },
       });
-      expect(rig.messages.latestPreviewByConversation()[conversation]).toBe('🧩 销售看板 按周查看');
+      expect(rig.messages.latestPreviewByConversation()[conversation]?.text).toBe(
+        '🧩 销售看板 按周查看',
+      );
     } finally {
       closeDatabase(rig.db);
     }

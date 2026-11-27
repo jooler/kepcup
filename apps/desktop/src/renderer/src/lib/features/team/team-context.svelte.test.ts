@@ -146,6 +146,22 @@ describe('团队上下文激活（T5）', () => {
     expect(teamContext.isTeamHidden('bot-create')).toBe(false);
   });
 
+  it('notifies identity listeners for pending, known, and reset transitions', async () => {
+    stubBootstrap();
+    const listener = vi.fn();
+    const stop = teamContext.onIdentityChanged(listener);
+    try {
+      teamContext.begin();
+      expect(listener).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(teamContext.member?.id).toBe('mbr_self'));
+      expect(listener).toHaveBeenCalledTimes(2);
+      teamContext.reset();
+      expect(listener).toHaveBeenCalledTimes(3);
+    } finally {
+      stop();
+    }
+  });
+
   it('重连（onConnected）后自动重拉 bootstrap', async () => {
     stubBootstrap();
     teamContext.begin();

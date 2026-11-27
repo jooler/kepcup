@@ -359,6 +359,9 @@ console.log('[dist] stdio-proxy.mjs copied next to the core-entry bundle');
     'KEPCUP_FAKE_ACP_AGENT_RECORD',
     // D104 P1-3 plugin-market e2e seam (must DCE with __KEPCUP_TEST_HOOKS__).
     'KEPCUP_TEST_PLUGIN_MARKET',
+    // AI 内容举报端点测试缝（__KEPCUP_TEST_HOOKS__ 门控，start.ts）：打包产物
+    // 固定 reports.kepcup.com，环境变量不得重定向举报流量。
+    'KEPCUP_REPORT_ENDPOINT',
   ];
   for (const marker of markers) {
     if (bundled.includes(marker)) {

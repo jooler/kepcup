@@ -1,5 +1,4 @@
 <script lang="ts">
-  import type { Message } from '@kepcup/shared';
   import { ChevronDown } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { getChatSession } from './chat-session-context';
@@ -11,6 +10,7 @@
   import { chatDisplay } from './chat-display.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
   import TaskStatusLine from '$lib/features/tasks/TaskStatusLine.svelte';
+  import { messageVisibility, type DisplayMessage } from '$lib/stores/message-visibility.svelte';
 
   /**
    * topInset：顶部浮层（单聊药丸 56px / 项目组顶栏下的留白 12px）让出的空间，
@@ -49,8 +49,14 @@
    * pill/已撤回小字都断开连排。初始化访谈问题卡按 bot 侧气泡形态渲染，
    * 视作当前对话 bot 的发言参与连排。
    */
-  function chainKey(message: Message): string | null {
-    if (message.status === 'recalled') return null;
+  function chainKey(message: DisplayMessage): string | null {
+    if (
+      message.status === 'recalled' ||
+      (message.senderType === 'bot' &&
+        messageVisibility.isHidden(session.source, message.conversationId, message.id))
+    ) {
+      return null;
+    }
     if (message.kind === 'text') {
       if (message.senderType === 'user') {
         // 团队上下文（T5）：用户消息按发送主体分组——同一成员的相邻消息连排，

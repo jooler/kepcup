@@ -55,6 +55,8 @@ export * from './domain/conversation-notes.js';
 export * from './domain/sidebar.js';
 export * from './domain/agent-status.js';
 export * from './domain/share.js';
+// AI 生成内容举报（Microsoft Store 11.16，todo/ai-content-reporting.md §5 / §6.5）。
+export * from './domain/report.js';
 export * from './domain/remote.js';
 export * from './domain/collab.js';
 export * from './settings-catalog/index.js';

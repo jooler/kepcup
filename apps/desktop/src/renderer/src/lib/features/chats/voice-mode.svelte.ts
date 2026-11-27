@@ -10,9 +10,10 @@
  * 保持可纯逻辑单测。
  */
 
-import type { Approval, Message } from '@kepcup/shared';
+import type { Approval } from '@kepcup/shared';
 import { isVisibleInTranscript } from './transcript-visibility';
 import { extractSpeechText } from './extractSpeechText';
+import type { DisplayMessage } from '$lib/stores/message-visibility.svelte';
 
 /** 四态（53 号交互状态机）。 */
 export type VoiceUiPhase = 'idle' | 'recording' | 'transcribing' | 'speaking';
@@ -239,6 +240,8 @@ export interface AnnounceContext {
   active: boolean;
   /** 审批快照：与消息列表同一可见性口径（缺省空表 = 徽标场景的口径）。 */
   approvals?: Readonly<Record<string, Approval | undefined>>;
+  /** Current viewer scope; the baked flag is only a pure-test fallback. */
+  isHidden?: (message: DisplayMessage) => boolean;
 }
 
 /**
@@ -249,12 +252,16 @@ export interface AnnounceContext {
  * 内 send_message / send_media 的可见说明，以及旧版本 forward_task_result
  * 留言，D75）只供阅读不播报（53 号修订 v2 V2-1）。返回 null = 不入队。
  */
-export function announceEntryFor(message: Message, context: AnnounceContext): AnnounceEntry | null {
+export function announceEntryFor(
+  message: DisplayMessage,
+  context: AnnounceContext,
+): AnnounceEntry | null {
   if (!context.active) return null;
   if (context.conversationId === null || message.conversationId !== context.conversationId) {
     return null;
   }
   if (message.senderType !== 'bot' || message.kind !== 'text') return null;
+  if (context.isHidden ? context.isHidden(message) : message.hidden === true) return null;
   if (!('text' in message.content) || message.content.text.trim().length === 0) return null;
   if ((message.content as { origin?: string }).origin === 'task') return null;
   if (!isVisibleInTranscript(message, context.approvals ?? {})) return null;
@@ -277,7 +284,7 @@ export interface AnnounceScan {
  * 漏播，也不会在进入模式时补播历史（水位基线由接线方在 enter 时记下）。
  */
 export function collectAnnounceEntries(
-  messages: readonly Message[],
+  messages: readonly DisplayMessage[],
   sinceSeq: number,
   context: AnnounceContext,
 ): AnnounceScan {
@@ -334,6 +341,8 @@ export interface AnnounceController {
   enqueue(entry: AnnounceEntry): boolean;
   /** 有空就消费（宿主回 idle / 新消息入队后触发）；循环中重复触发只记一次。 */
   pump(): void;
+  /** Remove one hidden message without discarding the remaining queue. */
+  remove(messageId: string): boolean;
   /** 插话作废：停当前 + 清未播队列（拿到流才调，53 号半双工）。 */
   interrupt(): void;
   /** 退出 / 切会话清理：停当前 + 清队（objectURL 归缓存管，不 revoke）。 */
@@ -364,9 +373,14 @@ export function createAnnounceQueue(host: AnnounceHost, deps: AnnounceDeps): Ann
   let pumping = false;
   let pumpAgain = false;
   let currentHandle: PlaybackHandle | null = null;
+  let currentEntryId: string | null = null;
+  let cancelCurrentSynthesis: (() => void) | null = null;
+  const synthesisCancelled = Symbol('announcement-synthesis-cancelled');
 
   /** 停当前播放（音频归 speech-audio 仲裁；缓存条目保留）。 */
   const stopCurrent = (): void => {
+    cancelCurrentSynthesis?.();
+    cancelCurrentSynthesis = null;
     currentHandle?.stop();
     currentHandle = null;
   };
@@ -386,13 +400,21 @@ export function createAnnounceQueue(host: AnnounceHost, deps: AnnounceDeps): Ann
     host.enterSpeaking();
     const myEpoch = epoch;
     let url: string;
+    let cancel!: () => void;
+    const cancelled = new Promise<typeof synthesisCancelled>((resolve) => {
+      cancel = () => resolve(synthesisCancelled);
+    });
+    cancelCurrentSynthesis = cancel;
     try {
-      url = await deps.resolveAudio(entry.id, entry.text);
+      const result = await Promise.race([deps.resolveAudio(entry.id, entry.text), cancelled]);
+      if (cancelCurrentSynthesis === cancel) cancelCurrentSynthesis = null;
+      if (result === synthesisCancelled || epoch !== myEpoch) return;
+      url = result;
     } catch (error) {
+      if (cancelCurrentSynthesis === cancel) cancelCurrentSynthesis = null;
       if (epoch === myEpoch) fail(error);
       return;
     }
-    if (epoch !== myEpoch) return; // interrupt / reset 已清理，静默放弃（URL 归缓存）
     let preempted = false;
     try {
       host.setSpeakingStage('playing');
@@ -441,7 +463,9 @@ export function createAnnounceQueue(host: AnnounceHost, deps: AnnounceDeps): Ann
         if (!host.active || host.phase !== 'idle' || stopped || queue.length === 0) return;
         const entry = queue.shift();
         if (entry === undefined) return;
+        currentEntryId = entry.id;
         await runOne(entry);
+        if (currentEntryId === entry.id) currentEntryId = null;
       }
     };
     void loop().finally(() => {
@@ -466,14 +490,28 @@ export function createAnnounceQueue(host: AnnounceHost, deps: AnnounceDeps): Ann
       return true;
     },
     pump,
+    remove(messageId) {
+      const before = queue.length;
+      queue = queue.filter((entry) => entry.id !== messageId);
+      const removedQueued = queue.length !== before;
+      if (currentEntryId !== messageId) return removedQueued;
+      epoch += 1;
+      stopCurrent();
+      currentEntryId = null;
+      if (host.phase === 'speaking') host.exitSpeaking();
+      pump();
+      return true;
+    },
     interrupt() {
       epoch += 1;
       stopCurrent();
+      currentEntryId = null;
       queue = []; // 插话作废：被作废的回复只留文字，不再补播
     },
     reset() {
       epoch += 1;
       stopCurrent();
+      currentEntryId = null;
       queue = [];
       seenIds.clear();
       stopped = false;
@@ -591,6 +629,10 @@ class VoiceModeState implements AnnounceHost {
     // 用户已手动接管本轮播放：后续新音频只留在列表里，由用户自己点（v3）。
     if (this.manualPlaybackOverride) return false;
     return this.#announcer?.enqueue(entry) ?? false;
+  }
+
+  hideMessage(messageId: string): boolean {
+    return this.#announcer?.remove(messageId) ?? false;
   }
 
   /**

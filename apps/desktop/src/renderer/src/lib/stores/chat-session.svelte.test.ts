@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Message, Run, Settings, TaskView } from '@kepcup/shared';
-import { ChatSession } from './chat-session.svelte';
+import { ChatSession, type ChatSessionHost } from './chat-session.svelte';
+import { messageVisibility } from './message-visibility.svelte';
+import { composerDrafts } from '../features/chats/composer-drafts.svelte';
+import { EMPTY_COMPOSER_DOC } from '../features/chats/composer-draft-persist';
 
 /**
  * Two ChatSession instances share the event bus and keep their own views.
@@ -25,6 +28,8 @@ const state = {
   messages: [] as Message[],
   calls: [] as Array<{ method: string; params: unknown }>,
   membersSnapshot: null as { mainView: string; openTaskId: string | null } | null,
+  conversationMetadata: {} as Record<string, { lastSeq?: number }>,
+  delayGet: null as Promise<void> | null,
 };
 
 function textMessage(
@@ -71,7 +76,7 @@ function conversation(id: string) {
     readOnly: false,
     summary: null,
     summaryUptoSeq: 0,
-    lastSeq: 0,
+    lastSeq: state.conversationMetadata[id]?.lastSeq ?? 0,
     lastReadSeq: 0,
     lastMessageAt: null,
     createdAt: 1,
@@ -105,6 +110,7 @@ vi.mock('$lib/rpc/client.svelte', () => ({
       state.calls.push({ method, params });
       switch (method) {
         case 'conversations.get':
+          if (state.delayGet) await state.delayGet;
           return { conversation: conversation((params as { id: string }).id) };
         case 'messages.list':
           return { messages: state.messages };
@@ -159,6 +165,19 @@ beforeEach(() => {
   state.messages = [];
   state.calls = [];
   state.membersSnapshot = null;
+  state.conversationMetadata = {};
+  state.delayGet = null;
+  // Hidden-overlay state is process-global: clear every conversation these tests
+  // touch so an early assertion failure cannot leak a mask into later tests.
+  for (const conversationId of [
+    'visibility-test',
+    'preview-system-test',
+    'preview-recall-edit-test',
+    'preview-partial-test',
+    'visibility-reply-test',
+  ]) {
+    messageVisibility.forget('local', conversationId);
+  }
   settingsStore.settings = null;
   agentsStore.loaded = true;
   agentsStore.agents = [];
@@ -530,5 +549,330 @@ describe('ChatSession', () => {
     expect(tasks.byId['done_main']).toEqual(settled);
     expect(tasks.openTaskId).toBe('task_main');
     tasks.closeDetail();
+  });
+
+  it('applies hidden overlays on open and message updates, and refuses hidden replies', async () => {
+    const conversationId = 'visibility-test';
+    const original = textMessage({
+      id: 'hidden-open',
+      conversationId,
+      seq: 1,
+      senderType: 'bot',
+      senderBotId: 'bot_1',
+      content: { text: 'original' },
+    });
+    messageVisibility.forget('local', conversationId);
+    messageVisibility.setHidden('local', conversationId, original.id, true);
+    state.messages = [original];
+    const session = new ChatSession();
+    await session.open(conversationId);
+    expect(session.messages[0]?.hidden).toBe(true);
+    session.startReply(session.messages[0]!);
+    expect(session.replyTo).toBeNull();
+
+    emit('message.updated', {
+      conversationId,
+      message: { ...original, content: { text: 'edited original' } },
+    });
+    expect(session.messages[0]?.hidden).toBe(true);
+    expect(session.messages[0]?.content).toEqual({ text: 'edited original' });
+
+    const incoming = textMessage({
+      id: 'hidden-incoming',
+      conversationId,
+      seq: 2,
+      senderType: 'bot',
+      senderBotId: 'bot_1',
+    });
+    messageVisibility.setHidden('local', conversationId, incoming.id, true);
+    const received: string[] = [];
+    session.onIncomingMessage((_id, message) => received.push(message.id));
+    emit('message.created', { conversationId, message: incoming });
+    expect(session.messages[1]?.hidden).toBe(true);
+    expect(received).toEqual([]);
+
+    expect(session.setMessageHidden(original.id, false)).toBe(true);
+    expect(session.messages[0]?.hidden).toBe(false);
+    session.startReply(session.messages[0]!);
+    expect(session.replyTo?.id).toBe(original.id);
+    session.dispose();
+    messageVisibility.forget('local', conversationId);
+  });
+
+  it('tracks the latest previewable row independently of later system events', async () => {
+    const conversationId = 'preview-system-test';
+    const bot = textMessage({
+      id: 'preview-bot',
+      conversationId,
+      seq: 1,
+      senderType: 'bot',
+      senderBotId: 'bot_1',
+      content: { text: 'hidden preview' },
+    });
+    const system = (seq: number) =>
+      textMessage({
+        id: `preview-system-${seq}`,
+        conversationId,
+        seq,
+        senderType: 'system',
+        senderBotId: null,
+        kind: 'system_event',
+        content: { event: 'run_done', text: 'done' },
+      });
+    messageVisibility.forget('local', conversationId);
+    messageVisibility.setHidden('local', conversationId, bot.id, true);
+    messageVisibility.setPreviewHidden('local', conversationId, true, 1, bot.id);
+    state.conversationMetadata[conversationId] = { lastSeq: 2 };
+    state.messages = [bot, system(2)];
+    const session = new ChatSession();
+    await session.open(conversationId);
+    expect(session.conversation?.lastPreviewSeq).toBe(1);
+    expect(messageVisibility.previewHidden('local', conversationId, 1)).toBe(true);
+
+    session.setMessageHidden(bot.id, false);
+    expect(messageVisibility.previewHidden('local', conversationId, 1)).toBe(false);
+    session.setMessageHidden(bot.id, true);
+    expect(messageVisibility.previewHidden('local', conversationId, 1)).toBe(true);
+    emit('message.updated', {
+      conversationId,
+      message: { ...bot, content: { text: '   ' } },
+    });
+    expect(session.conversation?.lastPreviewSeq).toBeUndefined();
+    expect(messageVisibility.previewHidden('local', conversationId)).toBe(false);
+
+    const visible = textMessage({
+      id: 'preview-visible',
+      conversationId,
+      seq: 3,
+      content: { text: 'new visible preview' },
+    });
+    emit('message.created', { conversationId, message: visible });
+    expect(session.conversation?.lastPreviewSeq).toBe(3);
+    expect(messageVisibility.previewHidden('local', conversationId, 3)).toBe(false);
+    emit('message.created', { conversationId, message: system(4) });
+    expect(session.conversation?.lastPreviewSeq).toBe(3);
+    expect(messageVisibility.previewHidden('local', conversationId, 3)).toBe(false);
+    session.dispose();
+    messageVisibility.forget('local', conversationId);
+  });
+
+  it('falls back to the previous preview after recall and adopts edited text on the local path', async () => {
+    const conversationId = 'preview-recall-edit-test';
+    const previous = textMessage({
+      id: 'previous-preview',
+      conversationId,
+      seq: 1,
+      content: { text: 'previous preview' },
+    });
+    const latest = textMessage({
+      id: 'latest-preview',
+      conversationId,
+      seq: 2,
+      content: { text: 'latest preview' },
+    });
+    const applyMessagePreview = vi.fn();
+    const host: ChatSessionHost = {
+      syncReadCursor: () => undefined,
+      syncMemberPreviews: () => undefined,
+      noteIncoming: () => undefined,
+      applyMessageVisibility: () => undefined,
+      applyMessagePreview,
+      applyRunning: () => undefined,
+      applyBot: () => undefined,
+      applyConversation: () => false,
+    };
+    state.messages = [previous, latest];
+    const session = new ChatSession(host);
+    await session.open(conversationId);
+
+    emit('message.updated', {
+      conversationId,
+      message: { ...latest, status: 'recalled' },
+    });
+    expect(session.conversation?.lastPreviewSeq).toBe(1);
+    expect(applyMessagePreview).toHaveBeenLastCalledWith('local', conversationId, previous);
+
+    const edited = { ...previous, status: 'edited' as const, content: { text: 'edited preview' } };
+    emit('message.updated', { conversationId, message: edited });
+    expect(session.conversation?.lastPreviewSeq).toBe(1);
+    expect(applyMessagePreview).toHaveBeenLastCalledWith('local', conversationId, edited);
+    expect(messageVisibility.previewHidden('local', conversationId)).toBe(false);
+    session.dispose();
+  });
+
+  it('keeps lastPreviewSeq when conversation.updated omits preview metadata', async () => {
+    const conversationId = 'preview-merge-test';
+    const latest = textMessage({
+      id: 'merge-latest',
+      conversationId,
+      seq: 2,
+      content: { text: 'latest' },
+    });
+    state.messages = [latest];
+    const session = new ChatSession();
+    await session.open(conversationId);
+    expect(session.conversation?.lastPreviewSeq).toBe(2);
+
+    emit('conversation.updated', { conversation: conversation(conversationId) });
+    expect(session.conversation?.lastPreviewSeq).toBe(2);
+    session.dispose();
+  });
+
+  it('keeps preview masks fail-closed outside the loaded window and clears only full-history no-preview', async () => {
+    const conversationId = 'preview-partial-test';
+    const hiddenId = 'preview-outside-window';
+    const systems = Array.from({ length: 60 }, (_, index) =>
+      textMessage({
+        id: `preview-system-${index + 2}`,
+        conversationId,
+        seq: index + 2,
+        senderType: 'system',
+        senderBotId: null,
+        kind: 'system_event',
+        content: { event: 'run_done', text: 'done' },
+      }),
+    );
+    messageVisibility.forget('local', conversationId);
+    messageVisibility.setHidden('local', conversationId, hiddenId, true);
+    messageVisibility.setPreviewHidden('local', conversationId, true, 1, hiddenId);
+    state.conversationMetadata[conversationId] = { lastSeq: 61 };
+    state.messages = systems;
+    const applyMessagePreview = vi.fn();
+    const host: ChatSessionHost = {
+      syncReadCursor: () => undefined,
+      syncMemberPreviews: () => undefined,
+      noteIncoming: () => undefined,
+      applyMessageVisibility: () => undefined,
+      applyMessagePreview,
+      applyRunning: () => undefined,
+      applyBot: () => undefined,
+      applyConversation: () => false,
+    };
+    const partial = new ChatSession(host);
+    await partial.open(conversationId);
+    expect(partial.hasEarlier).toBe(true);
+    // conversations.get does not carry preview metadata; a partial window that
+    // has no previewable row cannot derive it, so the row stays conservative
+    // (no seq) and the persisted fail-closed mask is kept.
+    expect(partial.conversation?.lastPreviewSeq).toBeUndefined();
+    expect(messageVisibility.previewHidden('local', conversationId)).toBe(true);
+    expect(applyMessagePreview).not.toHaveBeenCalled();
+    emit('message.updated', {
+      conversationId,
+      message: { ...systems[0]!, content: { event: 'run_done', text: 'edited' } },
+    });
+    expect(messageVisibility.previewHidden('local', conversationId)).toBe(true);
+    expect(applyMessagePreview).not.toHaveBeenCalled();
+    partial.dispose();
+
+    state.conversationMetadata[conversationId] = { lastSeq: 61 };
+    const oldCache = new ChatSession(host);
+    await oldCache.open(conversationId);
+    expect(oldCache.conversation?.lastPreviewSeq).toBeUndefined();
+    expect(messageVisibility.previewHidden('local', conversationId)).toBe(true);
+    oldCache.dispose();
+
+    state.conversationMetadata[conversationId] = { lastSeq: 2 };
+    state.messages = [systems[0]!];
+    const complete = new ChatSession(host);
+    await complete.open(conversationId);
+    expect(complete.hasEarlier).toBe(false);
+    expect(complete.conversation?.lastPreviewSeq).toBeUndefined();
+    expect(messageVisibility.previewHidden('local', conversationId)).toBe(false);
+    expect(applyMessagePreview).toHaveBeenLastCalledWith('local', conversationId, null);
+    complete.dispose();
+    messageVisibility.forget('local', conversationId);
+  });
+
+  it('hiding clears active and persisted reply snapshots and refreshes only the latest preview', async () => {
+    const conversationId = 'visibility-reply-test';
+    const older = textMessage({
+      id: 'older-bot',
+      conversationId,
+      seq: 1,
+      senderType: 'bot',
+      senderBotId: 'bot_1',
+    });
+    const latest = textMessage({
+      id: 'latest-bot',
+      conversationId,
+      seq: 2,
+      senderType: 'bot',
+      senderBotId: 'bot_1',
+    });
+    const applyMessageVisibility = vi.fn();
+    const host: ChatSessionHost = {
+      syncReadCursor: () => undefined,
+      syncMemberPreviews: () => undefined,
+      noteIncoming: () => undefined,
+      applyMessageVisibility,
+      applyMessagePreview: () => undefined,
+      applyRunning: () => undefined,
+      applyBot: () => undefined,
+      applyConversation: () => false,
+    };
+    messageVisibility.forget('local', conversationId);
+    state.messages = [older, latest];
+    const session = new ChatSession(host);
+    await session.open(conversationId);
+    session.startReply(older);
+    composerDrafts.setRpcSource('local');
+    composerDrafts.saveComposerDoc(conversationId, EMPTY_COMPOSER_DOC, [], session.replyTo);
+    expect(composerDrafts.loadDraft(conversationId).reply?.id).toBe(older.id);
+
+    expect(session.setMessageHidden(older.id, true)).toBe(true);
+    expect(session.replyTo).toBeNull();
+    expect(composerDrafts.loadDraft(conversationId).reply).toBeNull();
+    expect(messageVisibility.previewHidden('local', conversationId)).toBe(false);
+    expect(applyMessageVisibility).toHaveBeenLastCalledWith(
+      'local',
+      conversationId,
+      expect.objectContaining({ id: older.id, hidden: true }),
+      true,
+      false,
+    );
+
+    expect(session.setMessageHidden(latest.id, true)).toBe(true);
+    expect(messageVisibility.previewHidden('local', conversationId)).toBe(true);
+    expect(applyMessageVisibility).toHaveBeenLastCalledWith(
+      'local',
+      conversationId,
+      expect.objectContaining({ id: latest.id, hidden: true }),
+      true,
+      true,
+    );
+    session.setMessageHidden(latest.id, false);
+    expect(messageVisibility.previewHidden('local', conversationId)).toBe(false);
+    session.dispose();
+    messageVisibility.forget('local', conversationId);
+  });
+
+  it('open() still sets the view when constructed as dialogs do (undefined host, empty history)', async () => {
+    // CardChat / TaskRunView / DelegationDetailView pass `undefined` as the host.
+    const conversationId = 'dialog-undefined-host';
+    state.messages = [];
+    const session = new ChatSession(undefined, { foreground: false });
+    await expect(session.open(conversationId)).resolves.toBe(true);
+    expect(session.view).not.toBeNull();
+    expect(session.view?.conversation.id).toBe(conversationId);
+    expect(session.view?.messages).toEqual([]);
+    session.dispose();
+  });
+
+  it('coalesces concurrent open() of the same id so a board reload cannot cancel the load', async () => {
+    const conversationId = 'dialog-open-coalesce';
+    let release!: () => void;
+    state.delayGet = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const session = new ChatSession(undefined, { foreground: false });
+    const first = session.open(conversationId, { markOnOpen: false });
+    const second = session.open(conversationId, { markOnOpen: false });
+    release();
+    await expect(first).resolves.toBe(true);
+    await expect(second).resolves.toBe(true);
+    expect(session.view?.conversation.id).toBe(conversationId);
+    expect(state.calls.filter((call) => call.method === 'conversations.get')).toHaveLength(1);
+    session.dispose();
   });
 });

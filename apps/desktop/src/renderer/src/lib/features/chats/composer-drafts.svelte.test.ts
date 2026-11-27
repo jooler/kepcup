@@ -81,6 +81,20 @@ store.set(
       updatedAt: 1,
       conversationId: 'conv_restored',
     },
+    // Cross-source same-id draft: the persisted reply belongs to the team source.
+    conv_foreign_reply: {
+      doc: { type: 'doc', content: [{ type: 'paragraph' }] },
+      mentions: [],
+      reply: {
+        id: 'msg_foreign',
+        senderType: 'bot',
+        senderBotId: 'bot_team',
+        text: 'team-only original',
+        source: 'team:h1',
+      },
+      attachments: [],
+      updatedAt: 1,
+    },
   }),
 );
 vi.stubGlobal('localStorage', {
@@ -91,17 +105,88 @@ vi.stubGlobal('localStorage', {
 vi.stubGlobal('window', { addEventListener: () => undefined });
 
 const { composerDrafts } = await import('./composer-drafts.svelte');
+const { messageVisibility } = await import('$lib/stores/message-visibility.svelte');
+const { connections } = await import('$lib/rpc/connections.svelte');
 
 const flush = async (): Promise<void> => {
   for (let i = 0; i < 5; i += 1) await Promise.resolve();
 };
 
 beforeEach(() => {
+  connections.reset();
   calls.length = 0;
   toasts.length = 0;
   previewRequests.length = 0;
   previewFails = new Set();
   statusFails = false;
+  // Hidden overlay is process-global; clear ids this file uses.
+  messageVisibility.forget('local', 'conv_hidden_reply');
+});
+
+describe('composerDrafts hidden reply sanitization', () => {
+  it('drops active and persisted reply snapshots for hidden Bot messages', () => {
+    connections.servers = [
+      {
+        serverHash: 'h1',
+        url: 'https://team.example.com',
+        name: '',
+        accounts: [{ memberId: 'mbr_other', username: 'other', displayName: 'Other', remembered: true }],
+        activeMemberId: 'mbr_other',
+        status: 'connected',
+      },
+    ];
+    try {
+      const conversationId = 'conv_hidden_reply';
+      const reply = {
+        id: 'msg_hidden_reply',
+        senderType: 'bot' as const,
+        senderBotId: 'bot_1',
+        text: 'hidden original',
+        source: 'local' as const,
+      };
+      composerDrafts.setRpcSource('local');
+      composerDrafts.saveComposerDoc(
+        conversationId,
+        { type: 'doc', content: [{ type: 'paragraph' }] },
+        [],
+        reply,
+      );
+      expect(composerDrafts.loadDraft(conversationId).reply).toEqual(reply);
+      messageVisibility.setHidden('local', conversationId, reply.id, true);
+      expect(composerDrafts.loadDraft(conversationId).reply).toBeNull();
+      composerDrafts.saveComposerDoc(
+        conversationId,
+        { type: 'doc', content: [{ type: 'paragraph' }] },
+        [],
+        reply,
+      );
+      expect(composerDrafts.loadDraft(conversationId).reply).toBeNull();
+      // Cross-source same-id drafts must not reuse a foreign reply snapshot.
+      messageVisibility.setHidden('local', conversationId, reply.id, false);
+      composerDrafts.setRpcSource('local');
+      composerDrafts.saveComposerDoc(
+        conversationId,
+        { type: 'doc', content: [{ type: 'paragraph' }] },
+        [],
+        reply,
+      );
+      expect(composerDrafts.loadDraft(conversationId).reply).toEqual(reply);
+      composerDrafts.setRpcSource('team:h1');
+      expect(composerDrafts.loadDraft(conversationId).reply).toBeNull();
+      // Rejected replies are purged, not restored when switching back.
+      composerDrafts.setRpcSource('local');
+      expect(composerDrafts.loadDraft(conversationId).reply).toBeNull();
+      messageVisibility.forget('local', conversationId);
+    } finally {
+      connections.reset();
+    }
+  });
+
+  it('drops a persisted reply snapshot that belongs to another source', () => {
+    composerDrafts.setRpcSource('local');
+    composerDrafts.hydrate('conv_foreign_reply');
+    expect(composerDrafts.loadDraft('conv_foreign_reply').reply).toBeNull();
+  });
 });
 
 describe('composerDrafts.hydrate 的附件存在性校验', () => {
@@ -158,7 +243,10 @@ describe('composerDrafts.discardAttachments / inspectAttachments', () => {
   it('按附件 id 摘掉 chip（missing 与 sent 都摘），返回被摘的 key；没有命中返回 null', () => {
     statusFails = true; // 水合时不校验，只关心 discard 本身
     composerDrafts.hydrate('conv_discard');
-    const keys = composerDrafts.discardAttachments('conv_discard', { missing: [], sent: ['att_d'] });
+    const keys = composerDrafts.discardAttachments('conv_discard', {
+      missing: [],
+      sent: ['att_d'],
+    });
     expect(keys).toEqual(new Set(['att_att_d']));
     expect(composerDrafts.uploadsOf('conv_discard')).toEqual([]);
     expect(
@@ -169,7 +257,10 @@ describe('composerDrafts.discardAttachments / inspectAttachments', () => {
   it('inspectAttachments 把 status 归类；空列表不发请求', async () => {
     statusHandler = ({ ids }) => ids.map((id) => ({ id, state: id === 'b' ? 'sent' : 'missing' }));
     calls.length = 0;
-    expect(await composerDrafts.inspectAttachments('conv_z', [])).toEqual({ missing: [], sent: [] });
+    expect(await composerDrafts.inspectAttachments('conv_z', [])).toEqual({
+      missing: [],
+      sent: [],
+    });
     expect(calls).toHaveLength(0);
     expect(await composerDrafts.inspectAttachments('conv_z', ['a', 'b'])).toEqual({
       missing: ['a'],

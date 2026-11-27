@@ -26,6 +26,17 @@ import { settingsStore } from '$lib/stores/settings.svelte';
 import { shell } from '$lib/stores/shell.svelte';
 import { isEphemeralApprovalCard } from '../features/approvals/ephemeral-approval';
 import { toast } from 'svelte-sonner';
+import {
+  isVisibilityScopePending,
+  messageVisibility,
+  messageVisibilityScope,
+  type DisplayMessage,
+} from './message-visibility.svelte';
+import { teamContext } from '../features/team/team-context.svelte';
+import { composerDrafts } from '../features/chats/composer-drafts.svelte';
+import { isPreviewableMessage, latestPreviewMessage } from '../features/chats/message-preview';
+import { voiceMode } from '../features/chats/voice-mode.svelte';
+import { speechAudio } from '../features/chats/speech-audio.svelte';
 
 /**
  * One open conversation's view. The object is replaced on `open` / `clear`
@@ -34,7 +45,7 @@ import { toast } from 'svelte-sonner';
  */
 export interface ChatSessionView {
   conversation: ConversationView;
-  messages: Message[];
+  messages: DisplayMessage[];
   activeRuns: ActiveRunView[];
   failedRun: Run | null;
   loadingEarlier: boolean;
@@ -66,6 +77,14 @@ export interface ChatSessionHost {
   syncReadCursor(source: SourceId, conversationId: string, lastReadSeq: number): void;
   syncMemberPreviews(source: SourceId, conversationId: string, members: ProjectMemberView[]): void;
   noteIncoming(source: SourceId, conversationId: string, message: Message): void;
+  applyMessageVisibility(
+    source: SourceId,
+    conversationId: string,
+    message: DisplayMessage,
+    hidden: boolean,
+    latestPreview: boolean,
+  ): void;
+  applyMessagePreview(source: SourceId, conversationId: string, preview: Message | null): void;
   applyRunning(source: SourceId, run: Run): void;
   applyBot(source: SourceId, bot: Bot): void;
   /**
@@ -102,6 +121,8 @@ const noopHost: ChatSessionHost = {
   syncReadCursor: () => undefined,
   syncMemberPreviews: () => undefined,
   noteIncoming: () => undefined,
+  applyMessageVisibility: () => undefined,
+  applyMessagePreview: () => undefined,
   applyRunning: () => undefined,
   applyBot: () => undefined,
   applyConversation: () => false,
@@ -150,6 +171,18 @@ export class ChatSession {
   /** 当前团队来源的视图级订阅（来源切换时重挂）。 */
   #teamSubscribedSource: SourceId | null = null;
   #teamUnsubscribers: Array<() => void> = [];
+  #teamIdentityUnsubscribe: (() => void) | null = null;
+  #identityUnsubscribe: (() => void) | null = null;
+  #teamContextIdentityUnsubscribe: (() => void) | null = null;
+  #resolvedVisibilityScope = messageVisibilityScope('local');
+  #visibilityIdentityResolved = !isVisibilityScopePending(this.#resolvedVisibilityScope);
+  #openGeneration = 0;
+  /**
+   * In-flight `open` of one conversation. Board reloads (200ms debounce) would
+   * otherwise start a new open, bump `#openGeneration`, and cancel the load
+   * before `view` is set — the card dialog chat stays empty.
+   */
+  #openInFlight: { key: string; promise: Promise<boolean> } | null = null;
   // 普通 Set（刻意非响应式）：事件转发台账，没有界面从它派生。
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
   #incomingListeners = new Set<(conversationId: string, message: Message) => void>();
@@ -178,10 +211,13 @@ export class ChatSession {
   };
 
   constructor(
-    host: ChatSessionHost = noopHost,
+    host: ChatSessionHost | undefined = noopHost,
     options: { attach?: boolean; foreground?: boolean } = {},
   ) {
-    this.#host = host;
+    // Dialogs call `new ChatSession(undefined, { foreground: false })`.
+    // An explicit undefined does not trigger the default argument, and
+    // open() now calls applyMessagePreview — that used to throw before view was set.
+    this.#host = host ?? noopHost;
     // Only an explicit foreground session (the main chat) may replace the
     // right-panel grants list or the main task page. `new ChatSession()` is
     // a dialog and must not steal either.
@@ -195,6 +231,12 @@ export class ChatSession {
    * （本机订阅与旧版一样只在 start 落位——open 不再隐式订阅本机来源。）
    */
   start(): void {
+    this.#identityUnsubscribe ??= connections.onSourcesChanged(() =>
+      this.#handleVisibilityIdentityChange(),
+    );
+    this.#teamContextIdentityUnsubscribe ??= teamContext.onIdentityChanged(() =>
+      this.#handleVisibilityIdentityChange(),
+    );
     this.#ensureSubscribed();
   }
 
@@ -206,6 +248,38 @@ export class ChatSession {
   /** 当前来源的连接视图（调用 / 事件 / 身份）。 */
   #rpc(): SessionRpc {
     return connections.get(this.#source);
+  }
+
+  #withPreviewMetadata(
+    conversation: ConversationView,
+    messages: readonly Message[],
+    hasEarlier: boolean,
+  ): ConversationView {
+    const latest = latestPreviewMessage(messages);
+    if (latest !== null) return { ...conversation, lastPreviewSeq: latest.seq };
+    return hasEarlier ? conversation : { ...conversation, lastPreviewSeq: undefined };
+  }
+
+  #reconcilePreview(
+    source: SourceId,
+    conversationId: string,
+    messages: readonly Message[],
+    knownPreviewSeq?: number,
+  ): void {
+    const latest = latestPreviewMessage(messages);
+    const override = messageVisibility.previewOverride(source, conversationId);
+    if (override !== null) {
+      const sourceMessage = messages.find((message) => message.id === override.messageId);
+      const stale =
+        (knownPreviewSeq !== undefined && override.seq !== knownPreviewSeq) ||
+        (sourceMessage !== undefined && !isPreviewableMessage(sourceMessage)) ||
+        (latest !== null && latest.id !== override.messageId);
+      if (stale) messageVisibility.setPreviewHidden(source, conversationId, false);
+    }
+    if (latest !== null) {
+      const hidden = messageVisibility.isHidden(source, conversationId, latest.id);
+      messageVisibility.setPreviewHidden(source, conversationId, hidden, latest.seq, latest.id);
+    }
   }
 
   /**
@@ -227,6 +301,8 @@ export class ChatSession {
       if (this.#teamSubscribedSource !== null) {
         for (const unsubscribe of this.#teamUnsubscribers) unsubscribe();
         this.#teamUnsubscribers = [];
+        this.#teamIdentityUnsubscribe?.();
+        this.#teamIdentityUnsubscribe = null;
         this.#teamSubscribedSource = null;
       }
       return;
@@ -234,8 +310,13 @@ export class ChatSession {
     if (this.#teamSubscribedSource === this.#source) return;
     for (const unsubscribe of this.#teamUnsubscribers) unsubscribe();
     this.#teamUnsubscribers = [];
-    this.#subscribeSource(this.#source);
-    this.#teamSubscribedSource = this.#source;
+    this.#teamIdentityUnsubscribe?.();
+    const source = this.#source;
+    this.#teamIdentityUnsubscribe = connections
+      .get(source)
+      .onIdentityChanged(() => this.#handleVisibilityIdentityChange(source));
+    this.#subscribeSource(source);
+    this.#teamSubscribedSource = source;
   }
 
   get conversationId(): string | null {
@@ -246,7 +327,7 @@ export class ChatSession {
     return this.view?.conversation ?? null;
   }
 
-  get messages(): Message[] {
+  get messages(): DisplayMessage[] {
     return this.view?.messages ?? [];
   }
 
@@ -279,27 +360,68 @@ export class ChatSession {
    * T7: 入参可为 `ConversationRef`（团队来源的会话经该来源的连接取数与收发）；
    * 字符串 id 保持本机来源语义（既有调用点与测试零改动）。
    */
-  async open(idOrRef: string | ConversationRef, options: OpenSessionOptions = {}): Promise<boolean> {
+  async open(
+    idOrRef: string | ConversationRef,
+    options: OpenSessionOptions = {},
+  ): Promise<boolean> {
     if (this.#disposed) return false;
     const ref = conversationRefOf(idOrRef);
     const id = ref.id;
+    const key = `${ref.source}:${id}`;
+    if (this.#openInFlight?.key === key) return this.#openInFlight.promise;
+    const promise = this.#performOpen(ref, id, options);
+    this.#openInFlight = { key, promise };
+    void promise.finally(() => {
+      if (this.#openInFlight?.promise === promise) this.#openInFlight = null;
+    });
+    return promise;
+  }
+
+  async #performOpen(
+    ref: ConversationRef,
+    id: string,
+    options: OpenSessionOptions,
+  ): Promise<boolean> {
+    if (this.#disposed) return false;
+    const request = ++this.#openGeneration;
+    const rpc = connections.get(ref.source);
+    const isCurrent = (): boolean =>
+      !this.#disposed && request === this.#openGeneration && this.#source === ref.source;
     this.#source = ref.source;
-    // 团队来源在 open 时挂视图级订阅（本机订阅只在 start 落位，见上）。
-    if (ref.source !== 'local') this.#ensureSubscribed();
+    this.#resolvedVisibilityScope = messageVisibilityScope(ref.source);
+    this.#visibilityIdentityResolved = !isVisibilityScopePending(this.#resolvedVisibilityScope);
+    // Team views subscribe on open; switching back to local also drops the old team listeners.
+    if (ref.source !== 'local' || this.#teamSubscribedSource !== null) this.#ensureSubscribed();
     // T8 读路径（团队来源）：先渲染缓存（秒开 + 离线兜底），随后服务端路径在
     // 上面覆盖（在线时）；服务端不可达且缓存有快照 → 离线只读视图（跳过 runs /
     // markRead / permissions 等写与服务端取数）。卡片会话不走缓存（chat.select
     // 的 stop 语义在服务端路径里，先装视图会破坏导航）。
     const cached =
       ref.source !== 'local' ? await teamCacheSync.loadCachedSession(ref.source, id) : null;
+    if (!isCurrent()) return false;
     if (cached !== null && cached.conversation.type !== 'card') {
+      const messages = messageVisibility.applyMany(ref.source, id, cached.messages);
+      const hasEarlier = cached.messages.length >= PAGE_SIZE;
+      const conversation = this.#withPreviewMetadata(
+        cached.conversation as ConversationView,
+        messages,
+        hasEarlier,
+      );
+      const latestPreview = latestPreviewMessage(messages);
+      if (latestPreview !== null || !hasEarlier) {
+        this.#reconcilePreview(ref.source, id, messages, conversation.lastPreviewSeq);
+        if (latestPreview === null) {
+          messageVisibility.setPreviewHidden(ref.source, id, false);
+          this.#host.applyMessagePreview(ref.source, id, null);
+        }
+      }
       this.view = {
-        conversation: cached.conversation as ConversationView,
-        messages: cached.messages,
+        conversation,
+        messages,
         activeRuns: [],
         failedRun: null,
         loadingEarlier: false,
-        hasEarlier: cached.messages.length >= PAGE_SIZE,
+        hasEarlier,
         members: [],
       };
       this.replyTo = null;
@@ -318,19 +440,22 @@ export class ChatSession {
       options.afterResolved?.(cached.conversation as ConversationView);
       this.#holdConversation(id);
       await options.onReady?.(cached.conversation as ConversationView);
-      return true;
+      return isCurrent();
     }
-    const rpc = this.#rpc();
     const loaded = (await rpc.call('conversations.get', { id })) as {
       conversation: ConversationView | null;
     };
-    if (!loaded.conversation) return false;
+    if (!isCurrent() || !loaded.conversation) return false;
     let conversation = loaded.conversation;
     // Card rows are not in the sidebar. `chat.select` stops here, before any
     // message load or unarchive, and opens the board instead.
     if (conversation.type === 'card') {
       if (options.afterResolved?.(conversation) === 'stop') return false;
-    } else if (this.#foreground && this.#source === 'local' && isArchivedConversation(conversation)) {
+    } else if (
+      this.#foreground &&
+      this.#source === 'local' &&
+      isArchivedConversation(conversation)
+    ) {
       // 只有主对话会话把归档会话恢复进侧栏（与构造器的归属约束同理）。后台 /
       // 弹层 session 是纯取数——任务详情页的归属会话 session 打开用户归档的
       // 私聊时，静默 unarchive 会把它悄悄顶回左栏。归档会话照常可读。
@@ -340,14 +465,31 @@ export class ChatSession {
       };
       conversation = restored.conversation;
     }
+    if (!isCurrent()) return false;
     if (conversation.type !== 'card') options.afterResolved?.(conversation);
-    const messages = await this.#loadLatest(id);
+    const loadedMessages = await this.#loadLatest(id, rpc);
+    if (!isCurrent()) return false;
+    if (ref.source !== 'local') {
+      void teamCacheSync.rememberMessages(ref.source, id, loadedMessages);
+    }
+    const messages = messageVisibility.applyMany(ref.source, id, loadedMessages);
+    const hasEarlier = messages.length >= PAGE_SIZE;
+    conversation = this.#withPreviewMetadata(conversation, messages, hasEarlier);
+    const latestPreview = latestPreviewMessage(messages);
+    if (latestPreview !== null || !hasEarlier) {
+      this.#reconcilePreview(ref.source, id, messages, conversation.lastPreviewSeq);
+      if (latestPreview === null) {
+        messageVisibility.setPreviewHidden(ref.source, id, false);
+        this.#host.applyMessagePreview(ref.source, id, null);
+      }
+    }
     const runs = (await rpc.call('runs.list', { conversationId: id, limit: 30 })) as {
       runs: Run[];
     };
     const inFlight = (await rpc.call('runs.list', { conversationId: id, active: true })) as {
       runs: Run[];
     };
+    if (!isCurrent()) return false;
     // Not awaited: select must not wait on the task list (same as today).
     // 团队来源的任务页是重型面板（DEV-142）：不拉本机任务列表。
     if (this.#source === 'local') void tasks.loadActive(id);
@@ -366,7 +508,7 @@ export class ChatSession {
       })),
       failedRun: failed,
       loadingEarlier: false,
-      hasEarlier: messages.length >= PAGE_SIZE,
+      hasEarlier,
       members: [],
     };
     this.replyTo = null;
@@ -378,18 +520,22 @@ export class ChatSession {
     // the project member fetch. Waiting on members used to keep the previous
     // surface up until that RPC returned.
     await options.onReady?.(conversation);
+    if (!isCurrent()) return false;
     if (conversation.type === 'project') await this.reloadMembers();
+    if (!isCurrent()) return false;
     if (options.markOnOpen !== false) await this.markRead();
+    if (!isCurrent()) return false;
     await permissions.loadForConversation(id, {
       foreground: this.#foreground,
       ...(this.#source === 'local' ? {} : { source: this.#source }),
       call: (method: string, input?: unknown) => rpc.call(method, input),
     });
-    return true;
+    return isCurrent();
   }
 
   /** Drop the view but keep the subscription. `main` uses this on close. */
   clear(): void {
+    this.#openGeneration += 1;
     this.#releaseConversation();
     this.view = null;
     this.replyTo = null;
@@ -406,7 +552,13 @@ export class ChatSession {
     this.#localSubscribed = false;
     for (const unsubscribe of this.#teamUnsubscribers) unsubscribe();
     this.#teamUnsubscribers = [];
+    this.#teamIdentityUnsubscribe?.();
+    this.#teamIdentityUnsubscribe = null;
     this.#teamSubscribedSource = null;
+    this.#identityUnsubscribe?.();
+    this.#identityUnsubscribe = null;
+    this.#teamContextIdentityUnsubscribe?.();
+    this.#teamContextIdentityUnsubscribe = null;
     this.#incomingListeners.clear();
     this.clear();
   }
@@ -442,7 +594,9 @@ export class ChatSession {
       // 当前打开的就是它则用会话源，否则按视图归属解析）。团队来源的
       // client 标记（D121「来自 X」）用该来源自己的协作身份。
       const source =
-        this.view?.conversation.id === conversationId ? this.#source : this.#sourceOfId(conversationId);
+        this.view?.conversation.id === conversationId
+          ? this.#source
+          : this.#sourceOfId(conversationId);
       const rpc = connections.get(source);
       const identity = source === 'local' ? null : rpc.clientIdentity;
       await rpc.call('messages.send', {
@@ -526,10 +680,12 @@ export class ChatSession {
     if (shell.workbenchShown) return;
     const lastSeq = view.messages.at(-1)?.seq;
     if (lastSeq === undefined || lastSeq <= view.conversation.lastReadSeq) return;
+    const source = this.#source;
     await this.#rpc().call('conversations.markRead', {
       conversationId: view.conversation.id,
       seq: lastSeq,
     });
+    if (this.view !== view || this.#source !== source) return;
     view.conversation = { ...view.conversation, lastReadSeq: lastSeq, unreadCount: 0 };
     this.#host.syncReadCursor(this.#source, view.conversation.id, lastSeq);
   }
@@ -543,18 +699,28 @@ export class ChatSession {
       // T8 读路径（团队来源）：先试缓存（离线可翻更早历史）；缓存无更早时在线
       // 向服务端补并把结果回写缓存，离线则止于缓存（hasEarlier=false）。
       if (this.#source !== 'local') {
-        const cached = await teamCacheSync.getMessagesFromCache(this.#source, view.conversation.id, {
-          beforeSeq: oldestSeq,
-          limit: PAGE_SIZE,
-        });
+        const cached = await teamCacheSync.getMessagesFromCache(
+          this.#source,
+          view.conversation.id,
+          {
+            beforeSeq: oldestSeq,
+            limit: PAGE_SIZE,
+          },
+        );
         if (cached !== null) {
           if (cached.length > 0) {
-            view.messages = [...cached, ...view.messages];
+            view.messages = [
+              ...messageVisibility.applyMany(this.#source, view.conversation.id, cached),
+              ...view.messages,
+            ];
             view.hasEarlier = cached.length >= PAGE_SIZE;
             this.#recheckPendingLinkCards(cached);
           } else if (connections.get(this.#source).status === 'connected') {
             const fetched = await this.#fetchEarlierFromServer(view.conversation.id, oldestSeq);
-            view.messages = [...fetched, ...view.messages];
+            view.messages = [
+              ...messageVisibility.applyMany(this.#source, view.conversation.id, fetched),
+              ...view.messages,
+            ];
             view.hasEarlier = fetched.length >= PAGE_SIZE;
             this.#recheckPendingLinkCards(fetched);
             void teamCacheSync.rememberMessages(this.#source, view.conversation.id, fetched);
@@ -573,7 +739,10 @@ export class ChatSession {
       if (this.#source !== 'local') {
         void teamCacheSync.rememberMessages(this.#source, view.conversation.id, result.messages);
       }
-      view.messages = [...result.messages, ...view.messages];
+      view.messages = [
+        ...messageVisibility.applyMany(this.#source, view.conversation.id, result.messages),
+        ...view.messages,
+      ];
       view.hasEarlier = result.messages.length >= PAGE_SIZE;
       this.#recheckPendingLinkCards(result.messages);
     } finally {
@@ -613,9 +782,11 @@ export class ChatSession {
   async reloadMembers(): Promise<void> {
     const view = this.view;
     if (!view || view.conversation.type !== 'project') return;
+    const source = this.#source;
     const result = (await this.#rpc().call('conversations.members', {
       conversationId: view.conversation.id,
     })) as { members: ProjectMemberView[] };
+    if (this.view !== view || this.#source !== source) return;
     view.members = result.members;
     view.conversation = {
       ...view.conversation,
@@ -624,12 +795,61 @@ export class ChatSession {
     this.#host.syncMemberPreviews(this.#source, view.conversation.id, result.members);
   }
 
+  #handleVisibilityIdentityChange(changedSource?: SourceId): void {
+    if (changedSource !== undefined && changedSource !== this.#source) return;
+    const nextScope = messageVisibilityScope(this.#source);
+    if (nextScope === this.#resolvedVisibilityScope) return;
+    const wasResolved = this.#visibilityIdentityResolved;
+    const resolved = !isVisibilityScopePending(nextScope);
+    this.#resolvedVisibilityScope = nextScope;
+    this.#visibilityIdentityResolved = resolved;
+    if (!wasResolved && resolved) {
+      this.refreshMessageVisibility();
+      return;
+    }
+    voiceMode.exit();
+    speechAudio.stop();
+    this.clear();
+  }
+
+  /** Re-resolve hidden state after the active viewer/source identity changes. */
+  refreshMessageVisibility(): void {
+    const view = this.view;
+    if (view === null) return;
+    const source = this.#source;
+    const conversationId = view.conversation.id;
+    view.messages = messageVisibility.applyMany(source, conversationId, view.messages);
+    for (const message of view.messages) {
+      if (message.hidden !== true) continue;
+      voiceMode.hideMessage(message.id);
+      speechAudio.hideMessage(message.id);
+    }
+    const reply = this.replyTo;
+    if (reply !== null && messageVisibility.isHidden(source, conversationId, reply.id)) {
+      this.replyTo = null;
+      composerDrafts.clearReply(conversationId, reply.id);
+    }
+    const latestPreview = latestPreviewMessage(view.messages);
+    if (latestPreview === null && view.hasEarlier) return;
+    if (latestPreview === null) {
+      view.conversation = { ...view.conversation, lastPreviewSeq: undefined };
+      messageVisibility.setPreviewHidden(source, conversationId, false);
+      this.#host.applyMessagePreview(source, conversationId, null);
+      return;
+    }
+    view.conversation = { ...view.conversation, lastPreviewSeq: latestPreview.seq };
+    this.#reconcilePreview(source, conversationId, view.messages, latestPreview.seq);
+    this.#host.applyMessagePreview(source, conversationId, latestPreview);
+  }
+
   startReply(message: Message): void {
+    if (messageVisibility.isHidden(this.#source, message.conversationId, message.id)) return;
     this.replyTo = {
       id: message.id,
       senderType: message.senderType,
       senderBotId: message.senderBotId,
       text: 'text' in message.content ? message.content.text : '',
+      source: this.#source,
       ...(message.attachments.length > 0
         ? {
             attachments: message.attachments.map((attachment) => ({
@@ -641,6 +861,46 @@ export class ChatSession {
           }
         : {}),
     };
+  }
+
+  /** Update the renderer-only hidden overlay and refresh its sidebar preview. */
+  setMessageHidden(messageId: string, hidden: boolean): boolean {
+    const view = this.view;
+    if (view === null) return false;
+    const message = view.messages.find((item) => item.id === messageId);
+    if (message === undefined || message.senderType !== 'bot') return false;
+    const source = this.#source;
+    const conversationId = view.conversation.id;
+    if (messageVisibility.isIdentityPending(source)) return false;
+    messageVisibility.setHidden(source, conversationId, messageId, hidden);
+    const updated: DisplayMessage = { ...message, hidden };
+    view.messages = view.messages.map((item) => (item.id === messageId ? updated : item));
+    const latestPreview = latestPreviewMessage(view.messages);
+    if (latestPreview !== null) {
+      view.conversation = {
+        ...view.conversation,
+        lastPreviewSeq: latestPreview.seq,
+      };
+    }
+    const latest = latestPreview?.id === messageId;
+    if (latest) {
+      messageVisibility.setPreviewHidden(source, conversationId, hidden, message.seq, message.id);
+    } else {
+      this.#reconcilePreview(
+        source,
+        conversationId,
+        view.messages,
+        view.conversation.lastPreviewSeq,
+      );
+    }
+    if (hidden) {
+      voiceMode.hideMessage(messageId);
+      speechAudio.hideMessage(messageId);
+      if (this.replyTo?.id === messageId) this.replyTo = null;
+      composerDrafts.clearReply(conversationId, messageId);
+    }
+    this.#host.applyMessageVisibility(source, conversationId, updated, hidden, latest);
+    return true;
   }
 
   /** 请求把一段文本回填进输入框（撤回回填；Composer 消费后清空）。 */
@@ -706,46 +966,90 @@ export class ChatSession {
   #ingestMessage(source: SourceId, conversationId: string, message: Message): void {
     if (this.#disposed) return;
     if (isInterimMessage(message) || isEphemeralApprovalCard(message)) return;
-    if (source === 'local') this.#host.noteIncoming('local', conversationId, message);
+    const display = messageVisibility.apply(source, conversationId, message);
+    const mutatesCurrentView = source === this.#source;
+    const currentView = this.view;
+    if (
+      mutatesCurrentView &&
+      currentView?.conversation.id === conversationId &&
+      isPreviewableMessage(display) &&
+      display.seq >= (currentView.conversation.lastPreviewSeq ?? 0)
+    ) {
+      currentView.conversation = { ...currentView.conversation, lastPreviewSeq: display.seq };
+      messageVisibility.setPreviewHidden(
+        source,
+        conversationId,
+        display.hidden === true,
+        display.seq,
+        display.id,
+      );
+    }
+    if (source === 'local') this.#host.noteIncoming('local', conversationId, display);
     // 播报订阅口（53 号）：在 interim / 临时审批卡过滤之后、视图判重之前透传；
     // 本机事件恒透传（打开团队会话不丢本机播报链路），团队事件只在该来源
     // 是当前会话来源时透传。
     const forwardToListeners = source === 'local' || source === this.#source;
-    if (!forwardToListeners) return;
-    // 只读会话（view 为空或别的会话）也照发——订阅方按需自筛。单个订阅方抛错
-    // 只 warn 留痕（对齐 logFailedRun 的「错误不静默」惯例），不影响其他订阅方
-    // 与 ingest 主流程（消息照常入列表）。
-    for (const listener of this.#incomingListeners) {
-      try {
-        listener(conversationId, message);
-      } catch (error) {
-        console.warn('[kepcup] incoming-message listener failed', {
-          conversationId,
-          messageId: message.id,
-          error,
-        });
+    // 只读会话（view 为空或别的会话）也照发——订阅方按需自筛。隐藏消息不进入
+    // 语音等外部订阅链路，但仍照常入列表与未读状态。单个订阅方抛错只 warn。
+    if (forwardToListeners && display.hidden !== true) {
+      for (const listener of this.#incomingListeners) {
+        try {
+          listener(conversationId, display);
+        } catch (error) {
+          console.warn('[kepcup] incoming-message listener failed', {
+            conversationId,
+            messageId: display.id,
+            error,
+          });
+        }
       }
     }
     const view = this.view;
-    if (!view || view.conversation.id !== conversationId) return;
-    if (!view.messages.some((item) => item.id === message.id)) {
-      view.messages = [...view.messages, message];
+    if (!mutatesCurrentView || !view || view.conversation.id !== conversationId) return;
+    if (!view.messages.some((item) => item.id === display.id)) {
+      view.messages = [...view.messages, display];
     }
-    if (message.senderType === 'bot' && message.runId) {
-      const entry = view.activeRuns.find((item) => item.run.id === message.runId);
+    if (display.senderType === 'bot' && display.runId) {
+      const entry = view.activeRuns.find((item) => item.run.id === display.runId);
       if (entry && !entry.muted) {
         entry.muted = true;
         view.activeRuns = [...view.activeRuns];
       }
     }
-    if (message.senderType === 'user') void this.markRead();
+    if (display.senderType === 'user') void this.markRead();
   }
 
   #replaceMessage(source: SourceId, message: Message): void {
     if (this.#disposed || source !== this.#source) return;
     const view = this.view;
     if (!view || view.conversation.id !== message.conversationId) return;
-    view.messages = view.messages.map((item) => (item.id === message.id ? message : item));
+    const display = messageVisibility.apply(source, message.conversationId, message);
+    view.messages = view.messages.map((item) => (item.id === display.id ? display : item));
+    const latestPreview = latestPreviewMessage(view.messages);
+    if (latestPreview !== null) {
+      view.conversation = {
+        ...view.conversation,
+        lastPreviewSeq: latestPreview.seq,
+      };
+      this.#reconcilePreview(
+        source,
+        display.conversationId,
+        view.messages,
+        latestPreview.seq,
+      );
+      this.#host.applyMessagePreview(source, display.conversationId, latestPreview);
+    } else if (!view.hasEarlier) {
+      view.conversation = { ...view.conversation, lastPreviewSeq: undefined };
+      messageVisibility.setPreviewHidden(source, display.conversationId, false);
+      this.#host.applyMessagePreview(source, display.conversationId, null);
+    }
+    this.#host.applyMessageVisibility(
+      source,
+      display.conversationId,
+      display,
+      display.hidden === true,
+      latestPreview?.id === display.id,
+    );
   }
 
   #applyRun(source: SourceId, run: Run): void {
@@ -841,6 +1145,13 @@ export class ChatSession {
     if (!hostWroteView) {
       view.conversation = {
         ...conversation,
+        // conversation.updated payloads can omit preview metadata; keep the
+        // view's known preview instead of dropping it on unrelated updates.
+        lastPreviewSeq: conversation.lastPreviewSeq ?? view.conversation.lastPreviewSeq,
+        ...(conversation.lastMessageText === undefined &&
+        view.conversation.lastMessageText !== undefined
+          ? { lastMessageText: view.conversation.lastMessageText }
+          : {}),
         bot: conversation.bot ?? view.conversation.bot,
         memberPreviews: conversation.memberPreviews ?? view.conversation.memberPreviews,
       };
@@ -848,15 +1159,11 @@ export class ChatSession {
     if (conversation.type === 'project') void this.reloadMembers();
   }
 
-  async #loadLatest(conversationId: string): Promise<Message[]> {
-    const result = (await this.#rpc().call('messages.list', {
+  async #loadLatest(conversationId: string, rpc: SessionRpc): Promise<Message[]> {
+    const result = (await rpc.call('messages.list', {
       conversationId,
       limit: PAGE_SIZE,
     })) as { messages: Message[] };
-    // T8：服务端拉到的最新页回写缓存（团队来源）——缓存与在线读保持同源。
-    if (this.#source !== 'local') {
-      void teamCacheSync.rememberMessages(this.#source, conversationId, result.messages);
-    }
     return result.messages;
   }
 

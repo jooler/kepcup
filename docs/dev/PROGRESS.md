@@ -2559,3 +2559,32 @@ T0–T10（P0 / P1 / P2）全部完成后的收口阶段：本文档代理负责
 - **undici override 随动**：pi-coding-agent 1.6.1 起精确依赖 undici 8.12.4（GHSA-mqg3-3v4r-cm32 等 6 个安全公告），workspace override 从 8.11.2 提到 8.12.4——继续收敛 pi 单实例（pi 精确 pin 与 core `^8.11.2` 会分裂双实例），同时不吃进安全修复回退；lock 内 undici 全量收敛 8.12.4 单实例。
 - **破坏性变更核对**：1.6.0 TUI 组件 `render()` 只读返回与 1.6.1 `showCacheMissNotices` 设置移除均不涉及宿主（只用 `Agent` / `AgentTool`、pi-ai 模型 API 与 pi-mcp 传输 / OAuth，未用 pi-tui 组件与 pi 设置管理器）；pi-ai `onResponse` 起也对 HTTP 错误响应与重试尝试触发（宿主无消费点）；工具 TypeBox schema 未用 strict 采样路径。pi-mcp / pi-ai 侧均为修复与目录更新（MCP 字符串 request ID 超时、SSE 二次方扫描、临时性供应商错误自动重试等）。
 - **验证**：shared / package-guard / core build、core 与 desktop typecheck 0 error（desktop 4 条既有 svelte warning）、desktop `electron-vite build` 通过；app-validator 定向 197/197；core 单包 5662 通过 / 140 skip / **14 失败**——依赖回退对照（stash 回 1.5.2 / 45.2.1 离线重装后复跑同文件**原样失败**）判定全部为本机环境问题、非升级回归：11 例测试夹具 `tar -czf C:\...` 被 tar 解析为远程主机（agent-installer / environment / env-distro-toolchain），2 例只读拒绝链路超时（workdirs / task-subagent-read-only）、1 例 WSL 真实发行版探测超时（wsl-backend）——2026-11-24 全量基线同用例全绿，疑期间本机 WSL / tar 状态变化所致，待环境恢复后复核。全量 `pnpm test` 留阶段收口跑一次。
+
+## AI 生成内容举报（Microsoft Store 11.16，2026-11-27，分支 v0.6.3）
+
+为满足 Microsoft Store 政策 11.16（生成式 AI 应用必须提供内容举报与处置机制），五阶段一次做完：shared 契约 + core 本地举报核心 + Cloudflare Worker 接收端 + 桌面 UI emoji 反馈与举报双通道 + 官网披露与 Store 清单，外加终审修复轮。as-built 设计见 [design/64-ai-content-reporting.md](../design/64-ai-content-reporting.md)（含 7 项偏差记录），原始方案见 [todo/ai-content-reporting.md](../../todo/ai-content-reporting.md)，Worker 侧运维说明见 [infra/cloudflare/reports/README.md](../../infra/cloudflare/reports/README.md)。
+
+- **提交**：宿主 5 个 commit——0665a1dc 阶段 1（shared 契约 + core 本地核心 + Worker 骨架，38 文件 +7803 行）、dda42e98 阶段 2（Worker 部署 + verify.mjs / report-triage.mjs + README，5 文件）、0c3857c6 阶段 3（桌面 UI emoji 反馈与举报入口，9 文件 +1327 行）、2db3bc9e 阶段 4（隐私政策 / 条款 / Store 清单 / design 64，4 文件）、6c8086bf 终审修复（KEPCUP_REPORT_ENDPOINT 测试缝门控 + dist/pack-hooks 双清单、model-selection 守卫允许清单、eslint verify.mjs 覆盖、triage stats 子命令、team 快照信任注释）；闭源配套：apps/team-server 嵌套仓 08e5aeb（METHOD_POLICY +3，guarded('conversation')）。
+
+- **阶段 1（0665a1dc）**：shared contracts 18 用例；core 新增 reports 27 / reactions 7 / migration 3 / contract 6 用例；Worker 95 用例；team-server policy 52 用例（345 计数随迁）；registry 回归 124 用例，全绿。阶段审查修 3×P1（canonicalJson 双实现对齐 + parity 测试、admin 路径日志折叠防 clientId 泄漏、team 快照补可选 conversation.type）+ 4×P2。
+
+- **阶段 2（dda42e98）**：线上冒烟 11/11 ×3（healthz / 400 / 201 / duplicate 不占限流 / 429 / admin 401 / list / patch / stats / delete-client / 清空复查）；D1 `kepcup-reports`（id 1e63e07f-bd54-40b3-852f-7b4665bdc7d1）、Worker `kepcup-reports`（版本 ed171fe7-5762-4c6e-abb4-25e84dc5dd33）、custom domain `reports.kepcup.com`、secrets `REPORT_ADMIN_TOKEN` / `IP_HASH_SALT` 就位；测试行自清零残留。
+
+- **阶段 3（0c3857c6）**：chats + i18n 428 用例、desktop-svelte 166 用例、desktop typecheck 0 error；e2e `message-reactions.spec` 通过（假 Worker 恰好 1 次 POST、content hash 复算、二次点击零新增、限流排队、右键菜单双通道）。阶段审查零修复项。
+
+- **阶段 4（2db3bc9e）**：astro check 0 error、website build 7 页；隐私政策 en/zh 16 段（含 AI 举报 6 段专节）、terms 8 段；release 清单隐私 URL 就绪 + 11.16 人工项（见 [06-release.md](06-release.md)）。
+
+- **收口（全量唯一一次）**：verify.mjs 11/11 PASS；`pnpm typecheck` exit 0（含 website）；worker `tsc --noEmit` exit 0；全量 `pnpm test` 10252 通过 / 45 跳过 / 1 失败——已修（model-selection 架构守卫：reports.ts 复制模型配置值不做选取，进允许清单后单跑 34 用例绿）；`pnpm lint` 修掉 verify.mjs 漏配后功能 44 改动文件 0 错误，其余 11 个错误全部为闭源 team-server 既有基线（嵌套仓提交 48c191e / 348f020 / 2cafea6 早于本功能，零触碰取证）。
+
+- **终审（6c8086bf）**：Store 11.16 合规矩阵 4/4（举报入口双通道可达 / 处置机制可运行 / 披露与人工项就绪 / 无未披露收集）；隐私政策与实现逐句对拍无「说了没做到」；core / Worker canonicalJson 7 组边界（undefined 键 / UTF-16 排序 / 64 层深嵌套 / 数值边界 / 孤立代理对等）字节级一致。终审修 P1（端点环境变量在打包产物可重定向举报端点 → `__KEPCUP_TEST_HOOKS__` 门控 + 产物级校验）+ 2×P2（triage stats、快照信任注释）。
+
+- **遗留（记录不阻塞）**：隐私政策「一条举报包含」清单未列 client.id（删除段已披露，建议下轮站点文案补一句）；team 来源快照信任渲染层（自托管团队内部问题，服务端去重 / 限流封顶，schema 注释已记）；team-server 对 reports.submit 只按 conversation 鉴权；IP 限流依赖 IP_HASH_SALT（已配）。
+
+## 举报反滥用与管理端（2026-11-27，分支 v0.6.3）
+
+举报管线两道加固一次部署上线：**5A 反滥用**（PoW 挑战 + 全局日上限，commit `88ce53c5`——提交端点不再信任无成本请求，客户端先 `GET /v1/challenge` 领 HMAC 签名挑战、后台求解后随 proof 提交，服务端单次哈希验签 + IP 绑定 + 单次使用表，外加 UTC 日受理上限 2000）与 **5B 管理端 Web UI**（commit `72112ee3`——Worker 同源内嵌单页 `https://reports.kepcup.com/admin/`，会话 Cookie 鉴权 + 严格 CSP，与 bearer CLI 同权）。as-built 见 [reports/README.md](../../infra/cloudflare/reports/README.md) 与 [design 64](../design/64-ai-content-reporting.md)（已知限制与已接受缺口指针：design 64 §11）。
+
+- **部署证据（2026-11-27）**：D1 `kepcup-reports` 幂等加两表 `report_pow_used` / `report_daily`（schema.sql 全 IF NOT EXISTS，已有 reports / report_rate / report_ip_rate 三表无影响，远程核 5 表齐）；新增 secret `REPORT_POW_SECRET`（openssl 生成管道直入，只进 secret，`secret list` 三名确认）；Worker 新版本 `d1bd0277-b012-4eb2-9298-ae4486948bf1`（wrangler 4.151.1）。部署顺序有一处调整：secret 后置于部署写入——先部署时 PoW 按 secret 缺失逃生语义自动关闭（与旧版行为一致，无回归窗口），避免 verify.mjs 主段第 3/4/5 步（不带 proof）在 PoW 启用后拿 400 `missing_proof` 而无法全 PASS；secret 即时生效后再手工补测启用态（理由与后续跟进项已记 `infra/cloudflare/README.md` §7 变更行）。兼容性窗口：`88ce53c5` / `72112ee3` 仅在 `v0.6.3` 分支（origin/main 仍在 v0.6.2 合并点），无已发布客户端依赖无 proof 直发行为。
+- **线上冒烟**：`reports/verify.mjs` **14/14 PASS**（healthz、坏 JSON 400、合法 201、同内容 200 duplicate 不占限流、异内容立即 429 带 Retry-After/retryAfterMs、admin 无 token 401、有 token list/PATCH/stats/delete-client 及删除后为空；PoW 段 secret 未配时按脚本内建降级模式：本地自检 + challenge 200（enabled:false）+ 无 proof 201）。secret 写入后**启用态 PoW 三步手工补测**：challenge（difficulty 20）→ solve → **201 accepted**、同 proof 换 reportId → **400 `challenge_reused`**、无 proof → **400 `missing_proof`**（不带 Retry-After）；另观察到换网出口（连接间 v4/v6 翻转）会得 `challenge_ip_mismatch`——IP 绑定按设计生效，core 侧换题重试一次可吸收。**/admin/ 冒烟**：页面 200、`/admin` 308 → `/admin/`、GET 带 CSP `default-src 'none'` 全策略（HEAD 405 系 GET-only 门控非缺陷）、登录 Set-Cookie `__Host-` 前缀 + HttpOnly + Secure + SameSite=Strict + Path=/ + Max-Age 12h、带 Cookie GET `/v1/admin/reports?limit=1` 200、错 token 401。D1 冒烟残留核零（reports / report_rate / report_pow_used 按 `verify-%` / `rep_verify%` 前缀 0；report_daily 为 UTC 日聚合含 4 次冒烟受理，cron 7 天自清）。
+- **测试**：Worker 152 用例、core reports/contract 39 用例、desktop e2e `message-reactions.spec` 通过（5A/5B 提交时全绿，见两 commit message）。
+- **已知限制**：见 design 64 §11（4 项已接受缺口）与 reports/README.md「已知限制」节；部署侧新增一条跟进项——verify.mjs 主段三步尚未随 5A 统一携带 proof，且成功路径 7d 步置 `cleanupDone` 会短路 finally 清理、漏删 PoW 段 powClientId 的行（本次部署已手工补删），统一修正前跑完 verify 需按 `verify-pow-` 前缀手工核对/补删。

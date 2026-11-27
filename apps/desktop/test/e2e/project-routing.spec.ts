@@ -81,7 +81,7 @@ async function sendPlain(page: Page, text: string): Promise<void> {
   const composer = page.locator('[data-testid="composer-input"]');
   await composer.click();
   await composer.fill(text);
-  await composer.press('Meta+Enter');
+  await composer.press('ControlOrMeta+Enter');
 }
 
 async function botIdOf(page: Page, name: string): Promise<string> {
@@ -199,7 +199,7 @@ test('project routing: gate routes to member, continuation claims, gate self/non
       .first()
       .click();
     await composer.pressSequentially(' 直达问题');
-    await composer.press('Meta+Enter');
+    await composer.press('ControlOrMeta+Enter');
     await expect(bubbles.filter({ hasText: '丙直达' })).toBeVisible({ timeout: 60_000 });
     expect(bubbles).toHaveCount(bubblesBefore + 1);
     // 路由与续接判断都没跑（显式目标直接开轮）。

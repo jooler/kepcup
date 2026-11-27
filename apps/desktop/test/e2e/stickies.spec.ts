@@ -254,9 +254,10 @@ test('pin a whole message from the hover button and the context menu', async () 
     const bubble = page.locator('[data-testid="bot-bubble"]').first();
     await expect(bubble).toContainText('整条消息固定出来的便签内容', { timeout: 30_000 });
 
-    // hover 操作：消息行悬停出现 pin 按钮，点击后整条消息文本成为便签。
+    // Hover More menu: pin the entire message as a stickie.
     await bubble.hover();
-    await page.locator('[data-testid="message-pin"]').last().click();
+    await page.locator('[data-testid="message-more"]').last().click();
+    await page.locator('[data-testid="more-message-pin"]').click();
     await expect(page.locator('[data-testid="stickie-card"]')).toHaveCount(1, { timeout: 5_000 });
     await expect(page.locator('[data-testid="stickie-card"]')).toContainText(reply);
 

@@ -503,9 +503,13 @@ function bootstrap(): void {
     },
     writeFile: writeTeamServersState,
     createChannel: () => new MessageChannelMain(),
-    postPort: (serverHash, port) => {
+    postPort: (serverHash, port, activeMemberId) => {
       // BridgePortMain 的结构子集 → Electron 端口（真实 MessagePortMain，见 createChannel）。
-      window?.webContents.postMessage('team-port', { serverHash }, [port as MessagePortMain]);
+      window?.webContents.postMessage(
+        'team-port',
+        { serverHash, activeMemberId },
+        [port as MessagePortMain],
+      );
     },
     onChanged: () => {
       window?.webContents.send('team-servers:changed');

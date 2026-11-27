@@ -65,6 +65,8 @@ export interface SpeechAudioDeps {
    * 暂停 / 续播同一条消息不触发。
    */
   onManualPlayStart(): void;
+  /** Renderer-local visibility guard for new manual speech requests. */
+  isHidden?(message: Message): boolean;
 }
 
 interface CacheEntry {
@@ -103,6 +105,8 @@ class SpeechAudioState {
   /** 普通 Map（刻意非响应式）：LRU 台册，界面从 currentId/isPlaying 派生。 */
   #cache = new Map<string, CacheEntry>();
   #pending = new Map<string, Promise<string>>();
+  /** 每个 messageId 最近一次请求的朗读文本：迟到的旧文本结果不得覆盖缓存。 */
+  #latestText = new Map<string, string>();
   /** 手动朗读序号：合成落地后用户已改选别的消息则放弃本次播放。 */
   #toggleSeq = 0;
   #element: SpeechAudioElement | null = null;
@@ -118,32 +122,45 @@ class SpeechAudioState {
   }
 
   /**
-   * messageId → objectURL（缓存未命中才合成；在途合成去重）。text 用调用方
-   * 提取好的朗读文本（播报条目与手动 toggle 同一口径）；失败 reject。
+   * messageId + text → objectURL（缓存未命中才合成；在途去重按 id + 文本）。
+   * 同一个 messageId 可能对应不同来源的不同消息（本机 / 团队 id 碰撞）或编辑后
+   * 的新文本：只有 `cached.text === text` 才可复用音频。
    */
   async ensureUrl(messageId: string, text: string): Promise<string> {
+    const pendingKey = JSON.stringify([messageId, text]);
+    this.#latestText.set(messageId, text);
     const cached = this.#cache.get(messageId);
-    if (cached !== undefined) {
+    if (cached !== undefined && cached.text === text) {
       // LRU touch：删了重插，最近使用的沉底。
       this.#cache.delete(messageId);
       this.#cache.set(messageId, cached);
       return cached.url;
     }
-    const pending = this.#pending.get(messageId);
+    if (cached !== undefined) {
+      // Same id, new text: the cached audio belongs to another message/edit.
+      this.#cache.delete(messageId);
+      this.#deps?.revokeObjectUrl(cached.url);
+    }
+    const pending = this.#pending.get(pendingKey);
     if (pending !== undefined) return pending;
     const promise = (async () => {
       try {
         const deps = this.#requireDeps();
         const { blob, mimeType } = await deps.synthesize(text);
         const url = deps.createObjectUrl(blob);
-        this.#cache.set(messageId, { url, mimeType, text });
-        this.#evictOverflow();
+        if (this.#latestText.get(messageId) === text) {
+          this.#cache.set(messageId, { url, mimeType, text });
+          this.#evictOverflow();
+        } else {
+          // A newer text for the same id superseded this synthesis.
+          deps.revokeObjectUrl(url);
+        }
         return url;
       } finally {
-        this.#pending.delete(messageId);
+        this.#pending.delete(pendingKey);
       }
     })();
-    this.#pending.set(messageId, promise);
+    this.#pending.set(pendingKey, promise);
     return promise;
   }
 
@@ -202,15 +219,20 @@ class SpeechAudioState {
     this.isPlaying = false;
     this.currentId = null;
   }
+
+  hideMessage(messageId: string): void {
+    if (this.currentId === messageId) this.stop();
+  }
   /**
    * Bot 语音气泡点击：播放中本条 → 暂停；暂停中本条 → 续播；其他 / 空闲 →
    * 打断播报（onManualPlayStart）+ 抢占当前 + 按需合成后播放。无可朗读文字
    * （空提取 / 非 bot text）no-op。返回 promise 便于气泡显示合成加载态。
    */
   toggle(message: Message): Promise<void> {
+    if (this.#deps?.isHidden?.(message) === true) return Promise.resolve();
     const text = this.#speechTextOf(message);
     if (text.length === 0) return Promise.resolve();
-    return this.toggleSource(message.id, () => this.ensureUrl(message.id, text));
+    return this.toggleSource(message.id, () => this.ensureUrl(message.id, text), message);
   }
 
   /**
@@ -220,9 +242,13 @@ class SpeechAudioState {
    * 取源失败 / 播放失败走 onToggleFailure；等源期间又点了别的消息则放弃。
    * 返回 promise 便于组件显示加载态（只等到开始播放或失败）。
    */
-  async toggleSource(messageId: string, loadAudio: () => Promise<string>): Promise<void> {
+  async toggleSource(
+    messageId: string,
+    loadAudio: () => Promise<string>,
+    message?: Message,
+  ): Promise<void> {
     const deps = this.#deps;
-    if (deps === null) return;
+    if (deps === null || (message !== undefined && deps.isHidden?.(message) === true)) return;
     if (this.currentId === messageId) {
       this.#toggleCurrent(deps);
       return;
@@ -238,6 +264,7 @@ class SpeechAudioState {
     try {
       const url = await loadAudio();
       if (myToggle !== this.#toggleSeq) return; // 取源期间用户已改选别的消息
+      if (message !== undefined && deps.isHidden?.(message) === true) return;
       // 播放失败（解码 / 自动播放被拒）只会以 ended reject 冒出（被抢占是
       // resolve，不 reject）——接住走同款失败提示，避免未处理拒绝。
       void this.play({ messageId, audio: url }).ended.catch((error: unknown) =>
@@ -378,6 +405,7 @@ class SpeechAudioState {
     this.currentTime = 0;
     this.duration = 0;
     this.#pending.clear();
+    this.#latestText.clear();
     for (const entry of this.#cache.values()) this.#deps?.revokeObjectUrl(entry.url);
     this.#cache.clear();
     this.#toggleSeq = 0;

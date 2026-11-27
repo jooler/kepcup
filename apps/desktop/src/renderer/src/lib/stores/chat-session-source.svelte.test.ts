@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Message } from '@kepcup/shared';
+import { t } from '$lib/i18n';
 
 /**
  * ChatSession 的来源化（T7 步骤 3）：
@@ -18,6 +19,7 @@ const h = vi.hoisted(() => ({
   localCalls: [] as string[],
   teamHandlers: {} as Record<string, (input: unknown) => unknown>,
   teamCalls: [] as string[],
+  activeMemberId: 'mbr_self' as string | null,
 }));
 
 function emitLocal(event: string, payload: unknown): void {
@@ -160,13 +162,21 @@ function attachTeam(): void {
     h.teamCalls.push(frame.m);
     const handler = h.teamHandlers[frame.m];
     if (frame.i === undefined) return;
-    serverPort.postMessage({
-      t: 's',
-      i: frame.i,
-      ...(handler === undefined ? { e: new Error('not found') } : { r: handler(frame.a[0]) }),
-    });
+    if (handler === undefined) {
+      serverPort.postMessage({ t: 's', i: frame.i, e: new Error('not found') });
+      return;
+    }
+    const result = handler(frame.a[0]);
+    if (result instanceof Promise) {
+      void result.then(
+        (value) => serverPort.postMessage({ t: 's', i: frame.i, r: value }),
+        (error: unknown) => serverPort.postMessage({ t: 's', i: frame.i, e: error }),
+      );
+      return;
+    }
+    serverPort.postMessage({ t: 's', i: frame.i, r: result });
   });
-  rpc.connections.attachTeamPort('h1', clientPort as unknown as MessagePort);
+  rpc.connections.attachTeamPort('h1', clientPort as unknown as MessagePort, h.activeMemberId);
   pushTeamEvent = (name, payload) => {
     serverPort.postMessage({ m: name, a: [payload], t: 'q' });
   };
@@ -175,10 +185,18 @@ function attachTeam(): void {
 const rpc = await import('$lib/rpc/connections.svelte');
 const { chat } = await import('./chat.svelte');
 const { permissions } = await import('./permissions.svelte');
+const { messageVisibility } = await import('./message-visibility.svelte');
+const { voiceMode } = await import('../features/chats/voice-mode.svelte');
+const { speechAudio } = await import('../features/chats/speech-audio.svelte');
 
 beforeEach(() => {
   h.localCalls = [];
   h.teamCalls = [];
+  h.activeMemberId = 'mbr_self';
+  // Hidden-overlay state is process-global; clear the ids these tests use so a
+  // failed assertion cannot leak a mask into the next test.
+  messageVisibility.forget('local', 'c1');
+  messageVisibility.forget('team:h1', 'c1');
   // 事件注册表跨用例保留（订阅方在模块单例里只挂一次；清掉会让它们失联）。
   localState.conversations = [];
   h.teamHandlers = {
@@ -280,6 +298,322 @@ describe('事件隔离与提及角标（id 碰撞：本机 / 团队同 id 各一
     });
     const teamRow = chat.team.slices.h1?.conversations.find((entry) => entry.id === 'c1');
     expect(teamRow?.unreadCount).toBe(1);
+  });
+
+  it('keeps same-id local events out of an open team view while preserving local forwarding', async () => {
+    localState.conversations = [teamConversation('c1', 'direct')];
+    await chat.refresh();
+    const teamRow = teamMessage({ id: 'team-only', seq: 1, content: { text: 'team preview' } });
+    h.teamHandlers['messages.list'] = () => ({ messages: [teamRow] });
+    attachTeam();
+    await chat.select({ source: 'team:h1', id: 'c1' });
+    pushTeamEvent('message.created', { conversationId: 'c1', message: teamRow });
+    await vi.waitFor(() => expect(chat.team.slices.h1?.lastMessageText['c1']).toBe('team preview'));
+
+    messageVisibility.forget('local', 'c1');
+    messageVisibility.setHidden('local', 'c1', 'local-hidden', true);
+    const forwarded: Array<{ conversationId: string; message: Message }> = [];
+    const stop = chat.main.onIncomingMessage((conversationId, message) => {
+      forwarded.push({ conversationId, message });
+    });
+    try {
+      emitLocal('message.created', {
+        conversationId: 'c1',
+        message: teamMessage({ id: 'local-hidden', seq: 2, content: { text: 'LOCAL_SECRET' } }),
+      });
+      emitLocal('message.created', {
+        conversationId: 'c1',
+        message: teamMessage({ id: 'local-visible', seq: 3, content: { text: 'local visible' } }),
+      });
+      await tick();
+
+      expect(chat.main.messages.map((message) => message.id)).toEqual(['team-only']);
+      expect(chat.main.conversation?.lastPreviewSeq).toBe(1);
+      expect(chat.team.slices.h1?.lastMessageText['c1']).toBe('team preview');
+      expect(forwarded.map((entry) => entry.message.id)).toEqual(['local-visible']);
+      expect(chat.conversations.find((row) => row.id === 'c1')?.unreadCount).toBe(2);
+    } finally {
+      stop();
+      messageVisibility.forget('local', 'c1');
+    }
+  });
+
+  it('hard-clears an open account, rejects stale refreshes, and reloads the new account slice', async () => {
+    attachTeam();
+    await chat.select({ source: 'team:h1', id: 'c1' });
+    expect(chat.currentId).toBe('c1');
+    voiceMode.enter('c1');
+    const stopAudio = vi.spyOn(speechAudio, 'stop');
+    let resolveOldList!: (value: { conversations: unknown[] }) => void;
+    const oldList = new Promise<{ conversations: unknown[] }>((resolve) => {
+      resolveOldList = resolve;
+    });
+    h.teamHandlers['conversations.list'] = () => oldList;
+    attachTeam();
+    await vi.waitFor(() =>
+      expect(
+        h.teamCalls.filter((method) => method === 'conversations.list').length,
+      ).toBeGreaterThan(1),
+    );
+
+    const connection = rpc.connections.get('team:h1');
+    (connection as unknown as { memberId: string | null }).memberId = 'mbr_other';
+    expect(chat.current).toBeNull();
+    expect(chat.team.slices.h1?.conversations).toEqual([]);
+    expect(voiceMode.active).toBe(false);
+    expect(stopAudio).toHaveBeenCalled();
+
+    pushTeamEvent('message.created', {
+      conversationId: 'c1',
+      message: teamMessage({ id: 'old-port-after-switch', seq: 2 }),
+    });
+    await tick();
+    expect(chat.team.slices.h1?.conversations).toEqual([]);
+
+    h.activeMemberId = 'mbr_other';
+    h.teamHandlers['conversations.list'] = () => ({
+      conversations: [teamConversation('c2', 'direct')],
+    });
+    attachTeam();
+    resolveOldList({ conversations: [teamConversation('c1', 'direct')] });
+    await vi.waitFor(() =>
+      expect(chat.team.slices.h1?.conversations.map((row) => row.id)).toEqual(['c2']),
+    );
+    await tick();
+    expect(chat.team.slices.h1?.conversations.map((row) => row.id)).toEqual(['c2']);
+    stopAudio.mockRestore();
+    voiceMode.exit();
+  });
+
+  it('team previews ignore later system events and advance only on previewable rows', async () => {
+    attachTeam();
+    await vi.waitFor(() => {
+      expect(chat.team.slices.h1?.conversations.some((row) => row.id === 'c1')).toBe(true);
+    });
+    messageVisibility.forget('team:h1', 'c1');
+    messageVisibility.setHidden('team:h1', 'c1', 'team-preview-hidden', true);
+    pushTeamEvent('message.created', {
+      conversationId: 'c1',
+      message: teamMessage({ id: 'team-preview-hidden', seq: 2 }),
+    });
+    await vi.waitFor(() => {
+      const row = chat.team.slices.h1?.conversations.find((entry) => entry.id === 'c1');
+      expect(row?.lastPreviewSeq).toBe(2);
+      expect(chat.team.slices.h1?.lastMessageText['c1']).toBe(t('messages.hidden'));
+    });
+    pushTeamEvent('message.created', {
+      conversationId: 'c1',
+      message: teamMessage({
+        id: 'team-system',
+        seq: 3,
+        senderType: 'system',
+        senderBotId: null,
+        kind: 'system_event',
+        content: { event: 'run_done', text: 'done' },
+      }),
+    });
+    await tick();
+    let row = chat.team.slices.h1?.conversations.find((entry) => entry.id === 'c1');
+    expect(row?.lastPreviewSeq).toBe(2);
+    expect(chat.team.slices.h1?.lastMessageText['c1']).toBe(t('messages.hidden'));
+
+    pushTeamEvent('message.created', {
+      conversationId: 'c1',
+      message: teamMessage({ id: 'team-preview-visible', seq: 4, content: { text: 'visible' } }),
+    });
+    await vi.waitFor(() => {
+      row = chat.team.slices.h1?.conversations.find((entry) => entry.id === 'c1');
+      expect(row?.lastPreviewSeq).toBe(4);
+      expect(chat.team.slices.h1?.lastMessageText['c1']).toBe('visible');
+    });
+    chat.team.applyMessagePreview('team:h1', 'c1', null);
+    expect(chat.team.slices.h1?.lastMessageText['c1']).toBe('');
+    expect(
+      chat.team.slices.h1?.conversations.find((entry) => entry.id === 'c1')?.lastPreviewSeq,
+    ).toBeUndefined();
+    messageVisibility.forget('team:h1', 'c1');
+  });
+
+  it('reconciles team previews after recall and edit instead of keeping a stale placeholder', async () => {
+    attachTeam();
+    await vi.waitFor(() =>
+      expect(chat.team.slices.h1?.conversations.some((row) => row.id === 'c1')).toBe(true),
+    );
+    const previous = teamMessage({ id: 'preview-previous', seq: 1, content: { text: 'previous' } });
+    const latest = teamMessage({ id: 'preview-latest', seq: 2, content: { text: 'latest' } });
+    let serverMessages: Message[] = [previous, latest];
+    h.teamHandlers['messages.list'] = () => ({ messages: serverMessages });
+    pushTeamEvent('message.created', { conversationId: 'c1', message: previous });
+    pushTeamEvent('message.created', { conversationId: 'c1', message: latest });
+    await vi.waitFor(() => expect(chat.team.slices.h1?.lastMessageText['c1']).toBe('latest'));
+
+    const recalled = { ...latest, status: 'recalled' as const };
+    serverMessages = [previous, recalled];
+    pushTeamEvent('message.updated', { conversationId: 'c1', message: recalled });
+    await vi.waitFor(() => {
+      expect(chat.team.slices.h1?.lastMessageText['c1']).toBe('previous');
+      expect(
+        chat.team.slices.h1?.conversations.find((row) => row.id === 'c1')?.lastPreviewSeq,
+      ).toBe(1);
+    });
+
+    const edited = { ...previous, status: 'edited' as const, content: { text: 'edited previous' } };
+    serverMessages = [edited, recalled];
+    pushTeamEvent('message.updated', { conversationId: 'c1', message: edited });
+    await vi.waitFor(() =>
+      expect(chat.team.slices.h1?.lastMessageText['c1']).toBe('edited previous'),
+    );
+  });
+
+  it('keeps a hidden preview outside a full system-event window masked after message.updated', async () => {
+    attachTeam();
+    await vi.waitFor(() =>
+      expect(chat.team.slices.h1?.conversations.some((row) => row.id === 'c1')).toBe(true),
+    );
+    messageVisibility.forget('team:h1', 'c1');
+    messageVisibility.setHidden('team:h1', 'c1', 'team-preview-hidden', true);
+    pushTeamEvent('message.created', {
+      conversationId: 'c1',
+      message: teamMessage({
+        id: 'team-preview-hidden',
+        seq: 2,
+        content: { text: 'HIDDEN_ORIGINAL' },
+      }),
+    });
+    await vi.waitFor(() => {
+      expect(chat.team.slices.h1?.lastMessageText['c1']).toBe(t('messages.hidden'));
+    });
+
+    // The newest 60 rows are all system events, so the previewable hidden row
+    // sits outside the loaded window: an empty preview result is not authoritative.
+    h.teamHandlers['messages.list'] = () => ({
+      messages: Array.from({ length: 60 }, (_, index) =>
+        teamMessage({
+          id: `system-${index}`,
+          seq: 10 + index,
+          senderType: 'system',
+          senderBotId: null,
+          kind: 'system_event',
+          content: { event: 'run_done', text: 'done' },
+        }),
+      ),
+    });
+    let listCalls = h.teamCalls.filter((method) => method === 'messages.list').length;
+    // Only a row that owned the preview is re-read: recalling the hidden
+    // preview row itself. An unrelated system event must not trigger an RPC.
+    pushTeamEvent('message.updated', {
+      conversationId: 'c1',
+      message: { ...teamMessage({ id: 'team-preview-hidden', seq: 2 }), status: 'recalled' },
+    });
+    await vi.waitFor(() =>
+      expect(h.teamCalls.filter((method) => method === 'messages.list').length).toBe(listCalls + 1),
+    );
+    await tick();
+    let row = chat.team.slices.h1?.conversations.find((entry) => entry.id === 'c1');
+    expect(row?.lastPreviewSeq).toBe(2);
+    expect(chat.team.slices.h1?.lastMessageText['c1']).toBe(t('messages.hidden'));
+    expect(messageVisibility.previewHidden('team:h1', 'c1')).toBe(true);
+    // A system-event update that owned no preview does not re-read.
+    pushTeamEvent('message.updated', {
+      conversationId: 'c1',
+      message: teamMessage({
+        id: 'system-59',
+        seq: 69,
+        senderType: 'system',
+        senderBotId: null,
+        kind: 'system_event',
+        content: { event: 'run_done', text: 'done' },
+      }),
+    });
+    await tick();
+    await tick();
+    expect(h.teamCalls.filter((method) => method === 'messages.list').length).toBe(listCalls + 1);
+
+    // A complete window (fewer than 60 rows) is authoritative: the mask clears.
+    h.teamHandlers['messages.list'] = () => ({ messages: [] });
+    listCalls = h.teamCalls.filter((method) => method === 'messages.list').length;
+    pushTeamEvent('message.updated', {
+      conversationId: 'c1',
+      message: { ...teamMessage({ id: 'team-preview-hidden', seq: 2 }), status: 'recalled' },
+    });
+    await vi.waitFor(() =>
+      expect(h.teamCalls.filter((method) => method === 'messages.list').length).toBe(listCalls + 1),
+    );
+    await vi.waitFor(() => {
+      row = chat.team.slices.h1?.conversations.find((entry) => entry.id === 'c1');
+      expect(row?.lastPreviewSeq).toBeUndefined();
+      expect(chat.team.slices.h1?.lastMessageText['c1']).toBe('');
+      expect(messageVisibility.previewHidden('team:h1', 'c1')).toBe(false);
+    });
+    messageVisibility.forget('team:h1', 'c1');
+  });
+
+  it('keeps team row preview metadata across conversation.updated events that omit it', async () => {
+    attachTeam();
+    await vi.waitFor(() =>
+      expect(chat.team.slices.h1?.conversations.some((row) => row.id === 'c1')).toBe(true),
+    );
+    messageVisibility.forget('team:h1', 'c1');
+    messageVisibility.setHidden('team:h1', 'c1', 'row-preview-hidden', true);
+    pushTeamEvent('message.created', {
+      conversationId: 'c1',
+      message: teamMessage({ id: 'row-preview-hidden', seq: 2, content: { text: 'SECRET' } }),
+    });
+    await vi.waitFor(() => {
+      const row = chat.team.slices.h1?.conversations.find((entry) => entry.id === 'c1');
+      expect(row?.lastPreviewSeq).toBe(2);
+    });
+    pushTeamEvent('conversation.updated', { conversation: teamConversation('c1', 'direct') });
+    await tick();
+    const row = chat.team.slices.h1?.conversations.find((entry) => entry.id === 'c1');
+    expect(row?.lastPreviewSeq).toBe(2);
+    expect(chat.team.slices.h1?.lastMessageText['c1']).toBe(t('messages.hidden'));
+    messageVisibility.forget('team:h1', 'c1');
+  });
+
+  it('discards a slow preview re-read superseded by a newer message', async () => {
+    attachTeam();
+    await vi.waitFor(() =>
+      expect(chat.team.slices.h1?.conversations.some((row) => row.id === 'c1')).toBe(true),
+    );
+    messageVisibility.forget('team:h1', 'c1');
+    const previous = teamMessage({ id: 'slow-previous', seq: 1, content: { text: 'previous' } });
+    const latest = teamMessage({ id: 'slow-latest', seq: 2, content: { text: 'latest' } });
+    h.teamHandlers['messages.list'] = () => ({ messages: [previous, latest] });
+    pushTeamEvent('message.created', { conversationId: 'c1', message: previous });
+    pushTeamEvent('message.created', { conversationId: 'c1', message: latest });
+    await vi.waitFor(() => expect(chat.team.slices.h1?.lastMessageText['c1']).toBe('latest'));
+
+    // Recall the preview row; the re-read is slow and will return the old window.
+    let resolveSlow!: (value: { messages: Message[] }) => void;
+    h.teamHandlers['messages.list'] = () =>
+      new Promise<{ messages: Message[] }>((resolve) => {
+        resolveSlow = resolve;
+      });
+    pushTeamEvent('message.updated', {
+      conversationId: 'c1',
+      message: { ...latest, status: 'recalled' },
+    });
+    // Let the coalesced re-read start before the newer message arrives.
+    await tick();
+    expect(h.teamCalls.filter((method) => method === 'messages.list').length).toBeGreaterThan(0);
+    const newer = teamMessage({ id: 'slow-newer', seq: 3, content: { text: 'newer' } });
+    pushTeamEvent('message.created', { conversationId: 'c1', message: newer });
+    await vi.waitFor(() => {
+      const row = chat.team.slices.h1?.conversations.find((entry) => entry.id === 'c1');
+      expect(row?.lastPreviewSeq).toBe(3);
+      expect(chat.team.slices.h1?.lastMessageText['c1']).toBe('newer');
+    });
+
+    // The stale response must not resurrect the recalled preview.
+    resolveSlow({ messages: [previous] });
+    await tick();
+    await tick();
+    expect(chat.team.slices.h1?.lastMessageText['c1']).toBe('newer');
+    expect(
+      chat.team.slices.h1?.conversations.find((entry) => entry.id === 'c1')?.lastPreviewSeq,
+    ).toBe(3);
+    messageVisibility.forget('team:h1', 'c1');
   });
 
   it('被 @（principal:<自己>）在团队切片落提及角标并提醒', async () => {

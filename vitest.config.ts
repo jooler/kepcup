@@ -109,6 +109,11 @@ export default defineConfig({
       {
         test: { name: 'infra-relay', include: ['infra/cloudflare/relay/test/**/*.test.ts'] },
       },
+      // AI 内容举报 Worker（Microsoft Store 11.16, todo/ai-content-reporting.md §7）:
+      // infra/cloudflare/reports,D1Like 用 node:sqlite 内存库,不用 wrangler/miniflare。
+      {
+        test: { name: 'infra-reports', include: ['infra/cloudflare/reports/test/**/*.test.ts'] },
+      },
       {
         test: {
           name: 'desktop',

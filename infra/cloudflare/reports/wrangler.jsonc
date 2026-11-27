@@ -1,0 +1,51 @@
+{
+  // AI 生成内容举报 Worker（Microsoft Store 11.16，方案 todo/ai-content-reporting.md §11.2）：
+  // Workers + D1 + Cron；接收桌面端 👎 举报，重算 hash 校验后按 client 去重入库，
+  // 供 admin API（bearer token）triage。与 registry 一样是独立部署单元（独立 D1 / 域名）。
+  // 已于 2026-11-27 部署上线（D1 / secrets / custom domain 齐备，见 README「部署状态」）。
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "kepcup-reports",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "kepcup-reports",
+      // 阶段 2（2026-11-27）`wrangler d1 create kepcup-reports` 建库后回填；
+      // 资源标识，不是机密（对照 registry/wrangler.jsonc）。
+      "database_id": "1e63e07f-bd54-40b3-852f-7b4665bdc7d1",
+    },
+  ],
+  // custom domain：部署时 Cloudflare 自动创建 reports.kepcup.com 的 DNS 记录与证书。
+  "routes": [{ "pattern": "reports.kepcup.com", "custom_domain": true }],
+  // 每日 04:23 UTC 清理过期行（reports 保留期 / rate 窗口，见 schema.sql 注释）。
+  "triggers": {
+    "crons": ["23 4 * * *"],
+  },
+  "vars": {
+    // 客户端限流：同一 client_id 两次被受理的最小间隔（1/分钟）。
+    "REPORT_RATE_LIMIT_MS": "60000",
+    // IP 粗限流：每个 HMAC(ip) 每 1 小时窗口最多受理条数。
+    "REPORT_IP_LIMIT": "100",
+    "REPORT_IP_WINDOW_MS": "3600000",
+    // 去重窗口（§5.5 时间桶）：content 24h、payload 90 天；与
+    // packages/shared/src/domain/report.ts 的 REPORT_*_DEDUPE_MS 默认值保持一致。
+    "REPORT_CONTENT_DEDUPE_MS": "86400000",
+    "REPORT_PAYLOAD_DEDUPE_MS": "7776000000",
+    // 保留期：cron 删除 received_at 早于该天数的 reports（§7.3）。
+    "REPORT_RETENTION_DAYS": "365",
+    // 反滥用（任务 5A）：PoW 难度（解的前导零比特数，0 = 逃生开关关闭 PoW）、
+    // challenge 有效期、全局日上限（UTC 日受理数，超过 429 至次日 UTC）。
+    "REPORT_POW_DIFFICULTY": "20",
+    "REPORT_POW_TTL_MS": "600000",
+    "REPORT_DAILY_LIMIT": "2000",
+    "BUILD_VERSION": "1.0.0",
+  },
+  // Secrets（wrangler secret put，不写进本文件）：
+  //   REPORT_ADMIN_TOKEN  admin API bearer（随机 32 字节 hex）；未配置时 admin 路径一律 404。
+  //   IP_HASH_SALT        IP 哈希的 HMAC 盐；未配置时跳过 IP 限流（部署必配，见 src/worker.ts）。
+  //   REPORT_POW_SECRET   PoW challenge 签名密钥（随机 32 字节 hex）；未配置时不启用 PoW（部署必配）。
+}

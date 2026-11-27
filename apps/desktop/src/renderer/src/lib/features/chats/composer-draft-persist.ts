@@ -13,6 +13,7 @@
  */
 
 import type { JSONContent } from '@tiptap/core';
+import type { SourceId } from '$lib/rpc/connections.svelte';
 
 export interface PersistedAttachment {
   attachmentId: string;
@@ -30,6 +31,11 @@ export interface ComposerReplyRef {
   senderBotId: string | null;
   text: string;
   attachments?: PersistedAttachment[];
+  /**
+   * 该引用所属来源（`local` / `team:<hash>`）。可选：旧快照无此字段，按当前
+   * 来源处理；跨来源同 id 会话（本机 c1 vs 团队 c1）不得复用彼此的引用。
+   */
+  source?: SourceId;
 }
 
 export interface PersistedComposerDraft {
@@ -183,6 +189,11 @@ function normalizeReply(value: unknown): ComposerReplyRef | null {
   const senderBotId = typeof record.senderBotId === 'string' ? record.senderBotId : null;
   const text =
     typeof record.text === 'string' ? record.text.slice(0, MAX_PERSISTED_REPLY_TEXT) : '';
+  const source =
+    record.source === 'local' ||
+    (typeof record.source === 'string' && record.source.startsWith('team:'))
+      ? (record.source as SourceId)
+      : undefined;
   const attachments = Array.isArray(record.attachments)
     ? record.attachments
         .map(normalizeAttachment)
@@ -193,6 +204,7 @@ function normalizeReply(value: unknown): ComposerReplyRef | null {
     senderType: record.senderType,
     senderBotId,
     text,
+    ...(source !== undefined ? { source } : {}),
     ...(attachments.length > 0 ? { attachments } : {}),
   };
 }

@@ -83,6 +83,9 @@ describe('0073 tool_usage_ledger migration', () => {
       db.exec('drop table conversation_notes;');
       // 0076（D125 插件运行时）的 plugin_storage 同样摘除，否则回放到 0076 时建表冲突。
       db.exec('drop table plugin_storage;');
+      // 0084（AI 内容举报）的两张表同样摘除，否则回放到 0084 时建表冲突。
+      db.exec('drop table report_outbox;');
+      db.exec('drop table message_reactions;');
       db.exec('alter table usage_ledger drop column capability;');
       db.exec('alter table usage_ledger drop column model_entry_id;');
       // 0077–0080（团队服务器主体缝）的新增物同样摘除：conversation_principals /

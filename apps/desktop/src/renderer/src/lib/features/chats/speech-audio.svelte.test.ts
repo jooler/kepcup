@@ -1,7 +1,17 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Message } from '@kepcup/shared';
 import { speechAudio, type SpeechAudioDeps, type SpeechAudioElement } from './speech-audio.svelte';
 import { voiceMode } from './voice-mode.svelte';
+import { messageVisibility } from '$lib/stores/message-visibility.svelte';
+import { applyMessageSpeechVisibility } from './message-speech-visibility';
+
+const teamContextMock = vi.hoisted(() => ({
+  active: false,
+  member: null as { id: string } | null,
+}));
+vi.mock('$lib/features/team/team-context.svelte', () => ({
+  teamContext: teamContextMock,
+}));
 
 /**
  * Bot 语音音频缓存与播放仲裁（docs/design/53-voice-conversation.md 修订 v2
@@ -163,6 +173,68 @@ describe('toggle（手动朗读开关）', () => {
     speechAudio.__resetForTest();
     h = createHarness();
     speechAudio.configure(h.deps);
+    // Hidden overlay is process-global; clear the id this block uses.
+    messageVisibility.forget('local', 'conv_scope_speech');
+  });
+
+  it('does not synthesize or play a hidden Bot message', async () => {
+    h.deps.isHidden = () => true;
+    await speechAudio.toggle(botTextMessage());
+    expect(h.synthCalls).toEqual([]);
+    expect(h.elements).toEqual([]);
+    expect(h.manualPlayStarts).toBe(0);
+  });
+
+  it('cancels manual audio on a local team viewer scope change while voice mode is inactive', async () => {
+    const conversationId = 'conv_scope_speech';
+    const message = botTextMessage({ id: 'scope-speech', conversationId });
+    voiceMode.exit();
+    teamContextMock.active = true;
+    teamContextMock.member = { id: 'viewer_a' };
+    messageVisibility.forget('local', conversationId);
+    h.deps.isHidden = (candidate) =>
+      messageVisibility.isHidden('local', candidate.conversationId, candidate.id);
+    try {
+      await toggleAndPlay(message, h);
+      expect(voiceMode.active).toBe(false);
+      expect(speechAudio.currentId).toBe(message.id);
+      teamContextMock.member = { id: 'viewer_b' };
+      messageVisibility.setHidden('local', conversationId, message.id, true);
+      const display = applyMessageSpeechVisibility('local', conversationId, [message]);
+      expect(display[0]?.hidden).toBe(true);
+      expect(speechAudio.currentId).toBeNull();
+      expect(speechAudio.isPlaying).toBe(false);
+      expect(h.elements[0]?.pauseCalls).toBe(1);
+    } finally {
+      messageVisibility.forget('local', conversationId);
+      teamContextMock.active = false;
+      teamContextMock.member = null;
+    }
+  });
+
+  it('hide during manual synthesis prevents the late audio from playing', async () => {
+    let hidden = false;
+    h.deps.isHidden = () => hidden;
+    const pending = speechAudio.toggle(botTextMessage({ id: 'm1' }));
+    await tick();
+    expect(h.synthCalls).toEqual(['你好，世界']);
+    hidden = true;
+    speechAudio.hideMessage('m1');
+    h.resolveSynth();
+    await pending;
+    await tick();
+    expect(h.elements).toEqual([]);
+    expect(speechAudio.currentId).toBeNull();
+  });
+
+  it('hideMessage stops only the matching current manual audio', async () => {
+    await toggleAndPlay(botTextMessage({ id: 'm1' }), h);
+    speechAudio.hideMessage('other');
+    expect(speechAudio.currentId).toBe('m1');
+    speechAudio.hideMessage('m1');
+    expect(speechAudio.currentId).toBeNull();
+    expect(speechAudio.isPlaying).toBe(false);
+    expect(h.elements[0]?.pauseCalls).toBe(1);
   });
 
   it('空闲点击：合成一次并播放（唯一元素、onManualPlayStart 通知）', async () => {
@@ -417,6 +489,25 @@ describe('缓存（LRU，逐出即 revoke）', () => {
 
     await toggleAndPlay(botTextMessage({ id: 'm21', content: { text: '第21条' } }), h);
     expect(h.synthCalls).toHaveLength(22); // m21 仍在缓存
+  });
+
+  it('same message id with different text is re-synthesized (cross-source collision)', async () => {
+    const first = speechAudio.ensureUrl('m_same', 'local 的原文');
+    h.resolveSynth();
+    await expect(first).resolves.toBe('blob:u1');
+    expect(h.synthCalls).toEqual(['local 的原文']);
+
+    // Team conversation shares the id but has different text: cached audio for
+    // the local message must not be reused.
+    const second = speechAudio.ensureUrl('m_same', '团队的不同原文');
+    h.resolveSynth();
+    await expect(second).resolves.toBe('blob:u2');
+    expect(h.synthCalls).toEqual(['local 的原文', '团队的不同原文']);
+    expect(h.revokedUrls).toEqual(['blob:u1']);
+
+    // Same text again hits the cache (no third synthesis).
+    await expect(speechAudio.ensureUrl('m_same', '团队的不同原文')).resolves.toBe('blob:u2');
+    expect(h.synthCalls).toHaveLength(2);
   });
 
   it('在播条目不逐出：挤占时 revoke 的是别人，在播的仍命中缓存', async () => {

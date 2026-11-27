@@ -60,7 +60,7 @@ export interface TeamServersDeps {
   writeFile(path: string, contents: string): Promise<void>;
   createChannel(): BridgeChannel;
   /** port2 → 渲染层（index.ts 接 webContents.postMessage('team-port', …)）。 */
-  postPort(serverHash: string, port: BridgePortLike): void;
+  postPort(serverHash: string, port: BridgePortLike, activeMemberId: string | null): void;
   openSocket?: OpenTeamSocket;
   /** 状态 / 名单有任何变化时通知渲染层（ipc 事件 team-servers:changed）。 */
   onChanged(): void;
@@ -185,7 +185,10 @@ export class TeamServers {
     this.#bridge = new TeamServerBridge(
       {
         createChannel: deps.createChannel,
-        postPort: deps.postPort,
+        postPort: (serverHash, port) => {
+          const activeMemberId = this.#state?.servers[serverHash]?.activeMemberId ?? null;
+          this.#deps.postPort(serverHash, port, activeMemberId);
+        },
         openSocket: deps.openSocket ?? openTeamSocket,
         fetch: deps.fetch,
         log: deps.log,
@@ -460,7 +463,8 @@ export class TeamServers {
   }
 
   /**
-   * 换激活账号：active 换人；桥接存在时先拆再按新账号凭据重连——新账号有可用 token
+   * 换激活账号：先拆旧桥接再写新 active / 重连——否则仍在重试的旧端口可能在
+   * 身份切换后被盖上新账号（postPort 读当前 active）。新账号有可用 token
    * （内存或已存）则重连，否则置 `unauthenticated`（等用户 login；不自动重试）。
    */
   async switchAccount(input: { serverHash: string; memberId: string }): Promise<{ ok: true }> {
@@ -469,11 +473,14 @@ export class TeamServers {
     if (!server.accounts.some((account) => account.memberId === input.memberId)) {
       throw teamRpcError('NOT_FOUND', '该成员账号不在本设备登录记录中');
     }
-    server.activeMemberId = input.memberId;
-    await this.#persist();
-    if (this.#bridge.has(input.serverHash)) {
+    const hadBridge = this.#bridge.has(input.serverHash);
+    if (hadBridge) {
       this.#bridge.disconnect(input.serverHash);
       this.#setStatus(input.serverHash, 'idle');
+    }
+    server.activeMemberId = input.memberId;
+    await this.#persist();
+    if (hadBridge) {
       const token = await this.#activeToken(state, input.serverHash);
       if (token !== null) {
         this.#bridge.connect(input.serverHash, { url: server.url, token });

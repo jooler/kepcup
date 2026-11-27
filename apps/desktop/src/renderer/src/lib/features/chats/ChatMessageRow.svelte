@@ -1,16 +1,21 @@
 <script lang="ts">
   import type { Component } from 'svelte';
-  import type { Message } from '@kepcup/shared';
   import {
     AlarmClock,
     ClipboardList,
     Copy,
+    Eye,
+    EyeClosed,
+    EyeOff,
+    MoreHorizontal,
     Pin,
     Reply,
+    ShieldAlert,
     Undo2,
     type LucideIcon,
   } from '@lucide/svelte';
   import * as Tooltip from '$lib/components/ui/tooltip/index.js';
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
   import { toast } from 'svelte-sonner';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
@@ -24,6 +29,10 @@
   import { connections } from '$lib/rpc/connections.svelte';
   import { teamContext } from '$lib/features/team/team-context.svelte';
   import MessageBody from './MessageBody.svelte';
+  import MessageReactionBar from './MessageReactionBar.svelte';
+  import MessageReactionChips from './MessageReactionChips.svelte';
+  import { messageReactions, REPORT_EMOJI } from './message-reactions.svelte';
+  import { reactionTargetOf } from './message-reaction-target';
   import { avatarOriginBotName, exchangeMessageShape, teamMessageSide } from './exchange-message';
   import MessageAttachments from './MessageAttachments.svelte';
   import QuotedMedia from './QuotedMedia.svelte';
@@ -32,21 +41,23 @@
   import { stickies } from './stickies.svelte';
   import { voiceRecordingOf } from './voice-message';
   import { clientIdentity } from '$lib/features/collab/client-identity';
+  import { messageVisibility, type DisplayMessage } from '$lib/stores/message-visibility.svelte';
 
   /**
-   * 普通对话消息行（用户 / Bot 文本消息）：负责布局与交互——用户消息反向
-   * 排列、项目组头像列、引用行、hover 操作（引用/复制/固定/撤回）与右键
-   * 菜单、证据跳转高亮。气泡内容与附件分别委托 MessageBody /
-   * MessageAttachments（附件在上、正文在下）：后续多模态支持（图片、音
-   * 频、视频等）只扩展那两层，本行的布局与操作保持稳定。merge 为连排信
-   * 息，透传给 MessageBody 决定对齐侧圆角。isLast 标记本行是否为会话记录
-   * 最后一条（撤回按钮只挂在其用户消息上）。
+   * Message row layout and interactions: user-side reversal, project avatars,
+   * quoted previews, hover reaction/copy/recall/More actions, the context menu,
+   * and evidence highlighting. Hidden Bot rows render only the accessible
+   * placeholder. MessageBody and MessageAttachments own bubble content.
    */
   let {
     message,
     isLast = false,
     merge = { above: false, below: false },
-  }: { message: Message; isLast?: boolean; merge?: { above: boolean; below: boolean } } = $props();
+  }: {
+    message: DisplayMessage;
+    isLast?: boolean;
+    merge?: { above: boolean; below: boolean };
+  } = $props();
 
   const isUser = $derived(message.senderType === 'user');
   /** D71：另一个 Bot 代用户转交的消息（B 的私聊）——标注来源，不可撤回。 */
@@ -98,6 +109,10 @@
   // v2.3 交换会话双侧都是 Bot——两边都带头像，同一 Bot 连续消息只有第一条
   // 带（merge.above 为真时留同尺寸占位，保持对齐不塌）。
   const session = getChatSession();
+  const isHidden = $derived(
+    message.senderType === 'bot' &&
+      messageVisibility.isHidden(session.source, message.conversationId, message.id),
+  );
   const isProjectChat = $derived(session.view?.conversation.type === 'project');
   /**
    * v2.3 交换会话形态：发起方 A 相当于这条对话里的「用户」——消息居右、
@@ -137,7 +152,7 @@
   const teamPeerName = $derived(
     teamPeer === null
       ? ''
-      : (teamPeer.senderName || teamPeerMember?.displayName || teamPeer.principalId || ''),
+      : teamPeer.senderName || teamPeerMember?.displayName || teamPeer.principalId || '',
   );
   /** T10 预留：分身代回（origin='avatar'）的气泡徽标数据；非分身消息为 null。 */
   const avatarBadgeName = $derived(avatarOriginBotName(message));
@@ -162,6 +177,11 @@
       ? (session.view?.messages.find((m) => m.id === message.replyTo) ?? null)
       : null,
   );
+  const quotedHidden = $derived(
+    quoted !== null &&
+      quoted.senderType === 'bot' &&
+      messageVisibility.isHidden(session.source, quoted.conversationId, quoted.id),
+  );
   const quotedName = $derived.by(() => {
     if (quoted === null) return '';
     if (quoted.senderType === 'user') {
@@ -170,7 +190,9 @@
       if (side?.side === 'peer') {
         return (
           side.senderName ||
-          (side.principalId !== null ? (teamContext.memberById(side.principalId)?.displayName ?? side.principalId) : '') ||
+          (side.principalId !== null
+            ? (teamContext.memberById(side.principalId)?.displayName ?? side.principalId)
+            : '') ||
           settingsStore.userDisplayName
         );
       }
@@ -194,6 +216,32 @@
 
   // hover / 右键共用的操作集合：引用对所有消息可用。
   const canAct = $derived(message.status !== 'recalled');
+  const canHide = $derived(!isHidden && message.senderType === 'bot' && canAct);
+  /**
+   * 可反应 / 可举报的消息（AI 内容举报 §3.1 / §4.1）：Bot 发出的 text / card
+   * 且未撤回。交换会话两侧都是 Bot——B 侧消息同样可举报；团队对端成员消息
+   * senderType 非 bot，天然不出入口。
+   */
+  const canReact = $derived(
+    !isHidden &&
+      message.senderType === 'bot' &&
+      (message.kind === 'text' || message.kind === 'card') &&
+      message.status !== 'recalled',
+  );
+  /** 一次 reaction / 举报点击所需的全部输入（Bar 与右键菜单共用同一构造）。 */
+  const reactionTarget = $derived(canReact ? reactionTargetOf(session, message) : null);
+  // 进入会话时预取整个 conversation 的 reaction 聚合（幂等，store 内部去重；
+  // core 无 reaction 事件，靠打开时一次拉取）。挂在消息行上而非会话 store，
+  // 是为了不改既有 store 的行为。
+  $effect(() => {
+    void messageReactions.prefetch(session.source, message.conversationId);
+  });
+  /** 举报不当内容（§4.5）：与 👎 完全同流程——记 👎 reaction + reports.submit，无确认。 */
+  function reportMessage(): void {
+    if (reactionTarget === null) return;
+    messageReactions.handleReact(reactionTarget, REPORT_EMOJI);
+  }
+
   /** 可复制的纯文本：仅文本消息（卡片、任务事件等结构化内容不提供复制）。 */
   const messageText = $derived('text' in message.content ? message.content.text : '');
   const hasText = $derived(messageText.length > 0);
@@ -203,9 +251,9 @@
       ? (message.content.artifacts ?? [])
       : [],
   );
-  const canCopy = $derived(canAct && hasText);
+  const canCopy = $derived(!isHidden && canAct && hasText);
   /** 整条钉为便签：便签是纯文本，只对有正文的消息提供（与复制同一门槛）。 */
-  const canPin = $derived(canAct && hasText);
+  const canPin = $derived(!isHidden && canAct && hasText);
   /**
    * 撤回（design/02 §撤回与编辑）：只挂在本会话记录最后一条用户消息上（转交消息
    * 除外）。团队上下文（T5）只挂在自己的消息上——对端成员的消息不可撤回。
@@ -237,10 +285,18 @@
   }
 
   function quote(): void {
+    if (isHidden) return;
     session.startReply(message);
   }
 
+  function setHidden(hidden: boolean): void {
+    if (hidden && !canHide) return;
+    if (!hidden && !isHidden) return;
+    session.setMessageHidden(message.id, hidden);
+  }
+
   async function copyText(): Promise<void> {
+    if (isHidden) return;
     try {
       await navigator.clipboard.writeText(messageText);
     } catch {
@@ -254,18 +310,37 @@
 
   /** 整条消息钉成便签（与选中文本钉便签同一入口，作用域在便签卡片上切换）。 */
   function pinMessage(): void {
+    if (isHidden) return;
     const conversationId = session.view?.conversation.id;
     if (conversationId === undefined) return;
     stickies.pin(messageText, conversationId, 'conversation');
   }
 
-  function openMenu(event: MouseEvent): void {
-    if (!canAct) return;
-    event.preventDefault();
+  function openMenuAt(x: number, y: number): void {
     menuPos = {
-      x: Math.min(event.clientX, window.innerWidth - 170),
-      y: Math.min(event.clientY, window.innerHeight - 130),
+      x: Math.min(x, window.innerWidth - 170),
+      y: Math.min(y, window.innerHeight - 130),
     };
+  }
+
+  function openMenu(event: MouseEvent): void {
+    if (!canAct && !isHidden) return;
+    event.preventDefault();
+    openMenuAt(event.clientX, event.clientY);
+  }
+
+  function openHiddenMenuFromKeyboard(event: KeyboardEvent): void {
+    if (
+      event.key !== 'Enter' &&
+      event.key !== ' ' &&
+      event.key !== 'ContextMenu' &&
+      !(event.shiftKey && event.key === 'F10')
+    ) {
+      return;
+    }
+    event.preventDefault();
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    openMenuAt(rect.left, rect.bottom);
   }
 </script>
 
@@ -283,247 +358,289 @@
 {/snippet}
 
 <div
-  class="group flex w-full gap-2 rounded-md py-0.5 {userSide
-    ? 'flex-row-reverse'
-    : 'flex-row'} {session.highlightMessageId === message.id
-    ? 'bg-accent/60 ring-1 ring-accent transition-colors'
-    : ''}"
+  class={isHidden
+    ? 'w-full'
+    : `group flex w-full gap-2 rounded-md py-0.5 ${userSide ? 'flex-row-reverse' : 'flex-row'} ${
+        session.highlightMessageId === message.id
+          ? 'bg-accent/60 ring-1 ring-accent transition-colors'
+          : ''
+      }`}
   role="group"
-  aria-label={exchangeShape !== null
-    ? avatarName
-    : teamPeer !== null
-      ? teamPeerName
-      : isUser
-        ? settingsStore.userDisplayName
-        : name}
+  aria-label={isHidden
+    ? t('messages.hidden')
+    : exchangeShape !== null
+      ? avatarName
+      : teamPeer !== null
+        ? teamPeerName
+        : isUser
+          ? settingsStore.userDisplayName
+          : name}
   data-testid={`message-${message.id}`}
   data-message-status={message.status}
   data-highlighted={session.highlightMessageId === message.id ? 'true' : 'false'}
   oncontextmenu={openMenu}
 >
-  {#if exchangeChat}
-    <!-- v2.3 交换会话：双侧 Bot 头像（连排时只有第一条带，其余留占位对齐）。 -->
-    {#if merge.above}
-      <div class="mt-0.5 size-10 shrink-0" aria-hidden="true"></div>
-    {:else}
+  {#if isHidden}
+    <div
+      class="w-full rounded-sm py-1 text-left opacity-50 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+      data-testid="hidden-message"
+      data-message-id={message.id}
+      role="button"
+      tabindex="0"
+      aria-haspopup="menu"
+      aria-label={t('messages.hidden')}
+      onkeydown={openHiddenMenuFromKeyboard}
+    >
+      <span class="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+        <EyeClosed class="size-3.5 shrink-0" aria-hidden="true" />
+        {t('messages.hidden')}
+      </span>
+    </div>
+  {:else}
+    {#if exchangeChat}
+      <!-- v2.3 交换会话：双侧 Bot 头像（连排时只有第一条带，其余留占位对齐）。 -->
+      {#if merge.above}
+        <div class="mt-0.5 size-10 shrink-0" aria-hidden="true"></div>
+      {:else}
+        <BotAvatar
+          botId={message.senderBotId ?? ''}
+          name={avatarName}
+          avatar={senderBot?.avatar ?? null}
+          accentColor={senderBot?.accentColor ?? null}
+          mask={senderBot?.avatarMask ?? null}
+          padding={senderBot?.avatarPadding ?? null}
+          class="mt-0.5 size-10 shrink-0"
+          fallbackClass="text-[20px]"
+          animated={false}
+          testId="bot-avatar"
+        />
+      {/if}
+    {:else if teamPeer !== null}
+      <!-- 团队对端成员消息（T5）：左侧成员头像（连排只有第一条带，其余留占位对齐）。 -->
+      {#if merge.above}
+        <div class="mt-0.5 size-7 shrink-0" aria-hidden="true"></div>
+      {:else}
+        <MemberAvatar
+          name={teamPeerName}
+          avatar={teamPeerMember?.avatar ?? null}
+          state={teamPeerMember?.state ?? null}
+          class="mt-0.5 size-7"
+          testId="member-avatar"
+        />
+      {/if}
+    {:else if !isUser && isProjectChat}
       <BotAvatar
         botId={message.senderBotId ?? ''}
-        name={avatarName}
+        {name}
         avatar={senderBot?.avatar ?? null}
         accentColor={senderBot?.accentColor ?? null}
         mask={senderBot?.avatarMask ?? null}
         padding={senderBot?.avatarPadding ?? null}
-        class="mt-0.5 size-10 shrink-0"
-        fallbackClass="text-[20px]"
+        class="mt-0.5 size-7 shrink-0"
         animated={false}
         testId="bot-avatar"
       />
     {/if}
-  {:else if teamPeer !== null}
-    <!-- 团队对端成员消息（T5）：左侧成员头像（连排只有第一条带，其余留占位对齐）。 -->
-    {#if merge.above}
-      <div class="mt-0.5 size-7 shrink-0" aria-hidden="true"></div>
-    {:else}
-      <MemberAvatar
-        name={teamPeerName}
-        avatar={teamPeerMember?.avatar ?? null}
-        state={teamPeerMember?.state ?? null}
-        class="mt-0.5 size-7"
-        testId="member-avatar"
-      />
-    {/if}
-  {:else if !isUser && isProjectChat}
-    <BotAvatar
-      botId={message.senderBotId ?? ''}
-      {name}
-      avatar={senderBot?.avatar ?? null}
-      accentColor={senderBot?.accentColor ?? null}
-      mask={senderBot?.avatarMask ?? null}
-      padding={senderBot?.avatarPadding ?? null}
-      class="mt-0.5 size-7 shrink-0"
-      animated={false}
-      testId="bot-avatar"
-    />
-  {/if}
-  <!-- 气泡列宽：宽屏 78%；窄屏（33-narrow-layout）改 100% - 64px——左右各让约
+    <!-- 气泡列宽：宽屏 78%；窄屏（33-narrow-layout）改 100% - 64px——左右各让约
        一个头像的宽度， hover 操作钮落在让出的留白里，不再挤压气泡。 -->
-  <div
-    class="flex min-w-0 flex-col {narrowLayout.narrow
-      ? 'max-w-[calc(100%-32px)]'
-      : 'max-w-[78%]'} {userSide ? 'items-end' : 'items-start'}"
-  >
-    {#if teamPeer !== null}
-      <!-- 团队对端成员消息：发送人名（sender_name 快照，禁用 / 删除后仍可辨）。 -->
-      <span class="mb-0.5 text-[11px] text-muted-foreground" data-testid="member-sender-name">
-        {teamPeerName}
-      </span>
-    {/if}
-    {#if delegatedBy !== null}
-      <span class="mb-0.5 text-[11px] text-muted-foreground" data-testid="delegation-origin">
-        {t('delegation.proxiedBy', { name: delegatedBy ? chat.botName(delegatedBy) : '' })}
-      </span>
-    {/if}
-    {#if quoted !== null}
-      <!-- 引用块：文本 + 被引用附件（图片缩略图可点开大图）。外层用 div——
-           内嵌缩略图按钮，不能再是 button（按钮不可嵌套）。 -->
-      <div
-        class="mt-0.5 flex max-w-full items-center gap-1 rounded-md border-l-2 border-muted-foreground/40 bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground"
-        data-testid="quoted-line"
-      >
-        <span class="min-w-0 truncate">
-          {quoted.status === 'recalled'
-            ? t('messages.quotedDeleted')
-            : t('messages.quotedLine', {
-                name: quotedName,
-                text: 'text' in quoted.content ? quoted.content.text.slice(0, 60) : '',
-              })}
+    <div
+      class="flex min-w-0 flex-col {narrowLayout.narrow
+        ? 'max-w-[calc(100%-32px)]'
+        : 'max-w-[78%]'} {userSide ? 'items-end' : 'items-start'}"
+    >
+      {#if teamPeer !== null}
+        <!-- 团队对端成员消息：发送人名（sender_name 快照，禁用 / 删除后仍可辨）。 -->
+        <span class="mb-0.5 text-[11px] text-muted-foreground" data-testid="member-sender-name">
+          {teamPeerName}
         </span>
-        {#if quoted.status !== 'recalled' && quotedAttachments.length > 0}
-          <QuotedMedia attachments={quotedAttachments} />
-        {/if}
-      </div>
-    {/if}
-
-    {#if shownAttachments.length > 0}
-      <MessageAttachments attachments={shownAttachments} />
-    {/if}
-
-    <MessageBody {message} {merge} userStyle={exchangeShape?.side === 'issuer'} />
-
-    {#if avatarBadgeName !== null}
-      <!-- 分身代回徽标（T10 预留，本阶段只渲染；62.06）。 -->
-      <span class="mt-0.5 text-[11px] text-muted-foreground" data-testid="avatar-origin-badge">
-        {t('chats.avatarOriginBadge', { name: avatarBadgeName })}
-      </span>
-    {/if}
-
-    {#if clientSourceLabel !== null}
-      <span class="mt-0.5 text-[11px] text-muted-foreground" data-testid="message-client-source"
-        >{clientSourceLabel}</span
-      >
-    {/if}
-
-    {#if artifacts.length > 0}
-      <FileArtifacts {artifacts} conversationId={message.conversationId} />
-    {/if}
-
-    {#if isShareImport}
-      <span class="mt-0.5 text-[11px] text-muted-foreground" data-testid="share-source"
-        >{t('share.imported')}</span
-      >
-    {/if}
-
-    {#if scheduleTitle !== null}
-      <button
-        type="button"
-        class="mt-0.5 inline-flex max-w-full items-start gap-1 text-left text-[11px] text-muted-foreground hover:text-foreground"
-        title={t('schedules.sourceHint')}
-        onclick={() => shell.openSchedules()}
-        data-testid="schedule-source"
-      >
-        <AlarmClock class="mt-0.5 size-3 shrink-0" aria-hidden="true" />{scheduleTitle}
-      </button>
-    {/if}
-
-    {#if todoSource !== null}
-      <!-- 窄屏暂无工作台入口（P1）：标签只读。 -->
-      {#if narrowLayout.narrow}
-        <span
-          class="mt-0.5 inline-flex max-w-full items-start gap-1 text-left text-[11px] text-muted-foreground"
-          data-testid="todo-source"
+      {/if}
+      {#if delegatedBy !== null}
+        <span class="mb-0.5 text-[11px] text-muted-foreground" data-testid="delegation-origin">
+          {t('delegation.proxiedBy', { name: delegatedBy ? chat.botName(delegatedBy) : '' })}
+        </span>
+      {/if}
+      {#if quotedHidden}
+        <div
+          class="mt-0.5 flex max-w-full items-center rounded-md border-l-2 border-muted-foreground/40 bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground"
+          data-testid="quoted-line"
+          data-quoted-hidden="true"
         >
-          <ClipboardList class="mt-0.5 size-3 shrink-0" aria-hidden="true" />{todoSource.title}
+          {t('messages.hiddenQuote')}
+        </div>
+      {:else if quoted !== null}
+        <!-- 引用块：文本 + 被引用附件（图片缩略图可点开大图）。外层用 div——
+           内嵌缩略图按钮，不能再是 button（按钮不可嵌套）。 -->
+        <div
+          class="mt-0.5 flex max-w-full items-center gap-1 rounded-md border-l-2 border-muted-foreground/40 bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground"
+          data-testid="quoted-line"
+        >
+          <span class="min-w-0 truncate">
+            {quoted.status === 'recalled'
+              ? t('messages.quotedDeleted')
+              : t('messages.quotedLine', {
+                  name: quotedName,
+                  text: 'text' in quoted.content ? quoted.content.text.slice(0, 60) : '',
+                })}
+          </span>
+          {#if quoted.status !== 'recalled' && quotedAttachments.length > 0}
+            <QuotedMedia attachments={quotedAttachments} />
+          {/if}
+        </div>
+      {/if}
+
+      {#if shownAttachments.length > 0}
+        <MessageAttachments attachments={shownAttachments} />
+      {/if}
+
+      <MessageBody {message} {merge} userStyle={exchangeShape?.side === 'issuer'} />
+
+      <!-- reaction chips（§4.4）：紧跟正文、独立一行，不参与 merge 圆角计算；
+         无 reaction 时整行不渲染。 -->
+      <MessageReactionChips {message} />
+
+      {#if avatarBadgeName !== null}
+        <!-- 分身代回徽标（T10 预留，本阶段只渲染；62.06）。 -->
+        <span class="mt-0.5 text-[11px] text-muted-foreground" data-testid="avatar-origin-badge">
+          {t('chats.avatarOriginBadge', { name: avatarBadgeName })}
         </span>
-      {:else}
+      {/if}
+
+      {#if clientSourceLabel !== null}
+        <span class="mt-0.5 text-[11px] text-muted-foreground" data-testid="message-client-source"
+          >{clientSourceLabel}</span
+        >
+      {/if}
+
+      {#if artifacts.length > 0}
+        <FileArtifacts {artifacts} conversationId={message.conversationId} />
+      {/if}
+
+      {#if isShareImport}
+        <span class="mt-0.5 text-[11px] text-muted-foreground" data-testid="share-source"
+          >{t('share.imported')}</span
+        >
+      {/if}
+
+      {#if scheduleTitle !== null}
         <button
           type="button"
           class="mt-0.5 inline-flex max-w-full items-start gap-1 text-left text-[11px] text-muted-foreground hover:text-foreground"
-          title={t('workbench.todoSource.hint')}
-          onclick={() => workbench.focusTodo(todoSource.id)}
-          data-testid="todo-source"
+          title={t('schedules.sourceHint')}
+          onclick={() => shell.openSchedules()}
+          data-testid="schedule-source"
         >
-          <ClipboardList class="mt-0.5 size-3 shrink-0" aria-hidden="true" />{todoSource.title}
+          <AlarmClock class="mt-0.5 size-3 shrink-0" aria-hidden="true" />{scheduleTitle}
         </button>
       {/if}
-    {/if}
-  </div>
 
-  {#if canAct && !narrowLayout.narrow}
-    <!-- hover 操作：放在消息旁的留白区（参考 Grok），悬停展示 tooltip，右键菜单为同一组操作。
+      {#if todoSource !== null}
+        <!-- 窄屏暂无工作台入口（P1）：标签只读。 -->
+        {#if narrowLayout.narrow}
+          <span
+            class="mt-0.5 inline-flex max-w-full items-start gap-1 text-left text-[11px] text-muted-foreground"
+            data-testid="todo-source"
+          >
+            <ClipboardList class="mt-0.5 size-3 shrink-0" aria-hidden="true" />{todoSource.title}
+          </span>
+        {:else}
+          <button
+            type="button"
+            class="mt-0.5 inline-flex max-w-full items-start gap-1 text-left text-[11px] text-muted-foreground hover:text-foreground"
+            title={t('workbench.todoSource.hint')}
+            onclick={() => workbench.focusTodo(todoSource.id)}
+            data-testid="todo-source"
+          >
+            <ClipboardList class="mt-0.5 size-3 shrink-0" aria-hidden="true" />{todoSource.title}
+          </button>
+        {/if}
+      {/if}
+    </div>
+
+    {#if canAct && !narrowLayout.narrow}
+      <!-- hover 操作：放在消息旁的留白区（参考 Grok），悬停展示 tooltip，右键菜单为同一组操作。
          常驻占位（invisible↔visible）而非 hidden↔flex：出现/消失会挤压气泡横移，
          鼠标停在窄元素（如小图缩略图）上时形成「悬停→位移→移出→收起」的布局
          死循环，渲染层被 relayout 打满（P17 观察到的冻结）。
          窄屏（33-narrow-layout）整组不渲染——按钮组占掉大量宽度，操作只留右键菜单。 -->
-    <div
-      class="invisible flex shrink-0 items-center gap-0.5 self-center {userSide
-        ? 'mr-1'
-        : 'ml-1'} group-focus-within:visible group-hover:visible"
-      data-testid="message-actions"
-    >
-      {#if !exchangeChat}
-        <!-- 交换会话没有输入组件（宿主写入、用户不可发言），引用内容无处
-             落点——引用按钮隐藏（右键菜单同步）。 -->
-        <Tooltip.Root>
-          <Tooltip.Trigger
+      <div
+        class="invisible flex shrink-0 items-center gap-0.5 self-center {userSide
+          ? 'mr-1'
+          : 'ml-1'} group-focus-within:visible group-hover:visible"
+        data-testid="message-actions"
+      >
+        {#if reactionTarget !== null}
+          <!-- Reaction/report stays outside More; copy and recall remain direct actions. -->
+          <MessageReactionBar {reactionTarget} />
+        {/if}
+        <!-- Exchange chats omit Quote because they have no composer. -->
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger
             class="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            onclick={quote}
-            aria-label={t('messages.quote')}
-            data-testid="message-quote"
+            aria-label={t('messages.more')}
+            title={t('messages.more')}
+            data-testid="message-more"
           >
-            <Reply class="size-3.5" aria-hidden="true" />
-          </Tooltip.Trigger>
-          <Tooltip.Content>{t('messages.quote')}</Tooltip.Content>
-        </Tooltip.Root>
-      {/if}
-      {#if canCopy}
-        <Tooltip.Root>
-          <Tooltip.Trigger
-            class="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            onclick={() => void copyText()}
-            aria-label={t('messages.copy')}
-            data-testid="message-copy"
-          >
-            <Copy class="size-3.5" aria-hidden="true" />
-          </Tooltip.Trigger>
-          <Tooltip.Content>{t('messages.copy')}</Tooltip.Content>
-        </Tooltip.Root>
-      {/if}
-      {#if canPin}
-        <Tooltip.Root>
-          <Tooltip.Trigger
-            class="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            onclick={pinMessage}
-            aria-label={t('messages.pinMessage')}
-            data-testid="message-pin"
-          >
-            <Pin class="size-3.5" aria-hidden="true" />
-          </Tooltip.Trigger>
-          <Tooltip.Content>{t('messages.pinMessage')}</Tooltip.Content>
-        </Tooltip.Root>
-      {/if}
-      {#if canRecall}
-        <Tooltip.Root>
-          <Tooltip.Trigger
-            class="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            onclick={() => void recallMessage()}
-            aria-label={t('chats.recall')}
-            data-testid="message-recall"
-          >
-            <Undo2 class="size-3.5" aria-hidden="true" />
-          </Tooltip.Trigger>
-          <Tooltip.Content>{t('chats.recall')}</Tooltip.Content>
-        </Tooltip.Root>
-      {/if}
-    </div>
+            <MoreHorizontal class="size-3.5" aria-hidden="true" />
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Content align="start" class="w-44" data-testid="message-more-menu">
+            {#if !exchangeChat}
+              <DropdownMenu.Item onSelect={quote} data-testid="more-message-quote">
+                <Reply class="size-3.5" aria-hidden="true" />
+                {t('messages.quote')}
+              </DropdownMenu.Item>
+            {/if}
+            {#if canPin}
+              <DropdownMenu.Item onSelect={pinMessage} data-testid="more-message-pin">
+                <Pin class="size-3.5" aria-hidden="true" />
+                {t('messages.pinMessage')}
+              </DropdownMenu.Item>
+            {/if}
+            {#if canHide}
+              <DropdownMenu.Item onSelect={() => setHidden(true)} data-testid="more-message-hide">
+                <EyeOff class="size-3.5" aria-hidden="true" />
+                {t('messages.moreHide')}
+              </DropdownMenu.Item>
+            {/if}
+          </DropdownMenu.Content>
+        </DropdownMenu.Root>
+        {#if canCopy}
+          <Tooltip.Root>
+            <Tooltip.Trigger
+              class="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              onclick={() => void copyText()}
+              aria-label={t('messages.copy')}
+              data-testid="message-copy"
+            >
+              <Copy class="size-3.5" aria-hidden="true" />
+            </Tooltip.Trigger>
+            <Tooltip.Content>{t('messages.copy')}</Tooltip.Content>
+          </Tooltip.Root>
+        {/if}
+        {#if canRecall}
+          <Tooltip.Root>
+            <Tooltip.Trigger
+              class="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              onclick={() => void recallMessage()}
+              aria-label={t('chats.recall')}
+              data-testid="message-recall"
+            >
+              <Undo2 class="size-3.5" aria-hidden="true" />
+            </Tooltip.Trigger>
+            <Tooltip.Content>{t('chats.recall')}</Tooltip.Content>
+          </Tooltip.Root>
+        {/if}
+      </div>
+    {/if}
   {/if}
 </div>
 
 {#if menuPos}
-  <!-- 消息条目右键菜单：引用 / 复制 / 固定整条 -->
+  <!-- Context menu: hidden rows only Show; normal rows include message actions and Hide. -->
   <button
     type="button"
     class="fixed inset-0 z-40 cursor-default"
     aria-label={t('common.close')}
+    data-testid="message-context-backdrop"
     onclick={() => (menuPos = null)}
     oncontextmenu={(event) => {
       event.preventDefault();
@@ -535,38 +652,74 @@
     style="left: {menuPos.x}px; top: {menuPos.y}px;"
     data-testid="message-context-menu"
   >
-    {#if !exchangeChat}
+    {#if isHidden}
       {@render menuRow(
-        Reply,
-        t('messages.quote'),
+        Eye,
+        t('messages.show'),
         () => {
           menuPos = null;
-          quote();
+          setHidden(false);
         },
-        'context-message-quote',
+        'context-message-show',
       )}
-    {/if}
-    {#if canCopy}
-      {@render menuRow(
-        Copy,
-        t('messages.copy'),
-        () => {
-          menuPos = null;
-          void copyText();
-        },
-        'context-message-copy',
-      )}
-    {/if}
-    {#if canPin}
-      {@render menuRow(
-        Pin,
-        t('messages.pinMessage'),
-        () => {
-          menuPos = null;
-          pinMessage();
-        },
-        'context-message-pin',
-      )}
+    {:else}
+      {#if !exchangeChat}
+        {@render menuRow(
+          Reply,
+          t('messages.quote'),
+          () => {
+            menuPos = null;
+            quote();
+          },
+          'context-message-quote',
+        )}
+      {/if}
+      {#if canCopy}
+        {@render menuRow(
+          Copy,
+          t('messages.copy'),
+          () => {
+            menuPos = null;
+            void copyText();
+          },
+          'context-message-copy',
+        )}
+      {/if}
+      {#if canPin}
+        {@render menuRow(
+          Pin,
+          t('messages.pinMessage'),
+          () => {
+            menuPos = null;
+            pinMessage();
+          },
+          'context-message-pin',
+        )}
+      {/if}
+      {#if reactionTarget !== null}
+        <!-- 举报不当内容（§4.5）：与 👎 同流程（记 👎 + reports.submit），无确认；
+           窄屏 / 键盘用户从这里举报。 -->
+        {@render menuRow(
+          ShieldAlert,
+          t('messages.reactions.report'),
+          () => {
+            menuPos = null;
+            reportMessage();
+          },
+          'context-message-report',
+        )}
+      {/if}
+      {#if canHide}
+        {@render menuRow(
+          EyeOff,
+          t('messages.hide'),
+          () => {
+            menuPos = null;
+            setHidden(true);
+          },
+          'context-message-hide',
+        )}
+      {/if}
     {/if}
   </div>
 {/if}

@@ -70,6 +70,9 @@ const FORBIDDEN_MARKERS = [
   '__kepcupRpc',
   // D104 P1-3 插件市场 e2e seam（本地签名索引 + 回环包下载，start.ts）
   'KEPCUP_TEST_PLUGIN_MARKET',
+  // AI 内容举报端点测试缝（__KEPCUP_TEST_HOOKS__ 门控，start.ts）：打包产物
+  // 固定 reports.kepcup.com，环境变量不得重定向举报流量。
+  'KEPCUP_REPORT_ENDPOINT',
 ];
 
 /** 文本里出现的第一个禁止标记；干净 = null（导出供单测）。 */

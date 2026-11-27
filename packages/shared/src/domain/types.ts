@@ -1484,6 +1484,8 @@ export const conversationSchema = z.object({
    * 按会话打开/消息事件继续维护同一字段。
    */
   lastMessageText: z.string().optional(),
+  /** Sequence of the exact row that produced `lastMessageText`, when known. */
+  lastPreviewSeq: z.number().optional(),
   /**
    * Owning principal of a `direct` conversation (62.11 C3): the conversation is
    * scoped to that human principal. Null / absent on single-user installs and

@@ -30,6 +30,7 @@
   import { toast } from 'svelte-sonner';
   import { shell, type SettingsSectionId } from '$lib/stores/shell.svelte';
   import { chat, type ConversationView } from '$lib/stores/chat.svelte';
+  import { messageVisibility } from '$lib/stores/message-visibility.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
@@ -40,6 +41,7 @@
   import MemberAvatar from '$lib/features/team/MemberAvatar.svelte';
   import * as Avatar from '$lib/components/ui/avatar';
   import * as Dialog from '$lib/components/ui/dialog';
+  import { matchesConversationSearch, safeConversationPreview } from './conversation-search';
 
   /**
    * 全局搜索弹框（侧栏搜索按钮 / Cmd+K）：检索 Bot、会话与设置条目。
@@ -301,7 +303,14 @@
   }
 
   function conversationPreview(conversation: ConversationView): string {
-    return chat.lastMessageText[conversation.id] ?? conversation.summary ?? '';
+    if (messageVisibility.previewHidden('local', conversation.id, conversation.lastPreviewSeq)) {
+      return t('messages.hidden');
+    }
+    return safeConversationPreview({
+      preview: chat.lastMessageText[conversation.id] ?? '',
+      summary: conversation.summary ?? '',
+      hasHiddenMessages: messageVisibility.hasHiddenMessages('local', conversation.id),
+    });
   }
 
   const quickBotRows = $derived(
@@ -334,11 +343,15 @@
       .filter(
         (conversation) =>
           (conversation.type === 'project' || !botIds.has(conversation.directBotId ?? '')) &&
-          matches([
-            conversationTitle(conversation),
-            conversation.summary ?? '',
-            conversationPreview(conversation),
-          ]),
+          matchesConversationSearch(
+            {
+              title: conversationTitle(conversation),
+              summary: conversation.summary ?? '',
+              preview: conversationPreview(conversation),
+              hasHiddenMessages: messageVisibility.hasHiddenMessages('local', conversation.id),
+            },
+            q,
+          ),
       )
       .slice(0, CONVERSATION_CAP);
 

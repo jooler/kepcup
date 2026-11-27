@@ -338,6 +338,14 @@ import {
   type ShareConsumeOutput,
   type ShareTargets,
 } from '../domain/share.js';
+import {
+  MESSAGE_REACTION_SCOPE_PATTERN,
+  REPORT_EXCLUDED_MESSAGE_IDS_MAX,
+  reactionSummarySchema,
+  reportReactionEmojiSchema,
+  reportSourceSchema,
+  reportTeamSnapshotSchema,
+} from '../domain/report.js';
 
 /** Every RPC method: `domain.action`. Wire name is the dotted key. */
 export const systemPingOutputSchema = z.object({
@@ -1571,6 +1579,79 @@ export const messagesSendOutputSchema = z.object({
   message: messageSchema,
   runId: z.string().nullable(),
 });
+
+/**
+ * 消息 reaction（AI 内容举报 §5.6）：只存本机 main.db，不进消息内容、不进
+ * Bot 上下文、不参与团队同步。`scope` 隔离本机与团队会话 id（`local` 或
+ * `team:<serverHash>`）；emoji 只接受固定集合（reportReactionEmojiSchema），
+ * null = 取消。不校验消息是否存在（团队消息可能不在本机库）。
+ */
+export const messagesReactInputSchema = z.object({
+  scope: z.string().regex(MESSAGE_REACTION_SCOPE_PATTERN),
+  conversationId: z.string().min(1),
+  messageId: z.string().min(1),
+  /** 每条 (scope, messageId, clientId) 最多一个 emoji；幂等键之一。 */
+  clientId: z.string().min(1),
+  emoji: reportReactionEmojiSchema.nullable(),
+});
+export const messagesReactOutputSchema = z.object({
+  reactions: z.array(reactionSummarySchema),
+});
+/** 一次取整个 conversation 的聚合（消息分页加载后不用逐条请求）。 */
+export const messagesReactionsInputSchema = z.object({
+  scope: z.string().regex(MESSAGE_REACTION_SCOPE_PATTERN),
+  conversationId: z.string().min(1),
+  clientId: z.string().min(1),
+});
+export const messagesReactionsOutputSchema = z.object({
+  reactions: z.array(reactionSummarySchema),
+});
+
+// --- reports（AI 内容举报，todo/ai-content-reporting.md §5 / §6.5）-----------
+/**
+ * 点 👎 后渲染层把被举报消息交给 core。core 校验「是可举报的 Bot 消息」并
+ * （local 来源）从本地 DB 重读正文构建 payload、入 `report_outbox` 队列异步
+ * 上报——本方法不做网络等待。`rejected` 只表示「不是可举报的 Bot 消息」，
+ * UI 静默。`snapshot` 仅团队来源（source.kind='team'）必填：团队消息不在本地
+ * DB，core 无法重读；local 来源忽略该字段。payload 结构见 reportPayloadSchema。
+ */
+export const reportsSubmitInputSchema = z.object({
+  /** 渲染层 clientIdentity.id（localStorage 稳定 id，幂等与限流的主体）。 */
+  clientId: z.string().min(1).max(128),
+  source: reportSourceSchema,
+  messageId: z.string().min(1),
+  conversationId: z.string().min(1),
+  /** v1 只出 `desktop`；上限与 Worker 校验的 client.surface（32 字符）一致。 */
+  surface: z.string().max(32).optional(),
+  snapshot: reportTeamSnapshotSchema.optional(),
+  /** Renderer-hidden rows omitted from local reply/context collection; the target remains reportable. */
+  excludedMessageIds: z.array(z.string().min(1).max(128)).max(REPORT_EXCLUDED_MESSAGE_IDS_MAX).optional(),
+});
+export const reportsSubmitOutputSchema = z.object({
+  status: z.enum(['queued', 'duplicate', 'rejected']),
+  /** rejected / duplicate 时的补充说明（诊断用，UI 不展示）。 */
+  reason: z.string().optional(),
+});
+export type ReportsSubmitOutput = z.infer<typeof reportsSubmitOutputSchema>;
+
+/**
+ * 撤回尚未发出的举报（§6.5）：按 (clientId, messageId) 删 `report_outbox` 里
+ * 仍可撤的行（pending / failed；failed 从未送达，一并清理）。`cancelled` =
+ * 行已删除（去重唯一索引槽位随之释放，同内容窗口内可重新举报），无 reason；
+ * `not_revocable` = 行已进入发送流程（sending/sent）或本 client 无记录——已
+ * 发出的举报无法由客户端撤回，用户侧删除走隐私政策两通道。UI 全程静默。
+ */
+export const reportsCancelInputSchema = z.object({
+  /** 渲染层 clientIdentity.id：只撤本 client 的行，不泄露他人举报存在性。 */
+  clientId: z.string().min(1).max(128),
+  messageId: z.string().min(1).max(128),
+});
+export const reportsCancelOutputSchema = z.object({
+  status: z.enum(['cancelled', 'not_revocable']),
+  /** 仅 not_revocable 时携带：行处于 sent/sending；none = 本 client 无行。 */
+  reason: z.enum(['sent', 'sending', 'none']).optional(),
+});
+export type ReportsCancelOutput = z.infer<typeof reportsCancelOutputSchema>;
 
 // --- attachments ----------------------------------------------------------
 
@@ -3172,6 +3253,14 @@ export const rpcMethodSchemas = {
   'messages.recall': { input: messagesRecallInputSchema, output: messagesListOutputSchema },
 
   'messages.send': { input: messagesSendInputSchema, output: messagesSendOutputSchema },
+  // AI 内容举报（todo/ai-content-reporting.md §6.5）：reaction 本机存储；submit 入队异步上报。
+  'messages.react': { input: messagesReactInputSchema, output: messagesReactOutputSchema },
+  'messages.reactions': {
+    input: messagesReactionsInputSchema,
+    output: messagesReactionsOutputSchema,
+  },
+  'reports.submit': { input: reportsSubmitInputSchema, output: reportsSubmitOutputSchema },
+  'reports.cancel': { input: reportsCancelInputSchema, output: reportsCancelOutputSchema },
 
   'attachments.upload': {
     input: attachmentsUploadInputSchema,
@@ -4013,6 +4102,11 @@ export const APP_METHODS = [
   'messages.edit',
   'messages.recall',
   'messages.send',
+  // AI 内容举报（todo/ai-content-reporting.md §6.5）。
+  'messages.react',
+  'messages.reactions',
+  'reports.submit',
+  'reports.cancel',
   'attachments.upload',
   'attachments.get',
   'attachments.status',

@@ -53,6 +53,8 @@ import { tasks } from '$lib/stores/tasks.svelte';
 import { isInterimMessage } from '../features/chats/run-status-mute';
 import { shell } from '$lib/stores/shell.svelte';
 import { toast } from 'svelte-sonner';
+import { messageVisibility } from './message-visibility.svelte';
+import { isPreviewableMessage } from '../features/chats/message-preview';
 
 export interface SelectOptions {
   /**
@@ -94,6 +96,20 @@ class ChatState {
           return;
         }
         this.#noteIncoming(conversationId, message);
+      },
+      applyMessageVisibility: (source, conversationId, message, hidden, latest) => {
+        if (source !== 'local') {
+          this.team.applyMessageVisibility(source, conversationId, message, hidden, latest);
+          return;
+        }
+        this.#applyMessageVisibility(conversationId, message, hidden, latest);
+      },
+      applyMessagePreview: (source, conversationId, preview) => {
+        if (source !== 'local') {
+          this.team.applyMessagePreview(source, conversationId, preview);
+          return;
+        }
+        this.#applyMessagePreview(conversationId, preview);
       },
       applyRunning: (source, run) => {
         if (source !== 'local') {
@@ -152,6 +168,7 @@ class ChatState {
    */
   lastMessageText = $state<Record<string, string>>({});
   #lastSeqByConversation: Record<string, number> = {};
+  #localRefreshGeneration = 0;
   #started = false;
 
   /** Stable until the next open/clear. Property updates do not replace it. */
@@ -216,6 +233,18 @@ class ChatState {
   start(): void {
     if (this.#started) return;
     this.#started = true;
+    // Clear list-derived state before the open session reapplies its safe preview.
+    teamContext.onIdentityChanged(() => {
+      this.#localRefreshGeneration += 1;
+      this.conversations = [];
+      this.lastMessageText = {};
+      this.mentionCounts = {};
+      // A failed list keeps the sidebar empty until the next refresh/onChanged;
+      // swallow the rejection so identity churn cannot surface it as unhandled.
+      if (teamContext.endpointIsTeam || teamContext.active) {
+        void this.refresh().catch(() => undefined);
+      }
+    });
     // The session subscribes to message, run, bot, and conversation updates.
     // List-only events stay here.
     this.main.start();
@@ -227,6 +256,7 @@ class ChatState {
     core.onEvent('conversation.deleted', (payload) => {
       const data = payload as { id: string };
       this.conversations = this.conversations.filter((c) => c.id !== data.id);
+      messageVisibility.forget('local', data.id);
       this.#forgetMentions(data.id);
       tasks.forgetConversation(data.id);
       if (this.currentId === data.id) this.close();
@@ -274,7 +304,9 @@ class ChatState {
   }
 
   async refresh(): Promise<void> {
+    const generation = ++this.#localRefreshGeneration;
     const result = (await core.call('conversations.list')) as { conversations: ConversationView[] };
+    if (generation !== this.#localRefreshGeneration) return;
     // 已删除 Bot 的直聊（占位行 status='deleted'）不在左栏列出；启动恢复与
     // 事件驱动的增删在此统一过滤。
     this.conversations = result.conversations.filter(
@@ -287,7 +319,10 @@ class ChatState {
     for (const conversation of this.conversations) {
       this.runningByConversation[conversation.id] = conversation.runningBotIds ?? [];
       this.#lastSeqByConversation[conversation.id] = conversation.lastSeq;
-      if (conversation.lastMessageText !== undefined) {
+      this.#clearStalePreviewOverride(conversation.id, conversation.lastPreviewSeq);
+      if (messageVisibility.previewHidden('local', conversation.id, conversation.lastPreviewSeq)) {
+        lastMessageText[conversation.id] = t('messages.hidden');
+      } else if (conversation.lastMessageText !== undefined) {
         lastMessageText[conversation.id] = conversation.lastMessageText;
       }
     }
@@ -633,6 +668,10 @@ class ChatState {
     this.main.startReply(message);
   }
 
+  setMessageHidden(messageId: string, hidden: boolean): boolean {
+    return this.main.setMessageHidden(messageId, hidden);
+  }
+
   cancelReply(): void {
     this.replyTo = null;
   }
@@ -820,10 +859,63 @@ class ChatState {
    */
   #noteLastMessage(conversationId: string, message: Message | null): boolean {
     if (message === null) return false;
-    const text = messagePreviewText(message);
+    const hidden = messageVisibility.isHidden('local', conversationId, message.id);
+    const text = hidden ? t('messages.hidden') : messagePreviewText(message);
     if (text === null || text.length === 0) return false;
     this.lastMessageText = { ...this.lastMessageText, [conversationId]: text };
     return true;
+  }
+
+  #applyMessageVisibility(
+    conversationId: string,
+    message: Message,
+    hidden: boolean,
+    latest: boolean,
+  ): void {
+    if (!latest) return;
+    messageVisibility.setPreviewHidden('local', conversationId, hidden, message.seq, message.id);
+    this.conversations = this.conversations.map((conversation) =>
+      conversation.id === conversationId
+        ? { ...conversation, lastPreviewSeq: message.seq }
+        : conversation,
+    );
+    this.#noteLastMessage(conversationId, message);
+  }
+
+  /**
+   * A preview override older than the server's latest preview row is stale: a
+   * newer previewable message exists, so the fail-closed mask must not hide it.
+   */
+  #clearStalePreviewOverride(conversationId: string, lastPreviewSeq?: number): void {
+    if (lastPreviewSeq === undefined) return;
+    const override = messageVisibility.previewOverride('local', conversationId);
+    if (override !== null && override.seq < lastPreviewSeq) {
+      messageVisibility.setPreviewHidden('local', conversationId, false);
+    }
+  }
+
+  #applyMessagePreview(conversationId: string, preview: Message | null): void {
+    if (preview === null) {
+      messageVisibility.setPreviewHidden('local', conversationId, false);
+      this.lastMessageText = { ...this.lastMessageText, [conversationId]: '' };
+      this.conversations = this.conversations.map((conversation) =>
+        conversation.id === conversationId
+          ? { ...conversation, lastPreviewSeq: undefined }
+          : conversation,
+      );
+      return;
+    }
+    this.conversations = this.conversations.map((conversation) =>
+      conversation.id === conversationId
+        ? {
+            ...conversation,
+            lastPreviewSeq: preview.seq,
+          }
+        : conversation,
+    );
+    const hidden = messageVisibility.isHidden('local', conversationId, preview.id);
+    messageVisibility.setPreviewHidden('local', conversationId, hidden, preview.seq, preview.id);
+    this.#noteLastMessage(conversationId, preview);
   }
 
   /**
@@ -831,17 +923,27 @@ class ChatState {
    * `currentId`，但用户看不到——期间到达的回复要算未读，回到对话（`select`）时再补标已读。
    */
   isViewing(conversationId: string): boolean {
-    return !shell.workbenchShown && this.currentId === conversationId;
+    return (
+      !shell.workbenchShown && this.currentSource === 'local' && this.currentId === conversationId
+    );
   }
 
   /** Sidebar row for a new message. The open transcript is the session's job. */
   #noteIncoming(conversationId: string, message: Message): void {
     if (isInterimMessage(message) || isEphemeralApprovalCard(message)) return;
+    const previewable = isPreviewableMessage(message);
+    const currentPreviewSeq =
+      this.conversations.find((conversation) => conversation.id === conversationId)
+        ?.lastPreviewSeq ?? 0;
+    if (previewable && message.seq >= currentPreviewSeq) {
+      const hidden = messageVisibility.isHidden('local', conversationId, message.id);
+      messageVisibility.setPreviewHidden('local', conversationId, hidden, message.seq, message.id);
+      this.#noteLastMessage(conversationId, message);
+    }
     this.#lastSeqByConversation[conversationId] = Math.max(
       this.#lastSeqByConversation[conversationId] ?? 0,
       message.seq,
     );
-    this.#noteLastMessage(conversationId, message);
     // DEV-146 统一口径：web 团队上下文（T5 同源模式经本机列表渲染团队会话，
     // 「自己是谁」取 teamContext.member）与团队切片同款——仅自己回声静默、
     // `principal:<自己>` 计提及并提醒（62.04 §4「人类 @ = 通知」）。无主体
@@ -849,20 +951,28 @@ class ChatState {
     const selfMemberId = teamContext.member?.id ?? null;
     const viewing = this.isViewing(conversationId);
     const verdict = teamMessageArrival(message, selfMemberId);
+    const mentioned =
+      !messageVisibility.isHidden('local', conversationId, message.id) && verdict.mentioned;
     const silent = selfMemberId === null ? isSilentOnArrival(message) : verdict.silent;
     this.conversations = this.conversations.map((conversation) =>
       conversation.id === conversationId
         ? {
             ...conversation,
             lastSeq: Math.max(conversation.lastSeq, message.seq),
+            lastPreviewSeq:
+              previewable && message.seq >= (conversation.lastPreviewSeq ?? 0)
+                ? message.seq
+                : conversation.lastPreviewSeq,
             lastMessageAt: message.createdAt,
             unreadCount:
-              viewing || silent ? (conversation.unreadCount ?? 0) : (conversation.unreadCount ?? 0) + 1,
+              viewing || silent
+                ? (conversation.unreadCount ?? 0)
+                : (conversation.unreadCount ?? 0) + 1,
           }
         : conversation,
     );
     // 提及角标与提醒（非查看、未静默时；与 chat-team.noteIncoming 同款守卫）。
-    if (verdict.mentioned && !viewing && !silent) {
+    if (mentioned && !viewing && !silent) {
       this.mentionCounts = {
         ...this.mentionCounts,
         [conversationId]: (this.mentionCounts[conversationId] ?? 0) + 1,
@@ -896,8 +1006,15 @@ class ChatState {
     // A conversation first seen through an event without a count (D75: seq
     // math would count private task rows): ask the server for its count.
     if (unread.refetch) void this.#refreshUnread(conversation.id);
+    const existingRow = this.conversations[index];
     const merged: ConversationView = {
       ...conversation,
+      // Conversation events can omit preview metadata; keep the row's known
+      // preview rather than regressing to "no preview" on every update.
+      lastPreviewSeq: conversation.lastPreviewSeq ?? existingRow?.lastPreviewSeq,
+      ...(conversation.lastMessageText === undefined && existingRow?.lastMessageText !== undefined
+        ? { lastMessageText: existingRow.lastMessageText }
+        : {}),
       unreadCount: unread.count,
       runningBotIds:
         this.runningByConversation[conversation.id] ?? conversation.runningBotIds ?? [],

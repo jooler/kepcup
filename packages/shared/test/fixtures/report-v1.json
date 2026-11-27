@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "reportId": "rep_01JEXAMPLE0000000000000000",
+  "createdAt": 1764212345678,
+  "reason": "inappropriate",
+  "client": {
+    "id": "client-9f21c7d4a55e",
+    "surface": "desktop",
+    "appVersion": "0.6.2",
+    "platform": "win32",
+    "osVersion": "Windows 11 10.0.26100",
+    "arch": "x64",
+    "locale": "zh-CN"
+  },
+  "source": {
+    "kind": "local"
+  },
+  "conversation": {
+    "id": "conv_01JDEMOCONVERSATION00000A",
+    "type": "direct"
+  },
+  "bot": {
+    "id": "bot_01JDEMOBOT00000000000000A",
+    "name": "小助手",
+    "systemRole": null,
+    "runtime": {
+      "model": "openai/gpt-5.1",
+      "lightModel": "",
+      "backgroundModel": "",
+      "agent": {
+        "id": "builtin",
+        "model": "",
+        "effort": ""
+      }
+    },
+    "profile": {
+      "identity": {
+        "name": "小助手"
+      },
+      "persona": {
+        "tone": "专业、简洁"
+      },
+      "role": {},
+      "boundaries": [],
+      "behavior": {}
+    }
+  },
+  "message": {
+    "id": "msg_01JDEMOMESSAGE000000000000A",
+    "seq": 42,
+    "kind": "text",
+    "status": "normal",
+    "createdAt": 1764212300000,
+    "editedAt": null,
+    "runId": "run_01JDEMORUN000000000000000A",
+    "text": "已经帮你把上季度的销售数据按大区汇总好了：华北区同比增长 12.3%，华东区受物流成本影响环比下降 4.1%，华南区基本持平。完整图表见附件，需要的话我可以再按月份拆一份明细。",
+    "content": null,
+    "truncated": false,
+    "attachments": [
+      {
+        "fileName": "q3-sales-by-region.png",
+        "mime": "image/png",
+        "size": 12345
+      }
+    ]
+  },
+  "replyTo": {
+    "messageId": "msg_01JDEMOREPLY0000000000000A",
+    "text": "帮我把上季度的销售数据按大区汇总一下，重点看环比变化。"
+  },
+  "context": [
+    {
+      "messageId": "msg_01JDEMOCONTEXT000000000000A",
+      "senderType": "user",
+      "kind": "text",
+      "text": "先按华北、华东、华南三个大区分。",
+      "createdAt": 1764212290000
+    }
+  ],
+  "usage": [
+    {
+      "provider": "openai",
+      "model": "gpt-5.1",
+      "loopType": "turn",
+      "calls": 3,
+      "inputTokens": 1234,
+      "outputTokens": 456
+    }
+  ],
+  "tools": [
+    {
+      "name": "web_search",
+      "calls": 1
+    }
+  ],
+  "providers": [
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "vendor": "openai",
+      "api": "openai-completions"
+    }
+  ],
+  "hashes": {
+    "content": "69a79ef10ef88c2403a2379e49c17cea33d273aac4c6d325076e9c19fa21c911",
+    "payload": "66f397f8a4cdc8489775eb3c706cccc7dfe0e9c2fea3ea43a1aed5170353215b"
+  }
+}

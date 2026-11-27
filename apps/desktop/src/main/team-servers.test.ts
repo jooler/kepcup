@@ -135,6 +135,7 @@ interface Harness {
   writeFileCalls: string[];
   changedCount: () => number;
   channels: Array<{ port1: FakePort; port2: FakePort }>;
+  postPortCalls: Array<{ serverHash: string; port: FakePort; activeMemberId: string | null }>;
   openLog: Array<{ url: string; headers: Record<string, string>; socket: FakeSocketHandle }>;
   fetchMock: ReturnType<typeof vi.fn>;
   dispose(): void;
@@ -151,6 +152,7 @@ function createHarness(options?: {
   const statePath = options?.statePath ?? path.join(dir, 'team-servers.json');
   const writeFileCalls: string[] = [];
   const channels: Array<{ port1: FakePort; port2: FakePort }> = [];
+  const postPortCalls: Harness['postPortCalls'] = [];
   const openLog: Harness['openLog'] = [];
   let changed = 0;
   const defaultFetch = vi.fn(async () =>
@@ -176,7 +178,9 @@ function createHarness(options?: {
       channels.push({ port1, port2 });
       return { port1, port2 } as BridgeChannel;
     },
-    postPort: () => {},
+    postPort: (serverHash, port, activeMemberId) => {
+      postPortCalls.push({ serverHash, port: port as FakePort, activeMemberId });
+    },
     openSocket: scriptedOpenSocket(openLog, options?.openScript),
     onChanged: () => {
       changed += 1;
@@ -188,6 +192,7 @@ function createHarness(options?: {
     writeFileCalls,
     changedCount: () => changed,
     channels,
+    postPortCalls,
     openLog,
     fetchMock: (options?.fetchImpl ?? defaultFetch) as ReturnType<typeof vi.fn>,
     dispose: () => {
@@ -444,6 +449,11 @@ describe('多账号：add / login / switch / logout', () => {
     await harness.host.switchAccount({ serverHash, memberId: 'm1' }); // m1 仍有 token
     await harness.host.connect({ serverHash });
     await flush();
+    expect(harness.postPortCalls.at(-1)).toEqual({
+      serverHash,
+      port: harness.channels[0]!.port2,
+      activeMemberId: 'm1',
+    });
     expect(harness.openLog).toHaveLength(1);
     expect((await harness.host.list())[0]!.status).toBe('connected');
     // 换到 m2（logout 已清其 token）：拆连接、置 unauthenticated、不自动重试。
@@ -451,6 +461,33 @@ describe('多账号：add / login / switch / logout', () => {
     expect((await harness.host.list())[0]!.status).toBe('unauthenticated');
     expect(harness.openLog[0]!.socket.closedWith?.code).toBe(1000);
     expect(harness.openLog).toHaveLength(1);
+  });
+
+  it('switchAccount tears down the old bridge before persisting the new identity', async () => {
+    const { serverHash } = await harness.host.add({ url: URL_A });
+    await loginOk(harness, serverHash, { id: 'm1', displayName: 'Alice' }, 'alice');
+    await loginOk(harness, serverHash, { id: 'm2', displayName: 'Bob' }, 'bob');
+    await harness.host.connect({ serverHash });
+    await flush();
+    expect(harness.openLog).toHaveLength(1);
+    const socket = harness.openLog[0]!.socket;
+    let activeWhileClosing: string | null | undefined;
+    const originalClose = socket.close;
+    socket.close = (code, reason) => {
+      // Observe the persisted identity at the instant the old bridge is torn down.
+      const raw = JSON.parse(readFileSync(harness.statePath, 'utf8')) as {
+        servers: Record<string, { activeMemberId: string | null }>;
+      };
+      activeWhileClosing = raw.servers[serverHash]!.activeMemberId;
+      originalClose(code, reason);
+    };
+
+    await harness.host.switchAccount({ serverHash, memberId: 'm1' });
+
+    expect(activeWhileClosing).toBe('m2');
+    expect(socket.closedWith?.code).toBe(1000);
+    expect((await harness.host.list())[0]!.activeMemberId).toBe('m1');
+    expect(harness.postPortCalls.at(-1)?.activeMemberId).toBe('m1');
   });
 
   it('login 错误映射：401 / 429 / 网络错误（JSON 约定）', async () => {

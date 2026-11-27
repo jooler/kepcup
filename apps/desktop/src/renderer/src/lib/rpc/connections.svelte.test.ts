@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { flushSync } from 'svelte';
 
 /**
  * 多来源连接注册表（T7 步骤 2）：
@@ -53,9 +54,7 @@ vi.mock('$lib/rpc/client.svelte', () => ({
   },
 }));
 
-const mockCore = (
-  await import('$lib/rpc/client.svelte')
-).core as unknown as {
+const mockCore = (await import('$lib/rpc/client.svelte')).core as unknown as {
   onEvent(event: string, handler: (payload: unknown) => void): () => void;
 };
 
@@ -63,6 +62,7 @@ const mockCore = (
 
 class FakePort {
   posted: unknown[] = [];
+  onStart: (() => void) | null = null;
   #listener: ((event: { data: unknown }) => void) | null = null;
   #other: FakePort | null = null;
   connect(other: FakePort): void {
@@ -81,7 +81,9 @@ class FakePort {
   removeEventListener(): void {
     this.#listener = null;
   }
-  start(): void {}
+  start(): void {
+    this.onStart?.();
+  }
   close(): void {}
 }
 
@@ -130,6 +132,8 @@ function createTeamServer(
 
 const { connections } = await import('./connections.svelte');
 const { isTeamPortMessage } = await import('./team-port');
+const { messageVisibilityScope } = await import('../stores/message-visibility.svelte');
+const { teamContext } = await import('../features/team/team-context.svelte');
 
 /** birpc 的 onMessage 是异步的：事件投递落在微任务里。 */
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -194,6 +198,52 @@ describe('团队端口接入与断开', () => {
     h.emitLocal('message.created', { conversationId: 'c1', message: { id: 'lm1' } });
     expect(teamSeen).toHaveLength(1);
     expect(localSeen).toEqual([{ conversationId: 'c1', message: { id: 'lm1' } }]);
+  });
+
+  it('port handshake sets identity before start and stale-account events are dropped', async () => {
+    const serverA = createTeamServer({});
+    const conn = connections.get('team:h1');
+    let identityAtStart: string | null = null;
+    serverA.clientPort.onStart = () => {
+      identityAtStart = conn.memberId;
+    };
+    connections.attachTeamPort('h1', serverA.clientPort as unknown as MessagePort, 'mbr_a');
+    expect(identityAtStart).toBe('mbr_a');
+    const seen: unknown[] = [];
+    conn.onEvent('message.created', (payload) => seen.push(payload));
+    serverA.pushEvent('message.created', { id: 'a1' });
+    await tick();
+    expect(seen).toEqual([{ id: 'a1' }]);
+
+    (conn as unknown as { memberId: string | null }).memberId = 'mbr_b';
+    serverA.pushEvent('message.created', { id: 'stale-a' });
+    await tick();
+    expect(seen).toEqual([{ id: 'a1' }]);
+
+    const serverB = createTeamServer({});
+    connections.attachTeamPort('h1', serverB.clientPort as unknown as MessagePort, 'mbr_b');
+    serverA.pushEvent('message.created', { id: 'old-port-a' });
+    serverB.pushEvent('message.created', { id: 'b1' });
+    await tick();
+    expect(seen).toEqual([{ id: 'a1' }, { id: 'b1' }]);
+  });
+
+  it('member changes reject in-flight RPCs and drop the old transport immediately', async () => {
+    const serverA = createTeamServer({ 'system.info': () => NO_REPLY });
+    const conn = connections.get('team:h1');
+    connections.attachTeamPort('h1', serverA.clientPort as unknown as MessagePort, 'mbr_a');
+    const pending = conn.call('system.info');
+
+    (conn as unknown as { memberId: string | null }).memberId = 'mbr_b';
+    expect(conn.status).toBe('offline');
+    await expect(pending).rejects.toThrow('team source identity changed');
+    await expect(conn.call('system.info')).rejects.toThrow('team source not connected');
+
+    const seen: unknown[] = [];
+    conn.onEvent('message.created', (payload) => seen.push(payload));
+    serverA.pushEvent('message.created', { id: 'old-account' });
+    await tick();
+    expect(seen).toEqual([]);
   });
 
   it('断开（requestDisconnect）→ offline 占位；call 拒绝，不伪造数据', async () => {
@@ -266,6 +316,12 @@ describe('团队端口接入与断开', () => {
     connections.attachTeamPort('h1', second.clientPort as unknown as MessagePort);
     expect(conn.status).toBe('connected');
     expect(connectedCount).toBe(2);
+    const seen: unknown[] = [];
+    conn.onEvent('message.created', (payload) => seen.push(payload));
+    server.pushEvent('message.created', { id: 'old-port' });
+    second.pushEvent('message.created', { id: 'new-port' });
+    await tick();
+    expect(seen).toEqual([{ id: 'new-port' }]);
     // 旧端口上不再有帧往来（新调用走新端口）。
     await conn.call('system.info');
     expect(second.calls.map((call) => call.method)).toContain('system.info');
@@ -276,7 +332,7 @@ describe('团队端口接入与断开', () => {
     const self = {};
     const port = new FakePort();
     const good = {
-      data: { type: 'team-port', nonce: 'n1', serverHash: 'h1' },
+      data: { type: 'team-port', nonce: 'n1', serverHash: 'h1', activeMemberId: 'mbr_1' },
       source: self,
       ports: [port],
     };
@@ -290,9 +346,43 @@ describe('团队端口接入与断开', () => {
       ),
     ).toBe(false);
     expect(
-      isTeamPortMessage({ ...good, data: { type: 'team-port', nonce: 'n1', serverHash: '' } } as never, self, 'n1'),
+      isTeamPortMessage(
+        { ...good, data: { type: 'team-port', nonce: 'n1', serverHash: '' } } as never,
+        self,
+        'n1',
+      ),
     ).toBe(false);
     expect(isTeamPortMessage({ ...good, ports: [] } as never, self, 'n1')).toBe(false);
+    expect(
+      isTeamPortMessage(
+        {
+          ...good,
+          data: { type: 'team-port', nonce: 'n1', serverHash: 'h1' },
+        } as never,
+        self,
+        'n1',
+      ),
+    ).toBe(false);
+    expect(
+      isTeamPortMessage(
+        {
+          ...good,
+          data: { type: 'team-port', nonce: 'n1', serverHash: 'h1', activeMemberId: 42 },
+        } as never,
+        self,
+        'n1',
+      ),
+    ).toBe(false);
+    expect(
+      isTeamPortMessage(
+        {
+          ...good,
+          data: { type: 'team-port', nonce: 'n1', serverHash: 'h1', activeMemberId: null },
+        } as never,
+        self,
+        'n1',
+      ),
+    ).toBe(true);
   });
 });
 
@@ -312,7 +402,9 @@ describe('真·在线边沿（onTeamOnline）', () => {
                 serverHash: 'h1',
                 url: 'https://team.example.com',
                 name: '',
-                accounts: [{ memberId: 'mbr_1', username: 'a', displayName: '甲', remembered: true }],
+                accounts: [
+                  { memberId: 'mbr_1', username: 'a', displayName: '甲', remembered: true },
+                ],
                 activeMemberId: 'mbr_1',
                 status: h.platformStatus,
               },
@@ -461,6 +553,174 @@ describe('真·在线边沿（onTeamOnline）', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe('message visibility account scopes', () => {
+  it('reacts to TeamConnection.memberId changes in place', () => {
+    connections.servers = [
+      {
+        serverHash: 'h1',
+        url: 'https://team.example.com',
+        name: '',
+        accounts: [{ memberId: 'mbr_a', username: 'a', displayName: '甲', remembered: true }],
+        activeMemberId: 'mbr_a',
+        status: 'connected',
+      },
+    ];
+    const connection = connections.get('team:h1');
+    const scopes: string[] = [];
+    const stop = $effect.root(() => {
+      $effect(() => {
+        scopes.push(messageVisibilityScope('team:h1'));
+      });
+    });
+    try {
+      flushSync();
+      expect(scopes.at(-1)).toBe('team:h1:mbr_a');
+      (connection as unknown as { memberId: string | null }).memberId = 'mbr_b';
+      flushSync();
+      expect(scopes.at(-1)).toBe('team:h1:mbr_b');
+    } finally {
+      stop();
+    }
+  });
+
+  it('fails closed while a same-origin team endpoint is still resolving its member', () => {
+    teamContext.reset();
+    try {
+      teamContext.endpointIsTeam = true;
+      expect(messageVisibilityScope('local')).toBe('local:team:identity-pending');
+      teamContext.active = true;
+      teamContext.member = { id: 'web_a' } as NonNullable<typeof teamContext.member>;
+      expect(messageVisibilityScope('local')).toBe('local:team:web_a');
+    } finally {
+      teamContext.reset();
+    }
+  });
+
+  it('scopes same-origin web team members without changing personal local scope', () => {
+    const scopes: string[] = [];
+    const stop = $effect.root(() => {
+      $effect(() => {
+        scopes.push(messageVisibilityScope('local'));
+      });
+    });
+    try {
+      flushSync();
+      expect(scopes.at(-1)).toBe('local');
+      teamContext.active = true;
+      teamContext.member = { id: 'web_a' } as NonNullable<typeof teamContext.member>;
+      flushSync();
+      expect(scopes.at(-1)).toBe('local:team:web_a');
+      teamContext.member = { id: 'web_b' } as NonNullable<typeof teamContext.member>;
+      flushSync();
+      expect(scopes.at(-1)).toBe('local:team:web_b');
+    } finally {
+      stop();
+      teamContext.reset();
+    }
+  });
+});
+
+describe('account switch refresh generations', () => {
+  function stubList(list: () => Promise<unknown[]>): void {
+    vi.stubGlobal('window', {
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      kepcup: {
+        isWeb: false,
+        portNonce: 'n',
+        platform: {
+          teamServers: {
+            list,
+            connect: async () => ({ ok: true as const }),
+            probe: async () => ({ reachable: true, kind: 'team' as const }),
+            disconnect: async () => ({ ok: true as const }),
+            add: async () => ({ serverHash: 'x' }),
+            remove: async () => ({ ok: true as const }),
+            login: async () => ({ member: { id: 'm', displayName: '' } }),
+            logout: async () => ({ ok: true as const }),
+            switchAccount: async () => ({ ok: true as const }),
+            rename: async () => ({ ok: true as const }),
+            onChanged: () => () => undefined,
+          },
+        },
+      },
+    });
+  }
+
+  function serverEntry(activeMemberId: string) {
+    return {
+      serverHash: 'h1',
+      url: 'https://team.example.com',
+      name: '',
+      accounts: [],
+      activeMemberId,
+      status: 'connected' as const,
+    };
+  }
+
+  it('discards a pre-switch server list after a new member port is attached', async () => {
+    let resolveList!: (value: unknown[]) => void;
+    const list = vi.fn(
+      () =>
+        new Promise<unknown[]>((resolve) => {
+          resolveList = resolve;
+        }),
+    );
+    stubList(list);
+    try {
+      connections.reset();
+      connections.start();
+      const conn = connections.get('team:h1');
+      const serverB = createTeamServer({});
+      connections.attachTeamPort('h1', serverB.clientPort as unknown as MessagePort, 'mbr_b');
+      resolveList([serverEntry('mbr_a')]);
+      await tick();
+      expect(conn.memberId).toBe('mbr_b');
+      expect(connections.serverOf('h1')).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('invalidates a pre-port server list even when the member id is unchanged', async () => {
+    connections.servers = [serverEntry('mbr_a')];
+    let resolveList!: (value: unknown[]) => void;
+    const list = vi.fn(
+      () =>
+        new Promise<unknown[]>((resolve) => {
+          resolveList = resolve;
+        }),
+    );
+    stubList(list);
+    try {
+      connections.start();
+      const conn = connections.get('team:h1');
+      const replacement = createTeamServer({});
+      connections.attachTeamPort('h1', replacement.clientPort as unknown as MessagePort, 'mbr_a');
+      resolveList([serverEntry('mbr_b')]);
+      await tick();
+      expect(conn.memberId).toBe('mbr_a');
+      expect(connections.serverOf('h1')?.activeMemberId).toBe('mbr_a');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('recovers the server list after a port attach discarded an in-flight refresh', async () => {
+    const list = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise(() => undefined))
+      .mockResolvedValue([serverEntry('mbr_b')]);
+    stubList(list);
+    connections.reset();
+    connections.start();
+    const server = createTeamServer({});
+    connections.attachTeamPort('h1', server.clientPort as unknown as MessagePort, 'mbr_b');
+    await vi.waitFor(() => expect(list.mock.calls.length).toBeGreaterThanOrEqual(2));
+    await vi.waitFor(() => expect(connections.serverOf('h1')?.activeMemberId).toBe('mbr_b'));
   });
 });
 

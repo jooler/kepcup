@@ -20,13 +20,19 @@ const h = vi.hoisted(() => {
     /** platform 调用台账（putMessages 回写断言）。 */
     verbs: [] as Array<{ verb: string; input: Record<string, unknown> }>,
     /** 内存分区：<serverHash>::<memberId> → 数据。 */
-    parts: new Map<string, { conversations: Map<string, unknown>; messages: Map<string, Map<number, unknown>> }>(),
+    parts: new Map<
+      string,
+      { conversations: Map<string, unknown>; messages: Map<string, Map<number, unknown>> }
+    >(),
     storage: new Map<string, string>(),
   };
   return state;
 });
 
-function partOf(serverHash: string, memberId: string): { conversations: Map<string, unknown>; messages: Map<string, Map<number, unknown>> } {
+function partOf(
+  serverHash: string,
+  memberId: string,
+): { conversations: Map<string, unknown>; messages: Map<string, Map<number, unknown>> } {
   const key = `${serverHash}::${memberId}`;
   let part = h.parts.get(key);
   if (part === undefined) {
@@ -44,7 +50,12 @@ function fakePlatformApi(): Record<string, (input?: unknown) => Promise<unknown>
     open: async () => ({ ok: true }),
     close: async () => ({ ok: true }),
     putConversations: async (raw) => {
-      const input = raw as { serverHash: string; memberId: string; conversations: Conversation[]; replace?: boolean };
+      const input = raw as {
+        serverHash: string;
+        memberId: string;
+        conversations: Conversation[];
+        replace?: boolean;
+      };
       h.verbs.push({ verb: 'putConversations', input });
       const bucket = part(input);
       if (input.replace === true) {
@@ -53,11 +64,18 @@ function fakePlatformApi(): Record<string, (input?: unknown) => Promise<unknown>
           if (!keep.has(id)) bucket.conversations.delete(id);
         }
       }
-      for (const conversation of input.conversations) bucket.conversations.set(conversation.id, conversation);
+      for (const conversation of input.conversations)
+        bucket.conversations.set(conversation.id, conversation);
       return { ok: true };
     },
     putMessages: async (raw) => {
-      const input = raw as { serverHash: string; memberId: string; conversationId: string; messages: Message[]; replace?: boolean };
+      const input = raw as {
+        serverHash: string;
+        memberId: string;
+        conversationId: string;
+        messages: Message[];
+        replace?: boolean;
+      };
       h.verbs.push({ verb: 'putMessages', input });
       const bucket = part(input);
       let rows = bucket.messages.get(input.conversationId);
@@ -74,10 +92,17 @@ function fakePlatformApi(): Record<string, (input?: unknown) => Promise<unknown>
       return { conversations: [...part(input).conversations.values()] };
     },
     getMessages: async (raw) => {
-      const input = raw as { serverHash: string; memberId: string; conversationId: string; limit?: number; beforeSeq?: number };
+      const input = raw as {
+        serverHash: string;
+        memberId: string;
+        conversationId: string;
+        limit?: number;
+        beforeSeq?: number;
+      };
       const rows = part(input).messages.get(input.conversationId) ?? new Map<number, unknown>();
       let all = [...rows.keys()].sort((a, b) => b - a);
-      if (input.beforeSeq !== undefined) all = all.filter((seq) => seq < (input.beforeSeq as number));
+      if (input.beforeSeq !== undefined)
+        all = all.filter((seq) => seq < (input.beforeSeq as number));
       const seqs = all.slice(0, input.limit ?? 60);
       return { messages: seqs.map((seq) => rows.get(seq)).reverse() };
     },
@@ -122,7 +147,14 @@ vi.mock('$lib/rpc/connections.svelte', async (importOriginal) => {
       onSourcesChanged: () => () => undefined,
       get: (source: string) => {
         if (source === 'local') {
-          return { status: 'connected', memberId: null, call: async () => ({}), onEvent: () => () => undefined, onConnected: () => () => undefined };
+          return {
+            status: 'connected',
+            memberId: null,
+            call: async () => ({}),
+            onEvent: () => () => undefined,
+            onConnected: () => () => undefined,
+            onIdentityChanged: () => () => undefined,
+          };
         }
         return {
           status: h.connStatus,
@@ -135,6 +167,7 @@ vi.mock('$lib/rpc/connections.svelte', async (importOriginal) => {
           },
           onEvent: () => () => undefined,
           onConnected: () => () => undefined,
+          onIdentityChanged: () => () => undefined,
           callTeam: async () => {
             throw new Error('offline');
           },
@@ -145,21 +178,19 @@ vi.mock('$lib/rpc/connections.svelte', async (importOriginal) => {
 });
 
 vi.stubGlobal('window', { kepcup: { isWeb: false, platform: { teamCache: fakePlatformApi() } } });
-vi.stubGlobal(
-  'localStorage',
-  {
-    getItem: (key: string) => h.storage.get(key) ?? null,
-    setItem: (key: string, value: string) => void h.storage.set(key, value),
-    removeItem: (key: string) => void h.storage.delete(key),
-    clear: () => void h.storage.clear(),
-    get length() {
-      return h.storage.size;
-    },
-    key: (index: number) => [...h.storage.keys()][index] ?? null,
+vi.stubGlobal('localStorage', {
+  getItem: (key: string) => h.storage.get(key) ?? null,
+  setItem: (key: string, value: string) => void h.storage.set(key, value),
+  removeItem: (key: string) => void h.storage.delete(key),
+  clear: () => void h.storage.clear(),
+  get length() {
+    return h.storage.size;
   },
-);
+  key: (index: number) => [...h.storage.keys()][index] ?? null,
+});
 
 const { ChatSession } = await import('./chat-session.svelte');
+const { messageVisibility } = await import('./message-visibility.svelte');
 const { teamCacheSync } = await import('../features/team/cache-sync.svelte');
 
 // --- 夹具 -------------------------------------------------------------------
@@ -181,7 +212,11 @@ function convFixture(id: string, lastSeq: number): Conversation {
   } as Conversation;
 }
 
-function msgFixture(conversationId: string, seq: number, overrides: Partial<Message> = {}): Message {
+function msgFixture(
+  conversationId: string,
+  seq: number,
+  overrides: Partial<Message> = {},
+): Message {
   return {
     id: `msg-${conversationId}-${seq}`,
     conversationId,
@@ -223,9 +258,52 @@ beforeEach(() => {
   h.verbs = [];
   h.parts.clear();
   h.storage.clear();
+  messageVisibility.forget('team:h1', 'c1');
 });
 
 describe('ChatSession 的团队缓存读路径（T8）', () => {
+  it('applies per-team hidden overlays to offline cached opens and earlier pages', async () => {
+    const messages = Array.from({ length: 80 }, (_, index) =>
+      msgFixture('c1', index + 1, { senderType: 'bot', senderBotId: 'bot_1' }),
+    );
+    await seedCache(messages);
+    messageVisibility.forget('team:h1', 'c1');
+    messageVisibility.setHidden('team:h1', 'c1', 'msg-c1-1', true);
+    messageVisibility.setHidden('team:h1', 'c1', 'msg-c1-80', true);
+    const session = new ChatSession();
+    await session.open({ source: 'team:h1', id: 'c1' });
+    expect(session.messages.at(-1)?.hidden).toBe(true);
+    expect(messageVisibility.isHidden('local', 'c1', 'msg-c1-80')).toBe(false);
+    await session.loadEarlier();
+    expect(session.messages[0]?.hidden).toBe(true);
+    expect(h.calls).toEqual([]);
+    session.dispose();
+    messageVisibility.forget('team:h1', 'c1');
+  });
+
+  it('keeps an old cached preview mask when the hidden row is outside a partial page', async () => {
+    const messages = Array.from({ length: 60 }, (_, index) =>
+      msgFixture('c1', index + 2, {
+        senderType: 'system',
+        senderBotId: null,
+        kind: 'system_event',
+        content: { event: 'run_done', text: 'done' },
+      }),
+    );
+    await seedCache(messages);
+    messageVisibility.forget('team:h1', 'c1');
+    messageVisibility.setHidden('team:h1', 'c1', 'cached-hidden-preview', true);
+    messageVisibility.setPreviewHidden('team:h1', 'c1', true, 1, 'cached-hidden-preview');
+    const session = new ChatSession();
+    await session.open({ source: 'team:h1', id: 'c1' });
+    expect(session.hasEarlier).toBe(true);
+    expect(session.conversation?.lastPreviewSeq).toBeUndefined();
+    expect(messageVisibility.previewHidden('team:h1', 'c1')).toBe(true);
+    expect(h.calls).toEqual([]);
+    session.dispose();
+    messageVisibility.forget('team:h1', 'c1');
+  });
+
   it('离线打开：缓存快照渲染（消息/hasEarlier），零服务端取数', async () => {
     await seedCache([41, 42, 43].map((seq) => msgFixture('c1', seq)));
     const session = new ChatSession();
@@ -241,11 +319,15 @@ describe('ChatSession 的团队缓存读路径（T8）', () => {
   });
 
   it('离线 loadEarlier：缓存有更早 → 前插；缓存无更早 → hasEarlier=false 且不发服务端', async () => {
-    await seedCache([...Array.from({ length: 80 }, (_, i) => msgFixture('c1', i + 1))].map((m) => m));
+    await seedCache(
+      [...Array.from({ length: 80 }, (_, i) => msgFixture('c1', i + 1))].map((m) => m),
+    );
     // 缓存里 80 条：打开取最近 60 条（seq 21..80），更早 20 条在缓存。
     const session = new ChatSession();
     await session.open({ source: 'team:h1', id: 'c1' });
-    expect(session.messages.map((m) => m.seq)).toEqual(Array.from({ length: 60 }, (_, i) => i + 21));
+    expect(session.messages.map((m) => m.seq)).toEqual(
+      Array.from({ length: 60 }, (_, i) => i + 21),
+    );
     expect(session.hasEarlier).toBe(true);
     expect(h.calls).toEqual([]);
 
@@ -266,7 +348,9 @@ describe('ChatSession 的团队缓存读路径（T8）', () => {
     await seedCache(Array.from({ length: 60 }, (_, i) => msgFixture('c1', i + 41)));
     const session = new ChatSession();
     await session.open({ source: 'team:h1', id: 'c1' });
-    expect(session.messages.map((m) => m.seq)).toEqual(Array.from({ length: 60 }, (_, i) => i + 41));
+    expect(session.messages.map((m) => m.seq)).toEqual(
+      Array.from({ length: 60 }, (_, i) => i + 41),
+    );
     // 整页（60 条）→ 打开即标记可能有更早（离线口径，与在线服务端页一致）。
     expect(session.hasEarlier).toBe(true);
 
@@ -275,7 +359,9 @@ describe('ChatSession 的团队缓存读路径（T8）', () => {
     h.serverMessages = Array.from({ length: 20 }, (_, i) => msgFixture('c1', i + 21));
     const rememberSpy = vi.spyOn(teamCacheSync, 'rememberMessages');
     await session.loadEarlier();
-    expect(session.messages.map((m) => m.seq)).toEqual(Array.from({ length: 80 }, (_, i) => i + 21));
+    expect(session.messages.map((m) => m.seq)).toEqual(
+      Array.from({ length: 80 }, (_, i) => i + 21),
+    );
     // 服务端补拉只打了一次 messages.list。
     expect(h.calls.map((c) => c.method)).toEqual(['messages.list']);
     expect(h.calls[0]!.input).toEqual({ conversationId: 'c1', beforeSeq: 41, limit: 60 });

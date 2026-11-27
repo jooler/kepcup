@@ -1230,9 +1230,10 @@ export class MessagesService {
    * 启动即有「最后一条消息」预览，不必逐个打开会话）。文本消息取正文；卡片
    * 消息由 `messagePreviewText` 整理成「icon + 标题 + 摘要」单行。可见性口径
    * 与渲染端 #noteLastMessage 对齐：未撤回、非私有、非中途权限卡；空白文本
-   * 与内部事务事件不算预览，落到更早的一条。
+   * 与内部事务事件不算预览，落到更早的一条。Returns the exact row sequence
+   * alongside its text so renderer-local masks can be reconciled safely.
    */
-  latestPreviewByConversation(): Record<string, string> {
+  latestPreviewByConversation(): Record<string, { text: string; seq: number }> {
     const ephemeral = [...EPHEMERAL_APPROVAL_CARD_TYPES];
     const candidate = [
       'owner_bot_id is null',
@@ -1253,10 +1254,10 @@ export class MessagesService {
           `) latest on latest.conversation_id = m.conversation_id and latest.seq = m.seq`,
       )
       .all(...ephemeral) as MessageRow[];
-    const result: Record<string, string> = {};
+    const result: Record<string, { text: string; seq: number }> = {};
     for (const row of rows) {
       const preview = messagePreviewText(messageRowToMessage(row));
-      if (preview !== null) result[row.conversation_id] = preview;
+      if (preview !== null) result[row.conversation_id] = { text: preview, seq: row.seq };
     }
     return result;
   }

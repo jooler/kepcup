@@ -84,6 +84,8 @@
   import ComposerTakeoverBanner from './ComposerTakeoverBanner.svelte';
   import { RemoteCaretExtension, setRemoteCaret } from './remote-caret';
   import { remoteCaretFrom } from './remote-caret-model';
+  import { messageVisibility } from '$lib/stores/message-visibility.svelte';
+  import { applyMessageSpeechVisibility } from './message-speech-visibility';
 
   /** D119：本输入框实例的在线状态来源标识（多输入框共存时只有当前实例生效）。 */
   const presenceSource = Symbol('composer-presence');
@@ -205,7 +207,28 @@
   // 多端协作概念，双人会话里只是噪音——整行不渲染（2026-11）。Bot 直聊与
   // 项目组保留（多端同开 / 多人协作仍有提示价值）。
   const oneOnOneDm = $derived(!injectMode && chatSession.view?.conversation.type === 'dm');
-  const replyTo = $derived(injectMode ? null : chatSession.replyTo);
+  const activeReply = $derived(injectMode ? null : chatSession.replyTo);
+  const replyTo = $derived.by(() => {
+    const reply = activeReply;
+    if (reply === null) return null;
+    const conversationId = chatSession.view?.conversation.id ?? null;
+    return conversationId !== null &&
+      messageVisibility.isHidden(chatSession.source, conversationId, reply.id)
+      ? null
+      : reply;
+  });
+  $effect(() => {
+    const reply = activeReply;
+    if (reply === null || injectMode) return;
+    const conversationId = chatSession.view?.conversation.id ?? null;
+    if (
+      conversationId !== null &&
+      messageVisibility.isHidden(chatSession.source, conversationId, reply.id)
+    ) {
+      chatSession.replyTo = null;
+      composerDrafts.clearReply(conversationId, reply.id);
+    }
+  });
   const replyToName = $derived(
     replyTo === null
       ? ''
@@ -480,7 +503,7 @@
     sharedDraft.noteLocalChange({
       doc,
       mentions: collectMentionTokens(doc),
-      replyTo: chatSession.replyTo?.id ?? null,
+      replyTo: replyTo?.id ?? null,
       attachments: composerDrafts.attachmentsMetadata(conversationId),
     });
   }
@@ -1913,6 +1936,8 @@
       // 用户手动点了语音气泡（53 号修订 v3）：停当前 + 清空未播队列，并让本轮
       // 后续新音频只留在列表里由用户自己点（下一段用户语音开始时恢复自动播报）。
       onManualPlayStart: () => voiceMode.takeManualControl(),
+      isHidden: (message) =>
+        messageVisibility.isHidden(chatSession.source, message.conversationId, message.id),
     };
   }
 
@@ -1952,13 +1977,23 @@
   // 订阅晚挂载都不会漏播；水位保证不补播历史。任务消息（origin:'task'）由
   // announceEntryFor 排除，仍不自动播报。
   $effect(() => {
-    if (!voiceModeOwned || !voiceMode.active) return;
+    // Visibility cancellation must also run while voice mode is inactive, when
+    // `voiceModeOwned` is necessarily false. Task-inject composers stay isolated.
+    if (injectMode) return;
     const view = chatSession.view;
     if (view === null) return;
-    const { entries, lastSeq } = collectAnnounceEntries(view.messages, voiceAnnounceSinceSeq, {
+    const source = chatSession.source;
+    const messages = applyMessageSpeechVisibility(
+      source,
+      view.conversation.id,
+      view.messages,
+    );
+    if (!voiceMode.active || !voiceModeOwned) return;
+    const { entries, lastSeq } = collectAnnounceEntries(messages, voiceAnnounceSinceSeq, {
       conversationId: view.conversation.id,
       active: true,
       approvals: permissions.approvals,
+      isHidden: (message) => messageVisibility.isHidden(source, message.conversationId, message.id),
     });
     voiceAnnounceSinceSeq = lastSeq;
     for (const entry of entries) {

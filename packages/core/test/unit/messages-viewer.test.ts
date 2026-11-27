@@ -204,7 +204,9 @@ describe('摘要、预览、未读', () => {
         phase: 'result',
         text: '私有结果',
       });
-      expect(rig.messages.latestPreviewByConversation()[rig.conversationId]).toBe('最后一句可见');
+      expect(rig.messages.latestPreviewByConversation()[rig.conversationId]?.text).toBe(
+        '最后一句可见',
+      );
       const after = rig.db
         .prepare('select last_message_at as t, last_seq as s from conversations where id = ?')
         .get(rig.conversationId) as { t: number; s: number };
@@ -312,9 +314,9 @@ describe('转发的任务结果只供用户阅读（D75 §6.1，2026-11 修订�
       expect(
         seqs(rig.messages.search(rig.conversationId, '斑马', { viewerBotId: 'bot_x' })),
       ).toEqual([1, 2, 4, 5, 8, 10, 11]);
-      expect(
-        seqs(rig.messages.search(rig.conversationId, '斑马', { viewerBotId: null })),
-      ).toEqual([1, 4, 8, 10, 11]);
+      expect(seqs(rig.messages.search(rig.conversationId, '斑马', { viewerBotId: null }))).toEqual([
+        1, 4, 8, 10, 11,
+      ]);
     });
   });
 
@@ -330,9 +332,7 @@ describe('转发的任务结果只供用户阅读（D75 §6.1，2026-11 修订�
   it('unsummarized 不含转发原文（总结消息是结果的长久记录）', () => {
     withRig((rig) => {
       seedForward(rig);
-      expect(seqs(rig.messages.unsummarized(rig.conversationId, 11))).toEqual([
-        1, 4, 7, 8, 10, 11,
-      ]);
+      expect(seqs(rig.messages.unsummarized(rig.conversationId, 11))).toEqual([1, 4, 7, 8, 10, 11]);
     });
   });
 });

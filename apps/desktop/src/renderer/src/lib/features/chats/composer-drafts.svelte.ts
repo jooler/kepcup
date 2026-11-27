@@ -21,6 +21,7 @@ import {
   type DraftsStorage,
   type PersistedComposerDraft,
 } from './composer-draft-persist';
+import { messageVisibility } from '$lib/stores/message-visibility.svelte';
 
 /**
  * 输入框草稿的按会话缓存（store）：编辑器文档（原生 JSON）/ @ 提及 / 引用
@@ -130,6 +131,27 @@ class ComposerDraftsState {
     return connections.get(this.#rpcSource);
   }
 
+  #replyIsHidden(conversationId: string, reply: ComposerReplyRef | null): boolean {
+    return (
+      reply !== null &&
+      reply.senderType === 'bot' &&
+      messageVisibility.isHidden(this.#rpcSource, conversationId, reply.id)
+    );
+  }
+
+  /**
+   * A reply snapshot is only valid for the source that produced it: local and
+   * team conversations can share an id, and drafts are keyed by conversation id
+   * alone. Old persisted snapshots have no `source` (treated as current).
+   */
+  #replyIsForeign(reply: ComposerReplyRef | null): boolean {
+    return reply !== null && reply.source !== undefined && reply.source !== this.#rpcSource;
+  }
+
+  #replyIsUnusable(conversationId: string, reply: ComposerReplyRef | null): boolean {
+    return this.#replyIsForeign(reply) || this.#replyIsHidden(conversationId, reply);
+  }
+
   /** 打开过的会话的输入框草稿；text/mentions/reply 由 Composer 的水合/保存 effect 同步。 */
   #runtime = $state<Record<string, ComposerRuntimeDraft>>({});
   /** 启动时从 localStorage 载入的快照：未打开过的会话原样保留，打开时晋升为 runtime。 */
@@ -145,7 +167,7 @@ class ComposerDraftsState {
 
   constructor() {
     // 退出前的最后一笔兜底：防抖窗口内的键入也要落盘（localStorage 写是同步的）。
-    window.addEventListener('pagehide', () => this.#persistNow());
+    globalThis.window?.addEventListener?.('pagehide', () => this.#persistNow());
   }
 
   /** 订阅会话删除：缓存条目随会话一起丢弃（core 侧附件经删除级联清理）。 */
@@ -176,10 +198,20 @@ class ComposerDraftsState {
     reply: ComposerReplyRef | null;
   } {
     const entry = this.#runtime[conversationId];
+    const reply = entry?.reply ?? null;
+    if (this.#replyIsUnusable(conversationId, reply)) {
+      if (entry !== undefined) entry.reply = null;
+      this.#schedulePersist();
+      return {
+        doc: entry?.doc ?? EMPTY_COMPOSER_DOC,
+        mentions: [...(entry?.mentions ?? [])],
+        reply: null,
+      };
+    }
     return {
       doc: entry?.doc ?? EMPTY_COMPOSER_DOC,
       mentions: entry ? [...entry.mentions] : [],
-      reply: entry?.reply ?? null,
+      reply,
     };
   }
 
@@ -202,16 +234,19 @@ class ComposerDraftsState {
       previewUrl: null,
       ownsPreviewUrl: false,
     }));
+    const reply = saved?.reply ?? null;
+    const replyHidden = this.#replyIsUnusable(conversationId, reply);
     this.#runtime[conversationId] = {
       doc: saved?.doc ?? EMPTY_COMPOSER_DOC,
       mentions: [...(saved?.mentions ?? [])],
-      reply: saved?.reply ?? null,
+      reply: replyHidden ? null : reply,
       uploads,
       version: saved?.version ?? 0,
       dirty: saved?.dirty ?? false,
       // D115 附件直注：任务直注键的归属会话随快照恢复（chip 校验 / 上传 RPC 用）。
       ...(saved?.conversationId !== undefined ? { conversationId: saved.conversationId } : {}),
     };
+    if (replyHidden) this.#schedulePersist();
     if (uploads.length > 0) void this.#verifyRestored(conversationId, uploads);
   }
 
@@ -234,7 +269,8 @@ class ComposerDraftsState {
     entry.doc = input.doc;
     entry.mentions = [...input.mentions];
     // 服务端只存 reply 的 id：本地已有同 id 的预览就保留，否则（另一台设备）无预览。
-    entry.reply = input.replyTo !== null && entry.reply?.id === input.replyTo ? entry.reply : null;
+    const reply = input.replyTo !== null && entry.reply?.id === input.replyTo ? entry.reply : null;
+    entry.reply = this.#replyIsUnusable(conversationId, reply) ? null : reply;
     entry.uploads = input.attachments.map((attachment) => ({
       key: `att_${attachment.attachmentId}`,
       fileName: attachment.fileName,
@@ -395,9 +431,10 @@ class ComposerDraftsState {
   }
 
   /** 消息已发出后清掉该会话缓存里的引用回复（用户已切走时，回来不应还挂着旧引用）。 */
-  clearReply(conversationId: string): void {
+  clearReply(conversationId: string, messageId?: string): void {
     const entry = this.#runtime[conversationId];
     if (entry === undefined || entry.reply === null) return;
+    if (messageId !== undefined && entry.reply.id !== messageId) return;
     entry.reply = null;
     this.#schedulePersist();
   }
@@ -412,7 +449,7 @@ class ComposerDraftsState {
     const entry = this.#ensureEntry(conversationId);
     entry.doc = doc;
     entry.mentions = [...mentions];
-    entry.reply = reply;
+    entry.reply = this.#replyIsUnusable(conversationId, reply) ? null : reply;
     this.#schedulePersist();
   }
 
