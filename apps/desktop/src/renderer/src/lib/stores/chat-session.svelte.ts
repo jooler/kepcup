@@ -177,6 +177,12 @@ export class ChatSession {
   #resolvedVisibilityScope = messageVisibilityScope('local');
   #visibilityIdentityResolved = !isVisibilityScopePending(this.#resolvedVisibilityScope);
   #openGeneration = 0;
+  /**
+   * In-flight `open` of one conversation. Board reloads (200ms debounce) would
+   * otherwise start a new open, bump `#openGeneration`, and cancel the load
+   * before `view` is set — the card dialog chat stays empty.
+   */
+  #openInFlight: { key: string; promise: Promise<boolean> } | null = null;
   // 普通 Set（刻意非响应式）：事件转发台账，没有界面从它派生。
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
   #incomingListeners = new Set<(conversationId: string, message: Message) => void>();
@@ -361,6 +367,22 @@ export class ChatSession {
     if (this.#disposed) return false;
     const ref = conversationRefOf(idOrRef);
     const id = ref.id;
+    const key = `${ref.source}:${id}`;
+    if (this.#openInFlight?.key === key) return this.#openInFlight.promise;
+    const promise = this.#performOpen(ref, id, options);
+    this.#openInFlight = { key, promise };
+    void promise.finally(() => {
+      if (this.#openInFlight?.promise === promise) this.#openInFlight = null;
+    });
+    return promise;
+  }
+
+  async #performOpen(
+    ref: ConversationRef,
+    id: string,
+    options: OpenSessionOptions,
+  ): Promise<boolean> {
+    if (this.#disposed) return false;
     const request = ++this.#openGeneration;
     const rpc = connections.get(ref.source);
     const isCurrent = (): boolean =>
