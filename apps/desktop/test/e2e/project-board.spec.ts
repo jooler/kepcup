@@ -573,7 +573,13 @@ test('project board: assign, dialog chat, badge, deep link, cascade', async () =
     await expect(dialog.locator('[data-testid="board-dialog-status"]')).toContainText('执行中', {
       timeout: 30_000,
     });
-    await expect(dialog.locator('[data-testid="dispatch-card"]')).toContainText('任务派发');
+    // Below 760px the dialog is tabbed and starts on 详情; the dispatch card
+    // lives in the chat pane (display:none until that tab is selected).
+    const chatTab = dialog.locator('[data-testid="board-dialog-tab-chat"]');
+    if (await chatTab.isVisible()) await chatTab.click();
+    await expect(dialog.locator('[data-testid="dispatch-card"]')).toContainText('任务派发', {
+      timeout: 30_000,
+    });
     await expect(dialog.locator('[data-testid="dispatch-card-view"]')).toHaveCount(0);
     held.release();
     await expect(dialog.locator('[data-testid="bot-bubble"]').first()).toContainText('问候写好了', {
