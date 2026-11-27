@@ -3,8 +3,9 @@
 Microsoft Store 政策 11.16（Live Generative AI Content）的举报接收端（方案
 `todo/ai-content-reporting.md` §7 / §11）：Cloudflare Workers + D1 + Cron，独立部署单元
 （独立 D1 / 域名，与 `../registry/` 同构）。桌面端点 👎 后 core 异步推送举报 payload，
-Worker 重算 hash 校验、按 client 时间桶去重、限流后入库；管理员经 bearer-token admin API
-triage（`scripts/report-triage.mjs`）。
+Worker 重算 hash 校验、按 client 时间桶去重、限流后入库；管理员经同源内嵌 Web UI
+（`https://reports.kepcup.com/admin/`）或 bearer-token admin API（`scripts/report-triage.mjs`）
+triage。
 
 ```
 infra/cloudflare/reports/
@@ -14,7 +15,8 @@ infra/cloudflare/reports/
   src/index.ts      导出 fetch + scheduled（默认导出 ExportedHandler）
   src/worker.ts     公开管线（§7.4 十二步 + PoW 6.5 + 日上限 10.5，去重先于限流）、IP/客户端限流、日志
   src/pow.ts        PoW challenge 签发 / 验证（任务 5A 协议 v1；WebCrypto + atob/btoa，禁 node:crypto）
-  src/admin.ts      /v1/admin/*（bearer、常量时间比较、list/detail/patch/delete-client/stats）
+  src/admin.ts      /v1/admin/*（bearer 或会话 Cookie、常量时间比较、list/detail/patch/delete-client/stats）+ /admin* 会话端点与页面路由
+  src/admin-ui.ts   管理端单页资产（任务 5B：ADMIN_HTML/ADMIN_JS/ADMIN_CSS 字符串常量，vanilla JS 零依赖零构建）
   src/dedupe.ts     canonicalJson + content/payload hash（WebCrypto；与 core 的 node:crypto 实现以 fixture 向量互锁；proof 剥离）
   src/validate.ts   手写校验（shape/enum/长度/控制字符；数值与 shared REPORT_* 常量同步）
   src/db.ts         D1 语句封装（§7.5 限流 SQL 逐字一致；PoW 单次使用 / 日上限 / 清理）
@@ -32,7 +34,7 @@ scripts/report-triage.mjs   日常处置 CLI（本目录之外的唯一配套，
 | Worker | `kepcup-reports` | 独立部署单元，`workers_dev:false` |
 | 域名 | `reports.kepcup.com` | custom domain；DNS 与证书由 wrangler 部署时自动创建 |
 | D1 | `kepcup-reports` | id 是公开资源标识，见 `wrangler.jsonc` 的 `database_id`（建库时回填）与 `../README.md` §7（线上变更表） |
-| Secret | `REPORT_ADMIN_TOKEN` | admin API bearer，随机 32 字节 hex；**同一值**放仓库根 `.env` 的 `KEPCUP_REPORT_ADMIN_TOKEN`（已 gitignore），供 CLI/冒烟使用 |
+| Secret | `REPORT_ADMIN_TOKEN` | admin API bearer 与 Web UI 会话签名密钥（同一值），随机 32 字节 hex；**同一值**放仓库根 `.env` 的 `KEPCUP_REPORT_ADMIN_TOKEN`（已 gitignore），供 CLI/冒烟使用 |
 | Secret | `IP_HASH_SALT` | IP 限流的 HMAC 盐，随机 32 字节 hex；**只**在 Worker secret，不进 `.env`、不进任何仓库文件 |
 | Secret | `REPORT_POW_SECRET` | PoW challenge 签名密钥（任务 5A），随机 32 字节 hex；**只**在 Worker secret，不进 `.env`、不进任何仓库文件；未配置时不启用 PoW |
 | vars | 见 `wrangler.jsonc` | 客户端限流 60s、IP 100/h、去重窗口 content 24h / payload 90d、保留 365 天、PoW 难度 20 / TTL 10 分钟、日上限 2000 |
@@ -135,17 +137,53 @@ printf '%s' "$(openssl rand -hex 32)" | ../../../infra/cloudflare/with-env.sh \
 
 ## Admin API（§7.6）
 
-全部要求 `Authorization: Bearer <REPORT_ADMIN_TOKEN>`；secret 未配置时整棵子树 404（隐藏
-入口）；比较先各自 sha256 再逐字节 diff（常量时间）。无 Web UI，处置一律走
-`scripts/report-triage.mjs`。
+鉴权接受两种等价来源：`Authorization: Bearer <REPORT_ADMIN_TOKEN>`（CLI 通道，行为不变），
+或 `POST /admin/session` 签发的会话 Cookie（Web UI 通道，见下节）。secret 未配置时整棵
+子树（含 `/admin*`）404（隐藏入口）；比较先各自 sha256 再逐字节 diff（常量时间）。
+
+会话 Cookie 鉴权的写操作（PATCH/DELETE）有第二道 CSRF 防线：`Origin` 头存在且非本源 →
+403（bearer 不受影响，CLI 无 Origin 头）；GET 不校验。
 
 | 方法与路径 | 说明 |
 |---|---|
 | `GET /v1/admin/reports?status=&limit=&before=&client=` | 列表，默认 new / limit 20 / keyset 分页（`nextBefore` 游标）；返回摘要 + 200 字正文预览，**不含 payload_json** |
 | `GET /v1/admin/reports/:id` | 详情：全部列 + 解析后的完整 `payload` |
-| `PATCH /v1/admin/reports/:id` | `{status:'triaged'\|'actioned'\|'dismissed', note?}`；写 `updated_at`（`new` 是系统初始态，不可手工设置） |
+| `PATCH /v1/admin/reports/:id` | `{status:'triaged'\|'actioned'\|'dismissed', note?}`；`note` **省略 = 保留原值，`null` = 清除**；写 `updated_at`（`new` 是系统初始态，不可手工设置） |
 | `DELETE /v1/admin/clients/:clientId` | 删该 client 全部 reports + report_rate 行（隐私删除请求） |
 | `GET /v1/admin/stats` | 按状态计数 + 最近 7 天计数 |
+
+## 管理端 Web UI（任务 5B）
+
+浏览器打开 **`https://reports.kepcup.com/admin/`**（`/admin` 308 到 `/admin/`，查询串不
+保留），输入 Admin Token（与 `REPORT_ADMIN_TOKEN` 同值）登录即可：看统计卡、按
+状态/Client 筛选举报列表（keyset 翻页）、看完整 payload、改处置状态 + 备注、按 clientId
+双重确认删除。内部工具，中文文案，暗色跟随系统。
+
+- **会话**：登录成功签发 `__Host-kepcup_reports_session=<exp>.<sig>` Cookie——HttpOnly、
+  Secure、SameSite=Strict、Path=/、**有效期 12 小时**。sig = HMAC-SHA256（密钥直接取
+  `REPORT_ADMIN_TOKEN`，消息 `reports-session:<exp>`），会话**服务端零状态**；**轮换
+  token 即刻失效全部会话**（密钥变了验签全不过）。
+- **安全特性**：
+  - 严格 CSP（页面与资产同头）：`default-src 'none'; script-src 'self'; style-src
+    'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none';
+    base-uri 'none'; form-action 'self'`——无内联脚本/样式、无第三方外链、不可被嵌入；
+  - Cookie HttpOnly（脚本读不到）+ SameSite=Strict（跨站不携带）；
+  - CSRF 第二道：Cookie 鉴权的 PATCH/DELETE 校验 `Origin` 头，非本源 403；
+  - **XSS 防线**：全部动态内容经 `textContent` 渲染（举报正文是不可信输入），UI 源码
+    无任何 markup 注入面（测试静态审计锁定），CSP 兜底；HTML/JS/CSS 不含任何 token
+    字样，页面与资产无鉴权可取（秘密只在 API 层校验）；
+  - 登录失败只回 401 + 通用路由日志（token 是 32 字节 hex 熵，在线爆破不可行，未加
+    验证码/限速；Workers 也没有可用的服务端 sleep）。
+- **资产与构建**：页面与 `app.js`/`app.css` 是 `src/admin-ui.ts` 导出的字符串常量，
+  wrangler 打包零配置、无任何前端构建链；资产带内容 sha256 ETag（支持 304）——注意响应
+  同时是 `no-store`，浏览器不会存缓存、不会自动走 If-None-Match 复验，304 只对显式带
+  该头的工具/代理有意义（保留 ETag 是零成本的正确性兜底）。
+- **删除门控只是防误触**：按 Client 删除的两道门（形似 id 输入 + 携 clientId 的 confirm
+  弹窗）都在 UI 层；服务端只校验长度 ≤128，不做 clientId 形制检查，API/CLI 调用不受门控。
+- **为什么内嵌而非外站/Astro**：同源免 CORS、Cookie 天然可用、严格 CSP 无需配置矩阵，
+  且省掉第二个部署单元——单页管理工具用 vanilla JS 足够。
+- **与 CLI 的关系**：同一套 `/v1/admin/*` JSON API（`scripts/report-triage.mjs` 的
+  bearer 通道不变）；Web UI 适合人工看与点，CLI 适合脚本化与审计留痕，二者同权。
 
 ## 日常处置（triage CLI，§7.7）
 
@@ -175,7 +213,7 @@ node --env-file=.env scripts/report-triage.mjs stats
 node --env-file=.env scripts/report-triage.mjs delete-client client-…
 ```
 
-处置流程（§7.7 五步）：
+处置流程（§7.7 五步；1–4 步也可在 `https://reports.kepcup.com/admin/` 上人工完成）：
 
 1. 每日（至少每周）`list --status new` 过一遍。
 2. 逐条 `show` 看详情；涉及违法 / 严重有害内容的当天处理。
@@ -221,7 +259,8 @@ node --env-file=.env scripts/report-triage.mjs delete-client client-…
      ../../../apps/website/node_modules/.bin/wrangler secret put REPORT_POW_SECRET
    # 回读校验（只列名字不显示值）：wrangler secret list 应含三个 secret 名
    ```
-   token 轮换：重新 `wrangler secret put REPORT_ADMIN_TOKEN`，并同步更新 `.env`。
+   token 轮换：重新 `wrangler secret put REPORT_ADMIN_TOKEN`，并同步更新 `.env`。轮换
+   即刻失效全部 Web UI 会话（会话签名密钥就是该 token，见「管理端 Web UI」节）。
 4. **部署**（custom domain 首次生效可能要几秒）：
    ```bash
    ../../../infra/cloudflare/with-env.sh \
@@ -283,7 +322,11 @@ select name, type from sqlite_master where type in ('table','index') and name no
 
 ## 已知限制
 
-- **无 Web UI**：处置只有本 CLI；`nextBefore` 游标翻页是 keyset 分页（`--before`）。
+- **Web UI 单管理员视角**：同源内嵌单页（任务 5B）无自动轮询、无操作审计日志（处置
+  留痕靠 PATCH 写进 note）；无 `#reportId` 深链（不能从 URL 直达某条详情，只能在列表里
+  点）；「全部状态」视图是浏览器侧合并四种状态查询，翻页用裸时间戳游标，毫秒级并列的
+  边界行极罕见情况下可能跳过；会话 12 小时、服务端零状态，无单独注销全部会话手段
+  （轮换 token 即全部失效）。
 - **限流不依赖 WAF**：免费套餐唯一的 zone 限速规则名额已被 registry 占用；本 Worker 的
   限流全在 Worker + D1（客户端 1/min + IP 100/h + 去重）。要更紧的 IP 限制只能改 vars
   或买 WAF 额度。

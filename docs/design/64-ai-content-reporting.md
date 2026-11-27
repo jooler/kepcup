@@ -37,6 +37,7 @@ D1 kepcup-reports（静态加密）
   cron「23 4 * * *」删过期行（365 天保留）
         ▼
 triage：scripts/report-triage.mjs（bearer admin API：list/show/set/delete-client/stats）
+  与 管理端 Web UI（任务 5B：浏览器 /admin/ 同源内嵌单页 → 同一套 /v1/admin/*）
 ```
 
 要点：渲染层只负责交互；`reports.submit` 只入队不等待网络；队列在 core 的 `main.db`（关应用不丢、启动续发）；服务端是独立部署单元（独立 Worker / D1 / 域名），不复用 registry / relay。
@@ -75,7 +76,7 @@ triage：scripts/report-triage.mjs（bearer admin API：list/show/set/delete-cli
 
 **全局日上限（任务 5A）**：`report_daily(day, count)` 按 UTC 日期原子累加（步 10.5，在去重之后——duplicate 不占额度），超过 `REPORT_DAILY_LIMIT`（默认 2000）→ 429 + `Retry-After` 至次日 UTC；被拒请求消耗一次计数（与 IP 限流同语义）。cron 同步清理 `used_at < now-1d` 的 pow 行与 `day < now-7d` 的日计数行。
 
-**Admin API**（`src/admin.ts`，`/v1/admin/*`）：bearer `REPORT_ADMIN_TOKEN`，先各自 sha256 再逐字节比较（常量时间）；secret 未配置时整棵子树 404（隐藏入口）。`GET /v1/admin/reports`（keyset 分页，摘要不含 payload_json）、`GET /v1/admin/reports/:id`（完整 payload）、`PATCH`（status: triaged/actioned/dismissed + note）、`DELETE /v1/admin/clients/:clientId`（隐私删除：删该 client 全部举报与限流行）、`GET /v1/admin/stats`。无 Web UI，处置走 CLI。
+**Admin API + Web UI**（`src/admin.ts` + `src/admin-ui.ts`，任务 5B）：`/v1/admin/*` 鉴权接受 bearer `REPORT_ADMIN_TOKEN` 或会话 Cookie 二选一（CLI 通道不变），先各自 sha256 再逐字节比较（常量时间）；secret 未配置时整棵子树（含 `/admin*`）404（隐藏入口）。`GET /v1/admin/reports`（keyset 分页，摘要不含 payload_json）、`GET /v1/admin/reports/:id`（完整 payload）、`PATCH`（status: triaged/actioned/dismissed + note）、`DELETE /v1/admin/clients/:clientId`（隐私删除：删该 client 全部举报与限流行）、`GET /v1/admin/stats`。管理端 Web UI：`https://reports.kepcup.com/admin/` 同源内嵌 vanilla JS 单页（资产为 `src/admin-ui.ts` 的 HTML/JS/CSS 字符串常量，wrangler 打包零配置、零依赖零构建；`POST/DELETE /admin/session` 签发/清除 `__Host-` 会话 Cookie，12h），处置走 CLI 或 Web UI 均可。
 
 **Cron**：`23 4 * * *` 每日清理 `received_at` 超 365 天的 reports、超 1 天的 client rate 行、过期 IP 窗口行。
 
@@ -107,7 +108,7 @@ triage：scripts/report-triage.mjs（bearer admin API：list/show/set/delete-cli
 
 ## 8. 处置流程（11.16「take appropriate actions」，as-built）
 
-1. 每日（至少每周）`node --env-file=.env scripts/report-triage.mjs list`（默认 `--status new`）。
+1. 每日（至少每周）过一遍待处理：Web UI（`https://reports.kepcup.com/admin/`，任务 5B）或 `node --env-file=.env scripts/report-triage.mjs list`（默认 `--status new`）。
 2. `show rep_…` 逐条看完整 payload；违法/严重有害内容当天处理。
 3. `set rep_… triaged` → 评估；需改提示词/过滤/模型的进发版，无需处理 `set … dismissed`。
 4. 处理完 `set rep_… actioned --note "…"`（动作入备注，便于审计）。
@@ -122,7 +123,10 @@ triage：scripts/report-triage.mjs（bearer admin API：list/show/set/delete-cli
 | 服务端存储 | D1 静态加密；只存清洗/截断后文本 + 完整 payload JSON；不存 API Key |
 | IP | 不存原始 IP；HMAC-SHA256（`IP_HASH_SALT`）后存 `ip_hash`，仅限流用 |
 | 日志 | Worker `{reportId,status,httpStatus}` / 路由行（admin 资源段折叠）；core 只记 `reportId/status/错误码`；无正文/clientId/IP |
-| Admin | bearer + 常量时间比较；未配置 404；token 只在 Worker secret 与本地 `.env` |
+| Admin | bearer 或会话 Cookie（二选一）+ 常量时间比较；未配置 404；token 只在 Worker secret 与本地 `.env` |
+| Web UI 会话（任务 5B） | `__Host-kepcup_reports_session=<exp>.<sig>`：HttpOnly + Secure + SameSite=Strict + Path=/ + 12h；sig = HMAC-SHA256（密钥即 `REPORT_ADMIN_TOKEN`），服务端零状态，轮换 token 即全量失效 |
+| Web UI CSP（任务 5B） | `default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`（页面与资产同头）+ no-store + nosniff；无内联脚本/样式、无外链 |
+| Web UI CSRF / XSS（任务 5B） | CSRF：SameSite=Strict 为主，Cookie 鉴权的 PATCH/DELETE 另校验 `Origin`（非本源 403；bearer 不受影响）；XSS：动态内容全部 `textContent` 渲染（UI 源码无 markup 注入面，测试静态审计锁定）+ CSP 兜底 |
 | CORS | 不返回任何 CORS 头（原生 fetch 不需要；浏览器页面不可读响应） |
 | 输入 | 128 KiB 流式计数、手写校验（不执行内容）、hash 重算 |
 | 滥用 | 去重（content 24h / payload 90d 时间桶）→ PoW challenge（HMAC 签名 + IP 绑定 + 单次使用 + reportId 绑定，400 不带 Retry-After）→ IP 100/h → client 1/min → 全局日上限 2000/UTC 天（429 + Retry-After 至次日零点）；`proof`/challenge 原文不进日志；Cloudflare 边缘兜底 |

@@ -1,14 +1,37 @@
 /**
- * Admin API (todo/ai-content-reporting.md §7.6): list / detail / patch / delete-client /
- * stats over the stored reports, consumed by scripts/report-triage.mjs (stage 2).
+ * Admin API + console (todo/ai-content-reporting.md §7.6; Web UI is task 5B):
+ * /v1/admin/* list / detail / patch / delete-client / stats over the stored
+ * reports, plus the same-origin embedded single-page console under /admin*
+ * (assets live in admin-ui.ts).
  *
- * Auth: every /v1/admin path requires `Authorization: Bearer <REPORT_ADMIN_TOKEN>`.
- * With the secret unset the whole subtree answers 404 (hidden entry). The comparison
- * hashes both sides with sha256 first and then diffs byte by byte — no length or
- * prefix early-exit. Admin responses carry the standard no-store trio (they come from
- * jsonResponse / HttpError in http.ts) and never include CORS headers.
+ * Auth — two interchangeable sources for /v1/admin/* (§7.6 semantics kept):
+ *   1. `Authorization: Bearer <REPORT_ADMIN_TOKEN>` — the CLI channel
+ *      (scripts/report-triage.mjs), unchanged;
+ *   2. the session cookie issued by POST /admin/session — the browser console.
+ * With the secret unset the whole /v1/admin + /admin* surface answers 404
+ * (hidden entry). The comparison hashes both sides with sha256 first and then
+ * diffs byte by byte — no length or prefix early-exit.
+ *
+ * Session cookie: `__Host-kepcup_reports_session=<exp>.<sig>` — HttpOnly,
+ * Secure, SameSite=Strict, Path=/, Max-Age=12h. sig = HMAC-SHA256(key =
+ * REPORT_ADMIN_TOKEN, "reports-session:<exp>") hex; sessions are stateless
+ * (nothing stored server-side) and rotating the token invalidates all of them
+ * at once. Verification failure is indistinguishable from "not authenticated"
+ * and lands on the existing 401 / 404 paths.
+ *
+ * CSRF: SameSite=Strict is the first line; when a write (PATCH / DELETE) is
+ * cookie-authenticated AND an Origin header is present and not this origin, the
+ * request is 403. Bearer requests skip the Origin check (CLI clients have
+ * none). Login failures return 401 with only the generic {path,method,status}
+ * log line — the token is 32-byte-hex entropy, so online guessing is
+ * impractical and no rate limit is added here (README「管理端 Web UI」).
+ *
+ * Admin responses carry the standard no-store trio (jsonResponse / HttpError in
+ * http.ts) and never include CORS headers; page/asset responses additionally
+ * carry the strict ADMIN_CSP.
  */
 
+import { ADMIN_CSS, ADMIN_HTML, ADMIN_JS } from './admin-ui';
 import {
   deleteClientData,
   findById,
@@ -29,17 +52,129 @@ const MAX_LIMIT = 100;
 const NOTE_MAX_CHARS = 2000;
 /** List responses carry a preview, never the full message text nor payload_json (§7.6). */
 const PREVIEW_CHARS = 200;
+/** Login body cap: the token is ≤64 chars; anything larger is junk by definition. */
+const LOGIN_BODY_MAX_BYTES = 4096;
+
+// ------------------------------------------------------------------ session
+
+/**
+ * Session cookie name. The `__Host-` prefix makes browsers reject any Domain
+ * attribute and require Secure + Path=/ — exactly the attributes we set.
+ */
+export const SESSION_COOKIE_NAME = '__Host-kepcup_reports_session';
+/** Session lifetime: 12 h — the cookie Max-Age and the signed exp share it. */
+export const SESSION_TTL_MS = 12 * 3_600_000;
+/** HMAC message prefix binding the signature to this one purpose. */
+const SESSION_MSG_PREFIX = 'reports-session:';
+
+/**
+ * Strict CSP for the console page and its same-origin assets (task 5B): no
+ * inline script/style, no third-party anything, no framing, no base/form
+ * hijacking. script/style/connect are covered by 'self' via default-src 'none'.
+ */
+export const ADMIN_CSP =
+  "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; " +
+  "img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+
+/** `<exp>.<sig>` — the signed session cookie value (exp is a ms epoch). */
+export async function sessionCookieValue(exp: number, token: string): Promise<string> {
+  return `${exp}.${await hmacSha256Hex(token, `${SESSION_MSG_PREFIX}${exp}`)}`;
+}
+
+/** exp is fresh and the signature verifies (constant time against the HMAC). */
+async function verifySessionValue(value: string, token: string, now: number): Promise<boolean> {
+  const dot = value.indexOf('.');
+  if (dot === -1) return false;
+  const expRaw = value.slice(0, dot);
+  if (!/^\d{1,15}$/.test(expRaw)) return false;
+  const exp = Number(expRaw);
+  if (exp <= now) return false;
+  const expectedSig = await hmacSha256Hex(token, `${SESSION_MSG_PREFIX}${exp}`);
+  return timingSafeEqual(value.slice(dot + 1), expectedSig);
+}
+
+/** Value of the session cookie from a Cookie header, or null. */
+export function readSessionCookie(cookieHeader: string | null): string | null {
+  if (cookieHeader === null) return null;
+  for (const part of cookieHeader.split(';')) {
+    const pair = part.trim();
+    const eq = pair.indexOf('=');
+    if (eq === -1) continue;
+    if (pair.slice(0, eq) === SESSION_COOKIE_NAME) return pair.slice(eq + 1);
+  }
+  return null;
+}
+
+/** HMAC-SHA256(key, msg) as lowercase hex (WebCrypto; mirrors worker.ts helper). */
+async function hmacSha256Hex(key: string, message: string): Promise<string> {
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(key),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const mac = await crypto.subtle.sign('HMAC', cryptoKey, new TextEncoder().encode(message));
+  let hex = '';
+  for (const byte of new Uint8Array(mac)) hex += byte.toString(16).padStart(2, '0');
+  return hex;
+}
+
+function sessionSetCookie(value: string, maxAgeSeconds: number): string {
+  return (
+    `${SESSION_COOKIE_NAME}=${value}; HttpOnly; Secure; SameSite=Strict; Path=/; ` +
+    `Max-Age=${maxAgeSeconds}`
+  );
+}
+
+// ------------------------------------------------------------------ auth
+
+/**
+ * Auth source abstraction for /v1/admin/*: bearer first (CLI channel, exactly
+ * the old behavior), then the session cookie. Throws 401 like before when
+ * neither verifies.
+ */
+async function authorizeAdmin(
+  request: Request,
+  deps: HandlerDeps,
+  expected: string,
+): Promise<void> {
+  const header = request.headers.get('authorization');
+  if (header !== null && header.startsWith('Bearer ')) {
+    if (!(await timingSafeEqual(header.slice(7), expected))) {
+      throw new HttpError(401, { error: 'unauthorized' });
+    }
+    return; // Bearer path: no Origin check — CLI clients have none (§7.6 unchanged).
+  }
+  const cookie = readSessionCookie(request.headers.get('cookie'));
+  if (cookie !== null && (await verifySessionValue(cookie, expected, deps.now()))) {
+    assertTrustedOrigin(request);
+    return;
+  }
+  throw new HttpError(401, { error: 'unauthorized' });
+}
+
+/**
+ * CSRF line behind SameSite=Strict: cookie-authenticated writes (PATCH/DELETE)
+ * must not carry a cross-origin Origin header. A missing Origin passes (many
+ * same-origin requests omit it; its absence cannot be forged from a browser
+ * that would send one). Bearer requests never reach here.
+ */
+function assertTrustedOrigin(request: Request): void {
+  const method = request.method.toUpperCase();
+  if (method !== 'PATCH' && method !== 'DELETE') return;
+  const origin = request.headers.get('origin');
+  if (origin === null) return;
+  if (origin !== new URL(request.url).origin) {
+    throw new HttpError(403, { error: 'cross_origin_forbidden' });
+  }
+}
 
 export async function handleAdminRequest(request: Request, deps: HandlerDeps): Promise<Response> {
   const expected = deps.config.adminToken;
   // No token configured -> 404 for the whole subtree: the entry point does not exist.
   if (expected === undefined) throw new HttpError(404, { error: 'not_found' });
-
-  const header = request.headers.get('authorization');
-  const provided = header !== null && header.startsWith('Bearer ') ? header.slice(7) : null;
-  if (provided === null || !(await timingSafeEqual(provided, expected))) {
-    throw new HttpError(401, { error: 'unauthorized' });
-  }
+  await authorizeAdmin(request, deps, expected);
 
   const segments = new URL(request.url).pathname.split('/').filter((s) => s.length > 0);
   // segments: ['v1', 'admin', ...]; percent-decoding per path segment.
@@ -81,6 +216,111 @@ export async function handleAdminRequest(request: Request, deps: HandlerDeps): P
     return jsonResponse(200, { status: 'deleted', clientId, ...deleted });
   }
   throw new HttpError(404, { error: 'not_found' });
+}
+
+// ------------------------------------------------------------------ /admin* console
+
+/**
+ * The embedded single-page console: static page + same-origin assets + the two
+ * session endpoints. No token configured -> 404 like /v1/admin/*. Page and
+ * assets are served without auth — they contain no secret (auth happens per
+ * API call, in the browser via the session cookie); unknown paths 404.
+ */
+export async function handleAdminConsoleRequest(
+  request: Request,
+  deps: HandlerDeps,
+): Promise<Response> {
+  if (deps.config.adminToken === undefined) throw new HttpError(404, { error: 'not_found' });
+  const { pathname } = new URL(request.url);
+  if (pathname === '/admin') {
+    // Canonical /admin/: the slash matters for relative asset URLs; 308 keeps
+    // the method. Log stays the generic route line (no ids involved).
+    return new Response(null, {
+      status: 308,
+      headers: {
+        location: '/admin/',
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+      },
+    });
+  }
+  if (pathname === '/admin/' || pathname === '/admin/app.js' || pathname === '/admin/app.css') {
+    if (request.method !== 'GET') throw methodNotAllowed('GET');
+    if (pathname === '/admin/') return assetResponse(request, ADMIN_HTML, 'text/html; charset=utf-8');
+    if (pathname === '/admin/app.js') {
+      return assetResponse(request, ADMIN_JS, 'text/javascript; charset=utf-8');
+    }
+    return assetResponse(request, ADMIN_CSS, 'text/css; charset=utf-8');
+  }
+  if (pathname === '/admin/session') {
+    if (request.method === 'POST') return loginHandler(request, deps);
+    if (request.method === 'DELETE') return logoutHandler();
+    throw methodNotAllowed('POST, DELETE');
+  }
+  throw new HttpError(404, { error: 'not_found' });
+}
+
+/**
+ * Page/asset response: strict CSP + no-store + nosniff + an ETag (content
+ * sha256, first 16 hex) with a simple If-None-Match 304 path.
+ */
+async function assetResponse(
+  request: Request,
+  body: string,
+  contentType: string,
+): Promise<Response> {
+  const etag = `"${(await sha256Hex(body)).slice(0, 16)}"`;
+  const headers: Record<string, string> = {
+    'content-type': contentType,
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+    'content-security-policy': ADMIN_CSP,
+    etag,
+  };
+  if (request.headers.get('if-none-match') === etag) {
+    return new Response(null, { status: 304, headers });
+  }
+  return new Response(body, { status: 200, headers });
+}
+
+/**
+ * POST /admin/session — verify the token (constant time), set the signed
+ * cookie. Malformed/oversized bodies are just a failed login (401): no signal
+ * about token validity, no error echo, and the generic route log only (§8).
+ * The body is read with a streamed byte cap (this endpoint is unauthenticated —
+ * an uncapped request.text() would let anyone buffer an arbitrary body in the
+ * isolate). No rate limit beyond that: REPORT_ADMIN_TOKEN is 32-byte hex
+ * entropy, online guessing is impractical (Workers has no sleep for failure
+ * delays anyway).
+ */
+async function loginHandler(request: Request, deps: HandlerDeps): Promise<Response> {
+  const expected = deps.config.adminToken;
+  if (expected === undefined) throw new HttpError(404, { error: 'not_found' }); // gated above
+  let parsed: unknown;
+  try {
+    const raw = await readBodyCapped(request, LOGIN_BODY_MAX_BYTES);
+    if (raw === null) throw new Error('too large');
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new HttpError(401, { error: 'unauthorized' });
+  }
+  const token =
+    typeof parsed === 'object' && parsed !== null ? (parsed as { token?: unknown }).token : undefined;
+  if (typeof token !== 'string' || !(await timingSafeEqual(token, expected))) {
+    throw new HttpError(401, { error: 'unauthorized' });
+  }
+  const expiresAt = deps.now() + SESSION_TTL_MS;
+  const value = await sessionCookieValue(expiresAt, expected);
+  return jsonResponse(200, { ok: true, expiresAt }, {
+    'set-cookie': sessionSetCookie(value, SESSION_TTL_MS / 1000),
+  });
+}
+
+/** DELETE /admin/session — clear the cookie (Max-Age=0); idempotent, no auth needed. */
+function logoutHandler(): Response {
+  return jsonResponse(200, { ok: true }, {
+    'set-cookie': sessionSetCookie('', 0),
+  });
 }
 
 // ------------------------------------------------------------------ handlers
@@ -205,6 +445,36 @@ async function patchHandler(
 }
 
 // ------------------------------------------------------------------ helpers
+
+/**
+ * Reads the request body with a hard byte cap; null once over it. Same counting
+ * rule as worker.ts's readBodyWithLimit, kept local so the worker -> admin
+ * import graph stays one-way. Invalid UTF-8 throws (the caller maps it to 401).
+ */
+async function readBodyCapped(request: Request, maxBytes: number): Promise<string | null> {
+  const reader = request.body?.getReader() ?? null;
+  if (reader === null) return '';
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const full = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    full.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder('utf-8', { fatal: true }).decode(full);
+}
 
 /**
  * Constant-time comparison (§7.6): hash both sides first so lengths and prefixes

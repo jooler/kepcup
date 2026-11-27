@@ -26,7 +26,7 @@
  * never payload, body text, clientId, IP, token or any challenge/solution (§8).
  */
 
-import { handleAdminRequest } from './admin';
+import { handleAdminConsoleRequest, handleAdminRequest } from './admin';
 import {
   bucketOf,
   computeContentHash,
@@ -155,6 +155,11 @@ async function routeRequest(
   }
   if (pathname === '/v1/admin' || pathname.startsWith('/v1/admin/')) {
     return { response: await handleAdminRequest(request, deps) };
+  }
+  // Admin console (task 5B): the embedded single-page UI + its session
+  // endpoints, all same-origin. Dispatched last — never shadows /v1/*.
+  if (pathname === '/admin' || pathname.startsWith('/admin/')) {
+    return { response: await handleAdminConsoleRequest(request, deps) };
   }
   throw new HttpError(404, { error: 'not_found' });
 }
