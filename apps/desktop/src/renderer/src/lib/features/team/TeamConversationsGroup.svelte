@@ -5,6 +5,7 @@
   import type { ConversationView } from '$lib/stores/chat-session.svelte';
   import type { TeamConversationRow } from '$lib/stores/chat-team.svelte';
   import { chat } from '$lib/stores/chat.svelte';
+  import { messageVisibility } from '$lib/stores/message-visibility.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { friends } from '$lib/features/team/friends.svelte';
   import { connections, serverHashOf, teamSourceId, type SourceId } from '$lib/rpc/connections.svelte';
@@ -15,6 +16,7 @@
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import ProjectAvatarStack from '$lib/avatars/ProjectAvatarStack.svelte';
   import { SIDEBAR_ROW_ACTIVE_CLASS } from '$lib/features/sidebar/sidebar-active-class';
+  import { safeConversationPreview } from '$lib/features/search/conversation-search';
 
   /**
    * 侧栏的团队分组（T7 步骤 3，62.04 §1「会话列表合并显示」）：本机分组
@@ -96,8 +98,16 @@
       : (conversation.bot?.name ?? conversation.directBotId ?? conversation.id);
   }
 
+  /** 团队条目预览：有隐藏消息时摘要可能含被隐藏的原文，必须留空、不回退。 */
   function previewOf(serverHash: string, conversation: ConversationView): string {
-    return chat.team.slices[serverHash]?.lastMessageText[conversation.id] ?? conversation.summary ?? '';
+    const source = `team:${serverHash}` as SourceId;
+    return messageVisibility.previewHidden(source, conversation.id, conversation.lastPreviewSeq)
+      ? t('messages.hidden')
+      : safeConversationPreview({
+          preview: chat.team.slices[serverHash]?.lastMessageText[conversation.id] ?? '',
+          summary: conversation.summary ?? '',
+          hasHiddenMessages: messageVisibility.hasHiddenMessages(source, conversation.id),
+        });
   }
 
   function statusLabel(status: TeamServerGroup['status']): string {

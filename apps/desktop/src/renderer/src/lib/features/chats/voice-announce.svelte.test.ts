@@ -151,6 +151,13 @@ describe('announceEntryFor（入队条件的排列，53 号）', () => {
     expect(entry).toEqual({ id: 'm1', text: '你好，见 文档', truncated: false });
   });
 
+  it('uses the current visibility resolver instead of a stale display flag', () => {
+    expect(announceEntryFor(botTextMessage(), { ...base, isHidden: () => true })).toBeNull();
+    expect(
+      announceEntryFor(botTextMessage({ hidden: true }), { ...base, isHidden: () => false }),
+    ).not.toBeNull();
+  });
+
   it('语音模式未开启 → 不播', () => {
     expect(announceEntryFor(botTextMessage(), { ...base, active: false })).toBeNull();
   });
@@ -328,6 +335,54 @@ describe('播报队列（注入假依赖驱动真实 voiceMode store）', () => 
     expect(h.playedUrls).toEqual([]); // 无声泄漏
     expect(h.failures).toEqual([]); // 作废不算失败
     expect(voiceMode.phase).toBe('idle');
+  });
+
+  it('hide while synthesizing invalidates the late result and continues the queue', async () => {
+    voiceMode.enter();
+    voiceMode.announce({ id: 'a', text: '一', truncated: false });
+    voiceMode.announce({ id: 'b', text: '二', truncated: false });
+    await tick();
+    expect(voiceMode.hideMessage('a')).toBe(true);
+    expect(voiceMode.phase).toBe('idle');
+    await tick();
+    expect(h.synthMessages).toEqual(['a', 'b']);
+    h.resolveSynth(); // The hidden entry's late audio must stay silent.
+    await tick();
+    expect(h.playedUrls).toEqual([]);
+    h.resolveSynth();
+    await tick();
+    expect(h.playInputs.at(-1)?.messageId).toBe('b');
+  });
+
+  it('hide while playing stops the current announcement and continues the next one', async () => {
+    voiceMode.enter();
+    voiceMode.announce({ id: 'a', text: '一', truncated: false });
+    voiceMode.announce({ id: 'b', text: '二', truncated: false });
+    await tick();
+    h.resolveSynth();
+    await tick();
+    expect(voiceMode.hideMessage('a')).toBe(true);
+    await tick();
+    expect(h.stoppedUrls).toEqual([h.resolvedUrls[0]]);
+    expect(h.synthMessages).toEqual(['a', 'b']);
+    h.resolveSynth();
+    await tick();
+    expect(h.playInputs.at(-1)?.messageId).toBe('b');
+  });
+
+  it('hide removes a queued entry without synthesizing it', async () => {
+    voiceMode.enter();
+    voiceMode.announce({ id: 'a', text: '一', truncated: false });
+    voiceMode.announce({ id: 'b', text: '二', truncated: false });
+    voiceMode.announce({ id: 'c', text: '三', truncated: false });
+    await tick();
+    h.resolveSynth();
+    await tick();
+    expect(voiceMode.hideMessage('b')).toBe(true);
+    expect(h.stoppedUrls).toEqual([]);
+    h.endPlayback();
+    await tick();
+    expect(h.synthMessages).toEqual(['a', 'c']);
   });
 
   it('朗读抢占播放中的播报（onPreempted）：清队 + 回 idle，不再播下一条', async () => {

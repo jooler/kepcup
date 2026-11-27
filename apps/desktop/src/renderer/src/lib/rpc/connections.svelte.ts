@@ -86,6 +86,8 @@ export interface SourceConnection {
   readonly clientIdentity: ClientIdentityView;
   /** 来源对应的活跃成员 id（团队来源未登录为 null）。 */
   readonly memberId: string | null;
+  /** Member identity changes; listeners run synchronously before any new port is bound. */
+  onIdentityChanged(handler: (memberId: string | null) => void): () => void;
 }
 
 export function teamSourceId(serverHash: string): SourceId {
@@ -123,6 +125,7 @@ const localConnection: SourceConnection = {
   get memberId(): string | null {
     return null;
   },
+  onIdentityChanged: () => () => undefined,
 };
 
 /**
@@ -132,17 +135,38 @@ const localConnection: SourceConnection = {
  */
 class TeamConnection implements SourceConnection {
   status = $state<TeamConnectionState>('offline');
-  memberId: string | null = null;
+  #memberId = $state<string | null>(null);
 
   readonly #serverHash: string;
   readonly #eventHandlers = new Map<string, Set<EventHandler>>();
   readonly #connectedHandlers = new Set<() => void>();
+  // Plain Set: listener registry, not UI state.
+  readonly #identityListeners = new Set<(memberId: string | null) => void>();
   #rpc: RpcClient | null = null;
   #port: MessagePort | null = null;
+  #portMemberId: string | null = null;
+  #transportGeneration = 0;
 
   constructor(serverHash: string, memberId: string | null) {
     this.#serverHash = serverHash;
-    this.memberId = memberId;
+    this.#memberId = memberId;
+  }
+
+  get memberId(): string | null {
+    return this.#memberId;
+  }
+
+  set memberId(value: string | null) {
+    if (this.#memberId === value) return;
+    this.#memberId = value;
+    this.#dropClient('team source identity changed');
+    this.status = 'offline';
+    for (const listener of [...this.#identityListeners]) listener(value);
+  }
+
+  onIdentityChanged(handler: (memberId: string | null) => void): () => void {
+    this.#identityListeners.add(handler);
+    return () => this.#identityListeners.delete(handler);
   }
 
   get clientIdentity(): ClientIdentityView {
@@ -150,13 +174,16 @@ class TeamConnection implements SourceConnection {
   }
 
   /** 主进程交付的端口绑定（每次重建都替换旧客户端）。 */
-  bind(port: MessagePort): void {
-    this.#dropClient();
+  bind(port: MessagePort, memberId: string | null = this.memberId): void {
+    this.memberId = memberId;
+    this.#dropClient('team port replaced');
+    this.#portMemberId = memberId;
     this.#port = port;
+    const generation = this.#transportGeneration;
     port.start();
     this.#rpc = createRpcClient({
       transport: domPortToTransport(port),
-      eventHandlers: this.#eventProxy(),
+      eventHandlers: this.#eventProxy(memberId, generation),
     });
     this.status = 'connected';
     for (const handler of this.#connectedHandlers) handler();
@@ -168,7 +195,7 @@ class TeamConnection implements SourceConnection {
    * 永远回不来；`false`（用户断开 / 移除 / 认证失效）才销毁。
    */
   markOffline(reconnectExpected: boolean): void {
-    if (!reconnectExpected) this.#dropClient();
+    if (!reconnectExpected) this.#dropClient('team source disconnected');
     this.status = reconnectExpected ? 'reconnecting' : 'offline';
   }
 
@@ -191,8 +218,10 @@ class TeamConnection implements SourceConnection {
     if (this.#port !== null) this.status = 'connected';
   }
 
-  #dropClient(): void {
+  #dropClient(reason: string): void {
+    this.#transportGeneration += 1;
     if (this.#rpc !== null) {
+      this.#rpc.rejectPending(reason);
       this.#rpc.close();
       this.#rpc = null;
     }
@@ -204,6 +233,7 @@ class TeamConnection implements SourceConnection {
       }
       this.#port = null;
     }
+    this.#portMemberId = null;
   }
 
   onConnected(handler: () => void): () => void {
@@ -237,7 +267,14 @@ class TeamConnection implements SourceConnection {
     if (this.status === 'unreachable') {
       throw new Error('team source unreachable');
     }
-    return this.#rpc.call(method, input === undefined ? undefined : $state.snapshot(input));
+    const rpc = this.#rpc;
+    const generation = this.#transportGeneration;
+    const memberId = this.#memberId;
+    const result = await rpc.call(method, input === undefined ? undefined : $state.snapshot(input));
+    if (generation !== this.#transportGeneration || memberId !== this.#memberId) {
+      throw new Error('team source identity changed');
+    }
+    return result;
   }
 
   async callTeam<M extends TeamRpcMethodName>(method: M, input?: unknown): Promise<unknown> {
@@ -245,13 +282,23 @@ class TeamConnection implements SourceConnection {
   }
 
   /** birpc 按事件名在投递时查 handler：Proxy 让后注册的订阅也能收到。 */
-  #eventProxy(): Record<string, (payload: unknown) => void> {
+  #eventProxy(
+    portMemberId: string | null,
+    generation: number,
+  ): Record<string, (payload: unknown) => void> {
     return new Proxy(
       {},
       {
         get: (_target: Record<string, unknown>, name: string | symbol) => {
           if (typeof name !== 'string') return undefined;
           return (payload: unknown) => {
+            if (
+              generation !== this.#transportGeneration ||
+              this.#portMemberId !== portMemberId ||
+              this.memberId !== portMemberId
+            ) {
+              return;
+            }
             const handlers = this.#eventHandlers.get(name);
             if (!handlers) return;
             for (const handler of handlers) handler(payload);
@@ -270,6 +317,9 @@ class ConnectionsRegistry {
   /** 响应式锚点：teams 变化（建 / 拆）时递增，sources() 据此重算。 */
   #teamsRevision = $state(0);
   #started = false;
+  #refreshGeneration = 0;
+  /** A microtask-coalesced replacement refresh is already queued. */
+  #refreshQueued = false;
   #api: TeamServersApi | null = null;
   /** 本会话内已自动请求过 connect 的服务器（避免 onChanged 循环重连）。 */
   readonly #connectAttempted = new Set<string>();
@@ -324,6 +374,16 @@ class ConnectionsRegistry {
     if (!team) {
       const server = this.servers.find((entry) => entry.serverHash === hash);
       team = new TeamConnection(hash, server?.activeMemberId ?? null);
+      team.onIdentityChanged(() => {
+        this.#connectAttempted.delete(hash);
+        this.#onlineNotified.delete(hash);
+        this.#refreshGeneration += 1;
+        this.#teamsRevision += 1;
+        this.#notifySourcesChanged();
+        // The identity change discarded any in-flight api.list; a replacement
+        // refresh keeps the server list from being lost until the next change.
+        this.#scheduleRefresh();
+      });
       this.#teams.set(hash, team);
       this.#teamsRevision += 1;
     }
@@ -346,6 +406,7 @@ class ConnectionsRegistry {
   async requestDisconnect(serverHash: string): Promise<void> {
     if (this.#api === null) return;
     await this.#api.disconnect({ serverHash });
+    this.#refreshGeneration += 1;
     this.get(teamSourceId(serverHash)).markOffline(false);
     await this.#refresh();
   }
@@ -411,12 +472,20 @@ class ConnectionsRegistry {
   /**
    * 绑定主进程交付的团队端口（生产经 window message；测试直接调本方法注入）。
    */
-  attachTeamPort(serverHash: string, port: MessagePort): void {
+  attachTeamPort(
+    serverHash: string,
+    port: MessagePort,
+    activeMemberId?: string | null,
+  ): void {
+    // A new port starts a new transport identity. Lists requested before it must
+    // not overwrite the account that the port belongs to.
+    this.#refreshGeneration += 1;
     const team = this.get(teamSourceId(serverHash));
     if (team instanceof TeamConnection) {
       const server = this.serverOf(serverHash);
-      if (server?.activeMemberId != null) team.memberId = server.activeMemberId;
-      team.bind(port);
+      const memberId =
+        activeMemberId === undefined ? (server?.activeMemberId ?? team.memberId) : activeMemberId;
+      team.bind(port, memberId);
       // bind 把「端口交付」记成 connected（首连窗口的数据面就绪语义）；但桥对
       // 重试中的连接（connecting / error / unreachable）同样补发端口（窗口重载
       // refreshPorts）——若清单已收敛到 unreachable，这个 connected 没有任何后续
@@ -428,6 +497,10 @@ class ConnectionsRegistry {
       this.#maybeNotifyOnline(serverHash);
     }
     this.#notifySourcesChanged();
+    // attachTeamPort bumps #refreshGeneration, discarding any api.list in flight.
+    // Without a replacement the (possibly initial) list would stay empty and the
+    // team groups would never appear. Coalesced, so this cannot loop.
+    this.#scheduleRefresh();
   }
 
   /**
@@ -440,6 +513,7 @@ class ConnectionsRegistry {
     if (status === 'connected') {
       team.markConnected();
     } else if (status === 'idle' || status === 'unauthenticated') {
+      this.#refreshGeneration += 1;
       team.markOffline(false);
     } else if (status === 'unreachable') {
       team.markUnreachable();
@@ -450,6 +524,8 @@ class ConnectionsRegistry {
 
   /** 测试 /  teardown：拆掉全部团队连接。 */
   reset(): void {
+    this.#refreshGeneration += 1;
+    this.#refreshQueued = false;
     for (const team of this.#teams.values()) team.markOffline(false);
     this.#teams.clear();
     this.servers = [];
@@ -466,9 +542,20 @@ class ConnectionsRegistry {
     this.#notifySourcesChanged();
   }
 
+  /** A microtask-coalesced refresh that cannot loop (one queued slot). */
+  #scheduleRefresh(): void {
+    if (this.#refreshQueued || this.#api === null) return;
+    this.#refreshQueued = true;
+    queueMicrotask(() => {
+      this.#refreshQueued = false;
+      void this.#refresh();
+    });
+  }
+
   async #refresh(): Promise<void> {
     const api = this.#api;
     if (api === null) return;
+    const generation = ++this.#refreshGeneration;
     let list: TeamServerEntry[];
     try {
       list = await api.list();
@@ -476,8 +563,8 @@ class ConnectionsRegistry {
       // 平台暂不可用：保留上次清单（onChanged 会再触发）。
       return;
     }
+    if (generation !== this.#refreshGeneration || api !== this.#api) return;
     this.servers = list;
-    this.#notifySourcesChanged();
     for (const server of list) {
       this.#platformStatus.set(server.serverHash, server.status);
       const fused = fusionPref().isEnabled(server.serverHash);
@@ -509,14 +596,15 @@ class ConnectionsRegistry {
         this.#teamsRevision += 1;
       }
     }
+    this.#notifySourcesChanged();
   }
 
   readonly #onWindowMessage = (event: MessageEvent) => {
     const nonce = typeof window !== 'undefined' ? window.kepcup?.portNonce : undefined;
     if (nonce === undefined) return;
     if (isTeamPortMessage(event, window, nonce)) {
-      const data = event.data as { serverHash: string };
-      this.attachTeamPort(data.serverHash, event.ports[0]!);
+      const data = event.data as { serverHash: string; activeMemberId: string | null };
+      this.attachTeamPort(data.serverHash, event.ports[0]!, data.activeMemberId);
     }
   };
 }

@@ -159,13 +159,14 @@ test('project chat: create, @ mention, reply-quote, turn status', async () => {
         .expect((r) => JSON.stringify(r.body.messages).includes('名字：阿甲'))
         .replyText('引用也给我'),
     ]);
-    // 引用按钮随行 hover 出现（用户/Bot 消息都有），定位到 bot 消息所在行。
+    // Quote now lives in the hover More menu.
     const quotedRow = page
       .locator('[data-testid^="message-"][role="group"]')
       .filter({ has: page.locator('[data-testid="bot-bubble"]') })
       .first();
     await quotedRow.hover();
-    await quotedRow.locator('[data-testid="message-quote"]').click();
+    await quotedRow.locator('[data-testid="message-more"]').click();
+    await page.locator('[data-testid="more-message-quote"]').click();
     await expect(page.locator('[data-testid="reply-preview"]')).toBeVisible();
     await composer.click();
     await composer.pressSequentially('就按这个继续');

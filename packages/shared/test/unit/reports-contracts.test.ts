@@ -13,6 +13,7 @@ import {
   REPORT_CONTENT_DEDUPE_MS,
   REPORT_CONTEXT_ITEM_MAX_BYTES,
   REPORT_CONTEXT_MAX_ITEMS,
+  REPORT_EXCLUDED_MESSAGE_IDS_MAX,
   REPORT_MESSAGE_CONTENT_MAX_BYTES,
   REPORT_MESSAGE_TEXT_MAX_BYTES,
   REPORT_PAYLOAD_DEDUPE_MS,
@@ -133,6 +134,26 @@ describe('reports.submit 往返', () => {
     expect(reportsSubmitOutputSchema.parse({ status: 'duplicate', reason: 'payload' }).reason).toBe(
       'payload',
     );
+  });
+
+  it('accepts bounded excluded message ids for local reply/context filtering', () => {
+    const parsed = reportsSubmitInputSchema.parse({
+      ...base,
+      excludedMessageIds: ['msg_hidden_1', 'msg_hidden_2'],
+    });
+    expect(parsed.excludedMessageIds).toEqual(['msg_hidden_1', 'msg_hidden_2']);
+    expect(
+      reportsSubmitInputSchema.safeParse({ ...base, excludedMessageIds: [''] }).success,
+    ).toBe(false);
+    expect(
+      reportsSubmitInputSchema.safeParse({
+        ...base,
+        excludedMessageIds: Array.from(
+          { length: REPORT_EXCLUDED_MESSAGE_IDS_MAX + 1 },
+          (_, index) => `msg_${index}`,
+        ),
+      }).success,
+    ).toBe(false);
   });
 
   it('team 来源必须带 serverHash，snapshot 的 bot 可为 partial、conversation.type 可选', () => {

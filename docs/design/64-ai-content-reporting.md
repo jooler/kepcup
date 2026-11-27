@@ -45,7 +45,7 @@ triage：scripts/report-triage.mjs（bearer admin API：list/show/set/delete-cli
 ## 3. 数据契约
 
 - **唯一事实来源**：`packages/shared/src/domain/report.ts`——payload 顶层 schema（`reportPayloadSchema`）、子结构（client / source / bot / message / replyTo / context / usage / tools / providers / hashes）、内容上限常量（`REPORT_*_MAX_BYTES`）、去重窗口（`REPORT_CONTENT_DEDUPE_MS` 24h、`REPORT_PAYLOAD_DEDUPE_MS` 90d）、reaction 白名单（`MESSAGE_REACTION_EMOJIS` 12 个）与 scope 形状（`^local$|^team:[0-9a-f]{16}$`）。
-- **RPC**：`packages/shared/src/rpc/methods.ts` 的 `messages.react` / `messages.reactions` / `reports.submit` / `reports.cancel`（均在 `APP_RPC_METHODS`）。`reports.submit` 输出 `queued | duplicate | rejected`（`rejected` 只作诊断，UI 静默）；`reports.cancel` 撤回本机队列里尚未发出的举报——按 (clientId, messageId) 删 `report_outbox` 的 pending/failed 行（输出 `cancelled`），行已 sending/sent 或本 client 无行输出 `not_revocable` + `reason: sent|sending|none`（见 §11.j）。
+- **RPC**：`packages/shared/src/rpc/methods.ts` 的 `messages.react` / `messages.reactions` / `reports.submit` / `reports.cancel`（均在 `APP_RPC_METHODS`）。`reports.submit` 可带 `excludedMessageIds`（最多 500 个渲染层隐藏消息 id）：local 重读 reply/context 时省略这些行，可见的举报目标不受影响；team 快照在发送前即过滤隐藏 reply/context。`reports.submit` 输出 `queued | duplicate | rejected`（`rejected` 只作诊断，UI 静默）；`reports.cancel` 撤回本机队列里尚未发出的举报——按 (clientId, messageId) 删 `report_outbox` 的 pending/failed 行（输出 `cancelled`），行已 sending/sent 或本 client 无行输出 `not_revocable` + `reason: sent|sending|none`（见 §11.j）。
 - **固定向量**：`packages/shared/test/fixtures/report-v1.json`——content hash 前缀 `69a79ef1…`、payload hash 前缀 `66f397f8…`。core（`node:crypto`）与 Worker（`crypto.subtle`）各有一份 hash 实现，以该向量逐字节互锁，禁止只改一边。
 - **hash 定义**：content = 正文（text）或卡片 canonicalJson（card）的 sha256；payload = 去掉 `reportId / createdAt / hashes / proof` 后的 canonicalJson 的 sha256（递归按 key 字典序排序、数组保序；`proof` 是 PoW 传输层兄弟键，任务 5A，shared schema 不知道它）。bucket 由两侧各自时钟计算，不进 hash。
 - **上限**：正文 32KB、卡片 16KB、replyTo 2KB、每条 context 2KB×最多 4 条、profile 8KB、附件元数据 ≤20 条、整包 128KB；清洗顺序 = `secrets.redact()` → 去 C0 控制字符（保留 `\n` `\t`）→ UTF-8 字节截断（不劈多字节/代理对，置 `truncated`）。
@@ -60,7 +60,7 @@ triage：scripts/report-triage.mjs（bearer admin API：list/show/set/delete-cli
 
 **`ReportService`**（`packages/core/src/domain/reports.ts`）：
 
-- `submit()`：local 来源用 `messages.getById()` 重读正文（不信任渲染层）；team 来源用渲染层快照（`snapshot` 必填，模型/usage 信息可缺失不阻塞）。Bot 已删除仍可举报（名字尽力回退，profile 空对象）。返回 `queued / duplicate / rejected`；rejected 原因：`not_reportable`（非可举报的 Bot 消息）、`payload_too_deep`（深嵌套 RangeError 收口）、`payload_too_large`（>128KB）。
+- `submit()`：local 来源用 `messages.getById()` 重读正文（不信任渲染层），并按 `excludedMessageIds` 从 reply/context 中省略隐藏行；team 来源用渲染层快照（`snapshot` 必填，模型/usage 信息可缺失不阻塞），快照构建时已过滤隐藏 reply/context。Bot 已删除仍可举报（名字尽力回退，profile 空对象）。返回 `queued / duplicate / rejected`；rejected 原因：`not_reportable`（非可举报的 Bot 消息）、`payload_too_deep`（深嵌套 RangeError 收口）、`payload_too_large`（>128KB）。
 - 排队（1 条/分钟/client）：`next_attempt_at = max(now+60s, 该 client 最后一行非 failed 的 next_attempt_at+60s)`；不同 client 各自计时。
 - 发送状态机 `#tickOnce()`：条件 UPDATE 抢占（pending→sending）→ POST（`redirect:'error'`，15s 超时）；2xx → sent；429 → `max(Retry-After/retryAfterMs, 60s)` 退避；408/425/5xx/网络错误 → 指数退避 60s×2^n（上限 1h，±20% jitter）；其余 4xx/3xx → failed（schema 不兼容需发版修，不自动重试）；最多 20 次。
 - 生命周期：`start()` 把崩溃残留的 `sending` 重置回 `pending` + 15s 轮询（timer `unref()`）；`close()` 只清定时器不等网络。

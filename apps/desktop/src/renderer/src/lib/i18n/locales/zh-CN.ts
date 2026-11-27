@@ -1244,6 +1244,12 @@ export const zhCN = {
   'messages.pinMessage': '固定整条消息',
   'messages.quotedLine': '引用 {name}：{text}',
   'messages.quotedDeleted': '引用的消息已撤回或删除',
+  'messages.hidden': '该消息已被您隐藏',
+  'messages.hiddenQuote': '已隐藏一条消息',
+  'messages.hide': '隐藏此消息',
+  'messages.show': '显示此消息',
+  'messages.more': '更多',
+  'messages.moreHide': '隐藏此条目',
   // AI 内容举报（todo §4）：Bot 消息 emoji 反应与「举报不当内容」入口。
   'messages.reactions.add': '添加表情',
   'messages.reactions.more': '更多表情',

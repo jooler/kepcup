@@ -73,6 +73,14 @@ describe('任务直注模式（Composer 复用，D115）', () => {
     expect(injectAttachAction({ ...base, injectMode: false })).toBe('pick');
   });
 
+  it('cancels hidden speech before the inactive voice-mode early return', () => {
+    const source = readFileSync(new URL('./Composer.svelte', import.meta.url), 'utf8');
+    const applyAt = source.indexOf('const messages = applyMessageSpeechVisibility(');
+    const inactiveAt = source.indexOf('if (!voiceMode.active || !voiceModeOwned) return;', applyAt);
+    expect(applyAt).toBeGreaterThan(0);
+    expect(inactiveAt).toBeGreaterThan(applyAt);
+  });
+
   it('Composer 注入模式不碰会话发送 / 草稿 / 协作 / 语音对话', () => {
     const source = readFileSync(new URL('./Composer.svelte', import.meta.url), 'utf8');
     // 注入目标由 prop 决定，创建即隔离（调用方必须显式传参，不能默认注进主对话）。

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   MESSAGE_REACTION_EMOJIS,
   MESSAGE_REACTION_SCOPE_PATTERN,
+  REPORT_EXCLUDED_MESSAGE_IDS_MAX,
   reportSourceSchema,
   reportTeamSnapshotSchema,
   type Message,
@@ -69,6 +70,7 @@ const {
   MORE_REACTION_EMOJIS,
   REPORT_EMOJI,
 } = await import('./message-reactions.svelte');
+const { messageVisibility } = await import('$lib/stores/message-visibility.svelte');
 
 const flush = async (): Promise<void> => {
   for (let i = 0; i < 5; i += 1) await Promise.resolve();
@@ -226,6 +228,54 @@ describe('reaction store：toggle 语义（§4.2）', () => {
     // local 来源不带 snapshot（core 自己重读 DB）。
     expect(report?.payload['snapshot']).toBeUndefined();
     expect(messageReactions.reportStatusOf('local', msg.conversationId, msg.id)).toBe('queued');
+  });
+
+  it('local reports pass hidden row ids so Core can omit reply/context content', async () => {
+    const msg = messageFixture({ replyTo: 'msg_hidden_outside_window' });
+    const hidden = messageFixture({ id: 'msg_hidden', seq: 9 });
+    const view = {
+      conversationType: 'dm' as const,
+      botName: '小艾',
+      messages: [{ ...hidden, hidden: true }, msg],
+    };
+    messageVisibility.forget('local', msg.conversationId);
+    messageVisibility.setHidden('local', msg.conversationId, 'msg_hidden_outside_window', true);
+    try {
+      messageReactions.handleReact(targetOf(msg, 'local', view), '👎');
+      await flush();
+      const report = calls.find((call) => call.method === 'reports.submit');
+      expect(report?.payload['excludedMessageIds']).toEqual([
+        'msg_hidden',
+        'msg_hidden_outside_window',
+      ]);
+      expect(report?.payload['snapshot']).toBeUndefined();
+    } finally {
+      messageVisibility.forget('local', msg.conversationId);
+    }
+  });
+
+  it('caps excluded ids at the schema limit without dropping the replied-to row', async () => {
+    const msg = messageFixture({ replyTo: 'msg_hidden_reply' });
+    const view = {
+      conversationType: 'dm' as const,
+      botName: '小艾',
+      messages: Array.from({ length: REPORT_EXCLUDED_MESSAGE_IDS_MAX + 5 }, (_, index) => ({
+        ...messageFixture({ id: `msg_hidden_${index}`, seq: index + 1 }),
+        hidden: true,
+      })),
+    };
+    messageVisibility.forget('local', msg.conversationId);
+    messageVisibility.setHidden('local', msg.conversationId, 'msg_hidden_reply', true);
+    try {
+      messageReactions.handleReact(targetOf(msg, 'local', view), '👎');
+      await flush();
+      const report = calls.find((call) => call.method === 'reports.submit');
+      const ids = report?.payload['excludedMessageIds'] as string[];
+      expect(ids).toHaveLength(REPORT_EXCLUDED_MESSAGE_IDS_MAX);
+      expect(ids).toContain('msg_hidden_reply');
+    } finally {
+      messageVisibility.forget('local', msg.conversationId);
+    }
   });
 
   it('再点 👎 = 切换关闭：react(null) 与 reports.cancel 并发、互不等待；cancelled 清内部状态，再点走首次路径', async () => {
@@ -486,6 +536,24 @@ describe('团队快照构建（§5.2 / §6.5）', () => {
     expect(snapshot?.conversation).toEqual({ type: 'dm' });
   });
 
+  it('filters hidden reply targets and hidden context before building a team snapshot', () => {
+    const target = messageFixture({ replyTo: 'reply_target' });
+    const base = teamView();
+    const view = {
+      ...base,
+      messages: base.messages.map((item) =>
+        item.id === 'reply_target' || item.id === 'ctx_5'
+          ? { ...item, hidden: true, content: { text: 'HIDDEN_TEAM_CONTENT' } }
+          : item,
+      ),
+    };
+    const snapshot = buildTeamSnapshot(target, view);
+    expect(snapshot?.replyTo).toBeNull();
+    expect(snapshot?.context.map((item) => item.messageId)).not.toContain('reply_target');
+    expect(snapshot?.context.map((item) => item.messageId)).not.toContain('ctx_5');
+    expect(JSON.stringify(snapshot)).not.toContain('HIDDEN_TEAM_CONTENT');
+  });
+
   it('卡片消息：text 取空串、content 原样携带（截断由 core 做）', () => {
     const card = messageFixture({
       kind: 'card',
@@ -561,9 +629,9 @@ describe('store 的团队举报分支带 snapshot（§6.5）', () => {
     const report = calls.find((call) => call.method === 'reports.submit');
     expect(report).toBeDefined();
     expect(report?.payload['snapshot']).toBeUndefined();
-    expect(messageReactions.reportStatusOf('team:0123456789abcdef', msg.conversationId, msg.id)).toBe(
-      'rejected',
-    );
+    expect(
+      messageReactions.reportStatusOf('team:0123456789abcdef', msg.conversationId, msg.id),
+    ).toBe('rejected');
   });
 });
 

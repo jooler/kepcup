@@ -26,6 +26,7 @@ ipcRenderer.on('team-port', (event, meta) => {
       type: 'team-port',
       nonce: portNonce,
       serverHash: (meta as { serverHash?: unknown } | null)?.serverHash,
+      activeMemberId: (meta as { activeMemberId?: unknown } | null)?.activeMemberId,
     },
     window.location.origin,
     event.ports,

@@ -108,7 +108,13 @@ describe('私有时间线泄露契约（D75 §2.4.3）', () => {
       taskId: string,
       phase: 'brief' | 'inject' | 'cancel' | 'question' | 'result' | 'failure' | 'peer_message',
       text: string,
-      extra: { status?: 'cancelled'; error?: string; title?: string; fromTaskId?: string; fromTitle?: string } = {},
+      extra: {
+        status?: 'cancelled';
+        error?: string;
+        title?: string;
+        fromTaskId?: string;
+        fromTitle?: string;
+      } = {},
     ): Message =>
       domain.messages.appendTaskEvent({
         conversationId: cid,
@@ -159,10 +165,13 @@ describe('私有时间线泄露契约（D75 §2.4.3）', () => {
     );
     await core.rpc.call('conversations.markRead', { conversationId: cid, seq: u1.seq });
     const listed = (await core.rpc.call('conversations.list')) as {
-      conversations: Array<Conversation & { unreadCount?: number; lastMessageText?: string }>;
+      conversations: Array<
+        Conversation & { unreadCount?: number; lastMessageText?: string; lastPreviewSeq?: number }
+      >;
     };
     const view = listed.conversations.find((c) => c.id === cid)!;
     expect(view.lastMessageText).toBe('zebra user_second 还有别的吗');
+    expect(view.lastPreviewSeq).toBe(u2.seq);
     // Visible after user_first: the progress line and user_second only.
     expect(view.unreadCount).toBe(2);
     expect(view.lastSeq - view.lastReadSeq).toBeGreaterThan(2);

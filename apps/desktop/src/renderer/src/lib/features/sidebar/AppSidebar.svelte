@@ -57,10 +57,12 @@
   import { shell } from '$lib/stores/shell.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { chat, type ConversationView } from '$lib/stores/chat.svelte';
+  import { messageVisibility } from '$lib/stores/message-visibility.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
   import { onboarding } from '$lib/stores/onboarding.svelte';
   import { createBotConversational, createTeamBotConversational } from '$lib/features/bot-setup';
+  import { safeConversationPreview } from '$lib/features/search/conversation-search';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import ProjectAvatarStack from '$lib/avatars/ProjectAvatarStack.svelte';
   import UserAvatar from '$lib/avatars/UserAvatar.svelte';
@@ -384,9 +386,20 @@
   });
 
   /** 条目第二行的单行预览：本会话积累的最后一条消息，启动时回退会话摘要；
-   *  消息是 markdown 渲染的，这里剥掉语法标记只留可读文本。 */
+   *  有隐藏消息时摘要可能含被隐藏的原文，必须留空、不回退（消息是 markdown
+   *  渲染的，这里剥掉语法标记只留可读文本）。 */
   function previewOf(conversation: ConversationView): string {
-    const raw = chat.lastMessageText[conversation.id] ?? conversation.summary ?? '';
+    const raw = messageVisibility.previewHidden(
+      'local',
+      conversation.id,
+      conversation.lastPreviewSeq,
+    )
+      ? t('messages.hidden')
+      : safeConversationPreview({
+          preview: chat.lastMessageText[conversation.id] ?? '',
+          summary: conversation.summary ?? '',
+          hasHiddenMessages: messageVisibility.hasHiddenMessages('local', conversation.id),
+        });
     return stripMarkdown(raw);
   }
 

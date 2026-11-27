@@ -1287,8 +1287,10 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         // 已归档（已从对话列表移除）的会话不进列表，但仍留在通讯录里可恢复。
         conversations: visible.map((conversation) => {
           const view = conversationView(conversation, { principalId });
-          const text = previews[conversation.id];
-          return text === undefined ? view : { ...view, lastMessageText: text };
+          const preview = previews[conversation.id];
+          return preview === undefined
+            ? view
+            : { ...view, lastMessageText: preview.text, lastPreviewSeq: preview.seq };
         }),
       };
     }),

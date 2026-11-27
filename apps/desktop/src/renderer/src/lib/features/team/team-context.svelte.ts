@@ -23,16 +23,16 @@ import { setTeamBotCapabilities, setTeamMemberId } from './team-bots.svelte';
  */
 class TeamContextState {
   /** 团队会话已建立（bootstrap 成功）。非团队端点恒 false。 */
-  active = $state(false);
+  #active = $state(false);
   /**
    * 团队端点已确认（探测 / 登录响应带 member）——与 begin() 同步置位，不等
    * bootstrap。`active` 要等 team.bootstrap RPC 成功才翻转，App 首屏 bootstrap
    * 与之并行竞速：settings / permissions 等 store 需要在首屏就拿到「这是团队
    * 服务器」的确定答案（跳过 admin-plane 方法），用这个。
    */
-  endpointIsTeam = $state(false);
+  #endpointIsTeam = $state(false);
   /** 当前成员（团队身份）；自我会话、气泡分侧、@ 候选排除都用它。 */
-  member = $state<TeamMember | null>(null);
+  #member = $state<TeamMember | null>(null);
   /** 团队服务器显示名（通讯录「成员」栏标题等展示用）。 */
   serverName = $state('');
   /** 授权上限（C14，P0 仅记录，P1 权限菜单消费）。 */
@@ -43,9 +43,59 @@ class TeamContextState {
    */
   members = $state<TeamMember[]>([]);
 
+  get active(): boolean {
+    return this.#active;
+  }
+
+  set active(value: boolean) {
+    this.#active = value;
+    this.#notifyIdentityChanged();
+  }
+
+  get endpointIsTeam(): boolean {
+    return this.#endpointIsTeam;
+  }
+
+  set endpointIsTeam(value: boolean) {
+    this.#endpointIsTeam = value;
+    this.#notifyIdentityChanged();
+  }
+
+  get member(): TeamMember | null {
+    return this.#member;
+  }
+
+  set member(value: TeamMember | null) {
+    this.#member = value;
+    this.#notifyIdentityChanged();
+  }
+
+  // Plain Set: listener registry, not UI state.
+  readonly #identityListeners = new Set<() => void>();
+  #lastIdentitySignature = this.#identitySignature();
+
   #started = false;
   #bound = false;
   #refreshing = false;
+
+  /** Subscribe to endpoint/member identity changes, including pending bootstrap transitions. */
+  onIdentityChanged(listener: () => void): () => void {
+    this.#identityListeners.add(listener);
+    return () => this.#identityListeners.delete(listener);
+  }
+
+  #identitySignature(): string {
+    if (!this.#endpointIsTeam && !this.#active) return 'personal';
+    const memberId = this.#active ? (this.#member?.id ?? null) : null;
+    return memberId === null ? 'team:pending' : `team:${memberId}`;
+  }
+
+  #notifyIdentityChanged(): void {
+    const signature = this.#identitySignature();
+    if (signature === this.#lastIdentitySignature) return;
+    this.#lastIdentitySignature = signature;
+    for (const listener of [...this.#identityListeners]) listener();
+  }
 
   /**
    * 团队端点已确认（探测 / 登录响应带 member）。幂等；此后每次连接建立都会
@@ -68,8 +118,8 @@ class TeamContextState {
    * 一并复位——同一页面内重新登录（不刷新）后 `begin()` 要能再次拉起团队上下文。
    */
   reset(): void {
-    this.active = false;
     this.endpointIsTeam = false;
+    this.active = false;
     this.member = null;
     this.serverName = '';
     this.permissionCeiling = null;

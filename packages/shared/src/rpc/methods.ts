@@ -340,6 +340,7 @@ import {
 } from '../domain/share.js';
 import {
   MESSAGE_REACTION_SCOPE_PATTERN,
+  REPORT_EXCLUDED_MESSAGE_IDS_MAX,
   reactionSummarySchema,
   reportReactionEmojiSchema,
   reportSourceSchema,
@@ -1623,6 +1624,8 @@ export const reportsSubmitInputSchema = z.object({
   /** v1 只出 `desktop`；上限与 Worker 校验的 client.surface（32 字符）一致。 */
   surface: z.string().max(32).optional(),
   snapshot: reportTeamSnapshotSchema.optional(),
+  /** Renderer-hidden rows omitted from local reply/context collection; the target remains reportable. */
+  excludedMessageIds: z.array(z.string().min(1).max(128)).max(REPORT_EXCLUDED_MESSAGE_IDS_MAX).optional(),
 });
 export const reportsSubmitOutputSchema = z.object({
   status: z.enum(['queued', 'duplicate', 'rejected']),

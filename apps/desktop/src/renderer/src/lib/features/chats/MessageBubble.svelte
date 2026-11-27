@@ -1,5 +1,4 @@
 <script lang="ts">
-  import type { Message } from '@kepcup/shared';
   import { t } from '$lib/i18n';
   import { SETTING_CARD_RESOLVED_EVENT } from '@kepcup/shared';
   import { permissions } from '$lib/stores/permissions.svelte';
@@ -24,6 +23,8 @@
   import SetupPathCard from './SetupPathCard.svelte';
   import ChatMessageRow from './ChatMessageRow.svelte';
   import EpisodePausedCard from './EpisodePausedCard.svelte';
+  import { getChatSession } from './chat-session-context';
+  import { messageVisibility, type DisplayMessage } from '$lib/stores/message-visibility.svelte';
 
   /**
    * 消息渲染调度层：按消息种类分发——改动摘要卡 / 审批卡 / 初始化访谈
@@ -39,8 +40,13 @@
     message,
     isLast = false,
     merge = { above: false, below: false },
-  }: { message: Message; isLast?: boolean; merge?: { above: boolean; below: boolean } } = $props();
+  }: { message: DisplayMessage; isLast?: boolean; merge?: { above: boolean; below: boolean } } = $props();
 
+  const session = getChatSession();
+  const hiddenBot = $derived(
+    message.senderType === 'bot' &&
+      messageVisibility.isHidden(session.source, message.conversationId, message.id),
+  );
   const isCard = $derived(message.kind === 'card');
   const isChangesCard = $derived(
     isCard && 'cardType' in message.content && message.content.cardType === 'run_changes',
@@ -218,7 +224,9 @@
   );
 </script>
 
-{#if isChangesCard}
+{#if hiddenBot}
+  <ChatMessageRow {message} {isLast} {merge} />
+{:else if isChangesCard}
   <!-- Retired: change summary / diff / revert card is no longer shown. -->
 {:else if delegationCard !== null}
   <!-- 跨 Bot 委派卡（D71 v2）：药丸居中；点击「查看详情」打开交换会话详情。

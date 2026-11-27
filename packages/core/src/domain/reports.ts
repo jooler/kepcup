@@ -574,13 +574,17 @@ export class ReportService {
 
     const built = this.#buildMessage(message);
     const usage = runId === null ? [] : this.#usageOf(runId);
+    const excluded = new Set(input.excludedMessageIds ?? []);
     return {
       conversation: { id: input.conversationId, type: conversation?.type ?? 'direct' },
       bot: this.#botOf(bot, message.senderBotId),
       message: built.message,
       contentSource: built.contentSource,
-      replyTo: message.replyTo !== null ? this.#replyToOf(message.replyTo) : null,
-      context: this.#contextOf(message),
+      replyTo:
+        message.replyTo !== null && !excluded.has(message.replyTo)
+          ? this.#replyToOf(message.replyTo)
+          : null,
+      context: this.#contextOf(message, excluded),
       usage,
       tools: runId === null ? [] : this.#toolsOf(runId),
       providers: this.#providersOf(usage),
@@ -597,6 +601,7 @@ export class ReportService {
     }
 
     const built = this.#buildMessageFromSnapshot(message);
+    const excluded = new Set(input.excludedMessageIds ?? []);
     // 会话类型：快照带 type 优先（§5.2）；否则本地查（团队会话 id 一般不在本机
     // conversations 表，reaction 用 team:<hash> scope 隔离），最后回退 'dm'。
     const conversationType =
@@ -621,10 +626,11 @@ export class ReportService {
       message: built.message,
       contentSource: built.contentSource,
       replyTo:
-        snapshot.replyTo === null
+        snapshot.replyTo === null || excluded.has(snapshot.replyTo.messageId)
           ? null
           : this.#replyToItem(snapshot.replyTo.messageId, snapshot.replyTo.text),
       context: snapshot.context
+        .filter((item) => !excluded.has(item.messageId))
         .slice(0, REPORT_CONTEXT_MAX_ITEMS)
         .map((item) => ({
           messageId: item.messageId,
@@ -761,10 +767,10 @@ export class ReportService {
    * task_event（listVisible 已在 SQL 层排除 task_event 与内部事件，这里再去掉
    * system 发送者），各截 2KB。多取几条再裁最近 4 条：中间夹系统事件也能凑满。
    */
-  #contextOf(message: Message): ReportPayload['context'] {
+  #contextOf(message: Message, excluded: ReadonlySet<string>): ReportPayload['context'] {
     const rows = this.#messages
       .listVisible(message.conversationId, { beforeSeq: message.seq, limit: 16 })
-      .filter((row) => row.senderType !== 'system')
+      .filter((row) => row.senderType !== 'system' && !excluded.has(row.id))
       .slice(-REPORT_CONTEXT_MAX_ITEMS);
     return rows.map((row) => ({
       messageId: row.id,

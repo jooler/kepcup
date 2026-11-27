@@ -1,5 +1,6 @@
 import {
   MESSAGE_REACTION_EMOJIS,
+  REPORT_EXCLUDED_MESSAGE_IDS_MAX,
   reportTeamSnapshotSchema,
   type Conversation,
   type Message,
@@ -11,6 +12,7 @@ import {
 } from '@kepcup/shared';
 import { clientIdentity } from '$lib/features/collab/client-identity';
 import { core } from '$lib/rpc/client.svelte';
+import { messageVisibility } from '$lib/stores/message-visibility.svelte';
 
 /**
  * 消息 reaction 状态（AI 内容举报 todo §4 / §5.6 / §6.6）：数据只存本机
@@ -135,8 +137,7 @@ class MessageReactionsState {
     messageId: string,
   ): string | null {
     return (
-      this.summariesOf(source, conversationId, messageId).find((entry) => entry.mine)?.emoji ??
-      null
+      this.summariesOf(source, conversationId, messageId).find((entry) => entry.mine)?.emoji ?? null
     );
   }
 
@@ -200,6 +201,28 @@ class MessageReactionsState {
     const conversationId = message.conversationId;
     const snapshot =
       source === 'local' ? undefined : (buildTeamSnapshot(message, view) ?? undefined);
+    // Plain Set: request-local bookkeeping, not reactive UI state.
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity
+    const excluded = new Set<string>();
+    // The replied-to row is this report's own context: reserve its slot first
+    // so a long loaded window cannot push it past the schema cap.
+    const replyHidden =
+      message.replyTo !== null &&
+      messageVisibility.isHidden(source, conversationId, message.replyTo);
+    const loadedCap = replyHidden
+      ? REPORT_EXCLUDED_MESSAGE_IDS_MAX - 1
+      : REPORT_EXCLUDED_MESSAGE_IDS_MAX;
+    for (const item of view?.messages ?? []) {
+      if (excluded.size >= loadedCap) break;
+      if ((item as Message & { hidden?: boolean }).hidden === true) excluded.add(item.id);
+    }
+    if (replyHidden && message.replyTo !== null) excluded.add(message.replyTo);
+    const remaining = Math.max(0, REPORT_EXCLUDED_MESSAGE_IDS_MAX - excluded.size);
+    for (const id of messageVisibility.hiddenMessageIds(source, conversationId).slice(-remaining)) {
+      if (excluded.size >= REPORT_EXCLUDED_MESSAGE_IDS_MAX) break;
+      excluded.add(id);
+    }
+    const excludedMessageIds = [...excluded];
     try {
       const result = (await core.call('reports.submit', {
         clientId: clientIdentity.id,
@@ -208,6 +231,7 @@ class MessageReactionsState {
         conversationId,
         surface: 'desktop',
         ...(snapshot !== undefined ? { snapshot } : {}),
+        ...(excludedMessageIds.length > 0 ? { excludedMessageIds } : {}),
       })) as ReportsSubmitOutput;
       this.state(scope, conversationId).reports[message.id] = result.status;
     } catch (error) {
@@ -240,7 +264,11 @@ class MessageReactionsState {
   }
 
   /** RPC 返回的是整个 conversation 的聚合：按 messageId 重分组后整体替换。 */
-  #applySummaries(scope: ReactionScope, conversationId: string, reactions: ReactionSummary[]): void {
+  #applySummaries(
+    scope: ReactionScope,
+    conversationId: string,
+    reactions: ReactionSummary[],
+  ): void {
     const byMessage: Record<string, ReactionSummary[]> = {};
     for (const entry of reactions) {
       (byMessage[entry.messageId] ??= []).push(entry);
@@ -279,11 +307,15 @@ export function buildTeamSnapshot(
 ): ReportTeamSnapshot | null {
   if (view === null) return null;
   if (message.kind !== 'text' && message.kind !== 'card') return null;
+  if ((message as Message & { hidden?: boolean }).hidden === true) return null;
+  const visibleMessages = view.messages.filter(
+    (item) => (item as Message & { hidden?: boolean }).hidden !== true,
+  );
   const replyToMessage =
     message.replyTo !== null
-      ? (view.messages.find((item) => item.id === message.replyTo) ?? null)
+      ? (visibleMessages.find((item) => item.id === message.replyTo) ?? null)
       : null;
-  const context = view.messages
+  const context = visibleMessages
     .filter(
       (item) =>
         item.seq < message.seq &&
@@ -318,15 +350,15 @@ export function buildTeamSnapshot(
       })),
     },
     replyTo:
-      replyToMessage === null ? null : { messageId: replyToMessage.id, text: messageTextOf(replyToMessage) },
+      replyToMessage === null
+        ? null
+        : { messageId: replyToMessage.id, text: messageTextOf(replyToMessage) },
     context,
     bot: {
       id: message.senderBotId ?? '',
       name: view.botName || message.senderBotId || '',
     },
-    ...(view.conversationType !== null
-      ? { conversation: { type: view.conversationType } }
-      : {}),
+    ...(view.conversationType !== null ? { conversation: { type: view.conversationType } } : {}),
   };
   const parsed = reportTeamSnapshotSchema.safeParse(candidate);
   return parsed.success ? parsed.data : null;

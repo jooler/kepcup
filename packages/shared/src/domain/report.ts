@@ -36,6 +36,8 @@ export const REPORT_REPLY_TO_TEXT_MAX_BYTES = 2 * 1024;
 export const REPORT_CONTEXT_ITEM_MAX_BYTES = 2 * 1024;
 /** context 最多带几条（最近可见消息；跳过 system_event / task_event）。 */
 export const REPORT_CONTEXT_MAX_ITEMS = 4;
+/** Renderer-hidden ids accepted by reports.submit for local reply/context filtering. */
+export const REPORT_EXCLUDED_MESSAGE_IDS_MAX = 500;
 /** bot.profile（裁剪后 JSON）的字节上限。 */
 export const REPORT_BOT_PROFILE_MAX_BYTES = 8 * 1024;
 /** attachments 最多条数（只带文件名 / MIME / 大小，不带内容）。 */

@@ -448,6 +448,40 @@ describe('ReportService.submit payload 构建（local）', () => {
     }
   });
 
+  it('omits renderer-hidden reply/context rows while still reporting the visible target', () => {
+    const rig = makeRig();
+    try {
+      const hidden = rig.messages.append({
+        conversationId: rig.conversationId,
+        senderType: 'user',
+        kind: 'text',
+        text: 'HIDDEN_REPLY_AND_CONTEXT',
+      });
+      const visible = rig.messages.append({
+        conversationId: rig.conversationId,
+        senderType: 'user',
+        kind: 'text',
+        text: 'visible context',
+      });
+      const target = appendBotMessage(rig, 'visible report target', { replyTo: hidden.id });
+      const result = rig.reports.submit({
+        clientId: 'client-1',
+        source: { kind: 'local' },
+        messageId: target.id,
+        conversationId: rig.conversationId,
+        excludedMessageIds: [hidden.id, target.id],
+      });
+      expect(result.status).toBe('queued');
+      const payload = payloadOf(outboxRows(rig)[0]!);
+      expect(payload.message.text).toBe('visible report target');
+      expect(payload.replyTo).toBeNull();
+      expect(payload.context.map((item) => item.messageId)).toEqual([visible.id]);
+      expect(JSON.stringify(payload)).not.toContain('HIDDEN_REPLY_AND_CONTEXT');
+    } finally {
+      closeDatabase(rig.db);
+    }
+  });
+
   it('supports card messages: content hash uses the card JSON', () => {
     const rig = makeRig();
     try {
@@ -527,6 +561,60 @@ describe('ReportService.submit 快照与拒绝', () => {
       expect(payload.conversation).toEqual({ id: 'srv_conv_1', type: 'dm' });
       expect(payload.message.text).toBe('团队 Bot 的回复');
       expect(payload.context).toHaveLength(1);
+    } finally {
+      closeDatabase(rig.db);
+    }
+  });
+
+  it('defensively omits excluded hidden rows from a team snapshot', () => {
+    const rig = makeRig();
+    try {
+      const result = rig.reports.submit({
+        clientId: 'client-1',
+        source: { kind: 'team', serverHash: '0123456789abcdef' },
+        messageId: 'srv_visible_target',
+        conversationId: 'srv_conv_hidden',
+        excludedMessageIds: ['srv_hidden_reply', 'srv_hidden_context'],
+        snapshot: {
+          message: {
+            id: 'srv_visible_target',
+            seq: 3,
+            kind: 'text',
+            status: 'normal',
+            createdAt: BASE,
+            editedAt: null,
+            runId: null,
+            text: 'visible team target',
+            content: null,
+            truncated: false,
+            attachments: [],
+          },
+          replyTo: { messageId: 'srv_hidden_reply', text: 'HIDDEN_TEAM_REPLY' },
+          context: [
+            {
+              messageId: 'srv_hidden_context',
+              senderType: 'user',
+              kind: 'text',
+              text: 'HIDDEN_TEAM_CONTEXT',
+              createdAt: BASE - 2,
+            },
+            {
+              messageId: 'srv_visible_context',
+              senderType: 'user',
+              kind: 'text',
+              text: 'visible team context',
+              createdAt: BASE - 1,
+            },
+          ],
+          bot: { name: '团队小助手' },
+        },
+      });
+      expect(result.status).toBe('queued');
+      const payload = payloadOf(outboxRows(rig)[0]!);
+      expect(payload.message.text).toBe('visible team target');
+      expect(payload.replyTo).toBeNull();
+      expect(payload.context.map((item) => item.messageId)).toEqual(['srv_visible_context']);
+      expect(JSON.stringify(payload)).not.toContain('HIDDEN_TEAM_');
     } finally {
       closeDatabase(rig.db);
     }

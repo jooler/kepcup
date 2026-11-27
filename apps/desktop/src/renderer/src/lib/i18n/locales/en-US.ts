@@ -1303,6 +1303,12 @@ export const enUS = {
   'messages.pinMessage': 'Pin entire message',
   'messages.quotedLine': 'Quoting {name}: {text}',
   'messages.quotedDeleted': 'The quoted message was recalled or deleted',
+  'messages.hidden': 'This message has been hidden by you',
+  'messages.hiddenQuote': 'A message is hidden',
+  'messages.hide': 'Hide this message',
+  'messages.show': 'Show this message',
+  'messages.more': 'More',
+  'messages.moreHide': 'Hide this item',
   // AI content reporting (todo §4): bot message emoji reactions and the
   // "report inappropriate content" entry.
   'messages.reactions.add': 'Add reaction',
