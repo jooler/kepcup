@@ -516,16 +516,47 @@
            常驻占位（invisible↔visible）而非 hidden↔flex：出现/消失会挤压气泡横移，
            鼠标停在窄元素（如小图缩略图）上时形成「悬停→位移→移出→收起」的布局
            死循环，渲染层被 relayout 打满（P17 观察到的冻结）。
+           下拉 / reaction 弹层打开期间保持可见（group-has + data-state）：弹层内容
+           portal 在 .group 之外，指针移入弹层后 group-hover / group-focus-within
+           都已失效，靠 bits-ui trigger 的 data-state="open" 兜底（纯 CSS，无 JS 状态）。
+           用户侧行内顺序镜像（flex-row-reverse）：右对齐消息以贴气泡的右侧为排序
+           高位，镜像后「更多」（Bot 侧末位）落在行首，与 Bot 侧视觉对称。
            窄屏（33-narrow-layout）整组不渲染——按钮组占掉大量宽度，操作只留右键菜单。 -->
         <div
           class="invisible flex shrink-0 items-center gap-0.5 self-center {userSide
-            ? 'mr-1'
-            : 'ml-1'} group-focus-within:visible group-hover:visible"
+            ? 'mr-1 flex-row-reverse'
+            : 'ml-1'} group-focus-within:visible group-hover:visible group-has-[[data-state=open]]:visible"
           data-testid="message-actions"
         >
           {#if reactionTarget !== null}
             <!-- Reaction/report stays outside More; copy and recall remain direct actions. -->
             <MessageReactionBar {reactionTarget} />
+          {/if}
+          {#if canCopy}
+            <Tooltip.Root>
+              <Tooltip.Trigger
+                class="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                onclick={() => void copyText()}
+                aria-label={t('messages.copy')}
+                data-testid="message-copy"
+              >
+                <Copy class="size-3.5" aria-hidden="true" />
+              </Tooltip.Trigger>
+              <Tooltip.Content>{t('messages.copy')}</Tooltip.Content>
+            </Tooltip.Root>
+          {/if}
+          {#if canRecall}
+            <Tooltip.Root>
+              <Tooltip.Trigger
+                class="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                onclick={() => void recallMessage()}
+                aria-label={t('chats.recall')}
+                data-testid="message-recall"
+              >
+                <Undo2 class="size-3.5" aria-hidden="true" />
+              </Tooltip.Trigger>
+              <Tooltip.Content>{t('chats.recall')}</Tooltip.Content>
+            </Tooltip.Root>
           {/if}
           <!-- Exchange chats omit Quote because they have no composer. -->
           <DropdownMenu.Root>
@@ -558,32 +589,6 @@
               {/if}
             </DropdownMenu.Content>
           </DropdownMenu.Root>
-          {#if canCopy}
-            <Tooltip.Root>
-              <Tooltip.Trigger
-                class="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                onclick={() => void copyText()}
-                aria-label={t('messages.copy')}
-                data-testid="message-copy"
-              >
-                <Copy class="size-3.5" aria-hidden="true" />
-              </Tooltip.Trigger>
-              <Tooltip.Content>{t('messages.copy')}</Tooltip.Content>
-            </Tooltip.Root>
-          {/if}
-          {#if canRecall}
-            <Tooltip.Root>
-              <Tooltip.Trigger
-                class="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                onclick={() => void recallMessage()}
-                aria-label={t('chats.recall')}
-                data-testid="message-recall"
-              >
-                <Undo2 class="size-3.5" aria-hidden="true" />
-              </Tooltip.Trigger>
-              <Tooltip.Content>{t('chats.recall')}</Tooltip.Content>
-            </Tooltip.Root>
-          {/if}
         </div>
       {/if}
     </div>
