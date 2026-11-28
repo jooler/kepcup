@@ -5,17 +5,30 @@ import {
   CHAT_DISPLAY_DEFAULTS,
   CHAT_DISPLAY_LOCKED_KEYS,
   CHAT_DISPLAY_TOGGLE_KEYS,
+  NOTICE_UNREAD_MAX_AGE_MS,
   chatDisplayCategory,
   isChatDisplayKeyEnabled,
+  isNoticeFresh,
+  isNoticeVisible,
   isVisibleWithChatDisplay,
   loadChatDisplayPrefs,
+  mergeNoticeReadCursors,
+  noticeReadKey,
   saveChatDisplayPrefs,
+  type NoticeDisplayState,
 } from './chat-display';
 
 /**
  * 对话信息展示（设置 → 通用）的纯逻辑：类目映射与 MessageBubble 渲染调度
- * 一致；可开关类目默认隐藏（勾选才显示），锁定类目永远可见。
+ * 一致；可开关类勾选后常驻（任务卡默认常驻），未勾选类目按未读 / 已读放行
+ * （30 天保留窗口），锁定类目永远可见。
  */
+
+/** 固定「现在」，避免依赖真实时钟。 */
+const NOW = 1_800_000_000_000;
+/** 窗口内（一分钟前）与窗口外（超期一分钟）的时间点。 */
+const FRESH = NOW - 60_000;
+const STALE = NOW - NOTICE_UNREAD_MAX_AGE_MS - 60_000;
 
 type MsgInit = Partial<Omit<Message, 'content'>> &
   Pick<Message, 'id' | 'kind' | 'senderType'> & { content?: unknown };
@@ -33,6 +46,11 @@ function msg(partial: MsgInit): Message {
     replyTo: null,
     ...partial,
   } as Message;
+}
+
+/** 邮件通知卡（可开关类目的代表），显式给 id / seq / createdAt。 */
+function mailAt(id: string, seq: number, createdAt: number): Message {
+  return msg({ id, seq, kind: 'card', senderType: 'bot', content: { cardType: 'mail' }, createdAt });
 }
 
 describe('chatDisplayCategory（与 MessageBubble 渲染调度一致）', () => {
@@ -101,6 +119,7 @@ describe('isVisibleWithChatDisplay（可开关类按各项默认值，显式勾�
     for (const key of CHAT_DISPLAY_TOGGLE_KEYS) {
       expect(CHAT_DISPLAY_DEFAULTS[key]).toBe(key === 'taskCards');
     }
+    // 缺省 notice（旧调用方 / 纯单测）= 旧行为：未勾选类目一律隐藏。
     expect(isVisibleWithChatDisplay(taskCard, {})).toBe(true);
     expect(isVisibleWithChatDisplay(taskCard, { taskCards: false })).toBe(false);
     expect(isVisibleWithChatDisplay(mail, {})).toBe(false);
@@ -114,6 +133,61 @@ describe('isVisibleWithChatDisplay（可开关类按各项默认值，显式勾�
     expect(isChatDisplayKeyEnabled({ taskCards: false }, 'taskCards')).toBe(false);
     expect(isChatDisplayKeyEnabled({}, 'mailCards')).toBe(false);
     expect(isChatDisplayKeyEnabled({ mailCards: true }, 'mailCards')).toBe(true);
+  });
+});
+
+describe('未勾选类目的通知可见性（未读显示、已读收起、30 天窗口、keep 豁免）', () => {
+  const hidden = { mailCards: false };
+
+  it('未读且在窗口内 → 显示；已读（seq ≤ 游标）→ 不再显示', () => {
+    const notice: NoticeDisplayState = { readThrough: 10 };
+    expect(isVisibleWithChatDisplay(mailAt('a', 11, FRESH), hidden, notice, NOW)).toBe(true);
+    expect(isVisibleWithChatDisplay(mailAt('b', 10, FRESH), hidden, notice, NOW)).toBe(false);
+    expect(isVisibleWithChatDisplay(mailAt('c', 5, FRESH), hidden, notice, NOW)).toBe(false);
+  });
+
+  it('超 30 天未读 → 不再显示（历史积压不轰炸）；勾选了的类目不受窗口影响', () => {
+    const notice: NoticeDisplayState = { readThrough: 0 };
+    expect(isVisibleWithChatDisplay(mailAt('a', 11, STALE), hidden, notice, NOW)).toBe(false);
+    expect(isVisibleWithChatDisplay(mailAt('a', 11, STALE), { mailCards: true }, notice, NOW)).toBe(
+      true,
+    );
+  });
+
+  it('keep 集合（本次查看已显示）豁免已读与过期——保持可见直到切换主体内容', () => {
+    const notice: NoticeDisplayState = { readThrough: 20, keepIds: new Set(['kept']) };
+    // kept：seq 15 已被游标越过、createdAt 已过期，仍要显示（显示到一半被
+    // 抽走更糟）；其余已读条目照常隐藏。
+    expect(isVisibleWithChatDisplay(mailAt('kept', 15, STALE), hidden, notice, NOW)).toBe(true);
+    expect(isVisibleWithChatDisplay(mailAt('other', 15, FRESH), hidden, notice, NOW)).toBe(false);
+  });
+});
+
+describe('通知已读游标的纯逻辑（IndexedDB 值的载入 / 合并 / 新鲜度）', () => {
+  it('noticeReadKey：键带来源（本机与团队会话 id 不保证唯一）', () => {
+    expect(noticeReadKey('local', 'conv1')).toBe('local:conv1');
+    expect(noticeReadKey('team_a', 'conv1')).toBe('team_a:conv1');
+  });
+
+  it('isNoticeFresh：createdAt 距今 30 天为界（UTC 毫秒）', () => {
+    const at = (offsetFromNow: number): Message =>
+      msg({ id: 'm', kind: 'text', senderType: 'bot', createdAt: NOW + offsetFromNow });
+    expect(isNoticeFresh(at(-NOTICE_UNREAD_MAX_AGE_MS), NOW)).toBe(true);
+    expect(isNoticeFresh(at(-NOTICE_UNREAD_MAX_AGE_MS - 1), NOW)).toBe(false);
+  });
+
+  it('isNoticeVisible：未读且窗口内显示；keep 豁免已读与过期', () => {
+    const notice: NoticeDisplayState = { readThrough: 5 };
+    expect(isNoticeVisible(mailAt('a', 6, FRESH), notice, NOW)).toBe(true);
+    expect(isNoticeVisible(mailAt('b', 5, FRESH), notice, NOW)).toBe(false);
+    expect(isNoticeVisible(mailAt('c', 6, STALE), notice, NOW)).toBe(false);
+    expect(
+      isNoticeVisible(mailAt('d', 5, STALE), { ...notice, keepIds: new Set(['d']) }, NOW),
+    ).toBe(true);
+  });
+
+  it('mergeNoticeReadCursors：max 合并——启动载入不回退早期推进', () => {
+    expect(mergeNoticeReadCursors({ a: 5, b: 2 }, { b: 7, c: 1 })).toEqual({ a: 5, b: 7, c: 1 });
   });
 });
 

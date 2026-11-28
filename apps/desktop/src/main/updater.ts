@@ -15,7 +15,7 @@ import {
   type UpdateSource,
   type UpdateSourceStore,
 } from './update-sources';
-import { appendSkippedVersion, type UpdateSkipStore } from './update-skip';
+import { appendSkippedVersion, removeSkippedVersion, type UpdateSkipStore } from './update-skip';
 
 // electron-updater is CommonJS and exposes autoUpdater via an
 // Object.defineProperty getter, which Node's CJS named-export detection cannot
@@ -52,6 +52,10 @@ export interface UpdaterWiring {
   /** 「取消更新」：停下本次下载并把该版本记入跳过集合（相位守卫在 gate：
    * 只有 downloading 相位有效；跳过版本持久化，更新的版本恢复正常流程）。 */
   cancelDownload(): void;
+  /** 「下载此版本」：把用户跳过的版本移出跳过集合并手动启动下载（设置页
+   * 手动检查查到 available-skipped 后的显式入口）。失败经 { ok, message? }
+   * 回传，由渲染层提示；相位守卫失败的过期点击按成功返回（no-op）。 */
+  resumeSkippedDownload(version: string): Promise<{ ok: boolean; message?: string }>;
   dispose(): void;
 }
 
@@ -171,15 +175,30 @@ export function wireUpdater(options: {
   let availableVersion: string | undefined;
   /** update-available 后待启动的下载版本（由 runCheck 消费）。 */
   let downloadRequest: string | null = null;
+  /**
+   * 本次 checkForUpdates 的模式：定时静默、手动检查可浮出被跳过的版本。事件
+   * 处理器在 checkForUpdates 的 await 期间读取——checkQueue 串行化保证同一
+   * 时刻只有一个 runCheck 在途，没有并发覆写。
+   */
+  let checkMode: 'manual' | 'scheduled' = 'scheduled';
+  /**
+   * 检查串行化队列：electron-updater 把并发 checkForUpdates 合并成同一
+   * promise/事件流（结果与 update-available 等事件只发一次），并发调用读不到
+   * 独立结果——排队串行执行，手动检查不被在途定时检查吞掉，检查也绝不与
+   * 在途下载交错。队列元素吞错（runCheck 的错误由 checkQuietly 捕获上报）。
+   */
+  let checkQueue: Promise<unknown> = Promise.resolve();
   autoUpdater.on('checking-for-update', () => gate.onChecking());
   autoUpdater.on('update-available', (info) => {
     availableVersion = String(info.version);
     host.log(`update available: ${availableVersion}`);
-    // gate 判定跳过集合：被用户取消过的版本静默忽略（否则 24h 定时重查会
-    // 立刻把同一版本下回来，「取消更新」名存实亡）。未跳过则立即切到
-    // downloading：手动检查查到更新后，检查按钮马上让位给进度，不等首包。
-    if (!gate.onUpdateAvailable(availableVersion)) {
-      host.log(`update skipped (user cancelled earlier): ${availableVersion}`);
+    // gate 判定跳过集合：定时/自动检查对被用户取消过的版本静默忽略（否则
+    // 24h 定时重查会立刻把同一版本下回来，「取消更新」名存实亡）；手动检查
+    // 则切 available-skipped，让设置页提供「下载此版本」的显式入口。
+    if (!gate.onUpdateAvailable(availableVersion, { manual: checkMode === 'manual' })) {
+      host.log(
+        `update skipped (user cancelled earlier${checkMode === 'manual' ? '; manual check' : ''}): ${availableVersion}`,
+      );
       return;
     }
     // 手动下载不在事件里直接启动：downloadUpdate 需要 checkForUpdates 返回
@@ -242,34 +261,70 @@ export function wireUpdater(options: {
   /** checkForUpdates 的返回：autoDownload=false 时 cancellationToken 未被自动
    * 下载占用，正是手动 downloadUpdate 需要传的取消句柄。 */
   type CheckResult = NonNullable<Awaited<ReturnType<typeof autoUpdater.checkForUpdates>>>;
+  type CheckToken = NonNullable<CheckResult['cancellationToken']>;
   /** 在途下载的取消句柄（cancelDownload 里取消）。 */
-  let activeDownloadToken: NonNullable<CheckResult['cancellationToken']> | null = null;
+  let activeDownloadToken: CheckToken | null = null;
+  /** 手动检查查到被跳过的版本时留下的句柄，供「下载此版本」恢复下载。 */
+  let skippedResume: { version: string; token: CheckToken } | null = null;
 
-  /** 检查更新；查到且未被跳过的更新由这里手动启动下载（autoDownload=false）。 */
-  async function runCheck(): Promise<void> {
+  /** 入队一次检查（串行执行）；错误沿返回的 promise 交给调用方捕获。 */
+  function queueCheck(mode: 'manual' | 'scheduled'): Promise<void> {
+    const next = checkQueue.then(
+      () => runCheck(mode),
+      () => runCheck(mode),
+    );
+    checkQueue = next.catch(() => undefined);
+    return next;
+  }
+
+  /**
+   * 检查更新；查到且未被跳过的更新由这里手动启动下载（autoDownload=false）。
+   * 被跳过的版本只在手动检查时留下取消句柄（skippedResume）：设置页随后可
+   * 经 resumeSkippedDownload 让用户显式启动该版本的下载。
+   */
+  async function runCheck(mode: 'manual' | 'scheduled'): Promise<void> {
+    checkMode = mode;
     const result = await autoUpdater.checkForUpdates();
     const version = downloadRequest;
-    if (result === null || !result.isUpdateAvailable || version === null) return;
-    downloadRequest = null;
-    const token = result.cancellationToken;
-    // 类型上可选（运行时 checkForUpdates 恒建 token）；万一未来实现不给，
-    // 宁可静默不下载也不带 undefined 传参。
-    if (token === undefined) return;
-    activeDownloadToken = token;
-    try {
-      await autoUpdater.downloadUpdate(token);
-    } catch (error) {
-      if (token.cancelled) {
-        // 用户取消：gate 已在 cancelDownload 里切回 idle；CancellationError 不
-        // 进 autoUpdater 的 error 事件，这里静默吸收，不抖 error 相位。
-        host.log(`update download cancelled: ${version}`);
-      } else {
-        host.log('update download failed', error);
-        gate.onError(error instanceof Error ? error.message : String(error));
+    if (result === null || !result.isUpdateAvailable) return;
+    if (version !== null) {
+      downloadRequest = null;
+      // 决策相位（waiting/ready/awaiting）下 artifact 已下载完成，而定时重查
+      // 仍会报 isUpdateAvailable——重复下载纯属浪费；只有真实 downloading
+      // 相位才启动。
+      if (gate.phase !== 'downloading') return;
+      // resumeSkippedDownload 的恢复下载不经本队列：在途时不重复启动，否则
+      // electron-updater 直接复用在途 promise、新 token 挂不上，「取消更新」
+      // 就取消不到真实下载。
+      if (activeDownloadToken !== null && !activeDownloadToken.cancelled) return;
+      const token = result.cancellationToken;
+      // 类型上可选（运行时 checkForUpdates 恒建 token）；万一未来实现不给，
+      // 宁可静默不下载也不带 undefined 传参。
+      if (token === undefined) return;
+      activeDownloadToken = token;
+      try {
+        await autoUpdater.downloadUpdate(token);
+      } catch (error) {
+        if (token.cancelled) {
+          // 用户取消：gate 已在 cancelDownload 里切回 idle；CancellationError 不
+          // 进 autoUpdater 的 error 事件，这里静默吸收，不抖 error 相位。
+          host.log(`update download cancelled: ${version}`);
+        } else {
+          host.log('update download failed', error);
+          gate.onError(error instanceof Error ? error.message : String(error));
+        }
+      } finally {
+        if (activeDownloadToken === token) activeDownloadToken = null;
       }
-    } finally {
-      if (activeDownloadToken === token) activeDownloadToken = null;
+      return;
     }
+    // downloadRequest 为 null 但 feed 报有更新 → 该版本被跳过（gate 拦下了
+    // 下载启动）。只留手动检查的句柄；定时检查保持完全静默（相位收敛由
+    // gate 的 onUpdateAvailable 负责）。
+    if (mode !== 'manual') return;
+    const token = result.cancellationToken;
+    if (token === undefined || availableVersion === undefined) return;
+    skippedResume = { version: availableVersion, token };
   }
 
   /**
@@ -289,11 +344,52 @@ export function wireUpdater(options: {
     host.log(`update cancelled by user: ${version} (skipped until a newer version)`);
   }
 
-  async function checkQuietly(): Promise<void> {
+  /**
+   * 「下载此版本」：用户在设置页对手动检查查到的被跳过版本显式点了下载。
+   * gate 把版本移出跳过集合并切 downloading；持久化同步移除；会话内恢复
+   * 「退出即装」（用户已重新选择要这个版本）。下载用手动检查留下的句柄
+   * 直接启动；句柄不在（如重启后没查过就点）则重查一次——版本已出跳过
+   * 集合，update-available 会照常自动启动下载。返回 { ok, message? } 给
+   * 渲染层提示（BR-P13-008 失败可见）；相位守卫失败的过期点击是 no-op
+   * （渲染层状态早已被状态推送纠正），按成功返回、不提示。
+   */
+  async function resumeSkippedDownload(
+    version: string,
+  ): Promise<{ ok: boolean; message?: string }> {
+    if (!gate.resumeSkipped(version)) return { ok: true };
+    removeSkippedVersion(skipStore, version);
+    autoUpdater.autoInstallOnAppQuit = true;
+    host.log(`update resumed by user: ${version}`);
+    const stashed = skippedResume;
+    if (stashed === null || stashed.version !== version) {
+      await checkQuietly('manual');
+      return { ok: true };
+    }
+    skippedResume = null;
+    activeDownloadToken = stashed.token;
+    try {
+      await autoUpdater.downloadUpdate(stashed.token);
+    } catch (error) {
+      if (stashed.token.cancelled) {
+        // 与 runCheck 同路：CancellationError 静默吸收（gate 已在 cancelDownload
+        // 里切回 idle，这里不会走到——句柄只在用户主动取消时才 cancelled）。
+        host.log(`update download cancelled: ${version}`);
+        return { ok: true };
+      }
+      host.log('update download failed', error);
+      gate.onError(error instanceof Error ? error.message : String(error));
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    } finally {
+      if (activeDownloadToken === stashed.token) activeDownloadToken = null;
+    }
+    return { ok: true };
+  }
+
+  async function checkQuietly(mode: 'manual' | 'scheduled' = 'scheduled'): Promise<void> {
     if (external !== null) return;
     if (selector === null) {
       try {
-        await runCheck();
+        await queueCheck(mode);
       } catch (error) {
         host.log('update check failed', error);
         gate.onError(error instanceof Error ? error.message : String(error));
@@ -309,7 +405,7 @@ export function wireUpdater(options: {
     }
     try {
       applySource(picked);
-      await runCheck();
+      await queueCheck(mode);
     } catch (error) {
       // 先不进 error 相位：镜像回退成功时用户不应看到错误一闪而过。
       host.log(`update check failed via ${picked.id}`, error);
@@ -319,7 +415,7 @@ export function wireUpdater(options: {
         if (fallback !== null && fallback.id !== picked.id) {
           try {
             applySource(fallback);
-            await runCheck();
+            await queueCheck(mode);
             return null;
           } catch (error2) {
             host.log(`update check failed via ${fallback.id}`, error2);
@@ -336,8 +432,9 @@ export function wireUpdater(options: {
 
   return {
     gate,
-    checkNow: checkQuietly,
+    checkNow: () => checkQuietly('manual'),
     cancelDownload,
+    resumeSkippedDownload,
     dispose() {
       for (const timer of timers) {
         clearTimeout(timer);

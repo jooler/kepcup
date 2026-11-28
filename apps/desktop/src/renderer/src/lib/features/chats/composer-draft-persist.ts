@@ -1,7 +1,12 @@
 /**
  * 输入框草稿的持久化快照（纯函数，便于在 node 环境单测）：
- * 按会话缓存 composer 的编辑器文档 / @ 提及 / 引用回复 / 待发送附件元数据，
- * localStorage 落盘，切换会话与重启应用后重载。
+ * 按会话缓存 composer 的编辑器文档 / @ 提及 / 引用回复 / 待发送附件元数据。
+ *
+ * 持久化走 IndexedDB（`kepcup.composer-drafts`，按会话一条记录，见
+ * composer-drafts.svelte.ts）：单条草稿是完整编辑器文档，字节数随内容增长，
+ * 旧 localStorage 单键整表（最多 30 份草稿）重写既慢又会撞每源配额、挤占
+ * 小偏好的写入空间。这里只放纯数据与纯函数（读取归一化、快照合成、增量
+ * diff）；旧版 localStorage 整表键（v3 / v2）由 store 启动时一次性导入。
  *
  * 文档存 TipTap 原生 JSON（editor.getJSON()）——中间过程不落 markdown，
  * mention 节点原样保留；markdown 只在发送入队时由 editor.getMarkdown()
@@ -57,7 +62,7 @@ export interface PersistedComposerDraft {
 }
 
 export const COMPOSER_DRAFTS_STORAGE_KEY = 'kepcup.composer.drafts.v3';
-/** 旧版本（纯本地草稿）；读取后一次性升级为 v3，写入时删除。 */
+/** 旧版本（纯本地草稿）；读取后一次性升级为 v3，导入完成即删除。 */
 export const LEGACY_COMPOSER_DRAFTS_STORAGE_KEY = 'kepcup.composer.drafts.v2';
 /** 容量上限：超出时按 updatedAt 淘汰最久未活跃的会话草稿。 */
 export const MAX_PERSISTED_DRAFTS = 30;
@@ -67,7 +72,8 @@ const MAX_PERSISTED_REPLY_TEXT = 500;
 /** 空编辑器文档（单空段落）。 */
 export const EMPTY_COMPOSER_DOC: JSONContent = { type: 'doc', content: [{ type: 'paragraph' }] };
 
-export type DraftsStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+/** 旧版 localStorage 整表键的缝（一次性导入 + 导入后删键；node 单测可注入）。 */
+export type LegacyDraftsStorage = Pick<Storage, 'getItem' | 'removeItem'>;
 
 /** 文档里没有任何可发送内容（空段落/空列表）即为空草稿。 */
 export function isComposerDocEmpty(doc: JSONContent): boolean {
@@ -80,8 +86,9 @@ function nodeHasContent(node: JSONContent): boolean {
   return (node.content ?? []).some(nodeHasContent);
 }
 
+/** 旧版整表键的一次性读取（v3 优先，v2 升级标记 dirty）；只用于启动导入。 */
 export function loadPersistedDrafts(
-  storage: DraftsStorage | null,
+  storage: LegacyDraftsStorage | null,
 ): Record<string, PersistedComposerDraft> {
   if (storage === null) return {};
   // v3 键存在（哪怕是空对象）就表示当前版本已初始化，不再回落到 v2——否则
@@ -92,8 +99,8 @@ export function loadPersistedDrafts(
   } catch {
     return {};
   }
-  if (hasCurrent) return readDrafts(storage, COMPOSER_DRAFTS_STORAGE_KEY);
-  const legacy = readDrafts(storage, LEGACY_COMPOSER_DRAFTS_STORAGE_KEY);
+  if (hasCurrent) return readLegacyDrafts(storage, COMPOSER_DRAFTS_STORAGE_KEY);
+  const legacy = readLegacyDrafts(storage, LEGACY_COMPOSER_DRAFTS_STORAGE_KEY);
   for (const draft of Object.values(legacy)) {
     draft.version = 0;
     draft.dirty = true;
@@ -101,7 +108,21 @@ export function loadPersistedDrafts(
   return legacy;
 }
 
-function readDrafts(storage: DraftsStorage, key: string): Record<string, PersistedComposerDraft> {
+/** 旧键导入收口：两个整表键一并删除（尽力而为；删不掉下次再导一次也幂等）。 */
+export function clearLegacyDraftKeys(storage: LegacyDraftsStorage | null): void {
+  if (storage === null) return;
+  try {
+    storage.removeItem(COMPOSER_DRAFTS_STORAGE_KEY);
+    storage.removeItem(LEGACY_COMPOSER_DRAFTS_STORAGE_KEY);
+  } catch {
+    // 尽力而为。
+  }
+}
+
+function readLegacyDrafts(
+  storage: LegacyDraftsStorage,
+  key: string,
+): Record<string, PersistedComposerDraft> {
   let raw: string | null;
   try {
     raw = storage.getItem(key);
@@ -118,7 +139,7 @@ function readDrafts(storage: DraftsStorage, key: string): Record<string, Persist
   if (parsed === null || typeof parsed !== 'object') return {};
   const out: Record<string, PersistedComposerDraft> = {};
   for (const [conversationId, value] of Object.entries(parsed as Record<string, unknown>)) {
-    const draft = normalizeDraft(value);
+    const draft = normalizePersistedDraft(value);
     if (draft !== null) out[conversationId] = draft;
   }
   return out;
@@ -131,7 +152,8 @@ function normalizeDoc(value: unknown): JSONContent | null {
   return record as unknown as JSONContent;
 }
 
-function normalizeDraft(value: unknown): PersistedComposerDraft | null {
+/** 单条草稿记录的归一化：形状不对 / 整体为空的条目丢弃（旧键与 IDB 记录读取共用）。 */
+export function normalizePersistedDraft(value: unknown): PersistedComposerDraft | null {
   if (value === null || typeof value !== 'object') return null;
   const record = value as Record<string, unknown>;
   const doc = normalizeDoc(record.doc);
@@ -290,21 +312,28 @@ function isEmptyDraft(draft: PersistedComposerDraft): boolean {
   );
 }
 
-export function writePersistedDrafts(
-  storage: DraftsStorage | null,
-  drafts: Record<string, PersistedComposerDraft>,
-): void {
-  if (storage === null) return;
-  try {
-    const keys = Object.keys(drafts);
-    if (keys.length === 0) {
-      storage.removeItem(COMPOSER_DRAFTS_STORAGE_KEY);
-      storage.removeItem(LEGACY_COMPOSER_DRAFTS_STORAGE_KEY);
-      return;
+/** 新旧快照的增量：只落变化的会话记录（IDB 按会话一条，不再整表重写）。 */
+export interface PersistedDraftDiff {
+  upserts: Array<[string, PersistedComposerDraft]>;
+  deletes: string[];
+}
+
+export function diffPersistedDrafts(
+  previous: Record<string, PersistedComposerDraft>,
+  next: Record<string, PersistedComposerDraft>,
+): PersistedDraftDiff {
+  const upserts: Array<[string, PersistedComposerDraft]> = [];
+  const deletes: string[] = [];
+  for (const [key, draft] of Object.entries(next)) {
+    // 按序列化内容比较：buildPersistedSnapshot 原样保留 previous 条目（引用
+    // 相等）自然跳过；runtime 重建的条目只有内容真变了才重写。
+    const before = previous[key];
+    if (before === undefined || JSON.stringify(before) !== JSON.stringify(draft)) {
+      upserts.push([key, draft]);
     }
-    storage.setItem(COMPOSER_DRAFTS_STORAGE_KEY, JSON.stringify(drafts));
-    storage.removeItem(LEGACY_COMPOSER_DRAFTS_STORAGE_KEY);
-  } catch {
-    // localStorage 不可用 / 配额满：缓存是尽力而为，不阻塞输入。
   }
+  for (const key of Object.keys(previous)) {
+    if (!(key in next)) deletes.push(key);
+  }
+  return { upserts, deletes };
 }

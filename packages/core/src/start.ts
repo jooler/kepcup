@@ -644,6 +644,13 @@ export interface CoreDomainServices {
 export interface CoreServices {
   status: CoreStatus;
   statusReason?: string | undefined;
+  /**
+   * 执行器是否已武装（jobsRunner.start() 起可能启动真实执行：D75 recovery
+   * 的 re-queued 任务、到期 proactive 派发都在 domain/orchestrator 赋值之前
+   * 发生）。update.activeRuns 的终局 error 放行空集只对「武装前失败」成立
+   * ——武装后（含这一窗口内失败）在途状态未知，仍 fail-closed。
+   */
+  executorsArmed?: boolean | undefined;
   paths: AppPaths;
   logger: CoreLogger;
   clock: Clock;
@@ -1004,11 +1011,18 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
 
   let status: CoreStatus = 'starting';
   let statusReason: string | undefined;
+  /** 终局 error 的机器可读码（DB_FROM_NEWER_VERSION 等）；starting/ready 无。 */
+  let statusCode: string | undefined;
 
-  const setStatus = (next: CoreStatus, reason?: string) => {
+  const setStatus = (next: CoreStatus, reason?: string, code?: string) => {
     status = next;
     statusReason = reason;
-    events.emit('core.status', reason === undefined ? { status } : { status, reason });
+    statusCode = code;
+    events.emit('core.status', {
+      status,
+      ...(reason !== undefined ? { reason } : {}),
+      ...(code !== undefined ? { code } : {}),
+    });
   };
 
   /** D75 §3.2 task reaper (armed after startup recovery, cleared by close()). */
@@ -1029,6 +1043,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
   const services: CoreServices = {
     status,
     statusReason,
+    executorsArmed: false,
     paths,
     logger,
     clock,
@@ -1100,10 +1115,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     collabPresence,
     collabDrafts: null,
     pushStatusTo(server) {
-      server.pushEvent(
-        'core.status',
-        statusReason === undefined ? { status } : { status, reason: statusReason },
-      );
+      server.pushEvent('core.status', {
+        status,
+        ...(statusReason !== undefined ? { reason: statusReason } : {}),
+        ...(statusCode !== undefined ? { code: statusCode } : {}),
+      });
     },
     pushPlatformStateTo(server) {
       // P13 任务 3: launch-at-login (settings default ON). Locked/errored
@@ -1208,8 +1224,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
   if (options.computerRpc !== undefined) services.computerRpc.bindFacade(options.computerRpc);
 
   const systemMethods = createSystemMethods(services, options.appVersion, options.diskUsageBudget);
-  const fail = (message: string): CoreServices => {
-    setStatus('error', message);
+  const fail = (message: string, code?: string): CoreServices => {
+    setStatus('error', message, code);
     services.status = status;
     services.statusReason = statusReason;
     services.appMethods = systemMethods;
@@ -3920,6 +3936,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     void environment.recheck().catch((error) => {
       warnQuietly('environment startup check failed', error);
     });
+    // 从这里起可能启动真实执行（见 CoreServices.executorsArmed 注释）——此后
+    // 终局失败时 update.activeRuns 不再放行空集（fail-closed，红线「不得强制
+    // 中断」）。
+    services.executorsArmed = true;
     jobsRunner.start();
     // AI 内容举报发送器（§6.7）：崩溃残留 sending → pending，启动立即 tick 一轮
     //（关应用时没发完的举报续发）。
@@ -4294,7 +4314,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     return services;
   } catch (error) {
     const message = error instanceof AppError ? `${error.code}: ${error.message}` : String(error);
-    return fail(message);
+    return fail(message, error instanceof AppError ? error.code : undefined);
   }
 }
 
@@ -4775,9 +4795,19 @@ function createPlatformMethods(services: CoreServices): Record<string, RpcMethod
       output: updateActiveRunsOutputSchema,
       handle: async () => {
         // Fail-closed (红线「不得强制中断」): while the core is starting /
-        // locked / errored the in-flight state is UNKNOWN — throwing makes
-        // the main-process gate treat it as busy instead of empty.
+        // locked the in-flight state is UNKNOWN — throwing makes the
+        // main-process gate treat it as busy instead of empty.
         if (services.domain === null || services.orchestrator === null) {
+          // 启动已终局失败（error：进程存活、服务永不就绪——低版本打开高版
+          // 本数据、钥匙串损坏等）且执行器尚未武装（executorsArmed：失败发生
+          // 在 jobsRunner.start() 之前，本轮不可能有任何执行在跑）是例外：
+          // 空集是事实而非猜测。继续 fail-closed 的话更新门控会干等 30 分钟
+          // 排空超时，下载完成后永远出不了「应用更新」按钮（用户只能靠退出
+          // 应用时 autoInstallOnAppQuit 兜底）。武装后失败的窗口在途状态未知
+          // ——仍 fail-closed（红线「不得强制中断」）。
+          if (services.status === 'error' && services.executorsArmed !== true) {
+            return { runs: [] };
+          }
           throw new AppError('INTERNAL', 'core services not ready');
         }
         return {

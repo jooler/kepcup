@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { Message } from '@kepcup/shared';
+import { NOTICE_UNREAD_MAX_AGE_MS } from '../chats/chat-display';
 import { chatTabBadge } from './project-chat-badge';
 
 /** 沟通 tab 徽标的全部口径（WP6 步骤 2）。 */
+
+/** 固定「现在」与 30 天保留窗口的内外时间点，避免依赖真实时钟。 */
+const NOW = 1_800_000_000_000;
+const FRESH = NOW - 60_000;
+const STALE = NOW - NOTICE_UNREAD_MAX_AGE_MS - 60_000;
 
 type MsgInit = Partial<Omit<Message, 'content'>> &
   Pick<Message, 'id' | 'senderType'> & { content?: unknown };
@@ -14,7 +20,7 @@ function msg(partial: MsgInit): Message {
     kind: 'text',
     content: { text: 'hi' },
     status: 'normal',
-    createdAt: 1,
+    createdAt: FRESH,
     runId: null,
     senderBotId: null,
     batchId: null,
@@ -92,6 +98,70 @@ describe('chatTabBadge unread', () => {
       pendingApprovals: 0,
     });
     expect(badge.unread).toBe(1);
+  });
+
+  it('未勾选类目的未读通知照常计（打开会话就会显示）；超 30 天未读不再显示也不计', () => {
+    const mail = (id: string, createdAt: number) =>
+      msg({ id, senderType: 'bot', kind: 'card', content: { cardType: 'mail' }, createdAt });
+    // 邮件卡未勾选：窗口内的未读打开会话会显示 → 计。
+    expect(
+      chatTabBadge({ messages: [mail('m1', FRESH)], seenSeq: 0, pendingApprovals: 0, now: NOW })
+        .unread,
+    ).toBe(1);
+    // 超 30 天的未读通知不再显示 → 不计。
+    expect(
+      chatTabBadge({ messages: [mail('m1', STALE)], seenSeq: 0, pendingApprovals: 0, now: NOW })
+        .unread,
+    ).toBe(0);
+    // 锁定类（Bot 文本）不受 30 天窗口影响，照常计。
+    expect(
+      chatTabBadge({
+        messages: [msg({ id: 'm2', senderType: 'bot', createdAt: STALE })],
+        seenSeq: 0,
+        pendingApprovals: 0,
+        now: NOW,
+      }).unread,
+    ).toBe(1);
+  });
+
+  it('30 天窗口只约束未勾选类目：勾选了的类目超期未读照常计', () => {
+    const staleCard = (cardType: string): Message =>
+      msg({
+        id: 'm1',
+        senderType: 'bot',
+        kind: 'card',
+        content: { cardType },
+        createdAt: STALE,
+      });
+    // 任务卡默认勾选（常驻显示）：超期未读照常计。
+    expect(
+      chatTabBadge({
+        messages: [staleCard('task')],
+        seenSeq: 0,
+        pendingApprovals: 0,
+        now: NOW,
+      }).unread,
+    ).toBe(1);
+    // 显式勾选的邮件卡同理。
+    expect(
+      chatTabBadge({
+        messages: [staleCard('mail')],
+        seenSeq: 0,
+        pendingApprovals: 0,
+        prefs: { mailCards: true },
+        now: NOW,
+      }).unread,
+    ).toBe(1);
+    // 同一条邮件卡在未勾选时不计。
+    expect(
+      chatTabBadge({
+        messages: [staleCard('mail')],
+        seenSeq: 0,
+        pendingApprovals: 0,
+        prefs: { mailCards: false },
+        now: NOW,
+      }).unread,
+    ).toBe(0);
   });
 });
 

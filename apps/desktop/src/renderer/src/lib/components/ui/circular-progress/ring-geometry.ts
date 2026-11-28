@@ -1,8 +1,8 @@
 /**
- * 圆形进度环的纯几何计算（侧栏按钮外环与进度卡片大环共用）。SVG 用
+ * 圆形进度环的纯几何计算（CircularProgress 组件的核心数学）。SVG 用
  * stroke-dasharray = 整周长 + stroke-dashoffset 后移出未完成弧段；起点由
- * -rotate-90 摆到 12 点钟。分块差量下载的 percent 推送可能倒退/抖动，
- * 这里 clamp 到 [0, 100]（NaN 也归 0），视觉平滑交给 CSS transition。
+ * -rotate-90 摆到 12 点钟。percent 推送可能倒退/抖动，这里 clamp 到
+ * [0, 100]（NaN 也归 0），视觉平滑交给 CSS transition。
  */
 export interface RingGeometry {
   /** 整周长（stroke-dasharray 与 dashoffset 的分母）。 */

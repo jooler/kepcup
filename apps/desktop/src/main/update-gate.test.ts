@@ -290,6 +290,133 @@ describe('UpdateGate', () => {
     expect(h.gate.phase).toBe('downloading');
   });
 
+  test('manual check surfaces a skipped version as available-skipped; scheduled stays silent', async () => {
+    const h = harness();
+    h.gate.onUpdateAvailable('1.1.0');
+    h.gate.cancelDownload();
+    expect(h.gate.phase).toBe('idle');
+
+    // 定时/自动检查：同版本静默，不切相位、不启动下载。
+    expect(h.gate.onUpdateAvailable('1.1.0')).toBe(false);
+    expect(h.gate.phase).toBe('idle');
+
+    // 手动检查（设置-通用「检查更新」）：切 available-skipped，设置页据此
+    // 提供「下载此版本」入口。
+    expect(h.gate.onUpdateAvailable('1.1.0', { manual: true })).toBe(false);
+    expect(h.gate.phase).toBe('available-skipped');
+    expect(h.gate.status).toMatchObject({ phase: 'available-skipped', version: '1.1.0' });
+
+    // available-skipped 同样抗 updater 噪音（定时重查失败不打掉手动入口）。
+    h.gate.onChecking();
+    h.gate.onError('404 not found');
+    expect(h.gate.phase).toBe('available-skipped');
+
+    // 未跳过的版本照旧：手动检查立即切 downloading 并允许启动下载。
+    expect(h.gate.onUpdateAvailable('1.2.0', { manual: true })).toBe(true);
+    expect(h.gate.phase).toBe('downloading');
+  });
+
+  test('scheduled check hitting a skipped version converges checking back to idle (never stuck)', async () => {
+    const h = harness();
+    h.gate.onUpdateAvailable('1.1.0');
+    h.gate.cancelDownload();
+    // 定时检查的事件序列：checking → update-available(skipped, 静默)——此后
+    // 没有任何事件会再来（runCheck 静默返回、update-not-available 不来），
+    // gate 必须自己把 checking 收敛回 idle，否则设置页「检查更新」永久卡在
+    // 「检查中」、手动入口不可达。
+    h.gate.onChecking();
+    expect(h.gate.phase).toBe('checking');
+    expect(h.gate.onUpdateAvailable('1.1.0')).toBe(false);
+    expect(h.gate.phase).toBe('idle');
+  });
+
+  test('manual check from downloading does not surface a skipped version and converges back', async () => {
+    const h = harness();
+    // 先让用户取消过 1.1.0（入跳过集合），再让 2.0.0 下载在途。
+    h.gate.onUpdateAvailable('1.1.0');
+    h.gate.cancelDownload();
+    h.gate.onDownloading('2.0.0', 40);
+    // 由 downloading 发起的手动检查（托盘入口）：有下载在途，浮出会被下一个
+    // 进度事件打回（闪帧）——不浮出，收敛回 downloading。
+    h.gate.onChecking();
+    expect(h.gate.onUpdateAvailable('1.1.0', { manual: true })).toBe(false);
+    expect(h.gate.phase).toBe('downloading');
+    expect(h.gate.status.version).toBe('2.0.0');
+  });
+
+  test('manual check hitting a skipped version while ready-to-install never washes the decision', async () => {
+    const h = harness();
+    h.gate.onUpdateAvailable('1.1.0');
+    h.gate.cancelDownload();
+    await h.gate.evaluate('2.0.0');
+    expect(h.gate.phase).toBe('ready-to-install');
+    // 决策相位进不了 checking（onChecking 守卫）：update-available 只可能被
+    // 静默吞掉，available-skipped 不浮出、ready 不被冲掉。
+    expect(h.gate.onUpdateAvailable('1.1.0', { manual: true })).toBe(false);
+    expect(h.gate.phase).toBe('ready-to-install');
+  });
+
+  test('resume then cancel re-skips the version: scheduled silent again, manual can resurface', async () => {
+    const h = harness({ skippedVersions: ['1.0.0'] });
+    expect(h.gate.onUpdateAvailable('1.0.0', { manual: true })).toBe(false);
+    expect(h.gate.resumeSkipped('1.0.0')).toBe(true);
+    expect(h.gate.phase).toBe('downloading');
+
+    // 用户再次取消：重新入跳过集合，gate 回 idle。
+    expect(h.gate.cancelDownload()).toBe('1.0.0');
+    expect(h.gate.phase).toBe('idle');
+
+    // 定时重查静默；迟到的进度事件不把 idle 拉回 downloading；手动检查仍可
+    // 重新浮出（用户随时可以反悔——这正是特性语义）。
+    h.gate.onChecking();
+    expect(h.gate.onUpdateAvailable('1.0.0')).toBe(false);
+    expect(h.gate.phase).toBe('idle');
+    h.gate.onDownloading('1.0.0', 60);
+    expect(h.gate.phase).toBe('idle');
+    expect(h.gate.onUpdateAvailable('1.0.0', { manual: true })).toBe(false);
+    expect(h.gate.phase).toBe('available-skipped');
+    expect(h.gate.resumeSkipped('1.0.0')).toBe(true);
+    expect(h.gate.phase).toBe('downloading');
+  });
+
+  test('feed pulling the skipped version clears the available-skipped surface (update-not-available)', async () => {
+    const h = harness({ skippedVersions: ['1.0.0'] });
+    expect(h.gate.onUpdateAvailable('1.0.0', { manual: true })).toBe(false);
+    expect(h.gate.phase).toBe('available-skipped');
+    // 手动重查且 feed 已无该版本：入口收回 idle 是事实修正。
+    h.gate.onUpToDate();
+    expect(h.gate.phase).toBe('idle');
+  });
+
+  test('resumeSkipped re-arms the download and un-skips the version', async () => {
+    const h = harness({ skippedVersions: ['1.0.0'] });
+    expect(h.gate.onUpdateAvailable('1.0.0', { manual: true })).toBe(false);
+    expect(h.gate.phase).toBe('available-skipped');
+
+    expect(h.gate.resumeSkipped('1.0.0')).toBe(true);
+    expect(h.gate.phase).toBe('downloading');
+    expect(h.gate.status).toMatchObject({ phase: 'downloading', version: '1.0.0' });
+
+    // 已移出跳过集合：后续进度 / 下载完成照常推进（不再静默）。
+    h.gate.onDownloading('1.0.0', 50);
+    expect(h.gate.status).toMatchObject({ phase: 'downloading', percent: 50 });
+    await h.gate.evaluate('1.0.0');
+    expect(h.gate.phase).toBe('ready-to-install');
+  });
+
+  test('resumeSkipped is a no-op outside available-skipped or with a stale version', async () => {
+    const h = harness({ skippedVersions: ['1.0.0'] });
+    // 相位守卫：available-skipped 之外的迟到点击是 no-op。
+    expect(h.gate.resumeSkipped('1.0.0')).toBe(false);
+    expect(h.gate.phase).toBe('idle');
+
+    // 版本不匹配同样 no-op（gate 记录的是最后一次浮出的版本）。
+    h.gate.onUpdateAvailable('1.0.0', { manual: true });
+    expect(h.gate.phase).toBe('available-skipped');
+    expect(h.gate.resumeSkipped('2.0.0')).toBe(false);
+    expect(h.gate.phase).toBe('available-skipped');
+  });
+
   test('onUpdateAvailable switches to downloading immediately (manual check UX)', async () => {
     const h = harness();
     expect(h.gate.onUpdateAvailable('1.1.0')).toBe(true);

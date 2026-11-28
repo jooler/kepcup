@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test } from 'vitest';
 import {
   appendSkippedVersion,
   createFileUpdateSkipStore,
+  removeSkippedVersion,
   type UpdateSkipStore,
 } from './update-skip.js';
 
@@ -76,5 +77,36 @@ describe('appendSkippedVersion', () => {
     };
     appendSkippedVersion(store, '2.0.0');
     expect(store.load()).toEqual(['2.0.0']);
+  });
+});
+
+describe('removeSkippedVersion', () => {
+  test('移除指定版本并持久化；不存在的版本与空集合都安全', () => {
+    const at = freshDir();
+    const store = createFileUpdateSkipStore(() => at);
+    appendSkippedVersion(store, '1.0.0');
+    appendSkippedVersion(store, '1.1.0');
+
+    removeSkippedVersion(store, '1.0.0');
+    expect(store.load()).toEqual(['1.1.0']);
+
+    // 不存在的版本 / 空集合：no-op 不抛错。
+    removeSkippedVersion(store, '9.9.9');
+    expect(store.load()).toEqual(['1.1.0']);
+    removeSkippedVersion(store, '1.1.0');
+    removeSkippedVersion(store, '1.1.0');
+    expect(store.load()).toEqual([]);
+  });
+
+  test('内存 store 也能用', () => {
+    const memory: { versions: string[] } = { versions: ['2.0.0'] };
+    const store: UpdateSkipStore = {
+      load: () => memory.versions,
+      save: (versions) => {
+        memory.versions = versions;
+      },
+    };
+    removeSkippedVersion(store, '2.0.0');
+    expect(store.load()).toEqual([]);
   });
 });

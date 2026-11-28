@@ -2,12 +2,13 @@ import { describe, expect, test } from 'vitest';
 import type { JSONContent } from '@tiptap/core';
 import {
   buildPersistedSnapshot,
+  clearLegacyDraftKeys,
   COMPOSER_DRAFTS_STORAGE_KEY,
+  diffPersistedDrafts,
   LEGACY_COMPOSER_DRAFTS_STORAGE_KEY,
   isComposerDocEmpty,
   loadPersistedDrafts,
   MAX_PERSISTED_DRAFTS,
-  writePersistedDrafts,
   type PersistedComposerDraft,
 } from './composer-draft-persist';
 
@@ -77,7 +78,7 @@ describe('isComposerDocEmpty', () => {
   });
 });
 
-describe('loadPersistedDrafts', () => {
+describe('loadPersistedDrafts（旧 localStorage 整表键的一次性导入读取）', () => {
   test('空存储 / 缺 key 返回空对象', () => {
     expect(loadPersistedDrafts(null)).toEqual({});
     expect(loadPersistedDrafts(fakeStorage())).toEqual({});
@@ -190,23 +191,19 @@ describe('loadPersistedDrafts', () => {
     expect(loaded.conv_old).toMatchObject({ version: 0, dirty: true });
   });
 
-  test('write 空快照时同时清掉 v2 键，v2 不会在 v3 清空后复活', () => {
+  test('clearLegacyDraftKeys 把 v3 / v2 两个整表键一并清掉（迁移收口）', () => {
     const storage = fakeStorage({
+      [COMPOSER_DRAFTS_STORAGE_KEY]: JSON.stringify({
+        conv_a: { doc: docOf('草稿'), mentions: [], reply: null, attachments: [], updatedAt: 5 },
+      }),
       [LEGACY_COMPOSER_DRAFTS_STORAGE_KEY]: JSON.stringify({
-        conv_old: {
-          doc: docOf('旧草稿'),
-          mentions: [],
-          reply: null,
-          attachments: [],
-          updatedAt: 5,
-        },
+        conv_old: { doc: docOf('旧草稿'), mentions: [], reply: null, attachments: [], updatedAt: 5 },
       }),
     });
-    expect(loadPersistedDrafts(storage).conv_old).toBeDefined();
-
-    writePersistedDrafts(storage, {});
+    clearLegacyDraftKeys(storage);
     expect(storage.store.has(COMPOSER_DRAFTS_STORAGE_KEY)).toBe(false);
     expect(storage.store.has(LEGACY_COMPOSER_DRAFTS_STORAGE_KEY)).toBe(false);
+    // 导入读取在删键后自然为空（不会“复活”）。
     expect(loadPersistedDrafts(storage)).toEqual({});
   });
 });
@@ -292,15 +289,34 @@ describe('buildPersistedSnapshot', () => {
   });
 });
 
-describe('writePersistedDrafts / 往返', () => {
-  test('写后读一致；空对象清 key', () => {
-    const storage = fakeStorage();
-    const drafts: Record<string, PersistedComposerDraft> = {
-      conv_a: draft({ doc: docOf('草稿'), updatedAt: 5 }),
+describe('diffPersistedDrafts（按会话增量落盘）', () => {
+  test('新增 / 内容变化的会话进 upserts；被清掉的会话进 deletes', () => {
+    const previous: Record<string, PersistedComposerDraft> = {
+      conv_old: draft({ doc: docOf('旧'), updatedAt: 1 }),
+      conv_gone: draft({ doc: docOf('将删除'), updatedAt: 2 }),
     };
-    writePersistedDrafts(storage, drafts);
-    expect(loadPersistedDrafts(storage)).toEqual(drafts);
-    writePersistedDrafts(storage, {});
-    expect(storage.store.has(COMPOSER_DRAFTS_STORAGE_KEY)).toBe(false);
+    const next: Record<string, PersistedComposerDraft> = {
+      conv_old: draft({ doc: docOf('旧'), updatedAt: 1 }),
+      conv_new: draft({ doc: docOf('新'), updatedAt: 3 }),
+    };
+    const diff = diffPersistedDrafts(previous, next);
+    expect(diff.upserts).toEqual([['conv_new', next.conv_new]]);
+    expect(diff.deletes).toEqual(['conv_gone']);
+  });
+
+  test('引用相等的条目（快照原样保留）不重写；全等时 diff 为空', () => {
+    const unchanged = draft({ doc: docOf('不变'), updatedAt: 1 });
+    const previous = { conv_a: unchanged };
+    expect(diffPersistedDrafts(previous, { conv_a: unchanged })).toEqual({
+      upserts: [],
+      deletes: [],
+    });
+  });
+
+  test('空到空 / 空到全量为常见启动与清空形态', () => {
+    expect(diffPersistedDrafts({}, {})).toEqual({ upserts: [], deletes: [] });
+    const next = { conv_a: draft({ doc: docOf('草稿'), updatedAt: 5 }) };
+    expect(diffPersistedDrafts({}, next).upserts).toEqual([['conv_a', next.conv_a]]);
+    expect(diffPersistedDrafts(next, {}).deletes).toEqual(['conv_a']);
   });
 });

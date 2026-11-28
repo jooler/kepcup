@@ -27,6 +27,7 @@
   import { sidebarSections } from '$lib/features/sidebar/sidebar-sections.svelte';
   import LockedPage from '$lib/features/shell/LockedPage.svelte';
   import CoreErrorPage from '$lib/features/shell/CoreErrorPage.svelte';
+  import UpdateProgressCard from '$lib/features/sidebar/UpdateProgressCard.svelte';
   import NarrowShell from '$lib/features/shell/NarrowShell.svelte';
   import BotDetailOverlay from '$lib/features/shell/BotDetailOverlay.svelte';
   import NarrowSettings from '$lib/features/settings/NarrowSettings.svelte';
@@ -45,6 +46,7 @@
   import ChatsArea from '$lib/features/chats/ChatsArea.svelte';
   import WorkbenchView from '$lib/features/workbench/WorkbenchView.svelte';
   import { composerDrafts } from '$lib/features/chats/composer-drafts.svelte';
+  import { messageVisibility } from '$lib/stores/message-visibility.svelte';
   import { presence } from '$lib/features/collab/presence.svelte';
   import { stickies } from '$lib/features/chats/stickies.svelte';
   import SettingsPage from '$lib/features/settings/SettingsPage.svelte';
@@ -199,6 +201,11 @@
       permissions.refreshSandbox(),
       workdirs.refresh(),
       stickies.load(),
+      // 渲染层持久化 store 的启动载入（IndexedDB）：消息隐藏覆盖与草稿快照要
+      // 在恢复会话 / 渲染消息列表之前就位，否则已隐藏消息会先闪现、草稿会被
+      // 空快照盖掉。
+      messageVisibility.ready(),
+      composerDrafts.ready(),
       // 左栏分组（main.db sidebar_sections / conversation_sidebar）；升级时把旧
       // localStorage 分组一次性导入。
       sidebarSections.start(),
@@ -379,6 +386,12 @@
     {#if onboarding.open}
       <OnboardingWizard />
     {/if}
+
+    <!-- 全局更新进度卡片（唯一实例，open 绑定 updateStore.progressOpen）：侧栏
+       更新圆钮与核心错误页「检查更新」共同指向它。不进 coreReady 门——核心
+       终局失败（如低版本打开高版本数据）时检查更新 / 下载 / 应用更新的整条
+       流程仍要可用，Portal 到 body 与布局无关，宽窄切换也不丢状态。 -->
+    <UpdateProgressCard />
 
     <!-- 窄屏 toast 改顶部居中（33-narrow-layout）：sonner 单条 toast 默认 356px 宽，
        bottom-right 在手机宽度窗口里会横贯整个底部 tab 栏。 -->

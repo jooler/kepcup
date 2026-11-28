@@ -22,6 +22,11 @@ import { settingCardOf } from '../features/settings-card/setting-card-model';
 import { tasks } from '$lib/stores/tasks.svelte';
 import { activeRunsOf } from '../features/tasks/task-view';
 import { botMessageMutesRun, isInterimMessage } from '../features/chats/run-status-mute';
+import {
+  chatDisplayCategory,
+  isNoticeFresh,
+} from '../features/chats/chat-display';
+import { chatDisplay } from '../features/chats/chat-display.svelte';
 import { settingsStore } from '$lib/stores/settings.svelte';
 import { shell } from '$lib/stores/shell.svelte';
 import { isEphemeralApprovalCard } from '../features/approvals/ephemeral-approval';
@@ -51,6 +56,14 @@ export interface ChatSessionView {
   loadingEarlier: boolean;
   hasEarlier: boolean;
   members: ProjectMemberView[];
+  /**
+   * 本次查看期间已显示过的未勾选类目通知条目（对话信息展示设置）。这些条目
+   * 在 markRead 推进通知已读游标后已成「已读」，但用户正是在此刻看到它们的
+   * ——立即按已读隐藏会让条目闪现即逝；keep 集合保证它们保持可见，直到视图
+   * 被 open / clear 替换（= 用户切换了主体内容）。见 chat-display.ts 的
+   * `NoticeDisplayState`。
+   */
+  noticeKeepIds?: ReadonlySet<string>;
 }
 
 export interface ProjectMemberView {
@@ -679,7 +692,9 @@ export class ChatSession {
     if (!view || view.conversation.readOnly) return;
     if (shell.workbenchShown) return;
     const lastSeq = view.messages.at(-1)?.seq;
-    if (lastSeq === undefined || lastSeq <= view.conversation.lastReadSeq) return;
+    if (lastSeq === undefined) return;
+    this.#commitNoticeRead(view, lastSeq);
+    if (lastSeq <= view.conversation.lastReadSeq) return;
     const source = this.#source;
     await this.#rpc().call('conversations.markRead', {
       conversationId: view.conversation.id,
@@ -688,6 +703,53 @@ export class ChatSession {
     if (this.view !== view || this.#source !== source) return;
     view.conversation = { ...view.conversation, lastReadSeq: lastSeq, unreadCount: 0 };
     this.#host.syncReadCursor(this.#source, view.conversation.id, lastSeq);
+  }
+
+  /**
+   * 推进通知已读游标（对话信息展示设置），并把本次查看中刚越过游标的未勾选
+   * 类目条目并入视图 keep 集合——用户正是在 markRead 这一刻看到它们的，keep
+   * 让它们保持可见直到视图被切换 / 关闭。放在 lastReadSeq 的早退**之前**：
+   * 重开一个没有新消息的会话也必须推进游标，否则存量通知的游标永远停在 0，
+   * 每次打开都会重新出现。超 30 天窗口的未读条目不进 keep（它们不该被显示，
+   * 见 `NOTICE_UNREAD_MAX_AGE_MS`）。
+   */
+  #commitNoticeRead(view: ChatSessionView, lastSeq: number): void {
+    const source = this.#source;
+    const conversationId = view.conversation.id;
+    const prev = chatDisplay.noticeReadThrough(source, conversationId);
+    const now = Date.now();
+    let changed = false;
+    // 快照集合：仅在 changed 时整体替换引用，就地变异不是响应源。
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity
+    const keep = new Set(view.noticeKeepIds ?? []);
+    for (const message of view.messages) {
+      const category = chatDisplayCategory(message);
+      // 勾选了的类目常驻显示，不需要 keep；锁定类不在 category 里。
+      if (category === null || chatDisplay.isEnabled(category)) continue;
+      if (message.seq > prev && isNoticeFresh(message, now) && !keep.has(message.id)) {
+        keep.add(message.id);
+        changed = true;
+      }
+    }
+    // 无变化不写：markRead 由 MessageList 的 $effect 同步触发，而该 effect 经
+    // display 派生读取本字段——无条件赋新 Set 引用会让派生反复失效，「写又
+    // 触发读」自激成 effect_update_depth_exceeded 死循环。
+    if (changed) view.noticeKeepIds = keep;
+    chatDisplay.advanceNoticeReadThrough(source, conversationId, lastSeq);
+  }
+
+  /**
+   * 通知已读游标提交的对外口（CardChat 只读线程兜底用）：`markRead` 对
+   * readOnly 会话整体早退（不动 core 游标），而 CardChat 的兜底会把 core
+   * 游标补上——只读线程在屏上时通知已读游标也要一并推进，否则未勾选类目
+   * 的通知在该线程每次打开都会重现、永不收口。
+   */
+  commitNoticeRead(): void {
+    const view = this.view;
+    if (!view) return;
+    const lastSeq = view.messages.at(-1)?.seq;
+    if (lastSeq === undefined) return;
+    this.#commitNoticeRead(view, lastSeq);
   }
 
   async loadEarlier(): Promise<void> {

@@ -86,8 +86,10 @@ describe('runMigrations', () => {
       error = caught;
     }
     expect(error).toBeInstanceOf(AppError);
+    // 独立码 DB_FROM_NEWER_VERSION：渲染层据此出「版本过低」专用提示（区别
+    // 于迁移文件损坏等其它 MIGRATION_FAILED）。
     expect(error).toMatchObject({
-      code: 'MIGRATION_FAILED',
+      code: 'DB_FROM_NEWER_VERSION',
       details: { currentVersion: 3, targetVersion: 2 },
     });
     expect((error as Error).message).toContain('此数据库由更新版本的 KepCup 写入');

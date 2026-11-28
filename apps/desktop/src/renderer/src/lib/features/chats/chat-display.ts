@@ -10,12 +10,20 @@ import { SETTING_CARD_EVENT } from '@kepcup/shared';
  * 始终显示（锁定，不可取消）。
  *
  * 通知与过程类内容（系统通知、定时任务卡、审批回执、邮件 / IM / 监看到达
- * 摘要、交接记录）默认隐藏，用户在设置里勾选后才出现；任务卡是任务的进度
- * 与结果汇报，默认显示（用户可取消）。
+ * 摘要、交接记录）默认不常驻：**未勾选的类目不再硬隐藏**——30 天内的未读
+ * 条目仍会出现在对话里让用户看见，已读（打开过该会话）或超 30 天未读的
+ * 条目不再显示；已显示的条目在本次查看期间保持可见（视图 keep 集合，见
+ * `NoticeDisplayState`），直到用户切换主体内容（会话被切换 / 关闭）才收起。
+ * 勾选了的类目照旧常驻显示；任务卡是任务的进度与结果汇报，默认常驻（用户
+ * 可取消）。
  *
- * 值只存渲染层 localStorage（owner = 'renderer'，core 读不到也写不了），存储
- * 只记与默认不同的显式选择；缺省（没存）= 按 `CHAT_DISPLAY_DEFAULTS`。这里
- * 只放纯数据与纯函数，响应式包装在 `chat-display.svelte.ts`。
+ * 值只存渲染层：勾选状态在 localStorage（owner = 'renderer'，core 读不到也
+ * 写不了），只记与默认不同的显式选择，缺省（没存）= 按 `CHAT_DISPLAY_DEFAULTS`。
+ * 通知已读游标按会话一条（`{source}:{conversationId}` → seq），走 IndexedDB
+ * ——会话（尤其任务卡会话）按使用量增长、无上限，localStorage 会撞每源配额。
+ * 没有记录的会话游标为 0，30 天内的历史存量条目全部按未读处理（会出现一次，
+ * 看过后收起）。这里只放纯数据与纯函数，响应式与 IndexedDB 包装在
+ * `chat-display.svelte.ts`。
  */
 
 /** 锁定类：一定显示，不出现在勾选列表的可操作区（设置页只作说明展示）。 */
@@ -173,8 +181,80 @@ export function chatDisplayCategory(message: Message): ChatDisplayCategory | nul
   return null;
 }
 
-/** 该消息是否应出现在对话列表里（transcript-visibility 之后的展示层开关）。 */
-export function isVisibleWithChatDisplay(message: Message, prefs: ChatDisplayPrefs): boolean {
+/** 该消息是否应出现在对话列表里（transcript-visibility 之后的展示层开关）。
+ *
+ * `notice` 缺省 = 旧行为（未勾选类目一律隐藏，纯逻辑单测与旧调用方用）。
+ * 消息列表（MessageList）传入当前会话的通知已读状态：未勾选类目按「未读、
+ * 未过 30 天窗口，或本次查看期间已显示（keep 集合）」放行。
+ */
+export function isVisibleWithChatDisplay(
+  message: Message,
+  prefs: ChatDisplayPrefs,
+  notice?: NoticeDisplayState,
+  now: number = Date.now(),
+): boolean {
   const category = chatDisplayCategory(message);
-  return category === null || isChatDisplayKeyEnabled(prefs, category);
+  if (category === null || isChatDisplayKeyEnabled(prefs, category)) return true;
+  if (notice === undefined) return false;
+  return isNoticeVisible(message, notice, now);
+}
+
+/**
+ * 未勾选类目的通知已读状态（每个打开的会话一份）：
+ * - `readThrough`：该会话的通知已读游标（渲染层 IndexedDB 持久化）。用户
+ *   真正看过消息时推进（markRead 的守卫——工作台遮罩、只读——天然保证「看过
+ *   才推进」）；`seq ≤ readThrough` 的未勾选条目视为已读，不再显示。
+ * - `keepIds`：本次查看期间已显示过的未读条目 id（挂在 `ChatSessionView`
+ *   上，随视图切换 / 关闭一起丢弃）。已读判定会在查看中途越过它们（打开
+ *   会话即 markRead），keep 集合保证这些条目**保持可见**直到切换主体内容，
+ *   否则条目会在标已读的一瞬间消失，用户根本来不及查看。
+ */
+export interface NoticeDisplayState {
+  readThrough: number;
+  keepIds?: ReadonlySet<string>;
+}
+
+/**
+ * 未读通知的保留窗口（设置 → 通用 → 对话信息展示）：未勾选类目的条目超过
+ * 30 天仍未读的，不再自动出现在对话里（历史积压不轰炸，需要时翻记录）。
+ * 只约束未勾选类目——锁定类（对话本身）与勾选了的类目不受影响。
+ */
+export const NOTICE_UNREAD_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** 该通知条目是否还在 30 天保留窗口内（`createdAt` 为 UTC 毫秒）。 */
+export function isNoticeFresh(message: Message, now: number): boolean {
+  return message.createdAt >= now - NOTICE_UNREAD_MAX_AGE_MS;
+}
+
+/**
+ * 未勾选类目条目当前是否显示：本次查看已显示过的（keep）保持可见（豁免
+ * 过期——显示到一半被抽走更糟）；否则要求未读且仍在 30 天窗口内。
+ */
+export function isNoticeVisible(
+  message: Message,
+  notice: NoticeDisplayState,
+  now: number,
+): boolean {
+  if (notice.keepIds?.has(message.id)) return true;
+  return message.seq > notice.readThrough && isNoticeFresh(message, now);
+}
+
+/** 游标存储键：会话 id 在来源之间不保证唯一（本机 / 各团队），键带来源。 */
+export function noticeReadKey(source: string, conversationId: string): string {
+  return `${source}:${conversationId}`;
+}
+
+/**
+ * 启动载入与早期推进的合并：游标只进不退，两边取大。IndexedDB 异步载入
+ * 期间内存里可能已有 markRead 推进过的新值，不能被库里的旧值覆盖。
+ */
+export function mergeNoticeReadCursors(
+  loaded: Record<string, number>,
+  pending: Record<string, number>,
+): Record<string, number> {
+  const merged = { ...loaded };
+  for (const [key, seq] of Object.entries(pending)) {
+    if (seq > (merged[key] ?? 0)) merged[key] = seq;
+  }
+  return merged;
 }

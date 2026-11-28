@@ -147,24 +147,12 @@ test('update downloads silently; settings and sidebar expose progress and apply'
     await page.keyboard.press('Escape');
     await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
 
-    // 点击左栏圆形按钮 → 弹进度卡片（下载完成态），右下「应用更新」再走
-    // 居中确认浮层（提醒需要重启才能生效——误点不直接重启），确认后才走
-    // preload update:installNow → 主进程门控退出并安装；门控先广播
-    // installing，按钮随之消失，证明确认后的点击确实走到了安装决策。
+    // 点击左栏圆形按钮 → 弹进度卡片（下载完成态，唯一一层弹框），右下
+    // 「应用更新」直接走 preload update:installNow → 主进程门控退出并安装；
+    // 门控先广播 installing，按钮随之消失，证明点击确实走到了安装决策。
     await sidebarButton.click();
     await expect(progressCard).toBeVisible();
     await page.locator('[data-testid="update-card-apply"]').click();
-    const confirm = page.locator('[data-testid="sidebar-update-confirm"]');
-    await expect(confirm).toBeVisible();
-    await expect(confirm).toContainText('9.9.9');
-    // 「稍后重启」只收起浮层，不触发安装。
-    await page.locator('[data-testid="sidebar-update-restart-later"]').click();
-    await expect(confirm).toBeHidden();
-    await expect(sidebarButton).toBeVisible();
-    await sidebarButton.click();
-    await page.locator('[data-testid="update-card-apply"]').click();
-    await expect(confirm).toBeVisible();
-    await page.locator('[data-testid="sidebar-update-install-now"]').click();
     await expect(sidebarButton).toHaveCount(0, {
       timeout: 15_000,
     });
@@ -234,8 +222,8 @@ test('waiting-runs shows drain copy; awaiting-user requires destructive confirma
     await expect(sidebarButton).toBeVisible({ timeout: 15_000 });
 
     // awaiting-user：左栏圆钮转 destructive 警示态；点击先开进度卡片（含执行
-    // 数与等待文案），「中断执行并更新」仍要过破坏性确认浮层，「继续等待」
-    // 直接重臂排空轮询（BR-P13-005：绝不静默中断在途执行）。
+    // 数与等待文案），「中断执行并更新」在卡片内切破坏性确认条（单层弹框、
+    // 二次确认不弱化，BR-P13-005：绝不静默中断在途执行）。
     await pushUpdate(app, { phase: 'awaiting-user', version: '9.9.9', activeRuns: 2 });
     await expect(sidebarButton).toHaveAttribute('data-awaiting', 'true');
     await sidebarButton.click();
@@ -243,16 +231,34 @@ test('waiting-runs shows drain copy; awaiting-user requires destructive confirma
     await expect(card).toBeVisible();
     await expect(card).toContainText('2');
     await page.locator('[data-testid="update-card-interrupt"]').click();
-    const confirm = page.locator('[data-testid="sidebar-update-confirm"]');
+    const confirm = page.locator('[data-testid="update-card-confirm-box"]');
     await expect(confirm).toBeVisible();
     await expect(confirm).toContainText('2');
-    // 确认浮层里的「继续等待」：收起且不安装。
-    await page.locator('[data-testid="sidebar-update-keep-waiting"]').click();
+    // 确认条里的「取消」：回到两按钮态，不触发安装。
+    await page.locator('[data-testid="update-card-confirm-cancel"]').click();
     await expect(confirm).toBeHidden();
+    await expect(page.locator('[data-testid="update-card-interrupt"]')).toBeVisible();
+    // 再次进入确认条，「继续等待」收起卡片且不安装（真实 gate 处于 idle，重臂
+    // 是 no-op——这里的断言只覆盖 UI 层；排空语义由主进程单测覆盖）。
+    await page.locator('[data-testid="update-card-interrupt"]').click();
+    await expect(confirm).toBeVisible();
+    await page.locator('[data-testid="update-card-confirm-keep-waiting"]').click();
+    await expect(card).toBeHidden();
     // 门控重臂排空轮询（这里以 waiting-runs 推送模拟相位回流），圆钮保持
     // 可见；installing 推送才把入口收走。
     await pushUpdate(app, { phase: 'waiting-runs', version: '9.9.9', activeRuns: 2 });
     await expect(sidebarButton).toBeVisible();
+
+    // 重开卡片走完整破坏性链路：「中断执行并更新」→ 确认条 → 确认按钮调
+    // installNow（真实门控 idle 下是 no-op：卡片收起、无静默崩溃；安装决策
+    // 本体由主进程单测与测试 1 覆盖），随后 installing 推送把入口收走。
+    await pushUpdate(app, { phase: 'awaiting-user', version: '9.9.9', activeRuns: 2 });
+    await sidebarButton.click();
+    await expect(card).toBeVisible();
+    await page.locator('[data-testid="update-card-interrupt"]').click();
+    await expect(confirm).toBeVisible();
+    await page.locator('[data-testid="update-card-confirm-install"]').click();
+    await expect(card).toBeHidden();
     await pushUpdate(app, { phase: 'installing', version: '9.9.9' });
     await expect(sidebarButton).toHaveCount(0, { timeout: 15_000 });
 
@@ -272,6 +278,20 @@ test('waiting-runs shows drain copy; awaiting-user requires destructive confirma
     await expect(page.locator('[data-testid="settings-update-apply"]')).toHaveCount(0, {
       timeout: 15_000,
     });
+
+    // available-skipped：手动检查查到被跳过的版本——设置行显示版本与「下载
+    // 此版本」入口，手动「检查更新」按钮让位（available-skipped 分支优先于
+    // idle/error/checking）。点击走真实门控：e2e 下 gate idle、相位守卫是
+    // no-op，不点；恢复下载链路由主进程单测覆盖。
+    await pushUpdate(app, { phase: 'available-skipped', version: '9.9.9' });
+    await expect(page.locator('[data-testid="settings-update-skipped"]')).toContainText(
+      '9.9.9',
+      { timeout: 15_000 },
+    );
+    await expect(page.locator('[data-testid="settings-update-download-skipped"]')).toBeVisible();
+    await expect(page.locator('[data-testid="settings-check-update"]')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
   } finally {
     await closeSession(session);
   }

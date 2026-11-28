@@ -7,6 +7,10 @@ export const enUS = {
   'shell.coreFailedHint':
     'Multiple consecutive start attempts failed, so retries have stopped. Check the logs directory for details.',
   'shell.coreErrorHint': 'Fix the issue below, then restart the app.',
+  'shell.versionTooLowTitle':
+    'The app is too old to open the local data. Please update the app!',
+  'shell.versionTooLowHint':
+    'The data may have been opened by a newer version of the app on this machine, or copied from another device running a newer version.',
   'shell.logsHint': 'Logs directory: {path}',
   'shell.rightPanelHide': 'Hide right panel',
   'sidebar.chatsEmpty': 'No conversations yet. Click + in the top right to start.',
@@ -2521,12 +2525,13 @@ export const enUS = {
     'Idle-loop guard, inactivity timeout, max run time and token soft budget for long tasks',
   'settings.chatDisplaySettings': 'Conversation display settings',
   'settings.chatDisplaySettingsHint':
-    'Choose what appears in the conversation list: notifications and process cards can be hidden',
+    'Choose what appears in the conversation list: checked notifications and process cards stay visible; unchecked ones still appear while unread',
   'settings.chatDisplayPageHint':
-    'Keep the conversation a conversation: categories below appear in the message list per their checkmarks, and unread badges follow the same rule; defaults differ per item (task cards are shown by default) and can be changed anytime.',
+    'Keep the conversation a conversation: checked categories always show in the message list; unchecked ones are no longer hidden outright — unread entries still appear once (unread for more than 30 days no longer appear), and are folded away once read after you switch conversations. Defaults differ per item (task cards are shown by default) and can be changed anytime.',
   'settings.chatDisplayAlwaysVisible':
     'Always shown (the conversation itself and things awaiting you — cannot be turned off)',
-  'settings.chatDisplayToggleable': 'Notifications & process content (defaults below, adjustable)',
+  'settings.chatDisplayToggleable':
+    'Notifications & process content (checked = always shown; unchecked = unread entries still appear, until read or older than 30 days)',
   'settings.chatDisplayLockedTag': 'Always shown',
   'settings.chatDisplay.userMessages': 'Your messages',
   'settings.chatDisplay.userMessagesHint':
@@ -2596,16 +2601,12 @@ export const enUS = {
   'update.downloadingProgress': 'Downloading v{version} - {percent}%',
   'update.downloadedWaiting': 'New version v{version} downloaded; waiting for runs to finish…',
   'update.applyNow': 'Restart and update',
-  'update.readyTitle': 'Update ready',
-  'update.readyToInstall':
-    'Version {version} has been downloaded. The update takes effect after the app restarts. Restart now?',
-  'update.restartLater': 'Restart later',
-  'update.awaitingTitle': 'Update paused',
   'update.awaitingUser':
     '{count} runs are still in progress, so the update is paused. Keep waiting (it installs automatically once they finish), or interrupt them and update now (unfinished runs will be canceled).',
   'update.keepWaiting': 'Keep waiting',
   'update.installAnyway': 'Interrupt runs and update',
   'update.installFailed': "Update couldn't complete: {reason}",
+  'update.downloadFailed': 'Update download failed: {reason}',
   'update.checkFailed': "Couldn't check for updates: {reason}",
   'update.viewLogs': 'View logs',
   'update.progressTitle': 'Update progress',
@@ -2614,8 +2615,11 @@ export const enUS = {
   'update.cardReady': 'v{version} has been downloaded. Restart the app to apply it.',
   'update.cardWaiting': 'v{version} downloaded; it applies automatically once {count} runs finish.',
   'update.cancelDownload': 'Cancel update',
-  'update.cardCancelHint': 'Cancelling skips this version until a newer one is released',
+  'update.cardCancelHint':
+    "Cancelling skips this version and stops auto-updates; it stays discoverable via a manual check in Settings → General",
   'update.downloadingLabel': 'Downloading update ({percent}%)',
+  'update.availableSkipped': 'New version v{version} found (auto-update was skipped earlier)',
+  'update.downloadSkipped': 'Download this version',
   'onboarding.welcomeTitle': 'Welcome to KepCup',
   'onboarding.welcomeBody':
     "KepCup helps you create, manage, and schedule your AI contacts. Each AI contact has its own personality, memory, and abilities. Your data and your AI contacts' data are stored locally at:",

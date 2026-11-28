@@ -56,6 +56,13 @@ export const coreStatusPayloadSchema = z.object({
   status: coreStatusSchema,
   /** Human-readable reason for `locked` / `error`, already localized for display. */
   reason: z.string().optional(),
+  /**
+   * Machine-readable AppError code for terminal `error` (e.g.
+   * DB_FROM_NEWER_VERSION → the renderer's dedicated「版本过低」page with a
+   * check-for-updates entry). Absent for `starting` / `ready` and generic
+   * failures.
+   */
+  code: z.string().optional(),
 });
 export type CoreStatusPayload = z.infer<typeof coreStatusPayloadSchema>;
 

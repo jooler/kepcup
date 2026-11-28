@@ -220,6 +220,8 @@ declare global {
       keepWaitingOnUpdate(): Promise<void>;
       /** 「取消更新」：停下本次下载并跳过该版本（gate 相位守卫：仅 downloading 有效）。 */
       cancelUpdateDownload(): Promise<void>;
+      /** 「下载此版本」：把被跳过的版本移出跳过集合并手动启动下载；失败经 { ok, message } 回传。 */
+      downloadSkippedUpdate(version: string): Promise<{ ok: boolean; message?: string }>;
       /** dev/e2e-only (DCE'd in packaged builds): drives the real gate's evaluate(). */
       testGateEvaluate?(version: string): Promise<void>;
       onUpdateStatus(callback: (status: unknown) => void): () => void;

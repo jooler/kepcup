@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { COMPOSER_DRAFTS_STORAGE_KEY } from './composer-draft-persist';
+import {
+  COMPOSER_DRAFTS_STORAGE_KEY,
+  LEGACY_COMPOSER_DRAFTS_STORAGE_KEY,
+} from './composer-draft-persist';
+import { createMemoryIdbKvFactory } from '$lib/persist/idb-kv';
 
 /**
  * 草稿恢复的附件存在性校验：core 7 天后回收未绑定附件（AttachmentsService.sweepOrphans），
@@ -104,7 +108,7 @@ vi.stubGlobal('localStorage', {
 });
 vi.stubGlobal('window', { addEventListener: () => undefined });
 
-const { composerDrafts } = await import('./composer-drafts.svelte');
+const { composerDrafts, ComposerDraftsState } = await import('./composer-drafts.svelte');
 const { messageVisibility } = await import('$lib/stores/message-visibility.svelte');
 const { connections } = await import('$lib/rpc/connections.svelte');
 
@@ -112,7 +116,9 @@ const flush = async (): Promise<void> => {
   for (let i = 0; i < 5; i += 1) await Promise.resolve();
 };
 
-beforeEach(() => {
+beforeEach(async () => {
+  // 启动载入（旧 localStorage 整表键一次性导入）就位后再操作 store。
+  await composerDrafts.ready();
   connections.reset();
   calls.length = 0;
   toasts.length = 0;
@@ -354,5 +360,126 @@ describe('D115 附件直注：任务键的归属会话覆盖', () => {
     expect(upload?.payload['conversationId']).toBe('conv_restored');
     composerDrafts.discardAttachments('task:run_h', { missing: [], sent: [] });
     vi.unstubAllGlobals();
+  });
+});
+
+describe('localStorage → IndexedDB 迁移（内存 IDB）', () => {
+  const restubStorage = (): void => {
+    // 前面的用例可能已 vi.unstubAllGlobals()：恢复文件顶层的 localStorage 桩。
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => void store.set(key, value),
+      removeItem: (key: string) => void store.delete(key),
+    });
+  };
+
+  const legacyDraft = (text: string) => ({
+    doc: {
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
+    },
+    mentions: [],
+    reply: null,
+    attachments: [],
+    updatedAt: 5,
+  });
+
+  it('旧整表键先逐条落 IDB 再删键；二次启动从 IDB 恢复（水合可用，version/dirty 保留）', async () => {
+    restubStorage();
+    // 文件顶层桩预置了 v3 键：清掉重置，用带 version/dirty 的 v3 草稿模拟升级
+    // （v3 是当前版本的旧整表键；v2 升级标记 version=0/dirty=true 由
+    // composer-draft-persist.test.ts 覆盖）。
+    store.delete(COMPOSER_DRAFTS_STORAGE_KEY);
+    store.set(COMPOSER_DRAFTS_STORAGE_KEY, JSON.stringify({
+      conv_legacy: { ...legacyDraft('旧草稿'), version: 3, dirty: true },
+    }));
+    const kv = createMemoryIdbKvFactory();
+    const dbPromise = kv.open('kepcup.composer-drafts', 1);
+
+    const first = new ComposerDraftsState({ kv: dbPromise });
+    await first.ready();
+    // 落库确认成功才删旧键（P0：不能指望后续防抖落盘——diff 基线已含导入条目）。
+    expect(store.has(COMPOSER_DRAFTS_STORAGE_KEY)).toBe(false);
+    const entries = await (await dbPromise).store('drafts').getEntries();
+    expect(entries.map((entry) => entry.key)).toContain('conv_legacy');
+
+    // 二次启动：IDB 是唯一来源，水合恢复旧草稿（共享草稿断线恢复依赖
+    // version/dirty，往返不得丢失）。
+    const second = new ComposerDraftsState({ kv: dbPromise });
+    await second.ready();
+    second.hydrate('conv_legacy');
+    expect(JSON.stringify(second.loadDraft('conv_legacy').doc)).toContain('旧草稿');
+    expect(second.syncVersion('conv_legacy')).toBe(3);
+    expect(second.isDirty('conv_legacy')).toBe(true);
+  });
+
+  it('重导入只补 IDB 缺口：IDB 已有有效记录的键不被旧值覆盖', async () => {
+    restubStorage();
+    // 上次迁移已落库（较新草稿）但删键失败：旧键带着同一会话的旧值残留。
+    store.delete(COMPOSER_DRAFTS_STORAGE_KEY);
+    const kv = createMemoryIdbKvFactory();
+    const dbPromise = kv.open('kepcup.composer-drafts', 1);
+    const db = await dbPromise;
+    await db.store('drafts').put('conv_legacy', {
+      ...legacyDraft('较新的草稿'),
+      version: 7,
+      dirty: false,
+      updatedAt: 100,
+    });
+    store.set(COMPOSER_DRAFTS_STORAGE_KEY, JSON.stringify({
+      conv_legacy: legacyDraft('旧的草稿'),
+    }));
+
+    const state = new ComposerDraftsState({ kv: dbPromise });
+    await state.ready();
+    state.hydrate('conv_legacy');
+    expect(JSON.stringify(state.loadDraft('conv_legacy').doc)).toContain('较新的草稿');
+    expect(state.syncVersion('conv_legacy')).toBe(7);
+    // 旧键仍被收口删除（IDB 已有该会话的有效记录，迁移完成）。
+    expect(store.has(COMPOSER_DRAFTS_STORAGE_KEY)).toBe(false);
+  });
+
+  it('IndexedDB 打不开：旧键保留（唯一持久副本），内存态照常水合', async () => {
+    restubStorage();
+    store.set(LEGACY_COMPOSER_DRAFTS_STORAGE_KEY, JSON.stringify({
+      conv_stuck: legacyDraft('卡住的草稿'),
+    }));
+    const state = new ComposerDraftsState({ kv: Promise.reject(new Error('denied')) });
+    await state.ready();
+    expect(store.has(LEGACY_COMPOSER_DRAFTS_STORAGE_KEY)).toBe(true);
+    state.hydrate('conv_stuck');
+    expect(JSON.stringify(state.loadDraft('conv_stuck').doc)).toContain('卡住的草稿');
+    // 收尾：清掉本次塞进桩的旧键，避免影响后续（无后续）用例。
+    store.delete(LEGACY_COMPOSER_DRAFTS_STORAGE_KEY);
+  });
+});
+
+describe('按会话记录的删除（回归：旧整表重写天然清掉，按记录必须显式删）', () => {
+  it('dropConversation 后 IndexedDB 记录被删，重启不再复活已删会话的草稿', async () => {
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => void store.set(key, value),
+      removeItem: (key: string) => void store.delete(key),
+    });
+    const kv = createMemoryIdbKvFactory();
+    const dbPromise = kv.open('kepcup.composer-drafts', 1);
+    const state = new ComposerDraftsState({ kv: dbPromise });
+    await state.ready();
+    state.hydrate('conv_drop');
+    state.saveComposerDoc(
+      'conv_drop',
+      { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '将删除' }] }] },
+      [],
+      null,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 350)); // 越过 300ms 防抖落库
+    const db = await dbPromise;
+    expect((await db.store('drafts').getEntries()).map((e) => e.key)).toContain('conv_drop');
+    state.dropConversation('conv_drop');
+    await new Promise((resolve) => setTimeout(resolve, 50)); // 显式删除是 fire-and-forget
+    expect((await db.store('drafts').getEntries()).map((e) => e.key)).not.toContain('conv_drop');
+    // 后续防抖落盘不得把该键重新写回（diff 基线已不含它）。
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect((await db.store('drafts').getEntries()).map((e) => e.key)).not.toContain('conv_drop');
   });
 });

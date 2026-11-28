@@ -13,14 +13,26 @@ import { isInterimMessage } from './run-status-mute';
  * `approvals` 缺省为空表：徽标场景没有审批快照，待审批的回执卡由琥珀色圆点
  * （pending）负责提示，不计入未读数。
  *
- * `display` 是「对话信息展示设置」的勾选状态（设置 → 通用，renderer 本地）：
- * 用户关掉的类目（邮件卡、系统通知等）从这里一并滤掉；缺省 null = 不过滤
- * （纯逻辑单测与旧调用方保持原行为）。
+ * `display` 是「对话信息展示设置」的过滤上下文（设置 → 通用，renderer 本地）：
+ * 勾选的类目常驻，未勾选类目按通知已读游标放行未读条目（`readThrough`）、
+ * 超过 30 天窗口的不再显示（`now` 供纯函数判新鲜度），并保持本次查看已显示的
+ * 条目（`keepIds`）；除 `prefs` / `now` 外与 `NoticeDisplayState` 同形（结构化
+ * 直传）。缺省 null = 不过滤（纯逻辑单测与旧调用方保持原行为）。徽标场景恒传
+ * null——未勾选类目的未读条目打开会话就会显示，应照常计入未读。
  */
+export interface ChatDisplayFilter {
+  prefs: ChatDisplayPrefs;
+  /** 该会话的通知已读游标（与 `NoticeDisplayState.readThrough` 同义）。 */
+  readThrough: number;
+  /** 当前时刻（UTC 毫秒）：30 天保留窗口的新鲜度判定用。 */
+  now: number;
+  keepIds?: ReadonlySet<string>;
+}
+
 export function isVisibleInTranscript(
   message: Message,
   approvals: Readonly<Record<string, Approval | undefined>> = {},
-  display: ChatDisplayPrefs | null = null,
+  display: ChatDisplayFilter | null = null,
 ): boolean {
   // 初始化问询的用户回答（setupAnswer）不渲染气泡——回答由问题卡片的已答行
   // 展示；消息本身仍在（上下文/引用/记忆证据都用得到）。
@@ -44,7 +56,9 @@ export function isVisibleInTranscript(
   // Mid-turn permission popups: the dock is the only user-facing surface;
   // auto-decided and egress / taint records show folded once resolved.
   if (hiddenFromTranscript(message, approvals)) return false;
-  // 对话信息展示设置：用户关掉的可开关类目（锁定类消息不受影响）。
-  if (display !== null && !isVisibleWithChatDisplay(message, display)) return false;
+  // 对话信息展示设置：锁定类不受影响；未勾选类目按未读 / keep 放行。
+  if (display !== null && !isVisibleWithChatDisplay(message, display.prefs, display, display.now)) {
+    return false;
+  }
   return true;
 }

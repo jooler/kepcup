@@ -14,20 +14,27 @@ import {
 } from './composer-send';
 import {
   buildPersistedSnapshot,
+  clearLegacyDraftKeys,
+  diffPersistedDrafts,
   isComposerDocEmpty,
   loadPersistedDrafts,
-  writePersistedDrafts,
+  normalizePersistedDraft,
   type ComposerReplyRef,
-  type DraftsStorage,
+  type LegacyDraftsStorage,
   type PersistedComposerDraft,
 } from './composer-draft-persist';
+import {
+  createBrowserIdbKvFactory,
+  type IdbKvDatabase,
+} from '$lib/persist/idb-kv';
 import { messageVisibility } from '$lib/stores/message-visibility.svelte';
 
 /**
  * 输入框草稿的按会话缓存（store）：编辑器文档（原生 JSON）/ @ 提及 / 引用
  * 回复 / 待发送附件。
  * Composer 是唯一的读写方——进入会话时把缓存水合进组件状态，内容变化即写回，
- * 这里负责防抖落盘（localStorage）；因此切换会话、关闭应用后回到原会话都能
+ * 这里负责防抖落盘（IndexedDB 按会话一条记录，启动时一次性载入 + 旧版
+ * localStorage 整表键一次性导入）；因此切换会话、关闭应用后回到原会话都能
  * 正确重载。附件字节本体在 core（上传即落盘，docs/design/20-conversation-media.md），
  * 快照只存 attachmentId + 元数据，重启后经 attachments.get 重建预览。
  */
@@ -67,12 +74,25 @@ interface ComposerRuntimeDraft {
 const PERSIST_DEBOUNCE_MS = 300;
 const MAX_UPLOAD_BYTES = 30_000_000;
 
-function draftsStorage(): DraftsStorage | null {
+const DRAFTS_DB_NAME = 'kepcup.composer-drafts';
+const DRAFTS_DB_VERSION = 1;
+const DRAFTS_STORE = 'drafts';
+
+function draftsStorage(): LegacyDraftsStorage | null {
   try {
-    return globalThis.localStorage;
+    return globalThis.localStorage ?? null;
   } catch {
     return null;
   }
+}
+
+/** 草稿库（按会话一条记录）；IndexedDB 不可用（node 测试 / 隐私模式）为 null。 */
+function draftsDb(): Promise<IdbKvDatabase> | null {
+  const factory = globalThis.indexedDB;
+  if (factory === undefined || factory === null) return null;
+  return createBrowserIdbKvFactory(factory).open(DRAFTS_DB_NAME, DRAFTS_DB_VERSION, (db) => {
+    if (!db.objectStoreNames.contains(DRAFTS_STORE)) db.createObjectStore(DRAFTS_STORE);
+  });
 }
 
 function errorCode(error: unknown): string | undefined {
@@ -116,7 +136,8 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-class ComposerDraftsState {
+/** 导出给 node 单测注入内存 IDB；运行时只用下方单例。 */
+export class ComposerDraftsState {
   /**
    * 附件 RPC 的会话来源（T7 融合视图）：Composer 进入会话时设置——团队会话的
    * 附件上传 / 状态 / 摘除经该团队连接；缺省 'local'（既有行为）。
@@ -154,20 +175,107 @@ class ComposerDraftsState {
 
   /** 打开过的会话的输入框草稿；text/mentions/reply 由 Composer 的水合/保存 effect 同步。 */
   #runtime = $state<Record<string, ComposerRuntimeDraft>>({});
-  /** 启动时从 localStorage 载入的快照：未打开过的会话原样保留，打开时晋升为 runtime。 */
-  #snapshot: Record<string, PersistedComposerDraft> = loadPersistedDrafts(draftsStorage());
+  /** 上次落盘的快照（IndexedDB 的内存镜像）：未打开过的会话原样保留，打开时晋升为 runtime。 */
+  #snapshot: Record<string, PersistedComposerDraft> = {};
   /**
    * 服务端草稿被应用到本地的次数。Composer 监听它来把编辑器内容切到共享草稿
    * （初次进入 / 读端镜像 / 发送后清空），避免和本地键入互相触发。
    */
   revision = $state(0);
   // 上传任务管道：key → 完成后的 attachmentId（失败为 null）；没有界面从它派生。
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
   #uploadTasks = new Map<string, Promise<string | null>>();
   #persistTimer: ReturnType<typeof setTimeout> | null = null;
+  #kvDb: Promise<IdbKvDatabase> | null;
+  #ready: Promise<void>;
 
-  constructor() {
-    // 退出前的最后一笔兜底：防抖窗口内的键入也要落盘（localStorage 写是同步的）。
+  /**
+   * `kv` 仅供 node 单测注入内存 IDB；生产走 `draftsDb()`（globalThis.indexedDB）。
+   */
+  constructor(options: { kv?: Promise<IdbKvDatabase> | null } = {}) {
+    // 退出前的最后一笔兜底：防抖窗口内的键入也要落盘。IndexedDB 写是异步的，
+    // pagehide 时尽力提交；强制杀进程可能丢防抖窗口内最后几笔键入——草稿本
+    // 就是尽力而为的缓存（旧 localStorage 同步写在隐私模式下同样可能丢）。
     globalThis.window?.addEventListener?.('pagehide', () => this.#persistNow());
+    this.#kvDb = options.kv !== undefined ? options.kv : draftsDb();
+    this.#ready = this.#load();
+  }
+
+  /**
+   * 启动载入完成；App bootstrap await 它之后才恢复会话，避免「进了会话但
+   * 持久化草稿还没载入」把旧草稿清掉。
+   */
+  ready(): Promise<void> {
+    return this.#ready;
+  }
+
+  /**
+   * 启动载入：IndexedDB 全量并入（IDB 为权威来源）→ 旧 localStorage 整表键
+   * 一次性导入（只补 IDB 没有有效记录的键，逐条 await 落库）→ 旧键收口。
+   * 落库 / 打开失败时旧键保留（它可能是唯一持久副本），下次启动重试导入。
+   */
+  async #load(): Promise<void> {
+    const storage = draftsStorage();
+    const legacy = loadPersistedDrafts(storage);
+    let handle: IdbKvDatabase | null = null;
+    const db = this.#kvDb;
+    if (db !== null) {
+      try {
+        handle = await db;
+      } catch {
+        // 打开失败：本会话内存态照常（仅不跨重启记忆）；旧键保留重试。
+        handle = null;
+      }
+    }
+    let legacyPersisted = Object.keys(legacy).length === 0;
+    if (handle !== null) {
+      try {
+        const store = handle.store(DRAFTS_STORE);
+        const entries = await store.getEntries();
+        const idbDrafts: Record<string, PersistedComposerDraft> = {};
+        for (const { key, value } of entries) {
+          const draft = normalizePersistedDraft(value);
+          if (draft !== null) idbDrafts[key] = draft;
+        }
+        // 合并方向：载入窗口内 runtime / 快照里已有的键是更新的（内存胜出）；
+        // IDB 记录只补快照没有的键。旧键只补 IDB 没有有效记录的键——重导入
+        //（上次落库成功但删键失败等）不得覆盖 IDB 里较新的草稿。
+        const merged = { ...this.#snapshot };
+        for (const [key, draft] of Object.entries(idbDrafts)) {
+          if (!(key in merged)) merged[key] = draft;
+        }
+        const pendingLegacy: Array<[string, PersistedComposerDraft]> = [];
+        for (const [key, draft] of Object.entries(legacy)) {
+          if (key in idbDrafts) continue;
+          if (!(key in merged)) {
+            merged[key] = draft;
+            pendingLegacy.push([key, draft]);
+          }
+        }
+        this.#snapshot = merged;
+        // 导入条目显式逐条落库（await 确认成功）——不能指望后续防抖落盘，
+        // diff 基线此时已含导入条目，只会得出「无变化」。
+        for (const [key, draft] of pendingLegacy) await store.put(key, draft);
+        legacyPersisted = true;
+      } catch {
+        // 落库 / 读取失败：旧键并入内存兜底并保留，下次启动重试导入。
+        const snapshot = { ...this.#snapshot };
+        for (const [key, draft] of Object.entries(legacy)) {
+          if (!(key in snapshot)) snapshot[key] = draft;
+        }
+        this.#snapshot = snapshot;
+      }
+    } else {
+      // 无 IDB：旧键只并入内存（它是唯一持久副本，保留，下次启动重试迁移）。
+      const snapshot = { ...this.#snapshot };
+      for (const [key, draft] of Object.entries(legacy)) {
+        if (!(key in snapshot)) snapshot[key] = draft;
+      }
+      this.#snapshot = snapshot;
+    }
+    // 收口：迁移确认落库（或本就没有旧数据）才删旧整表键，不再留随草稿
+    // 膨胀的单键值；删不掉（removeItem 异常）下次启动重导只补 IDB 缺口。
+    if (legacyPersisted) clearLegacyDraftKeys(storage);
   }
 
   /** 订阅会话删除：缓存条目随会话一起丢弃（core 侧附件经删除级联清理）。 */
@@ -419,6 +527,7 @@ class ComposerDraftsState {
   discardAttachments(conversationId: string, issue: AttachmentIssue): Set<string> | null {
     const entry = this.#runtime[conversationId];
     if (entry === undefined) return null;
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- 行内临时集合。
     const dead = new Set([...issue.missing, ...issue.sent]);
     const gone = entry.uploads.filter(
       (upload) => upload.attachmentId !== null && dead.has(upload.attachmentId),
@@ -427,6 +536,7 @@ class ComposerDraftsState {
     for (const upload of gone) this.#revokePreview(upload);
     entry.uploads = entry.uploads.filter((upload) => !gone.includes(upload));
     this.#schedulePersist();
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- 返回给调用方的临时集合，不是 UI 状态。
     return new Set(gone.map((upload) => upload.key));
   }
 
@@ -537,6 +647,7 @@ class ComposerDraftsState {
   commitSent(conversationId: string, attachmentIds: readonly string[]): void {
     const entry = this.#runtime[conversationId];
     if (entry === undefined || attachmentIds.length === 0) return;
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- 行内临时集合。
     const sent = new Set(attachmentIds);
     const gone = entry.uploads.filter(
       (upload) => upload.attachmentId !== null && sent.has(upload.attachmentId),
@@ -589,7 +700,11 @@ class ComposerDraftsState {
     if (upload.ownsPreviewUrl && upload.previewUrl !== null) URL.revokeObjectURL(upload.previewUrl);
   }
 
-  /** 会话删除：丢弃 runtime 与快照条目。 */
+  /**
+   * 会话删除：丢弃 runtime 与快照条目，并显式删掉 IndexedDB 记录——快照已在
+   * 此处先行删除，后续防抖落盘的 diff 不会再为它产生 deletes（旧整表重写
+   * 天然清掉，按会话记录后必须自己删，否则重启会复活已删会话的草稿）。
+   */
   dropConversation(conversationId: string): void {
     const entry = this.#runtime[conversationId];
     if (entry !== undefined) {
@@ -597,6 +712,7 @@ class ComposerDraftsState {
       delete this.#runtime[conversationId];
     }
     delete this.#snapshot[conversationId];
+    this.#deleteDraftRecord(conversationId);
     this.#schedulePersist();
   }
 
@@ -630,13 +746,37 @@ class ComposerDraftsState {
       clearTimeout(this.#persistTimer);
       this.#persistTimer = null;
     }
+    const previous = this.#snapshot;
     const next = buildPersistedSnapshot({
       runtime: this.#runtime,
-      previous: this.#snapshot,
+      previous,
       now: Date.now(),
     });
     this.#snapshot = next;
-    writePersistedDrafts(draftsStorage(), next);
+    const db = this.#kvDb;
+    if (db === null) return;
+    const { upserts, deletes } = diffPersistedDrafts(previous, next);
+    if (upserts.length === 0 && deletes.length === 0) return;
+    void db
+      .then(async (handle) => {
+        const store = handle.store(DRAFTS_STORE);
+        for (const [key, draft] of upserts) await store.put(key, draft);
+        for (const key of deletes) await store.delete(key);
+      })
+      .catch(() => {
+        // IndexedDB 不可用 / 配额满：缓存是尽力而为，不阻塞输入。
+      });
+  }
+
+  /** 单条草稿记录直删（dropConversation 用；fire-and-forget，失败留待下次覆盖）。 */
+  #deleteDraftRecord(key: string): void {
+    const db = this.#kvDb;
+    if (db === null) return;
+    void db
+      .then((handle) => handle.store(DRAFTS_STORE).delete(key))
+      .catch(() => {
+        // 同上：尽力而为。
+      });
   }
 }
 

@@ -60,6 +60,8 @@ const CANCEL_REASON = '用户确认更新：中断进行中的执行并安装新
 export class UpdateGate {
   readonly #deps: UpdateGateDeps;
   #phase: GatePhase = 'idle';
+  /** 发起检查时的相位（onChecking 只从 idle/downloading 进入 checking）。 */
+  #preCheckPhase: GatePhase = 'idle';
   #activeRuns = 0;
   #version: string | undefined;
   #percent: number | undefined;
@@ -111,21 +113,73 @@ export class UpdateGate {
     // BR-P13-002: a re-check must not wash away a pending decision — the
     // decision phases stay exactly as they are (see the header comment).
     if (this.#phase !== 'idle' && this.#phase !== 'downloading') return;
+    // 记住检查发起时的相位：available-skipped 只在「idle 发起的手动检查」
+    // 浮出（#canSurfaceSkipped）；updater 层把检查串行化，一次检查只有一条
+    // 事件流，这个前置相位在 update-available 到达时仍然可靠。
+    this.#preCheckPhase = this.#phase;
     this.#setPhase('checking');
   }
 
   /**
    * electron-updater update-available（自动下载时代由 updater 层直接
-   * onDownloading；如今下载按此返回值手动启动）。被用户取消过的版本静默
-   * 跳过——否则 24h 定时重查会立刻把同一版本下回来，「取消更新」就名存实
-   * 亡；其它版本立即切 downloading（手动检查查到更新后，检查按钮马上让位
+   * onDownloading；如今下载按此返回值手动启动）。被用户取消过的版本：
+   * 自动/定时检查静默跳过（否则 24h 定时重查会立刻把同一版本下回来，
+   * 「取消更新」就名存实亡）；手动检查则切 `available-skipped`——设置页
+   * 显示该版本并提供手动下载入口（下载仍需用户显式点，resumeSkipped）。
+   * 其它版本立即切 downloading（手动检查查到更新后，检查按钮马上让位
    * 给进度，不等首包）并返回 true = 允许开始下载。决策相位的 sticky 语义见
    * onDownloading：此时切换被忽略，但允许下载新版本顶替（下载完成后
-   * evaluate 会重新走排空决策）。
+   * evaluate 会重新走排空决策）；available-skipped 的切换同样只在
+   * idle/error/checking（含已在 available-skipped）时发生，不打断进行中的
+   * 下载/决策流。
    */
-  onUpdateAvailable(version: string): boolean {
-    if (this.#skippedVersions.has(version)) return false;
-    this.onDownloading(version);
+  onUpdateAvailable(version: string, options?: { manual?: boolean }): boolean {
+    if (!this.#skippedVersions.has(version)) {
+      this.onDownloading(version);
+      return true;
+    }
+    if (options?.manual === true && this.#canSurfaceSkipped()) {
+      this.#setPhase('available-skipped', { version });
+      return false;
+    }
+    // 未浮出（定时检查一律静默；手动检查但门控不空闲）：把 checking 收敛回
+    // 发起前的相位。update-available 之后不会再有任何事件收敛 checking——
+    // updater 层对被跳过版本静默返回、update-not-available 也不来——放任不管
+    // 设置页会永久停在「检查中」、手动入口不可达。收敛绝不触碰决策相位：它
+    // 们根本进不了 checking（onChecking 守卫），符合 BR-P13-002。
+    if (this.#phase === 'checking') {
+      if (this.#preCheckPhase === 'downloading' && this.#version !== undefined) {
+        // 有下载在途：收敛回 downloading（percent 由下一个进度事件补上）。
+        this.#setPhase('downloading', { version: this.#version });
+      } else {
+        this.onUpToDate();
+      }
+    }
+    return false;
+  }
+
+  /** available-skipped 只在静默态发起的手动检查时浮出（相位守卫同 onChecking）。 */
+  #canSurfaceSkipped(): boolean {
+    // checking 需前置相位是 idle：由 downloading 发起的检查说明有下载在途，
+    // 浮出会被下一个进度事件打回。idle 与已浮出（重复手动检查幂等刷新）直接
+    // 放行；error 从不停留（onError 同步 error→idle），无需列入。
+    return (
+      this.#phase === 'idle' ||
+      this.#phase === 'available-skipped' ||
+      (this.#phase === 'checking' && this.#preCheckPhase === 'idle')
+    );
+  }
+
+  /**
+   * 用户在设置页对被跳过的版本点了「下载此版本」：把该版本移出跳过集合，
+   * 切 downloading（后续进度/完成事件随之放行，下载本体由 updater 层用
+   * 手动检查留下的 token 启动）。相位守卫同 BR-P13-005 风格——只在
+   * available-skipped 且版本匹配时有效，过期的点击是 no-op。
+   */
+  resumeSkipped(version: string): boolean {
+    if (this.#phase !== 'available-skipped' || this.#version !== version) return false;
+    this.#skippedVersions.delete(version);
+    this.#setPhase('downloading', { version });
     return true;
   }
 
@@ -152,7 +206,9 @@ export class UpdateGate {
 
   /** Feed "no update" results (electron-updater update-not-available). */
   onUpToDate(): void {
-    if (this.#phase !== 'checking') return;
+    // available-skipped 也收敛：feed 明确撤下了该版本时，把手动入口收回 idle
+    // 是事实修正（available-skipped 非决策相位，不涉 BR-P13-002 的 sticky 面）。
+    if (this.#phase !== 'checking' && this.#phase !== 'available-skipped') return;
     this.#setPhase('idle');
   }
 
@@ -166,7 +222,8 @@ export class UpdateGate {
       this.#phase === 'installing' ||
       this.#phase === 'waiting-runs' ||
       this.#phase === 'awaiting-user' ||
-      this.#phase === 'ready-to-install'
+      this.#phase === 'ready-to-install' ||
+      this.#phase === 'available-skipped'
     ) {
       return;
     }

@@ -75,6 +75,9 @@
     // so the cursor still moves; otherwise the badge comes back on reassign.
     const view = session.view;
     if (view?.conversation.readOnly) {
+      // 通知已读游标同样补上（对话信息展示设置）：否则未勾选类目的通知
+      // 在只读线程里每次打开都会重现。幂等，可与下面的 core 游标并存。
+      session.commitNoticeRead();
       const lastSeq = view.messages.at(-1)?.seq;
       if (lastSeq !== undefined && lastSeq > view.conversation.lastReadSeq) {
         await core.call('conversations.markRead', {

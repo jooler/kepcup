@@ -8,8 +8,54 @@ import { rmHomeTolerant } from './helpers/home-cleanup';
 
 const HIDDEN_ORIGINAL = 'HIDDEN_ORIGINAL_9f3ac1';
 const HIDDEN_PLACEHOLDER = '该消息已被您隐藏';
-const VISIBILITY_KEY = 'kepcup.message-visibility.v2';
-const DRAFTS_KEY = 'kepcup.composer.drafts.v3';
+const VISIBILITY_DB = 'kepcup.message-visibility';
+const VISIBILITY_HIDDEN_STORE = 'hidden';
+const VISIBILITY_LEGACY_KEY = 'kepcup.message-visibility.v2';
+const DRAFTS_DB = 'kepcup.composer-drafts';
+const DRAFTS_STORE = 'drafts';
+
+interface IdbEntry {
+  key: string;
+  value: unknown;
+}
+
+/** 只读已有库；库还不存在时不要 open，以免建成无 store 的 v1 空库挡住应用建表。 */
+async function idbEntries(page: Page, dbName: string, storeName: string): Promise<IdbEntry[]> {
+  return page.evaluate(
+    ({ dbName, storeName }) =>
+      (async () => {
+        const listed = await indexedDB.databases();
+        if (!listed.some((database) => database.name === dbName)) return [];
+        return new Promise<IdbEntry[]>((resolve, reject) => {
+          const request = indexedDB.open(dbName);
+          request.onerror = () => reject(request.error ?? new Error('indexeddb open failed'));
+          request.onsuccess = () => {
+            const db = request.result;
+            if (!db.objectStoreNames.contains(storeName)) {
+              db.close();
+              resolve([]);
+              return;
+            }
+            const tx = db.transaction(storeName, 'readonly');
+            const store = tx.objectStore(storeName);
+            const keysRequest = store.getAllKeys();
+            const valuesRequest = store.getAll();
+            tx.oncomplete = () => {
+              const keys = keysRequest.result;
+              const values = valuesRequest.result;
+              db.close();
+              resolve(keys.map((key, index) => ({ key: String(key), value: values[index] })));
+            };
+            tx.onabort = () => {
+              db.close();
+              reject(tx.error ?? new Error('indexeddb transaction aborted'));
+            };
+          };
+        });
+      })(),
+    { dbName, storeName },
+  );
+}
 
 async function launchApp(
   home: string,
@@ -152,29 +198,28 @@ test('Bot message hiding is local, masks quotes/previews, survives restart, and 
     const messageId = await hidden.getAttribute('data-message-id');
     expect(messageId).not.toBeNull();
     await expect
-      .poll(() =>
-        page.evaluate(
-          ({ key, id }) => {
-            const raw = localStorage.getItem(key) ?? '';
-            return raw.includes(id as string) && !raw.includes('HIDDEN_ORIGINAL_9f3ac1');
-          },
-          { key: VISIBILITY_KEY, id: messageId },
-        ),
-      )
+      .poll(async () => {
+        const legacy = await page.evaluate(
+          (key) => localStorage.getItem(key),
+          VISIBILITY_LEGACY_KEY,
+        );
+        const entries = await idbEntries(page, VISIBILITY_DB, VISIBILITY_HIDDEN_STORE);
+        const raw = JSON.stringify(entries);
+        return (
+          legacy === null &&
+          raw.includes(messageId as string) &&
+          !raw.includes(HIDDEN_ORIGINAL)
+        );
+      })
       .toBe(true);
     await expect
-      .poll(() =>
-        page.evaluate(
-          ({ key, id }) => {
-            const drafts = JSON.parse(localStorage.getItem(key) ?? '{}') as Record<
-              string,
-              { reply: { id: string } | null }
-            >;
-            return drafts[id]?.reply ?? null;
-          },
-          { key: DRAFTS_KEY, id: conversationId },
-        ),
-      )
+      .poll(async () => {
+        const entries = await idbEntries(page, DRAFTS_DB, DRAFTS_STORE);
+        const draft = entries.find((entry) => entry.key === conversationId)?.value as
+          | { reply: { id: string } | null }
+          | undefined;
+        return draft?.reply ?? null;
+      })
       .toBeNull();
 
     const conversationItem = page

@@ -48,7 +48,7 @@ export function readUserVersion(db: SqliteDatabase): number {
  * `PRAGMA user_version`. Idempotent: files at or below the current version
  * are skipped. Version numbers must be contiguous starting at 1. A database
  * whose `user_version` is above the newest file (written by a newer client)
- * is refused with MIGRATION_FAILED instead of being used with stale SQL.
+ * is refused with DB_FROM_NEWER_VERSION instead of being used with stale SQL.
  *
  * A file whose first line is exactly `-- kepcup:foreign-keys=off` runs with
  * `PRAGMA foreign_keys = OFF` (toggled outside the transaction) and must
@@ -94,10 +94,12 @@ export function runMigrations(
   // (e.g. profile_card / composer_drafts), which only surfaces later as
   // cryptic runtime errors like "no such column: id". Refuse this database
   // with an actionable message instead of opening a half-working data home.
+  // 独立错误码（DB_FROM_NEWER_VERSION）：渲染层据此出「版本过低」专用页
+  // （检查更新入口），与迁移文件损坏等其它 MIGRATION_FAILED 区分开。
   const targetVersion = files[files.length - 1]!.version;
   if (currentVersion > targetVersion) {
     throw new AppError(
-      'MIGRATION_FAILED',
+      'DB_FROM_NEWER_VERSION',
       `此数据库由更新版本的 KepCup 写入（数据库版本 ${currentVersion}，当前版本最高支持 ${targetVersion}），当前版本无法安全读写。请升级到更新版本后再打开。`,
       { currentVersion, targetVersion },
     );
