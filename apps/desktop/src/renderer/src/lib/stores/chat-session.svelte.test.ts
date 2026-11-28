@@ -29,6 +29,7 @@ const state = {
   calls: [] as Array<{ method: string; params: unknown }>,
   membersSnapshot: null as { mainView: string; openTaskId: string | null } | null,
   conversationMetadata: {} as Record<string, { lastSeq?: number }>,
+  delayGet: null as Promise<void> | null,
 };
 
 function textMessage(
@@ -109,6 +110,7 @@ vi.mock('$lib/rpc/client.svelte', () => ({
       state.calls.push({ method, params });
       switch (method) {
         case 'conversations.get':
+          if (state.delayGet) await state.delayGet;
           return { conversation: conversation((params as { id: string }).id) };
         case 'messages.list':
           return { messages: state.messages };
@@ -164,6 +166,7 @@ beforeEach(() => {
   state.calls = [];
   state.membersSnapshot = null;
   state.conversationMetadata = {};
+  state.delayGet = null;
   // Hidden-overlay state is process-global: clear every conversation these tests
   // touch so an early assertion failure cannot leak a mask into later tests.
   for (const conversationId of [
@@ -901,5 +904,34 @@ describe('ChatSession', () => {
     expect(messageVisibility.previewHidden('local', conversationId)).toBe(false);
     session.dispose();
     messageVisibility.forget('local', conversationId);
+  });
+
+  it('open() still sets the view when constructed as dialogs do (undefined host, empty history)', async () => {
+    // CardChat / TaskRunView / DelegationDetailView pass `undefined` as the host.
+    const conversationId = 'dialog-undefined-host';
+    state.messages = [];
+    const session = new ChatSession(undefined, { foreground: false });
+    await expect(session.open(conversationId)).resolves.toBe(true);
+    expect(session.view).not.toBeNull();
+    expect(session.view?.conversation.id).toBe(conversationId);
+    expect(session.view?.messages).toEqual([]);
+    session.dispose();
+  });
+
+  it('coalesces concurrent open() of the same id so a board reload cannot cancel the load', async () => {
+    const conversationId = 'dialog-open-coalesce';
+    let release!: () => void;
+    state.delayGet = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const session = new ChatSession(undefined, { foreground: false });
+    const first = session.open(conversationId, { markOnOpen: false });
+    const second = session.open(conversationId, { markOnOpen: false });
+    release();
+    await expect(first).resolves.toBe(true);
+    await expect(second).resolves.toBe(true);
+    expect(session.view?.conversation.id).toBe(conversationId);
+    expect(state.calls.filter((call) => call.method === 'conversations.get')).toHaveLength(1);
+    session.dispose();
   });
 });

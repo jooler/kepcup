@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Message } from '@kepcup/shared';
+import { t } from '$lib/i18n';
 
 /**
  * DEV-146 口径统一：本机列表路径（`chat.svelte.ts`，T5 web 同源模式经它渲染
@@ -251,7 +252,7 @@ describe('DEV-146：web 团队上下文（本机列表路径）的到达口径',
     );
     expect(chat.mentionCounts['c1']).toBeUndefined();
     expect(toastMock.info).not.toHaveBeenCalled();
-    expect(chat.lastMessageText['c1']).toBe('该消息已被您隐藏');
+    expect(chat.lastMessageText['c1']).toBe(t('messages.hidden'));
     expect(chat.lastMessageText['c1']).not.toContain('HIDDEN_MENTION_TEXT');
     emit('message.created', {
       conversationId: 'c1',
@@ -266,7 +267,7 @@ describe('DEV-146：web 团队上下文（本机列表路径）的到达口径',
     });
     await tick();
     expect(chat.conversations.find((c) => c.id === 'c1')?.lastPreviewSeq).toBe(2);
-    expect(chat.lastMessageText['c1']).toBe('该消息已被您隐藏');
+    expect(chat.lastMessageText['c1']).toBe(t('messages.hidden'));
     emit('message.created', {
       conversationId: 'c1',
       message: teamMessage({ id: 'hidden-preview-visible', seq: 4, content: { text: 'visible' } }),
@@ -321,7 +322,7 @@ describe('DEV-146：web 团队上下文（本机列表路径）的到达口径',
     emit('message.created', { conversationId: 'c1', message: hiddenNotice });
     await vi.waitFor(() => {
       expect(chat.conversations.find((c) => c.id === 'c1')?.lastPreviewSeq).toBe(3);
-      expect(chat.lastMessageText['c1']).toBe('该消息已被您隐藏');
+      expect(chat.lastMessageText['c1']).toBe(t('messages.hidden'));
     });
     expect(chat.lastMessageText['c1']).not.toContain('SECRET_WORKDIR_NOTICE');
   });
@@ -372,7 +373,7 @@ describe('same-origin team identity bootstrap', () => {
     await chat.select(conversationId);
     expect(chat.currentId).toBe(conversationId);
     expect(chat.main.messages[0]?.hidden).toBe(true);
-    expect(chat.lastMessageText[conversationId]).toBe('该消息已被您隐藏');
+    expect(chat.lastMessageText[conversationId]).toBe(t('messages.hidden'));
     chat.main.startReply(chat.main.messages[0]!);
     expect(chat.main.replyTo).toBeNull();
     expect(chat.main.setMessageHidden(bot.id, false)).toBe(false);

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Message } from '@kepcup/shared';
+import { t } from '$lib/i18n';
 
 /**
  * ChatSession 的来源化（T7 步骤 3）：
@@ -398,7 +399,7 @@ describe('事件隔离与提及角标（id 碰撞：本机 / 团队同 id 各一
     await vi.waitFor(() => {
       const row = chat.team.slices.h1?.conversations.find((entry) => entry.id === 'c1');
       expect(row?.lastPreviewSeq).toBe(2);
-      expect(chat.team.slices.h1?.lastMessageText['c1']).toBe('该消息已被您隐藏');
+      expect(chat.team.slices.h1?.lastMessageText['c1']).toBe(t('messages.hidden'));
     });
     pushTeamEvent('message.created', {
       conversationId: 'c1',
@@ -414,7 +415,7 @@ describe('事件隔离与提及角标（id 碰撞：本机 / 团队同 id 各一
     await tick();
     let row = chat.team.slices.h1?.conversations.find((entry) => entry.id === 'c1');
     expect(row?.lastPreviewSeq).toBe(2);
-    expect(chat.team.slices.h1?.lastMessageText['c1']).toBe('该消息已被您隐藏');
+    expect(chat.team.slices.h1?.lastMessageText['c1']).toBe(t('messages.hidden'));
 
     pushTeamEvent('message.created', {
       conversationId: 'c1',
@@ -480,7 +481,7 @@ describe('事件隔离与提及角标（id 碰撞：本机 / 团队同 id 各一
       }),
     });
     await vi.waitFor(() => {
-      expect(chat.team.slices.h1?.lastMessageText['c1']).toBe('该消息已被您隐藏');
+      expect(chat.team.slices.h1?.lastMessageText['c1']).toBe(t('messages.hidden'));
     });
 
     // The newest 60 rows are all system events, so the previewable hidden row
@@ -510,7 +511,7 @@ describe('事件隔离与提及角标（id 碰撞：本机 / 团队同 id 各一
     await tick();
     let row = chat.team.slices.h1?.conversations.find((entry) => entry.id === 'c1');
     expect(row?.lastPreviewSeq).toBe(2);
-    expect(chat.team.slices.h1?.lastMessageText['c1']).toBe('该消息已被您隐藏');
+    expect(chat.team.slices.h1?.lastMessageText['c1']).toBe(t('messages.hidden'));
     expect(messageVisibility.previewHidden('team:h1', 'c1')).toBe(true);
     // A system-event update that owned no preview does not re-read.
     pushTeamEvent('message.updated', {
@@ -566,7 +567,7 @@ describe('事件隔离与提及角标（id 碰撞：本机 / 团队同 id 各一
     await tick();
     const row = chat.team.slices.h1?.conversations.find((entry) => entry.id === 'c1');
     expect(row?.lastPreviewSeq).toBe(2);
-    expect(chat.team.slices.h1?.lastMessageText['c1']).toBe('该消息已被您隐藏');
+    expect(chat.team.slices.h1?.lastMessageText['c1']).toBe(t('messages.hidden'));
     messageVisibility.forget('team:h1', 'c1');
   });
 
