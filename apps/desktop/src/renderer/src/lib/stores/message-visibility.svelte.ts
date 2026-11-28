@@ -146,7 +146,6 @@ function previewOverrideValue(value: unknown): PreviewOverride | null {
 }
 
 export class MessageVisibilityStore {
-  #kv: IdbKvFactory | null;
   #legacy: LegacyVisibilityStorage | null;
   #resolveScope: MessageVisibilityScopeResolver;
   #db: Promise<IdbKvDatabase> | null;
@@ -164,7 +163,6 @@ export class MessageVisibilityStore {
     persist: MessageVisibilityPersist = defaultPersist(),
     resolveScope: MessageVisibilityScopeResolver = messageVisibilityScope,
   ) {
-    this.#kv = persist.kv;
     this.#legacy = persist.legacy;
     this.#resolveScope = resolveScope;
     this.#db =
@@ -399,11 +397,13 @@ export class MessageVisibilityStore {
     this.#previewHidden = previews;
     if (handle === null) return;
     try {
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity -- 一次性去重，不是 UI 状态。
       for (const key of new Set(
         persisted.hidden.map(([scope, conversationId]) => conversationKey(scope, conversationId)),
       )) {
         await this.#putHiddenRecord(handle, key);
       }
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity -- 一次性去重，不是 UI 状态。
       for (const key of new Set(
         persisted.previewHidden.map(([scope, conversationId]) =>
           conversationKey(scope, conversationId),

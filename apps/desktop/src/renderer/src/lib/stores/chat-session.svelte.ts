@@ -719,6 +719,8 @@ export class ChatSession {
     const prev = chatDisplay.noticeReadThrough(source, conversationId);
     const now = Date.now();
     let changed = false;
+    // 快照集合：仅在 changed 时整体替换引用，就地变异不是响应源。
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity
     const keep = new Set(view.noticeKeepIds ?? []);
     for (const message of view.messages) {
       const category = chatDisplayCategory(message);

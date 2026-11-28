@@ -183,6 +183,7 @@ export class ComposerDraftsState {
    */
   revision = $state(0);
   // 上传任务管道：key → 完成后的 attachmentId（失败为 null）；没有界面从它派生。
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
   #uploadTasks = new Map<string, Promise<string | null>>();
   #persistTimer: ReturnType<typeof setTimeout> | null = null;
   #kvDb: Promise<IdbKvDatabase> | null;
@@ -526,6 +527,7 @@ export class ComposerDraftsState {
   discardAttachments(conversationId: string, issue: AttachmentIssue): Set<string> | null {
     const entry = this.#runtime[conversationId];
     if (entry === undefined) return null;
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- 行内临时集合。
     const dead = new Set([...issue.missing, ...issue.sent]);
     const gone = entry.uploads.filter(
       (upload) => upload.attachmentId !== null && dead.has(upload.attachmentId),
@@ -534,6 +536,7 @@ export class ComposerDraftsState {
     for (const upload of gone) this.#revokePreview(upload);
     entry.uploads = entry.uploads.filter((upload) => !gone.includes(upload));
     this.#schedulePersist();
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- 返回给调用方的临时集合，不是 UI 状态。
     return new Set(gone.map((upload) => upload.key));
   }
 
@@ -644,6 +647,7 @@ export class ComposerDraftsState {
   commitSent(conversationId: string, attachmentIds: readonly string[]): void {
     const entry = this.#runtime[conversationId];
     if (entry === undefined || attachmentIds.length === 0) return;
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- 行内临时集合。
     const sent = new Set(attachmentIds);
     const gone = entry.uploads.filter(
       (upload) => upload.attachmentId !== null && sent.has(upload.attachmentId),
