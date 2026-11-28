@@ -415,7 +415,34 @@ describe('ChatSession', () => {
     // 回到 A：游标已推进（≥ mail1.seq），mail 不再进 keep——已读条目收起。
     state.messages = messagesOfA();
     await session.open(convA);
-    expect(session.view?.noticeKeepIds).toEqual(new Set());
+    expect(session.view?.noticeKeepIds ?? new Set()).toEqual(new Set());
+    session.dispose();
+  });
+
+  it('通知已读游标：无变化不写 keep——重复 markRead 不重建 Set（防 effect 自激死循环）', async () => {
+    // MessageList 的 $effect 会同步触发 markRead，且该 effect 经 display 派生
+    // 读取 noticeKeepIds：若 markRead 无条件赋新 Set 引用，写会重新触发读，
+    // 形成 effect_update_depth_exceeded 死循环（回归防护）。
+    const convId = 'notice-keep-idempotent';
+    const mailCard = (id: string, seq: number): Message => ({
+      ...textMessage({ id, conversationId: convId, seq }),
+      senderType: 'bot',
+      kind: 'card',
+      createdAt: Date.now(),
+      content: { cardType: 'mail' },
+    } as Message);
+    state.messages = [
+      textMessage({ id: 't1', conversationId: convId, seq: 1 }),
+      mailCard('mail1', 2),
+    ];
+    const session = new ChatSession();
+    await session.open(convId);
+    const keep = session.view?.noticeKeepIds;
+    expect(keep).toEqual(new Set(['mail1']));
+
+    await session.markRead();
+    await session.markRead();
+    expect(session.view?.noticeKeepIds).toBe(keep);
     session.dispose();
   });
 

@@ -693,14 +693,21 @@ export class ChatSession {
     const conversationId = view.conversation.id;
     const prev = chatDisplay.noticeReadThrough(source, conversationId);
     const now = Date.now();
+    let changed = false;
     const keep = new Set(view.noticeKeepIds ?? []);
     for (const message of view.messages) {
       const category = chatDisplayCategory(message);
       // 勾选了的类目常驻显示，不需要 keep；锁定类不在 category 里。
       if (category === null || chatDisplay.isEnabled(category)) continue;
-      if (message.seq > prev && isNoticeFresh(message, now)) keep.add(message.id);
+      if (message.seq > prev && isNoticeFresh(message, now) && !keep.has(message.id)) {
+        keep.add(message.id);
+        changed = true;
+      }
     }
-    view.noticeKeepIds = keep;
+    // 无变化不写：markRead 由 MessageList 的 $effect 同步触发，而该 effect 经
+    // display 派生读取本字段——无条件赋新 Set 引用会让派生反复失效，「写又
+    // 触发读」自激成 effect_update_depth_exceeded 死循环。
+    if (changed) view.noticeKeepIds = keep;
     chatDisplay.advanceNoticeReadThrough(source, conversationId, lastSeq);
   }
 
