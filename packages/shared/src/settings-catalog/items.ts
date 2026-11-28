@@ -1123,7 +1123,8 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     id: 'general.chat-display',
     group: 'general',
     title: '对话信息展示',
-    summary: '对话本身始终显示；通知与过程类内容按勾选显示（默认仅任务卡显示，其余隐藏）',
+    summary:
+      '对话本身始终显示；通知与过程类勾选后常驻，未勾选的未读条目仍会出现（超 30 天未读不再出现，读过并切换会话后收起）',
     enables: ['隐藏对话里的通知与过程卡片', '保持对话像人与人的沟通'],
     keywords: [
       '对话',

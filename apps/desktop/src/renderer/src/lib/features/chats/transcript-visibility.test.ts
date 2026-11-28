@@ -1,11 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import type { Approval, Message } from '@kepcup/shared';
-import { isVisibleInTranscript } from './transcript-visibility';
+import { NOTICE_UNREAD_MAX_AGE_MS } from './chat-display';
+import { isVisibleInTranscript, type ChatDisplayFilter } from './transcript-visibility';
 
 /**
  * 共享的会话记录可见性（WP6 步骤 2）：与原 MessageList 的过滤条件逐条一致。
  * MessageList 现在直接用这个函数，两边口径由这一份测试钉死。
  */
+
+/** 固定「现在」与 30 天保留窗口的内外时间点，避免依赖真实时钟。 */
+const NOW = 1_800_000_000_000;
+const FRESH = NOW - 60_000;
+const STALE = NOW - NOTICE_UNREAD_MAX_AGE_MS - 60_000;
 
 type MsgInit = Partial<Omit<Message, 'content'>> &
   Pick<Message, 'id' | 'kind' | 'senderType'> & { content?: unknown };
@@ -23,6 +29,11 @@ function msg(partial: MsgInit): Message {
     replyTo: null,
     ...partial,
   } as Message;
+}
+
+/** 对话信息展示过滤上下文：缺省游标 0（全未读）+ 窗口内时刻。 */
+function display(over: Partial<ChatDisplayFilter> = {}): ChatDisplayFilter {
+  return { prefs: {}, readThrough: 0, now: NOW, ...over };
 }
 
 function approval(status: Approval['status']): Approval {
@@ -123,22 +134,52 @@ describe('isVisibleInTranscript（与原 MessageList 过滤逐条一致）', () 
     ).toBe(true);
   });
 
-  it('对话信息展示设置（display）：可开关类按默认（任务卡显示、通知类隐藏），显式勾选覆盖', () => {
-    const mail = msg({ id: 'm1', kind: 'card', senderType: 'bot', content: { cardType: 'mail' } });
+  it('对话信息展示设置（display）：勾选类目常驻；未勾选类目按未读 / keep / 30 天窗口放行', () => {
+    const mailAt = (id: string, seq: number, createdAt = FRESH) =>
+      msg({ id, seq, kind: 'card', senderType: 'bot', content: { cardType: 'mail' }, createdAt });
     const taskCard = msg({
       id: 'm3',
+      seq: 11,
       kind: 'card',
       senderType: 'bot',
       content: { cardType: 'task' },
+      createdAt: FRESH,
     });
     const botText = msg({ id: 'm2', kind: 'text', senderType: 'bot' });
-    // 可开关类缺省按各项默认值：任务卡默认显示，邮件卡默认隐藏。
-    expect(isVisibleInTranscript(mail, {}, {})).toBe(false);
-    expect(isVisibleInTranscript(taskCard, {}, {})).toBe(true);
-    expect(isVisibleInTranscript(mail, {}, { mailCards: true })).toBe(true);
-    expect(isVisibleInTranscript(taskCard, {}, { taskCards: false })).toBe(false);
+    // 可开关类缺省按各项默认值：任务卡默认常驻；邮件卡未勾选，未读 → 照常显示。
+    expect(isVisibleInTranscript(mailAt('mail11', 11), {}, display())).toBe(true);
+    // 未勾选的任务卡：未读照常显示；已读（seq ≤ 游标）不再显示。
+    expect(isVisibleInTranscript(taskCard, {}, display({ prefs: { taskCards: false } }))).toBe(
+      true,
+    );
+    expect(
+      isVisibleInTranscript(
+        taskCard,
+        {},
+        display({ prefs: { taskCards: false }, readThrough: 20 }),
+      ),
+    ).toBe(false);
+    expect(
+      isVisibleInTranscript(mailAt('mail11', 11), {}, display({ prefs: { mailCards: true } })),
+    ).toBe(true);
+    // 已读（seq ≤ 游标）不再显示；本次查看已显示的（keep）保持可见。
+    expect(isVisibleInTranscript(mailAt('mail5', 5), {}, display({ readThrough: 10 }))).toBe(
+      false,
+    );
+    expect(
+      isVisibleInTranscript(
+        mailAt('mail5', 5),
+        {},
+        display({ readThrough: 10, keepIds: new Set(['mail5']) }),
+      ),
+    ).toBe(true);
+    // 超 30 天未读不再显示（keep 里的豁免——显示中的条目不消失）。
+    expect(isVisibleInTranscript(mailAt('mail0', 11, STALE), {}, display())).toBe(false);
+    expect(
+      isVisibleInTranscript(mailAt('mail0', 11, STALE), {}, display({ keepIds: new Set(['mail0']) })),
+    ).toBe(true);
     // Bot 文本是锁定类，任何勾选状态都可见；缺省（不传 display）旧行为不变。
-    expect(isVisibleInTranscript(botText, {}, { mailCards: true })).toBe(true);
-    expect(isVisibleInTranscript(mail)).toBe(true);
+    expect(isVisibleInTranscript(botText, {}, display())).toBe(true);
+    expect(isVisibleInTranscript(mailAt('mail11', 11))).toBe(true);
   });
 });

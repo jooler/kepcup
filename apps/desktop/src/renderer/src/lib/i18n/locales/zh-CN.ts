@@ -2426,11 +2426,12 @@ export const zhCN = {
   'settings.taskEngineAdvanced': '任务引擎高级设置',
   'settings.taskEngineAdvancedHint': '长任务的空转保护、无活动超时、最长运行与 token 软预算',
   'settings.chatDisplaySettings': '对话信息展示设置',
-  'settings.chatDisplaySettingsHint': '控制对话列表里出现哪些内容：通知与过程卡片可按需隐藏',
+  'settings.chatDisplaySettingsHint': '控制对话列表里出现哪些内容：通知与过程卡片勾选后常驻，未勾选的未读条目仍会出现',
   'settings.chatDisplayPageHint':
-    '对话只保留沟通本身：下面的类目按勾选状态出现在对话列表里，未读徽标同步生效；各项默认勾选状态不同（任务卡默认显示），可随时调整。',
+    '对话只保留沟通本身：勾选的类目常驻对话列表；未勾选的类目不再硬隐藏——未读条目仍会出现一次（超 30 天未读的不再出现），读过并在切换会话后自动收起。各项默认勾选状态不同（任务卡默认显示），可随时调整。',
   'settings.chatDisplayAlwaysVisible': '始终显示（对话本身与需要你接手的事，不可关闭）',
-  'settings.chatDisplayToggleable': '通知与过程类（默认状态如下，可调整）',
+  'settings.chatDisplayToggleable':
+    '通知与过程类（勾选后常驻显示；未勾选时未读条目仍会出现，读过或超 30 天未读则不再显示）',
   'settings.chatDisplayLockedTag': '始终显示',
   'settings.chatDisplay.userMessages': '用户消息',
   'settings.chatDisplay.userMessagesHint': '你发送的文本、附件、引用与工作台派发的事项',

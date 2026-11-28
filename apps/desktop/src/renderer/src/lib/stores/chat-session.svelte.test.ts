@@ -387,6 +387,38 @@ describe('ChatSession', () => {
     other.dispose();
   });
 
+  it('通知已读游标：keep 随本次查看建立、切换会话丢弃、重开不再收进', async () => {
+    // 会话 id 本测试专用（通知游标单例跨用例共享）。
+    const convA = 'notice-keep-a';
+    const mailCard = (id: string, seq: number): Message => ({
+      ...textMessage({ id, conversationId: convA, seq }),
+      senderType: 'bot',
+      kind: 'card',
+      createdAt: Date.now(),
+      content: { cardType: 'mail' },
+    } as Message);
+    const messagesOfA = (): Message[] => [
+      textMessage({ id: 't1', conversationId: convA, seq: 1 }),
+      mailCard('mail1', 2),
+    ];
+    state.messages = messagesOfA();
+    const session = new ChatSession();
+    await session.open(convA);
+    // 打开即 markRead：未勾选类目的未读邮件进 keep（保持可见直到切换）。
+    expect(session.view?.noticeKeepIds).toEqual(new Set(['mail1']));
+
+    // 切到别的会话：视图被替换，新视图 keep 为空。
+    state.messages = [textMessage({ id: 'tb', conversationId: 'notice-keep-b', seq: 1 })];
+    await session.open('notice-keep-b');
+    expect(session.view?.noticeKeepIds ?? new Set()).toEqual(new Set());
+
+    // 回到 A：游标已推进（≥ mail1.seq），mail 不再进 keep——已读条目收起。
+    state.messages = messagesOfA();
+    await session.open(convA);
+    expect(session.view?.noticeKeepIds).toEqual(new Set());
+    session.dispose();
+  });
+
   it('chat.main.open switches the main view and resets replyTo', async () => {
     chat.start();
     state.messages = [textMessage({ id: 'main-m', conversationId: 'main-a', seq: 1 })];

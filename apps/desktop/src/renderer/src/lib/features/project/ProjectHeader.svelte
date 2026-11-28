@@ -68,8 +68,9 @@
       pendingApprovals:
         permissions.pendingOf(current?.conversation.id).length +
         episodes.pausedCount(current?.conversation.id),
-      // 对话信息展示设置（设置 → 通用）：用户隐藏的类目不计入未读。
-      display: chatDisplay.prefs,
+      // 对话信息展示设置（设置 → 通用）：30 天窗口只约束未勾选类目，
+      // 勾选了的常驻类目照常计（与消息列表同一份勾选状态）。
+      prefs: chatDisplay.prefs,
     }),
   );
 

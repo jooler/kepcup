@@ -28,12 +28,24 @@
   let showNewMessages = $state(false);
   let suppressScrollHandler = false;
 
-  // 会话记录可见性：与沟通 tab 徽标共用 isVisibleInTranscript（WP6 步骤 2），
-  // 各条件的语义见该函数的注释；第三参是对话信息展示设置（设置 → 通用）的
-  // 勾选状态——用户关掉的类目不进列表。
+  // 会话记录可见性：与沟通 tab 徽标共用 isVisibleInTranscript（WP6 步骤 2）。
+  // 第三参是对话信息展示设置（设置 → 通用）的过滤上下文：勾选类目常驻；
+  // 未勾选类目未读且未超 30 天窗口的条目照常显示（seq 越过通知已读游标），
+  // 本次查看已显示的条目经视图 keep 集合保持可见，切换主体内容后（游标已
+  // 推进、keep 随旧视图丢弃）才不再显示。
+  const display = $derived.by(() => {
+    const view = session.view;
+    if (view === null) return null;
+    return {
+      prefs: chatDisplay.prefs,
+      readThrough: chatDisplay.noticeReadThrough(session.source, view.conversation.id),
+      keepIds: view.noticeKeepIds,
+      now: Date.now(),
+    };
+  });
   const messages = $derived(
     (session.view?.messages ?? []).filter((m) =>
-      isVisibleInTranscript(m, permissions.approvals, chatDisplay.prefs),
+      isVisibleInTranscript(m, permissions.approvals, display),
     ),
   );
   // 状态行签名：出现/让位/工具名切换都会改变列表末尾的排版。

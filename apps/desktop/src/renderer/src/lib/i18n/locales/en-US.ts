@@ -2525,12 +2525,13 @@ export const enUS = {
     'Idle-loop guard, inactivity timeout, max run time and token soft budget for long tasks',
   'settings.chatDisplaySettings': 'Conversation display settings',
   'settings.chatDisplaySettingsHint':
-    'Choose what appears in the conversation list: notifications and process cards can be hidden',
+    'Choose what appears in the conversation list: checked notifications and process cards stay visible; unchecked ones still appear while unread',
   'settings.chatDisplayPageHint':
-    'Keep the conversation a conversation: categories below appear in the message list per their checkmarks, and unread badges follow the same rule; defaults differ per item (task cards are shown by default) and can be changed anytime.',
+    'Keep the conversation a conversation: checked categories always show in the message list; unchecked ones are no longer hidden outright — unread entries still appear once (unread for more than 30 days no longer appear), and are folded away once read after you switch conversations. Defaults differ per item (task cards are shown by default) and can be changed anytime.',
   'settings.chatDisplayAlwaysVisible':
     'Always shown (the conversation itself and things awaiting you — cannot be turned off)',
-  'settings.chatDisplayToggleable': 'Notifications & process content (defaults below, adjustable)',
+  'settings.chatDisplayToggleable':
+    'Notifications & process content (checked = always shown; unchecked = unread entries still appear, until read or older than 30 days)',
   'settings.chatDisplayLockedTag': 'Always shown',
   'settings.chatDisplay.userMessages': 'Your messages',
   'settings.chatDisplay.userMessagesHint':
