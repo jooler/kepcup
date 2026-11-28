@@ -46,6 +46,7 @@
   import ChatsArea from '$lib/features/chats/ChatsArea.svelte';
   import WorkbenchView from '$lib/features/workbench/WorkbenchView.svelte';
   import { composerDrafts } from '$lib/features/chats/composer-drafts.svelte';
+  import { messageVisibility } from '$lib/stores/message-visibility.svelte';
   import { presence } from '$lib/features/collab/presence.svelte';
   import { stickies } from '$lib/features/chats/stickies.svelte';
   import SettingsPage from '$lib/features/settings/SettingsPage.svelte';
@@ -200,6 +201,11 @@
       permissions.refreshSandbox(),
       workdirs.refresh(),
       stickies.load(),
+      // 渲染层持久化 store 的启动载入（IndexedDB）：消息隐藏覆盖与草稿快照要
+      // 在恢复会话 / 渲染消息列表之前就位，否则已隐藏消息会先闪现、草稿会被
+      // 空快照盖掉。
+      messageVisibility.ready(),
+      composerDrafts.ready(),
       // 左栏分组（main.db sidebar_sections / conversation_sidebar）；升级时把旧
       // localStorage 分组一次性导入。
       sidebarSections.start(),

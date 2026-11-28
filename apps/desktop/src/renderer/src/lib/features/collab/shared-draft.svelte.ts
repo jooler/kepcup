@@ -20,8 +20,9 @@ import { clientIdentity } from './client-identity';
  * 状态、事件订阅与租约都按自己的会话隔离，绝不共用全局对话 id。
  *
  * 同一会话单写者租约（clientId + connectionId）；持有者可编辑，其余客户端
- * 只读镜像；发送经 `collab.draft.send` 原子清草稿。localStorage 只是断线 /
- * 崩溃缓冲（v3 快照带 version/dirty）。
+ * 只读镜像；发送经 `collab.draft.send` 原子清草稿。本地持久化只是断线 /
+ * 崩溃缓冲（IndexedDB 按会话一条，快照带 version/dirty；旧 localStorage
+ * 整表键启动时一次性导入）。
  */
 
 export type SharedDraftState = 'idle' | 'loading' | 'no-owner' | 'owner' | 'reader' | 'offline';
