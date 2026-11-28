@@ -1004,11 +1004,18 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
 
   let status: CoreStatus = 'starting';
   let statusReason: string | undefined;
+  /** 终局 error 的机器可读码（DB_FROM_NEWER_VERSION 等）；starting/ready 无。 */
+  let statusCode: string | undefined;
 
-  const setStatus = (next: CoreStatus, reason?: string) => {
+  const setStatus = (next: CoreStatus, reason?: string, code?: string) => {
     status = next;
     statusReason = reason;
-    events.emit('core.status', reason === undefined ? { status } : { status, reason });
+    statusCode = code;
+    events.emit('core.status', {
+      status,
+      ...(reason !== undefined ? { reason } : {}),
+      ...(code !== undefined ? { code } : {}),
+    });
   };
 
   /** D75 §3.2 task reaper (armed after startup recovery, cleared by close()). */
@@ -1100,10 +1107,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     collabPresence,
     collabDrafts: null,
     pushStatusTo(server) {
-      server.pushEvent(
-        'core.status',
-        statusReason === undefined ? { status } : { status, reason: statusReason },
-      );
+      server.pushEvent('core.status', {
+        status,
+        ...(statusReason !== undefined ? { reason: statusReason } : {}),
+        ...(statusCode !== undefined ? { code: statusCode } : {}),
+      });
     },
     pushPlatformStateTo(server) {
       // P13 任务 3: launch-at-login (settings default ON). Locked/errored
@@ -1208,8 +1216,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
   if (options.computerRpc !== undefined) services.computerRpc.bindFacade(options.computerRpc);
 
   const systemMethods = createSystemMethods(services, options.appVersion, options.diskUsageBudget);
-  const fail = (message: string): CoreServices => {
-    setStatus('error', message);
+  const fail = (message: string, code?: string): CoreServices => {
+    setStatus('error', message, code);
     services.status = status;
     services.statusReason = statusReason;
     services.appMethods = systemMethods;
@@ -4294,7 +4302,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     return services;
   } catch (error) {
     const message = error instanceof AppError ? `${error.code}: ${error.message}` : String(error);
-    return fail(message);
+    return fail(message, error instanceof AppError ? error.code : undefined);
   }
 }
 
@@ -4775,9 +4783,15 @@ function createPlatformMethods(services: CoreServices): Record<string, RpcMethod
       output: updateActiveRunsOutputSchema,
       handle: async () => {
         // Fail-closed (红线「不得强制中断」): while the core is starting /
-        // locked / errored the in-flight state is UNKNOWN — throwing makes
-        // the main-process gate treat it as busy instead of empty.
+        // locked the in-flight state is UNKNOWN — throwing makes the
+        // main-process gate treat it as busy instead of empty.
         if (services.domain === null || services.orchestrator === null) {
+          // 启动已终局失败（error：进程存活、服务永不就绪——低版本打开高版
+          // 本数据、钥匙串损坏等）是例外：本轮服务从未建立，没有任何执行在
+          // 跑，空集是事实而非猜测。继续 fail-closed 的话更新门控会干等
+          // 30 分钟排空超时，下载完成后永远出不了「应用更新」按钮（用户只
+          // 能靠退出应用时 autoInstallOnAppQuit 兜底）。
+          if (services.status === 'error') return { runs: [] };
           throw new AppError('INTERNAL', 'core services not ready');
         }
         return {

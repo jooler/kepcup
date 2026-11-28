@@ -7,6 +7,10 @@ export const enUS = {
   'shell.coreFailedHint':
     'Multiple consecutive start attempts failed, so retries have stopped. Check the logs directory for details.',
   'shell.coreErrorHint': 'Fix the issue below, then restart the app.',
+  'shell.versionTooLowTitle':
+    'The app is too old to open the local data. Please update the app!',
+  'shell.versionTooLowHint':
+    'The data may have been opened by a newer version of the app on this machine, or copied from another device running a newer version.',
   'shell.logsHint': 'Logs directory: {path}',
   'shell.rightPanelHide': 'Hide right panel',
   'sidebar.chatsEmpty': 'No conversations yet. Click + in the top right to start.',

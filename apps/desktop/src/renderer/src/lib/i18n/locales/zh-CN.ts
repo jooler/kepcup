@@ -6,6 +6,9 @@ export const zhCN = {
   'shell.coreFailed': '核心服务未能启动',
   'shell.coreFailedHint': '连续多次启动失败已停止重试。请查看日志目录了解原因。',
   'shell.coreErrorHint': '请按下方提示处理后重新启动应用。',
+  'shell.versionTooLowTitle': '当前应用版本过低，不能打开本地数据，请更新应用！',
+  'shell.versionTooLowHint':
+    '您本地可能有更高版本的应用开启过，或者您的数据是从另一台运行着更高版本应用的设备中拷贝来的。',
   'shell.logsHint': '日志目录：{path}',
   'shell.rightPanelHide': '收起右栏',
   'sidebar.chatsEmpty': '还没有对话，点右上角「+」开始',

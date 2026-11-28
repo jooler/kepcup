@@ -28,7 +28,9 @@
    *   渲染目录条目 `general.task-loop`，校验单一来源在 core 适配器；收敛后
    *   去掉原区块的圆角边框）；
    * - 「对话信息展示设置」（对话列表内容可控显示：锁定类始终显示，通知 /
-   *   过程类可取消勾选；值存渲染层 localStorage，见 chats/chat-display.ts）。
+   *   过程类勾选后常驻、未勾选时未读条目仍会出现（30 天窗口内），读过并
+   *   切换会话后收起；勾选状态存渲染层 localStorage，通知已读游标存
+   *   IndexedDB，见 chats/chat-display.ts）。
    */
 
   /** 当前子视图：null = 通用列表本体；点击条目进入对应内容，返回键回列表。 */
@@ -131,40 +133,14 @@
   });
 
   async function checkUpdate(): Promise<void> {
-    updateStore.lastCheckError = null;
-    try {
-      const result = await updateStore.checkNow();
-      if (!result.ok) {
-        toast.error(t('update.checkFailed', { reason: result.message ?? '' }));
-        return;
-      }
-      // 事件驱动（BR-P13-008，无墙钟启发）：update:status 推送与 invoke 响应
-      // 经同一 ipc 队列有序送达，checkNow() resolve 时本次检查的结果推送已经
-      // 在渲染层生效——update-not-available → idle（已是最新）；有更新 →
-      // 设置行接管（downloading/waiting/ready）；失败 → error 推送已记入
-      // lastCheckError 后回 idle。
-      if (updateStore.lastCheckError !== null) {
-        toast.error(t('update.checkFailed', { reason: updateStore.lastCheckError }));
-      } else if (updateStore.status.phase === 'idle') {
-        toast.success(t('update.upToDate'));
-      }
-    } catch (error) {
-      toast.error(t('update.checkFailed', { reason: String((error as Error).message ?? '') }));
-    }
+    // 手动检查的提示与 settle 语义在 store（核心错误页入口共用同一实现）。
+    await updateStore.checkInteractive();
   }
 
   /** awaiting-user 的二次确认通过：才允许中断在途执行并安装。 */
   function confirmedInterruptInstall(): void {
     confirmInterrupt = false;
     void updateStore.applyWithFeedback();
-  }
-
-  /** available-skipped「下载此版本」：失败可见（BR-P13-008，同 applyWithFeedback）。 */
-  async function downloadSkippedUpdate(): Promise<void> {
-    const result = await updateStore.downloadSkipped(updateStatus.version ?? '');
-    if (!result.ok) {
-      toast.error(t('update.downloadFailed', { reason: result.message ?? '' }));
-    }
   }
 
   /** 「继续等待」：收起确认框并重臂门控的排空轮询（不中断任何执行）。 */
@@ -337,7 +313,7 @@
           class={canInstallUpdate ? '' : 'opacity-50'}
           disabled={!canInstallUpdate}
           title={canInstallUpdate ? undefined : t('settings.desktopOnly')}
-          onclick={() => void downloadSkippedUpdate()}
+          onclick={() => void updateStore.downloadSkippedInteractive()}
           data-testid="settings-update-download-skipped"
         >
           <ArrowUpCircle class="size-4" aria-hidden="true" />
@@ -374,8 +350,9 @@
     <h3 class="text-sm font-medium">{t('settings.taskEngineAdvanced')}</h3>
     <SettingsCatalogFields itemIds={['general.task-loop']} />
   {:else}
-    <!-- 对话信息展示设置：锁定类（对话本身）始终显示；可开关类用户勾选，
-         即时生效并落渲染层 localStorage。 -->
+    <!-- 对话信息展示设置：锁定类（对话本身）始终显示；可开关类勾选后常驻，
+         未勾选时未读条目仍会出现（30 天窗口内），读过并切换会话后收起。
+         勾选即时生效落渲染层 localStorage；通知已读游标在 IndexedDB。 -->
     <div class="flex items-center gap-1">
       <button
         type="button"

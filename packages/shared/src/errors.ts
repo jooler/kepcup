@@ -15,6 +15,12 @@ export const ERROR_CODES = [
   'MASTER_KEY_LOCKED',
   'DB_OPEN_FAILED',
   'MIGRATION_FAILED',
+  /**
+   * 数据库由更高版本的应用写入（user_version 超出当前迁移目标），低版本拒绝
+   * 打开。与 MIGRATION_FAILED 分码：渲染层据此出「版本过低」专用提示 + 检查
+   * 更新入口，而不是泛化的启动失败原因。
+   */
+  'DB_FROM_NEWER_VERSION',
   'MIGRATION_BACKUP_FAILED',
   // model providers
   'PROVIDER_AUTH_FAILED',
