@@ -122,10 +122,20 @@ class UpdateState {
         toast.success(t('update.upToDate'));
       }
     } catch (error) {
-      toast.error(t('update.checkFailed', { reason: String((error as Error).message ?? '') }));
+      toast.error(
+        t('update.checkFailed', {
+          reason: error instanceof Error && error.message ? error.message : String(error),
+        }),
+      );
     }
-    if (this.status.phase === 'idle' || this.status.phase === 'error') {
-      // 检查落定但没有查到更新（或失败）：撤回待展开标记。
+    if (
+      this.status.phase === 'idle' ||
+      this.status.phase === 'error' ||
+      this.status.phase === 'checking'
+    ) {
+      // 检查落定但没有查到更新（或失败）：撤回待展开标记。checking 也撤——
+      // 正常落定推送先于 resolve 到达（BR-P13-008），还停在 checking 说明本
+      // 检查没有产出任何活动流（毫秒级双击窗口的兜底）。
       this.autoOpenRequested = false;
     }
   }
