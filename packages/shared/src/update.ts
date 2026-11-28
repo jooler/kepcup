@@ -14,6 +14,12 @@ export const updateStatusPhaseSchema = z.enum([
   'checking',
   /** A newer version was found and is downloading in the background. */
   'downloading',
+  /**
+   * A newer version was found, but the user skipped it earlier (「取消更新」).
+   * The scheduled/auto flow stays silent for this version; the manual check in
+   * settings surfaces it so the user can still start a download by hand.
+   */
+  'available-skipped',
   /** Download finished; in-flight executions exist — waiting for them to drain. */
   'waiting-runs',
   /**

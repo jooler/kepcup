@@ -2490,15 +2490,12 @@ export const zhCN = {
   'update.downloadingProgress': '正在下载 v{version} - {percent}%',
   'update.downloadedWaiting': '新版本 v{version} 已下载，等待执行结束…',
   'update.applyNow': '重启并应用更新',
-  'update.readyTitle': '更新已就绪',
-  'update.readyToInstall': '新版本 {version} 已下载完成。更新需要重启应用后才能生效，现在重启吗？',
-  'update.restartLater': '稍后重启',
-  'update.awaitingTitle': '更新已暂停',
   'update.awaitingUser':
     '有 {count} 个执行尚未结束，更新已暂停。可继续等待（执行结束后自动安装），或中断这些执行并立即更新（未完成的执行将被取消）。',
   'update.keepWaiting': '继续等待',
   'update.installAnyway': '中断执行并更新',
   'update.installFailed': '更新未能完成：{reason}',
+  'update.downloadFailed': '更新下载失败：{reason}',
   'update.checkFailed': '无法检查更新：{reason}',
   'update.viewLogs': '查看日志',
   'update.progressTitle': '更新进度',
@@ -2507,8 +2504,10 @@ export const zhCN = {
   'update.cardReady': '新版本 v{version} 已下载完成，重启应用后即可生效。',
   'update.cardWaiting': '新版本 v{version} 已下载，等待 {count} 个执行结束后自动应用。',
   'update.cancelDownload': '取消更新',
-  'update.cardCancelHint': '取消将跳过此版本，直到更新的版本发布',
+  'update.cardCancelHint': '取消将跳过此版本（更新的版本仍会自动下载）；在「设置 → 通用」检查更新仍可手动下载',
   'update.downloadingLabel': '正在下载更新（{percent}%）',
+  'update.availableSkipped': '发现新版本 v{version}（此前已跳过自动更新）',
+  'update.downloadSkipped': '下载此版本',
 
   // --- P13-B 任务 4: 首次启动引导（features/onboarding） -----------------------
   'onboarding.welcomeTitle': '欢迎使用 KepCup',

@@ -54,3 +54,8 @@ export function appendSkippedVersion(store: UpdateSkipStore, version: string): v
   versions.push(version);
   store.save(versions);
 }
+
+/** 把一个版本移出跳过集合并持久化（用户在设置页手动下载被跳过的版本）。 */
+export function removeSkippedVersion(store: UpdateSkipStore, version: string): void {
+  store.save(store.load().filter((existing) => existing !== version));
+}

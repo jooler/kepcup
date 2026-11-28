@@ -1046,6 +1046,19 @@ function bootstrap(): void {
   ipcMain.handle('update:cancelDownload', () => {
     updater.cancelDownload();
   });
+  // 「下载此版本」：手动检查查到被跳过的版本（available-skipped）后，设置页
+  // 的显式下载入口——移出跳过集合并手动启动下载；失败随 { ok, message } 回给
+  // 渲染层提示（与 update:installNow 同型）。
+  ipcMain.handle('update:downloadSkipped', async (_event, version: string) => {
+    try {
+      return await updater.resumeSkippedDownload(String(version));
+    } catch (error) {
+      return {
+        ok: false as const,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  });
   // dev/e2e-only seam (DCE'd from packaged builds, same mechanism as the
   // mock-LLM seeding): drives the REAL gate through evaluate() so the e2e can
   // exercise the production transition path without a real update feed.

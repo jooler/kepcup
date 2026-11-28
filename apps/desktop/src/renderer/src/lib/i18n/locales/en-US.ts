@@ -2596,16 +2596,12 @@ export const enUS = {
   'update.downloadingProgress': 'Downloading v{version} - {percent}%',
   'update.downloadedWaiting': 'New version v{version} downloaded; waiting for runs to finish…',
   'update.applyNow': 'Restart and update',
-  'update.readyTitle': 'Update ready',
-  'update.readyToInstall':
-    'Version {version} has been downloaded. The update takes effect after the app restarts. Restart now?',
-  'update.restartLater': 'Restart later',
-  'update.awaitingTitle': 'Update paused',
   'update.awaitingUser':
     '{count} runs are still in progress, so the update is paused. Keep waiting (it installs automatically once they finish), or interrupt them and update now (unfinished runs will be canceled).',
   'update.keepWaiting': 'Keep waiting',
   'update.installAnyway': 'Interrupt runs and update',
   'update.installFailed': "Update couldn't complete: {reason}",
+  'update.downloadFailed': 'Update download failed: {reason}',
   'update.checkFailed': "Couldn't check for updates: {reason}",
   'update.viewLogs': 'View logs',
   'update.progressTitle': 'Update progress',
@@ -2614,8 +2610,11 @@ export const enUS = {
   'update.cardReady': 'v{version} has been downloaded. Restart the app to apply it.',
   'update.cardWaiting': 'v{version} downloaded; it applies automatically once {count} runs finish.',
   'update.cancelDownload': 'Cancel update',
-  'update.cardCancelHint': 'Cancelling skips this version until a newer one is released',
+  'update.cardCancelHint':
+    "Cancelling skips this version and stops auto-updates; it stays discoverable via a manual check in Settings → General",
   'update.downloadingLabel': 'Downloading update ({percent}%)',
+  'update.availableSkipped': 'New version v{version} found (auto-update was skipped earlier)',
+  'update.downloadSkipped': 'Download this version',
   'onboarding.welcomeTitle': 'Welcome to KepCup',
   'onboarding.welcomeBody':
     "KepCup helps you create, manage, and schedule your AI contacts. Each AI contact has its own personality, memory, and abilities. Your data and your AI contacts' data are stored locally at:",

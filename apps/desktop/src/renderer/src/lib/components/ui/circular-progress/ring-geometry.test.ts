@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { ringGeometry } from './update-ring.js';
+import { ringGeometry } from './ring-geometry.js';
 
 /** 圆形进度环纯几何：周长、clamp 与 NaN 兜底。 */
 

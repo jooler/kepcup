@@ -65,10 +65,20 @@ class UpdateState {
 
   /**
    * 「取消更新」：停下本次下载并跳过该版本（相位守卫在主进程 gate——只有
-   * downloading 相位有效；取消后 gate 回 idle，按钮与卡片随之收起）。
+   * downloading 相位有效；取消后 gate 回 idle，按钮与卡片随之收起。跳过的
+   * 版本不再自动下载，但设置页手动检查仍能查到并可手动下载）。
    */
   async cancelDownload(): Promise<void> {
     await window.kepcup.cancelUpdateDownload();
+  }
+
+  /**
+   * 「下载此版本」：手动检查查到被跳过的版本（available-skipped）后的显式
+   * 下载入口——主进程把该版本移出跳过集合并手动启动下载。失败以
+   * { ok: false, message } 返回，由调用方提示（BR-P13-008 失败可见）。
+   */
+  async downloadSkipped(version: string): Promise<{ ok: boolean; message?: string }> {
+    return window.kepcup.downloadSkippedUpdate(version);
   }
 }
 

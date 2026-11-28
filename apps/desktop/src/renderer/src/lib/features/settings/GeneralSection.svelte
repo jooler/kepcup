@@ -159,6 +159,14 @@
     void updateStore.applyWithFeedback();
   }
 
+  /** available-skipped「下载此版本」：失败可见（BR-P13-008，同 applyWithFeedback）。 */
+  async function downloadSkippedUpdate(): Promise<void> {
+    const result = await updateStore.downloadSkipped(updateStatus.version ?? '');
+    if (!result.ok) {
+      toast.error(t('update.downloadFailed', { reason: result.message ?? '' }));
+    }
+  }
+
   /** 「继续等待」：收起确认框并重臂门控的排空轮询（不中断任何执行）。 */
   function keepWaiting(): void {
     confirmInterrupt = false;
@@ -317,6 +325,24 @@
             </div>
           </div>
         {/if}
+      {:else if updateStatus.phase === 'available-skipped'}
+        <!-- 手动检查查到被跳过的版本（「取消更新」的版本）：显示入口供用户
+             显式下载；自动/定时检查对该版本保持静默，侧栏按钮也不出现。 -->
+        <span class="text-xs text-muted-foreground" data-testid="settings-update-skipped">
+          {t('update.availableSkipped', { version: updateStatus.version ?? '' })}
+        </span>
+        <Button
+          size="sm"
+          variant="outline"
+          class={canInstallUpdate ? '' : 'opacity-50'}
+          disabled={!canInstallUpdate}
+          title={canInstallUpdate ? undefined : t('settings.desktopOnly')}
+          onclick={() => void downloadSkippedUpdate()}
+          data-testid="settings-update-download-skipped"
+        >
+          <ArrowUpCircle class="size-4" aria-hidden="true" />
+          {t('update.downloadSkipped')}
+        </Button>
       {:else if updateCanCheck}
         <Button
           size="sm"
